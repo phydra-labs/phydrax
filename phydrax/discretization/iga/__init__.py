@@ -6,6 +6,10 @@
 
 from ..._interpolation import BSplineGrid
 from ._basis import IsogeometricQuadraturePolicy
+from ._field_view import (
+    IsogeometricFieldReconstructionKernel,
+    prepare_isogeometric_field_reconstruction,
+)
 from ._geometry import (
     IsogeometricGeometryEvidence,
     IsogeometricH1QualificationPolicy,
@@ -17,6 +21,7 @@ from ._plan import IsogeometricPlan, PreparedIsogeometricDiscretization
 
 __all__ = [
     "BSplineGrid",
+    "IsogeometricFieldReconstructionKernel",
     "IsogeometricGeometryEvidence",
     "IsogeometricH1QualificationPolicy",
     "IsogeometricPlan",
@@ -24,4 +29,5 @@ __all__ = [
     "IsogeometricRuntimeData",
     "NURBSGeometryState",
     "PreparedIsogeometricDiscretization",
+    "prepare_isogeometric_field_reconstruction",
 ]

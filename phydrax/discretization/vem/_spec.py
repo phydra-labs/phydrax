@@ -8,8 +8,12 @@ from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
+import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._polynomial._orthogonal import standard_vandermonde
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -131,6 +135,41 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         if self.family == "ConformingHcurl":
             return "curl"
         return "none"
+
+    def edge_trace_basis(self, coordinates: ArrayLike, /) -> Array:
+        """Tabulate the degree-`k` edge trace basis at canonical edge coordinates.
+
+        `coordinates` lie in `[-1, 1]` along an edge from its lower to its higher
+        vertex index; the result has shape `(*coordinates.shape, k + 1)`. H1
+        value traces use the Lagrange basis on the `k + 1` Gauss--Lobatto
+        nodes (start vertex, interior edge DOFs, end vertex). H(div) normal and
+        H(curl) tangential traces use the dual-scaled Legendre basis
+        `(2m + 1) P_m`, so the canonical trace is `sum_m (2m + 1) P_m d_m` for
+        the Legendre moment DOFs `d_m`. Discontinuous L2 spaces have no trace.
+        """
+        from ...integration import GaussLobattoLegendreRule, interval_rule_data
+        from ..fem import lagrange_1d_tabulation
+
+        values = jnp.asarray(coordinates)
+        flat = values.reshape((-1,))
+        match self.trace_kind:
+            case "value":
+                nodes = interval_rule_data(
+                    GaussLobattoLegendreRule(self.degree + 1)
+                ).nodes
+                basis, _ = lagrange_1d_tabulation(
+                    jnp.asarray(nodes, dtype=flat.dtype), flat
+                )
+            case "normal" | "tangential":
+                dual = 2 * jnp.arange(self.degree + 1, dtype=flat.dtype) + 1
+                basis = standard_vandermonde("legendre", flat, self.degree) * dual
+            case "none":
+                raise ValueError(
+                    "Discontinuous L2 virtual elements have no boundary trace."
+                )
+            case kind:
+                raise ValueError(f"Unknown virtual-element trace kind {kind!r}.")
+        return basis.reshape(values.shape + (self.degree + 1,))
 
     def local_dof_count(self, arity: int, /) -> int:
         arity_ = int(arity)

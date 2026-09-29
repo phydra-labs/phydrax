@@ -15,7 +15,7 @@ cell; points outside every cell are `OUTSIDE_SUPPORT`.
 from __future__ import annotations
 
 from math import isfinite, prod
-from typing import Any, final
+from typing import Any, assert_never, final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -62,20 +62,33 @@ from ._reconstruction import (
     AbstractFaceReconstructionPlan,
     PiecewiseConstantReconstruction,
 )
+from ._side_trace import (
+    finite_volume_field_space_id,
+    mesh_cell_dimension,
+    structured_axis_edges,
+)
 from ._structured import FiniteVolumeDiscretization
+from ._triangle_fv import TriangleFiniteVolumeDiscretization
+from ._triangle_polynomial import TriangleKExactReconstructionPlan
+from ._triangle_reconstruction import TriangleMUSCLReconstructionPlan
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_weno import PreparedUnstructuredWENOZReconstruction
 
 
 _SIMPLICES = ("triangle", "tetrahedron")
-# WENO-Z weights branch on max/min smoothness indicators; derivatives with
-# respect to the cell averages are those of the executed branch.
+# WENO-Z weights and MUSCL limiters branch on max/min indicators; derivatives
+# with respect to the cell averages are those of the executed branch.
 _WENO_BRANCH_POLICY = BranchDifferentiationPolicy.BRANCHWISE
 
 UnstructuredCellReconstruction = (
     PiecewiseConstantReconstruction
     | PreparedCellPolynomialReconstruction
     | PreparedUnstructuredWENOZReconstruction
+    | TriangleKExactReconstructionPlan
+    | TriangleMUSCLReconstructionPlan
+)
+_MeshDiscretization = (
+    UnstructuredFiniteVolumeDiscretization | TriangleFiniteVolumeDiscretization
 )
 
 
@@ -338,18 +351,28 @@ class _WENORoute(StrictModule):
 
 
 @final
+class _TriangleMUSCLRoute(StrictModule):
+    cells: Array
+    directions: Array
+    share: Array
+    constant: bool = eqx.field(static=True)
+
+
+@final
 class UnstructuredFiniteVolumeFieldReconstructionKernel(
     AbstractFieldReconstructionKernel, NonTrainableState
 ):
-    """Located cell reconstruction on an unstructured finite-volume mesh.
+    """Located cell reconstruction on an unstructured or triangular FV mesh.
 
     Points are located by an explicit `AbstractCellLocator` inverse cell map.
     Inside a cell the value is the prepared reconstruction: the cell average
     (`PiecewiseConstantReconstruction`), the conservative k-exact polynomial
-    (`PreparedCellPolynomialReconstruction`, linear in the averages), or the
-    WENO-Z blended polynomial (`PreparedUnstructuredWENOZReconstruction`,
-    nonlinear in the averages). Coordinate derivatives differentiate the cell
-    polynomial exactly.
+    (`PreparedCellPolynomialReconstruction` or `TriangleKExactReconstructionPlan`,
+    linear in the averages), the WLSQ MUSCL plane
+    (`TriangleMUSCLReconstructionPlan`; linear when unlimited, otherwise scaled
+    by the cell's limiter factor), or the WENO-Z blended polynomial
+    (`PreparedUnstructuredWENOZReconstruction`, nonlinear in the averages).
+    Coordinate derivatives differentiate the cell polynomial exactly.
     """
 
     locator: AbstractCellLocator
@@ -363,19 +386,27 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         self,
         locator: AbstractCellLocator,
         reconstruction: UnstructuredCellReconstruction,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: _MeshDiscretization,
         /,
         *,
         field_space_id: str,
     ) -> None:
         if not isinstance(locator, AbstractCellLocator):
             raise TypeError("locator must be an AbstractCellLocator.")
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+        if not isinstance(
+            discretization,
+            (UnstructuredFiniteVolumeDiscretization, TriangleFiniteVolumeDiscretization),
+        ):
             raise TypeError(
-                "discretization must be UnstructuredFiniteVolumeDiscretization."
+                "discretization must be UnstructuredFiniteVolumeDiscretization or "
+                "TriangleFiniteVolumeDiscretization."
             )
         match reconstruction:
-            case PiecewiseConstantReconstruction():
+            case (
+                PiecewiseConstantReconstruction()
+                | TriangleKExactReconstructionPlan()
+                | TriangleMUSCLReconstructionPlan()
+            ):
                 reconstruction_id = reconstruction.plan_id
             case (
                 PreparedCellPolynomialReconstruction()
@@ -385,8 +416,10 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             case _:
                 raise TypeError(
                     "reconstruction must be PiecewiseConstantReconstruction, "
-                    "PreparedCellPolynomialReconstruction, or "
-                    "PreparedUnstructuredWENOZReconstruction."
+                    "PreparedCellPolynomialReconstruction, "
+                    "PreparedUnstructuredWENOZReconstruction, "
+                    "TriangleKExactReconstructionPlan, or "
+                    "TriangleMUSCLReconstructionPlan."
                 )
         self.locator = locator
         self.reconstruction = reconstruction
@@ -421,7 +454,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         derivative: tuple[int, ...],
         side: FieldSideBinding | None,
         /,
-    ) -> tuple[GatherStencil | _WENORoute, FieldQueryEvidence]:
+    ) -> tuple[GatherStencil | _WENORoute | _TriangleMUSCLRoute, FieldQueryEvidence]:
         mask = None if side is None else side.cell_mask
         location = self.locator.locate(points, cell_mask=mask)
         accepted = location.candidate_cells >= 0
@@ -432,6 +465,8 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         evidence = FieldQueryEvidence(
             status, location.jacobian_condition, count, kernel_id=self.kernel_id
         )
+        constant = float(not any(derivative))
+        route: GatherStencil | _WENORoute | _TriangleMUSCLRoute
         match self.reconstruction:
             case PiecewiseConstantReconstruction():
                 _require_value_order(derivative)
@@ -442,8 +477,16 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                     valid=accepted,
                 )
             case PreparedCellPolynomialReconstruction() as polynomial:
-                route = self._polynomial_route(
-                    polynomial, points, derivative, cells, accepted, share
+                route = _stencil_route(
+                    _candidate_basis(polynomial, points, derivative, cells),
+                    polynomial.stencil_cells,
+                    polynomial.stencil_valid,
+                    polynomial.factors,
+                    cells,
+                    accepted,
+                    share,
+                    constant,
+                    self._cell_count,
                 )
             case PreparedUnstructuredWENOZReconstruction():
                 route = _WENORoute(
@@ -454,91 +497,114 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                     share,
                     not any(derivative),
                 )
+            case TriangleKExactReconstructionPlan() as kexact:
+                prepared = kexact.prepared
+                count_, width = cells.shape
+                repeated = jnp.broadcast_to(points[:, None, :], (count_, width, 2))
+                basis = prepared.basis_derivative(
+                    cells.reshape((-1,)),
+                    repeated.reshape((-1, 1, 2)),
+                    (int(derivative[0]), int(derivative[1])),
+                )
+                route = _stencil_route(
+                    basis.reshape((count_, width, basis.shape[-1])),
+                    prepared.neighbor_cells,
+                    prepared.valid,
+                    prepared.factors,
+                    cells,
+                    accepted,
+                    share,
+                    constant,
+                    self._cell_count,
+                )
+            case TriangleMUSCLReconstructionPlan() as muscl:
+                directions = _plane_directions(
+                    muscl.gradient.discretization.cell_centers.astype(points.dtype),
+                    points,
+                    derivative,
+                    cells,
+                )
+                if muscl.limiter == "unlimited":
+                    route = _stencil_route(
+                        directions,
+                        muscl.gradient.neighbor_cells,
+                        muscl.gradient.valid,
+                        muscl.gradient.factors,
+                        cells,
+                        accepted,
+                        share,
+                        constant,
+                        self._cell_count,
+                    )
+                else:
+                    route = _TriangleMUSCLRoute(
+                        cells, directions, share, not any(derivative)
+                    )
             case _:
                 raise TypeError("Unknown unstructured finite-volume reconstruction.")
         return route, evidence
 
-    def _polynomial_route(
+    def apply(
         self,
-        polynomial: PreparedCellPolynomialReconstruction,
-        points: Array,
-        derivative: tuple[int, ...],
-        cells: Array,
-        accepted: Array,
-        share: Array,
+        route: GatherStencil | _WENORoute | _TriangleMUSCLRoute,
+        coefficients: Array,
         /,
-    ) -> GatherStencil:
-        # u(x) = u_c + sum_f B_f(x) sum_s F[c, f, s] (u_s - u_c): a fixed linear
-        # route over the cell and its prepared stencil.
-        basis = _candidate_basis(polynomial, points, derivative, cells)
-        stencil_valid = polynomial.stencil_valid[cells]
-        neighbor_weights = jnp.where(
-            stencil_valid,
-            contract(
-                "pkf,pkfs->pks", basis, polynomial.factors[cells].astype(basis.dtype)
-            ),
-            0.0,
-        )
-        cell_weight = float(not any(derivative)) - jnp.sum(neighbor_weights, axis=-1)
-        weights = (
-            jnp.concatenate((cell_weight[..., None], neighbor_weights), axis=-1)
-            * share[..., None]
-        )
-        indices = jnp.concatenate(
-            (cells[..., None], polynomial.stencil_cells[cells]), axis=-1
-        )
-        valid = jnp.concatenate(
-            (accepted[..., None], stencil_valid & accepted[..., None]), axis=-1
-        )
-        width = indices.shape[1] * indices.shape[2]
-        return GatherStencil(
-            indices=indices.reshape((-1, width)),
-            weights=weights.reshape((-1, width)),
-            source_size=self._cell_count,
-            valid=valid.reshape((-1, width)),
-        )
-
-    def apply(self, route: GatherStencil | _WENORoute, coefficients: Array, /) -> Array:
-        match self.reconstruction:
-            case (
-                PiecewiseConstantReconstruction() | PreparedCellPolynomialReconstruction()
-            ):
+    ) -> Array:
+        match route:
+            case GatherStencil():
                 # locate() binds gather stencils for linear reconstructions.
-                if not (isinstance(route, GatherStencil)):
-                    raise RuntimeError(
-                        "Internal invariant failed: isinstance(route, GatherStencil)."
-                    )
                 return linear_apply(route.relation, route.weights, coefficients)
-            case PreparedUnstructuredWENOZReconstruction():
-                if not (isinstance(route, _WENORoute)):
+            case _WENORoute():
+                if not isinstance(
+                    self.reconstruction, PreparedUnstructuredWENOZReconstruction
+                ):
                     raise RuntimeError(
-                        "Internal invariant failed: isinstance(route, _WENORoute)."
+                        "Internal invariant failed: WENO routes need WENO-Z."
                     )
                 modal = self.reconstruction.coefficients(coefficients)
                 values = contract("pkf,pk...f->pk...", route.basis, modal[route.cells])
                 if route.constant:
                     values = values + coefficients[route.cells]
                 return contract("pk,pk...->p...", route.share, values)
-            case _:
-                raise TypeError("Unknown unstructured finite-volume reconstruction.")
-
-    def transpose(self, route: GatherStencil | _WENORoute, cotangent: Array, /) -> Array:
-        match self.reconstruction:
-            case (
-                PiecewiseConstantReconstruction() | PreparedCellPolynomialReconstruction()
-            ):
-                if not (isinstance(route, GatherStencil)):
+            case _TriangleMUSCLRoute():
+                if not isinstance(self.reconstruction, TriangleMUSCLReconstructionPlan):
                     raise RuntimeError(
-                        "Internal invariant failed: isinstance(route, GatherStencil)."
+                        "Internal invariant failed: limited routes need triangle MUSCL."
                     )
-                return linear_transpose_apply(route.relation, route.weights, cotangent)
-            case PreparedUnstructuredWENOZReconstruction():
-                raise ValueError(
-                    "WENO-Z reconstructions are nonlinear in the cell averages and "
-                    "have no algebraic transpose."
+                flat = route.cells.reshape((-1,))
+                gradient = self.reconstruction.gradient.cell_gradients(coefficients, flat)
+                factor = self.reconstruction.cell_limiter_factors(coefficients, flat)
+                values = factor * contract(
+                    "r...i,ri->r...",
+                    gradient,
+                    route.directions.reshape((-1, route.directions.shape[-1])),
+                )
+                if route.constant:
+                    values = values + coefficients[flat]
+                return contract(
+                    "pk,pk...->p...",
+                    route.share,
+                    values.reshape(route.cells.shape + values.shape[1:]),
                 )
             case _:
-                raise TypeError("Unknown unstructured finite-volume reconstruction.")
+                raise TypeError("Unknown unstructured finite-volume route.")
+
+    def transpose(
+        self,
+        route: GatherStencil | _WENORoute | _TriangleMUSCLRoute,
+        cotangent: Array,
+        /,
+    ) -> Array:
+        match route:
+            case GatherStencil():
+                return linear_transpose_apply(route.relation, route.weights, cotangent)
+            case _WENORoute() | _TriangleMUSCLRoute():
+                raise ValueError(
+                    "WENO-Z and limited MUSCL reconstructions are nonlinear in the "
+                    "cell averages and have no algebraic transpose."
+                )
+            case _:
+                raise TypeError("Unknown unstructured finite-volume route.")
 
     def bind_side(
         self,
@@ -595,6 +661,58 @@ def _candidate_basis(
     return basis.reshape((count, width, basis.shape[-1]))
 
 
+def _stencil_route(
+    basis: Array,
+    stencil_cells: Array,
+    stencil_valid: Array,
+    factors: Array,
+    cells: Array,
+    accepted: Array,
+    share: Array,
+    constant: float,
+    cell_count: int,
+    /,
+) -> GatherStencil:
+    """Fixed linear route `u(x) = c u_c + sum_f B_f(x) sum_s F[c, f, s] (u_s - u_c)`."""
+    valid_stencil = stencil_valid[cells]
+    neighbor_weights = jnp.where(
+        valid_stencil,
+        contract("pkf,pkfs->pks", basis, factors[cells].astype(basis.dtype)),
+        0.0,
+    )
+    cell_weight = constant - jnp.sum(neighbor_weights, axis=-1)
+    weights = (
+        jnp.concatenate((cell_weight[..., None], neighbor_weights), axis=-1)
+        * share[..., None]
+    )
+    indices = jnp.concatenate((cells[..., None], stencil_cells[cells]), axis=-1)
+    valid = jnp.concatenate(
+        (accepted[..., None], valid_stencil & accepted[..., None]), axis=-1
+    )
+    width = indices.shape[1] * indices.shape[2]
+    return GatherStencil(
+        indices=indices.reshape((-1, width)),
+        weights=weights.reshape((-1, width)),
+        source_size=cell_count,
+        valid=valid.reshape((-1, width)),
+    )
+
+
+def _plane_directions(
+    centers: Array, points: Array, derivative: tuple[int, ...], cells: Array, /
+) -> Array:
+    """Directions `d` with `D^a u(x) = [a = 0] u_c + phi_c g_c . d` on a plane."""
+    order = sum(derivative)
+    shape = cells.shape + (points.shape[1],)
+    if order == 0:
+        return points[:, None, :] - centers[cells]
+    if order == 1:
+        axis = derivative.index(1)
+        unit = jnp.zeros((points.shape[1],), dtype=points.dtype).at[axis].set(1.0)
+        return jnp.broadcast_to(unit, shape)
+    return jnp.zeros(shape, dtype=points.dtype)
+
+
 def _face_side_cells(
     containing: np.ndarray,
     side: FieldTraceSide,
@@ -630,19 +748,8 @@ def _face_side_cells(
     return np.asarray(resolved, dtype=np.int32)
 
 
-def _structured_edges(
-    discretization: FiniteVolumeDiscretization, /
-) -> tuple[np.ndarray, ...]:
-    edges = []
-    for axis in discretization.grid.structured_axes:
-        widths = np.asarray(axis.interval_widths, dtype=np.float64)
-        lower = float(np.asarray(axis.bounds)[0])
-        edges.append(lower + np.concatenate(([0.0], np.cumsum(widths))))
-    return tuple(edges)
-
-
 def _default_locator(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: _MeshDiscretization,
     policy: SimplicialLocationPolicy | None,
     /,
 ) -> PreparedSimplicialCellLocator:
@@ -677,7 +784,7 @@ def _default_locator(
 
 
 def _checked_locator(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: _MeshDiscretization,
     locator: AbstractCellLocator,
     /,
 ) -> AbstractCellLocator:
@@ -696,13 +803,13 @@ def _checked_locator(
 
 
 def _require_mesh(
-    reconstruction: PreparedCellPolynomialReconstruction
-    | PreparedUnstructuredWENOZReconstruction,
-    discretization: FiniteVolumeDiscretization | UnstructuredFiniteVolumeDiscretization,
+    prepared_on: FiniteVolumeDiscretization | _MeshDiscretization,
+    discretization: FiniteVolumeDiscretization | _MeshDiscretization,
     /,
 ) -> None:
-    if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization) or (
-        reconstruction.discretization.prepared_id != discretization.prepared_id
+    if (
+        isinstance(discretization, FiniteVolumeDiscretization)
+        or prepared_on.prepared_id != discretization.prepared_id
     ):
         raise ValueError(
             "The cell reconstruction was prepared on a different finite-volume "
@@ -712,10 +819,13 @@ def _require_mesh(
 
 def _cell_reconstruction(
     reconstruction: Any,
-    discretization: FiniteVolumeDiscretization | UnstructuredFiniteVolumeDiscretization,
+    discretization: FiniteVolumeDiscretization | _MeshDiscretization,
     /,
 ) -> tuple[DerivativeRegularity, int, bool]:
     """Regularity, maximum derivative order, and coefficient linearity."""
+    branchwise = branch_policy_contract(
+        _WENO_BRANCH_POLICY, surfaces=(DerivativeSurface.PRIMAL_STATE,)
+    ).conditions
     match reconstruction:
         case PiecewiseConstantReconstruction():
             return (
@@ -731,7 +841,7 @@ def _cell_reconstruction(
                 "reconstruction on an unstructured mesh."
             )
         case PreparedCellPolynomialReconstruction():
-            _require_mesh(reconstruction, discretization)
+            _require_mesh(reconstruction.discretization, discretization)
             degree = reconstruction.basis.degree
             return (
                 DerivativeRegularity.piecewise_polynomial(
@@ -741,33 +851,55 @@ def _cell_reconstruction(
                 True,
             )
         case PreparedUnstructuredWENOZReconstruction():
-            _require_mesh(reconstruction, discretization)
+            _require_mesh(reconstruction.discretization, discretization)
             if reconstruction.limiter != "none":
                 raise ValueError(
                     "A WENO-Z trace limiter scales each trace by its own evaluation "
                     "point set and defines no point reconstruction; prepare the view "
                     "with limiter='none'."
                 )
-            conditions = branch_policy_contract(
-                _WENO_BRANCH_POLICY, surfaces=(DerivativeSurface.PRIMAL_STATE,)
-            ).conditions
             return (
                 DerivativeRegularity.piecewise_smooth(
-                    continuity=-1, conditions=conditions
+                    continuity=-1, conditions=branchwise
                 ),
                 reconstruction.optimal.basis.degree,
+                False,
+            )
+        case TriangleKExactReconstructionPlan():
+            _require_mesh(reconstruction.prepared.discretization, discretization)
+            return (
+                DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=2),
+                2,
+                True,
+            )
+        case TriangleMUSCLReconstructionPlan():
+            _require_mesh(reconstruction.gradient.discretization, discretization)
+            if reconstruction.limiter == "unlimited":
+                return (
+                    DerivativeRegularity.piecewise_polynomial(
+                        continuity=-1, degree_bound=1
+                    ),
+                    1,
+                    True,
+                )
+            return (
+                DerivativeRegularity.piecewise_smooth(
+                    continuity=-1, conditions=branchwise
+                ),
+                1,
                 False,
             )
         case _:
             raise TypeError(
                 "reconstruction must be PiecewiseConstantReconstruction, "
-                "PreparedCellPolynomialReconstruction, or "
-                "PreparedUnstructuredWENOZReconstruction."
+                "PreparedCellPolynomialReconstruction, "
+                "PreparedUnstructuredWENOZReconstruction, "
+                "TriangleKExactReconstructionPlan, or TriangleMUSCLReconstructionPlan."
             )
 
 
 def prepare_finite_volume_field_reconstruction(
-    discretization: FiniteVolumeDiscretization | UnstructuredFiniteVolumeDiscretization,
+    discretization: FiniteVolumeDiscretization | _MeshDiscretization,
     reconstruction: Any,
     /,
     *,
@@ -782,17 +914,20 @@ def prepare_finite_volume_field_reconstruction(
 
     `reconstruction` is the explicit cell reconstruction policy:
     `PiecewiseConstantReconstruction()` (cell averages; `C^-1` degree zero, no
-    coordinate derivatives), a `PreparedCellPolynomialReconstruction` (k-exact,
-    `C^-1` piecewise degree `k`, exact derivatives through order `k`), or a
-    `PreparedUnstructuredWENOZReconstruction` with `limiter="none"` (nonlinear
-    in the averages, branchwise-differentiable, exact coordinate derivatives
-    through the candidate degree). Polynomial and WENO-Z reconstructions exist
-    on unstructured meshes; directional face-trace plans refuse.
+    coordinate derivatives), a `PreparedCellPolynomialReconstruction` or
+    `TriangleKExactReconstructionPlan` (k-exact, `C^-1` piecewise degree `k`,
+    exact derivatives through order `k`), a `TriangleMUSCLReconstructionPlan`
+    (WLSQ plane; linear when unlimited, otherwise scaled by the cell's limiter
+    factor and nonlinear), or a `PreparedUnstructuredWENOZReconstruction` with
+    `limiter="none"` (nonlinear in the averages, branchwise-differentiable,
+    exact coordinate derivatives through the candidate degree). Polynomial and
+    WENO-Z reconstructions exist on unstructured meshes and triangle
+    reconstructions on triangular meshes; directional face-trace plans refuse.
 
     Structured grids locate points by index arithmetic on the axis edges
     (closed intervals within `location_tolerance` of each axis extent) and
-    cover the grid box. Unstructured meshes need an inverse cell map:
-    single-block triangle/tetrahedron meshes build a
+    cover the grid box. Unstructured and triangular meshes need an inverse cell
+    map: single-block triangle/tetrahedron meshes build a
     `PreparedSimplicialCellLocator` from `location_policy`; other meshes need an
     explicit `locator` over the same topology and vertices. The support is the
     mesh region (an explicit geometry must be covered by the mesh). Coefficients
@@ -802,23 +937,21 @@ def prepare_finite_volume_field_reconstruction(
 
     if not isinstance(
         discretization,
-        (FiniteVolumeDiscretization, UnstructuredFiniteVolumeDiscretization),
+        (
+            FiniteVolumeDiscretization,
+            UnstructuredFiniteVolumeDiscretization,
+            TriangleFiniteVolumeDiscretization,
+        ),
     ):
         raise TypeError(
-            "discretization must be a FiniteVolumeDiscretization or an "
-            "UnstructuredFiniteVolumeDiscretization."
+            "discretization must be a FiniteVolumeDiscretization, an "
+            "UnstructuredFiniteVolumeDiscretization, or a "
+            "TriangleFiniteVolumeDiscretization."
         )
     regularity, maximum_order, linear = _cell_reconstruction(
         reconstruction, discretization
     )
-    field_space_id = canonical_fingerprint(
-        {
-            "kind": "finite-volume-field-space",
-            "discretization": discretization.prepared_id,
-            "field": discretization.cell_space.name,
-            "components": list(discretization.component_names),
-        }
-    )
+    field_space_id = finite_volume_field_space_id(discretization)
     match discretization:
         case FiniteVolumeDiscretization():
             if locator is not None or location_policy is not None:
@@ -826,7 +959,7 @@ def prepare_finite_volume_field_reconstruction(
                     "Structured grids locate points by index arithmetic; locators "
                     "apply to unstructured meshes."
                 )
-            edges = _structured_edges(discretization)
+            edges = structured_axis_edges(discretization)
             kernel = StructuredFiniteVolumeFieldReconstructionKernel(
                 edges,
                 location_tolerance=location_tolerance,
@@ -849,7 +982,10 @@ def prepare_finite_volume_field_reconstruction(
                 tolerance=support_tolerance,
             )
             dimension = lower.size
-        case UnstructuredFiniteVolumeDiscretization():
+        case (
+            UnstructuredFiniteVolumeDiscretization()
+            | TriangleFiniteVolumeDiscretization()
+        ):
             located = (
                 _default_locator(discretization, location_policy)
                 if locator is None
@@ -858,11 +994,20 @@ def prepare_finite_volume_field_reconstruction(
             kernel = UnstructuredFiniteVolumeFieldReconstructionKernel(
                 located, reconstruction, discretization, field_space_id=field_space_id
             )
+            match discretization:
+                case UnstructuredFiniteVolumeDiscretization():
+                    topology_id = discretization.topology_id
+                    geometry_id = discretization.geometry_id
+                case TriangleFiniteVolumeDiscretization():
+                    topology_id = discretization.mesh.topology_id
+                    geometry_id = discretization.mesh.geometry_id
+                case _:
+                    assert_never(discretization)
             support_id = canonical_fingerprint(
                 {
                     "kind": "unstructured-finite-volume-support",
-                    "topology": discretization.topology_id,
-                    "geometry": discretization.geometry_id,
+                    "topology": topology_id,
+                    "geometry": geometry_id,
                 }
             )
             tolerance = float(support_tolerance)
@@ -877,7 +1022,7 @@ def prepare_finite_volume_field_reconstruction(
                 geometry = support_geometry
             else:
                 raise TypeError("support_geometry must be a CompiledGeometry or None.")
-            dimension = discretization.cell_dimension
+            dimension = mesh_cell_dimension(discretization)
         case _:
             raise TypeError(
                 "discretization must be a FiniteVolumeDiscretization or an "

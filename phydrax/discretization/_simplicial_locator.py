@@ -21,6 +21,7 @@ from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_b
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._cell_geometry_validity import _bernstein_plan
 from .fem._cell_map import PreparedFiniteElementCellMap
 
 
@@ -138,8 +139,49 @@ class AbstractCellLocator(StrictModule):
         raise NotImplementedError
 
 
+def _certified_cell_bounds(
+    cell_map: PreparedFiniteElementCellMap, coordinates: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return boxes enclosing every mapped simplex cell of a polynomial geometry.
+
+    The coordinate map of degree `k` (the element's declared polynomial degree,
+    the contract shared with the Bernstein validity certificate) is converted to
+    its simplex Bernstein form; the control points bound the image by the
+    convex-hull property. The boxes are widened by a forward bound on the host
+    conversion rounding.
+    """
+    element = cell_map.coordinate_element
+    plan = _bernstein_plan("simplex", (element.degree, cell_map.reference_dimension))
+    basis_values, _ = element.tabulate(plan.nodes)
+    basis = np.asarray(basis_values, dtype=np.float64)
+    cell_coordinates = np.asarray(coordinates, dtype=np.float64)[
+        np.asarray(cell_map.coordinate_dofs)
+    ]
+    control = contract(
+        "rm,mn,cna->cra", plan.coefficients_from_values, basis, cell_coordinates
+    )
+    rounding = (
+        2.0
+        * plan.conversion_norm
+        * np.max(np.sum(np.abs(basis), axis=1))
+        * (basis.shape[0] + basis.shape[1])
+        * np.finfo(np.float64).eps
+        * np.max(np.abs(cell_coordinates), axis=(1, 2))
+    )
+    return (
+        np.min(control, axis=1) - rounding[:, None],
+        np.max(control, axis=1) + rounding[:, None],
+    )
+
+
 class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
-    """Bounded damped-Newton locator over a canonical prepared FE cell map."""
+    """Bounded damped-Newton locator over a canonical prepared FE cell map.
+
+    Candidate cells come from BVH item boxes that enclose each whole mapped
+    cell: the Bernstein control net of the polynomial coordinate map (convex-hull
+    property), not the coordinate nodes, so curved cells whose images bulge past
+    their nodes are never pruned.
+    """
 
     cell_map: PreparedFiniteElementCellMap
     coordinates: Array
@@ -166,10 +208,10 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         if values.shape != (cell_map.coordinate_count, cell_map.ambient_dimension):
             raise ValueError("Locator coordinates do not match the prepared cell map.")
         cells = cell_map.coordinate_dofs
-        cell_vertices = np.asarray(values)[np.asarray(cells)]
+        lower, upper = _certified_cell_bounds(cell_map, np.asarray(values))
         bvh = prepare_bvh(
-            np.min(cell_vertices, axis=1),
-            np.max(cell_vertices, axis=1),
+            lower,
+            upper,
             policy=BVHBuildPolicy(leaf_size=min(16, cell_map.cell_count)),
             dtype=values.dtype,
         )

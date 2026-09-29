@@ -14,6 +14,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._polynomial import ScaledMonomialBasis, total_degree_multiindices
+from ..._polynomial._orthogonal import standard_vandermonde
 from ..._strict import StrictModule
 from ...linalg import prepare_local_block_factorization, solve_local_blocks
 from .._polygon_geometry import PolygonCubature, PolygonGeometry
@@ -299,14 +300,7 @@ def _legendre_trace_data(degree: int, dtype: DTypeLike, /) -> tuple[Array, Array
     nodes = 0.5 * (jnp.asarray(data.nodes, dtype=dtype) + 1.0)
     weights = 0.5 * jnp.asarray(data.weights, dtype=dtype)
     coordinate = 2.0 * nodes - 1.0
-    values = [jnp.ones_like(coordinate)]
-    if degree:
-        values.append(coordinate)
-    for order in range(2, degree + 1):
-        values.append(
-            ((2 * order - 1) * coordinate * values[-1] - (order - 1) * values[-2]) / order
-        )
-    return nodes, weights, jnp.stack(values, axis=-1)
+    return nodes, weights, standard_vandermonde("legendre", coordinate, degree)
 
 
 def _polynomial_differential(

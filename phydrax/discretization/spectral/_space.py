@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, get_args, TYPE_CHECKING
+from typing import Any, get_args, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
 from ...typing import parse
 from .._axis import AxisDiscretization
@@ -28,12 +28,14 @@ from .._core import (
     DiscretizationRole,
     PreparationReport,
 )
+from .._integration_domain import IntegrationDomain
 from .._lifecycle import (
     AbstractDiscretizationPlan,
     validate_prepared_metadata,
 )
 from .._measure import DiscreteMeasure
 from .._periodic_cell import PeriodicCell
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._tensor import (
     _axis_eigenvalues,
@@ -43,6 +45,8 @@ from .._tensor import (
     AbstractStrongFormDiscretization,
 )
 from .._tensor_support import PreparedTensorGrid
+from .._topology import EntitySelection
+from .._views import FieldTraceSide
 from ._basis import (
     AbstractSpectralBasisPlan,
     CosineBasisPlan,
@@ -51,6 +55,12 @@ from ._basis import (
     SineBasisPlan,
 )
 from ._precision import SpectralPrecisionPolicy
+from ._side_trace import (
+    prepare_spectral_face_trace,
+    select_spectral_faces,
+    spectral_face_domain,
+    spectral_face_selection,
+)
 
 
 if TYPE_CHECKING:
@@ -546,6 +556,124 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     @property
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
+
+    @property
+    def exterior_facet_domain(self) -> IntegrationDomain:
+        """Boundary faces of every bounded axis in canonical order.
+
+        One facet per `(axis, lower/upper)` face with local face
+        `2 * axis + side` (`side` 0 lower, 1 upper), ascending axis order with
+        the lower face first. Periodic (Fourier) and unbounded axes have no
+        faces; `owner_cells` are zero because the synthesis is one tensor cell.
+        """
+        return spectral_face_domain(
+            self.axes, self.plan.axis_names, self.support.support_id
+        )
+
+    def integration_domain(
+        self, kind: str, selection: EntitySelection | None = None, /
+    ) -> IntegrationDomain:
+        """Exterior boundary faces, optionally restricted to a selection.
+
+        A global spectral field is one smooth synthesis over its box, so there
+        are no interior facets and no cell integration domain.
+        """
+        match kind:
+            case "exterior_facet":
+                base = self.exterior_facet_domain
+            case "interior_facet":
+                raise ValueError(
+                    "A global spectral field is one smooth synthesis over its box; "
+                    "it has no interior facets."
+                )
+            case "cell":
+                raise ValueError(
+                    "Global spectral spaces publish no cell integration domain; "
+                    "use their modal quadrature and operators."
+                )
+            case _:
+                raise ValueError("Unknown spectral integration-domain kind.")
+        if selection is None:
+            return base
+        return select_spectral_faces(self.axes, base, selection)
+
+    def boundary_face_selection(
+        self, axis: str, side: Literal["lower", "upper"], /
+    ) -> EntitySelection:
+        """Select the lower or upper face of one bounded axis.
+
+        Periodic (Fourier) axes have no boundary face or outward normal and
+        are refused, as are unbounded axes. Combine faces with
+        `EntitySelection.union`.
+        """
+        return spectral_face_selection(
+            self.axes,
+            self.plan.axis_names,
+            self.exterior_facet_domain,
+            axis,
+            side,
+        )
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule | None = None,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        component_shape: tuple[int, ...] = (),
+    ) -> PreparedTraceAction:
+        """Prepare the exact trace of the spectral field on bounded faces.
+
+        The trace is the synthesis evaluated on each face
+        (`approximation="exact"`). With `rule=None` the sites are the native
+        tangential nodes weighted by their prepared quadrature
+        (Clenshaw--Curtis on Chebyshev--Lobatto axes; Gauss, Radau, or Lobatto
+        on Legendre axes; uniform on periodic axes), and every selected face
+        must have the same node count. A `FacetTraceRule` instead maps its
+        points onto each face (weights times the face measure). Normals are the
+        outward axis unit vectors. `trace_degree` is the largest tangential
+        polynomial degree and `quadrature_exact_degree` the tangential
+        exactness; both are `None` when a tangential axis is trigonometric.
+        Coefficients have shape `modal_shape + component_shape` in the complex
+        coefficient dtype; real physical fields trace the real part of the
+        synthesis, so `<T c, w> = Re(sum(c * T^T w))`. `"normal"` and
+        `"tangential"` traces need `component_shape=(dimension,)`. Periodic
+        and sine axes have no faces with a trace; no flux is inferred.
+        """
+        if str(field_name) != self.plan.field_name:
+            raise KeyError(f"Unknown spectral field {field_name!r}.")
+        return prepare_spectral_face_trace(
+            self.axes,
+            self.plan.axis_names,
+            self.plan.precision,
+            self.exterior_facet_domain,
+            domain,
+            owner_id=self.prepared_id,
+            field_space_id=self.modal_space.field_space_id,
+            revision_id=canonical_fingerprint(
+                {
+                    "kind": "tensor-spectral-side-revision",
+                    "discretization": self.prepared_id,
+                    "nodes": [
+                        array_tree_fingerprint(np.asarray(axis.nodes))
+                        for axis in self.axes
+                    ],
+                    "bounds": [
+                        None
+                        if axis.bounds is None
+                        else array_tree_fingerprint(np.asarray(axis.bounds))
+                        for axis in self.axes
+                    ],
+                }
+            ),
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            component_shape=component_shape,
+        )
 
     def real_coordinates(
         self,

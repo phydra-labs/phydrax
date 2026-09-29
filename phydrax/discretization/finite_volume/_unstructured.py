@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, final
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -40,17 +40,24 @@ from .._core import (
     DiscretizationRole,
     PreparationReport,
 )
+from .._integration_domain import IntegrationDomain
 from .._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
     validate_prepared_metadata,
 )
 from .._measure import DiscreteMeasure
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
-from .._topology import CellComplexTopology
+from .._topology import CellComplexTopology, EntitySelection
+from .._views import FieldTraceSide
 from ._geometry_protocol import FiniteVolumeFaceBlock
 from ._structured import _component_names
+
+
+if TYPE_CHECKING:
+    from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
 
 
 Connectivity = PolygonalConnectivity | TetrahedralConnectivity | PolyhedralConnectivity
@@ -1663,6 +1670,76 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         raw_product = jnp.prod(raw_widths, axis=-1)
         normalization = (volume / raw_product) ** (1.0 / self.cell_dimension)
         return raw_widths * normalization[:, None]
+
+    def integration_domain(
+        self, kind: str, selection: EntitySelection | None = None, /
+    ) -> IntegrationDomain:
+        """Cell or facet domain in the face table's order and orientation.
+
+        The owner of each face is the cell its stored area vector points out
+        of; local facets index each cell's edge or face table.
+        """
+        from ._side_trace import finite_volume_integration_domain
+
+        return finite_volume_integration_domain(self, kind, selection)
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        reconstruction: FiniteVolumeFaceReconstruction | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the cell-average or linear face state on selected faces.
+
+        `reconstruction=None` publishes the side cell average at every site
+        (`representation="cell-average"`); a
+        `PreparedCellPolynomialReconstruction` publishes the k-exact face state
+        (`"face-state"`, `trace_degree=k`) through a per-facet stencil route
+        with an exact transpose. Sites follow the owner's facet
+        parametrization (edges or triangles) and are shared by both sides of an
+        interior face; normals point out of the side cell. Polyhedral faces and
+        nonlinear reconstructions are refused.
+        """
+        from ._side_trace import prepare_finite_volume_side_trace
+
+        return prepare_finite_volume_side_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            reconstruction=reconstruction,
+        )
+
+    def prepare_nonlinear_face_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        reconstruction: FiniteVolumeFaceReconstruction,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+    ) -> PreparedNonlinearFaceTrace:
+        """Prepare WENO-Z face states with a linearization at a supplied state."""
+        from ._side_trace import prepare_finite_volume_nonlinear_face_trace
+
+        return prepare_finite_volume_nonlinear_face_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            reconstruction=reconstruction,
+            quantity=quantity,
+            side=side,
+        )
 
 
 def _quality_report(

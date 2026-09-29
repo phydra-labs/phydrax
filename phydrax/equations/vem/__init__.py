@@ -15,8 +15,10 @@ from ._form import (
 from ._reconstruction import (
     evaluate_virtual_element_reconstruction,
     evaluate_virtual_element_trace,
+    prepare_virtual_element_field_reconstruction,
     project_virtual_element_field,
     VirtualElementReconstruction,
+    VirtualElementReconstructionChannel,
 )
 
 
@@ -27,9 +29,11 @@ __all__ = [
     "VirtualElementExecutionPolicy",
     "VirtualElementForm",
     "VirtualElementReconstruction",
+    "VirtualElementReconstructionChannel",
     "VirtualElementRobinAction",
     "compile_virtual_element_problem",
     "evaluate_virtual_element_reconstruction",
     "evaluate_virtual_element_trace",
+    "prepare_virtual_element_field_reconstruction",
     "project_virtual_element_field",
 ]

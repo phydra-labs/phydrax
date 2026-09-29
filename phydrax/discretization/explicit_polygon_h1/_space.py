@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, BlockSpace
+from ...typing import parse
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from .._core import (
@@ -39,9 +40,17 @@ from .._polygon_geometry import (
     PolygonTriangulation,
     prepare_polygon_triangulation,
 )
+from .._polygon_query import (
+    polygon_trace_action,
+    polygonal_connectivity_of,
+    prepare_polygon_facet_sites,
+    subset_polygon_domain,
+)
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
+from .._views import FieldTraceSide
 from ._basis import ExplicitPolygonH1BlockData, prepare_explicit_polygon_h1_basis
 from ._dofs import ExplicitPolygonH1DofMap
 from ._precision import ExplicitPolygonH1PrecisionPolicy
@@ -88,22 +97,6 @@ def _estimated_storage_bytes(
         np.dtype(precision.factorization_dtype).itemsize,
     )
     return retained_scalars * itemsize, workspace_scalars * itemsize
-
-
-def _subset_domain(base: IntegrationDomain, rows: np.ndarray, /) -> IntegrationDomain:
-    return IntegrationDomain(
-        base.kind,
-        np.asarray(base.entity_indices)[rows],
-        base.support_id,
-        base.entity_set_id,
-        owner_cells=np.asarray(base.owner_cells)[rows],
-        neighbor_cells=np.asarray(base.neighbor_cells)[rows],
-        owner_local_entities=np.asarray(base.owner_local_entities)[rows],
-        neighbor_local_entities=np.asarray(base.neighbor_local_entities)[rows],
-        neighbor_trace_permutations=np.asarray(base.neighbor_trace_permutations)[rows],
-        periodic_face_mask=np.asarray(base.periodic_face_mask)[rows],
-        selection_id=base.selection_id,
-    )
 
 
 class ExplicitPolygonH1RuntimeData(StrictModule):
@@ -486,7 +479,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
         rows = np.flatnonzero(
             np.asarray(selection.mask, dtype=np.bool_)[np.asarray(base.entity_indices)]
         )
-        return _subset_domain(base, rows)
+        return subset_polygon_domain(base, rows)
 
     def prepare_local_regions(
         self,
@@ -504,6 +497,59 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
             field_names=field_names,
             maximum_derivative_order=maximum_derivative_order,
             kernel_mode=kernel_mode,
+        )
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        runtime: ExplicitPolygonH1RuntimeData | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the exact value trace of the field on selected polygon edges.
+
+        The trace on each straight edge is linear in the two edge vertex values
+        (`trace_degree=1`), so it is the field's own trace, identical from both
+        incident cells. Sites follow the owner cell's local edge
+        parametrization at the reference points of `rule` and are the same
+        physical points for `side="owner"` and `side="neighbor"`; `normals` are
+        unit outward normals of the side cell. Only `quantity="value"` exists
+        for this scalar-basis H1 field; `side="neighbor"` requires interior
+        facets and `side="average"` is refused (compose both sides instead).
+        """
+        self._field_index(field_name)
+        quantity_ = parse(quantity, SideTraceQuantity, "quantity")
+        if quantity_ != "value":
+            raise ValueError(
+                "Explicit polygon H1 fields publish exact value traces only; "
+                f"{quantity_!r} traces belong to vector fields or to compiled "
+                "physics owners."
+            )
+        runtime_ = self.default_runtime if runtime is None else runtime
+        self.validate_local_runtime(runtime_)
+        space = self.field_space.vector_space
+        if not isinstance(space, ArraySpace):
+            raise TypeError("Explicit polygon H1 fields are array valued.")
+        sites = prepare_polygon_facet_sites(
+            self.mesh, runtime_.coordinates, runtime_.runtime_id, domain, rule, side
+        )
+        edges = np.asarray(polygonal_connectivity_of(self.mesh).edges, dtype=np.int32)
+        parameters = sites.canonical_parameters
+        return polygon_trace_action(
+            sites,
+            domain,
+            rule,
+            edges[sites.edges],
+            np.stack((1.0 - parameters, parameters), axis=-1),
+            space,
+            owner_id=self.prepared_id,
+            field_space_id=self.field_space.field_space_id,
+            quantity=quantity_,
+            trace_degree=1,
         )
 
     def validate_local_runtime(self, runtime: object, /) -> None:

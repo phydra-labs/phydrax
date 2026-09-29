@@ -3,12 +3,15 @@
 #
 
 
+from collections.abc import Callable
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
+import pytest
+from jax import Array
 
 import phydrax as phx
 from phydrax.discretization.fem._high_order import (
@@ -292,4 +295,293 @@ def test_finite_element_variational_scenario_2() -> None:
     )
     assert jnp.allclose(
         pullback(cotangent)[0], operator.transpose_mv(cotangent), atol=2.0e-6
+    )
+
+
+# Runtime parameters (diffusivity scale, source amplitude, Dirichlet amplitude).
+_RUNTIME_PARAMETERS = jnp.asarray([1.3, 0.7, 0.4])
+_RUNTIME_ARGUMENT_IDS = ("diffusivity", "source", "dirichlet-lift")
+_RUNTIME_CONFIGURATIONS = (
+    ("scalar", "matrix_free"),
+    ("tensor", "matrix_free"),
+    ("tensor", "sparse"),
+)
+_RUNTIME_CONFIGURATION_IDS = ("scalar-matrix-free", "tensor-matrix-free", "tensor-sparse")
+_CENTRAL_STEP = 1.0e-5
+# Central differences of exact dense solves agree with implicit derivatives up
+# to O(step^2) truncation and O(eps / step) roundoff.
+_RTOL = 1.0e-6
+_ATOL = 1.0e-8
+
+
+def _square_discretization() -> Any:
+    vertices = jnp.asarray(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [0.5, 0.5],
+            [0.5, 0.0],
+            [1.0, 0.5],
+            [0.5, 1.0],
+            [0.0, 0.5],
+        ]
+    )
+    cells = jnp.asarray(
+        [[0, 5, 4], [5, 1, 4], [1, 6, 4], [6, 2, 4], [2, 7, 4], [7, 3, 4], [3, 8, 4]]
+        + [[8, 0, 4]],
+        dtype=jnp.int32,
+    )
+    return phx.discretization.FiniteElementPlan(
+        phx.discretization.CellMesh.from_triangles(vertices, cells),
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 2)
+        ),
+    ).prepare()
+
+
+# FE coefficient callables receive the execution context; runtime data is user_args.
+def _runtime_diffusivity(points: Array, context: Any) -> Array:
+    return context.user_args["kappa"] * (1.0 + 0.5 * points[..., 0])
+
+
+def _runtime_tensor(points: Array, context: Any) -> Array:
+    anisotropy = jnp.asarray([[1.0, 0.2], [0.2, 0.8]])
+    return _runtime_diffusivity(points, context)[..., None, None] * anisotropy
+
+
+def _runtime_source(points: Array, context: Any) -> Array:
+    return context.user_args["source"] * (1.0 + points[..., 1])
+
+
+def _runtime_actions(action_kind: str) -> tuple[Any, Any]:
+    diffusion = (
+        phx.equations.DiffusionAction(
+            "u",
+            phx.equations.coefficient(
+                _runtime_diffusivity, coefficient_id="runtime-diffusivity"
+            ),
+        )
+        if action_kind == "scalar"
+        else phx.equations.TensorDiffusionAction(
+            "u",
+            phx.equations.coefficient(_runtime_tensor, coefficient_id="runtime-tensor"),
+        )
+    )
+    source = phx.equations.SourceAction(
+        "u", phx.equations.coefficient(_runtime_source, coefficient_id="runtime-source")
+    )
+    return diffusion, source
+
+
+def _runtime_problem(action_kind: str, realization: str) -> tuple[Any, Any, Any]:
+    discretization = _square_discretization()
+    constraint = phx.discretization.dirichlet_constraint(discretization, "u")
+    compiled = phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            f"runtime-{action_kind}", "u", _runtime_actions(action_kind)
+        ),
+        discretization,
+        constraint=constraint,
+        dirichlet_values=0.0,
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization=realization
+        ),
+    )
+    return discretization, constraint, compiled
+
+
+def _runtime_context(discretization: Any, constraint: Any, theta: Array) -> Any:
+    return phx.equations.FiniteElementExecutionContext(
+        discretization.default_runtime,
+        lift=constraint.lift(
+            lambda points: theta[2] * (points[..., 0] + 2.0 * points[..., 1])
+        ),
+        user_args={"kappa": theta[0], "source": theta[1]},
+    )
+
+
+def _mathematical_policy() -> Any:
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.DenseLU(),
+        differentiation=phx.linalg.DifferentiationPolicy("mathematical"),
+    )
+
+
+def _runtime_solution(action_kind: str, realization: str) -> Callable[[Array], Array]:
+    """Full solved state as a function of all runtime parameters."""
+    discretization, constraint, compiled = _runtime_problem(action_kind, realization)
+    policy = _mathematical_policy()
+
+    def solution(theta: Array) -> Array:
+        context = _runtime_context(discretization, constraint, theta)
+        system, right_hand_side = compiled.linear_system(context)
+        result = phx.linalg.solve(system, right_hand_side, policy=policy)
+        return compiled.expand(result.value, context)
+
+    return solution
+
+
+def _structural_solution() -> Callable[[Array], Array]:
+    """Unconstrained sparse tensor-diffusion-reaction solve on assembled storage."""
+    diffusion, source = _runtime_actions("tensor")
+    compiled = phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            "runtime-structural",
+            "u",
+            (diffusion, phx.equations.MassAction("u", 1.0), source),
+        ),
+        _square_discretization(),
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(realization="sparse"),
+    )
+    policy = _mathematical_policy()
+
+    def solution(theta: Array) -> Array:
+        system, right_hand_side = compiled.linear_system(
+            {"kappa": theta[0], "source": theta[1]}
+        )
+        return phx.linalg.solve(system, right_hand_side, policy=policy).value
+
+    return solution
+
+
+def _central_difference(
+    function: Callable[[Array], Array], theta: Array, direction: Array
+) -> np.ndarray:
+    plus = np.asarray(function(theta + _CENTRAL_STEP * direction))
+    minus = np.asarray(function(theta - _CENTRAL_STEP * direction))
+    return (plus - minus) / (2.0 * _CENTRAL_STEP)
+
+
+def _assert_solution_derivative(
+    solution: Callable[[Array], Array], theta: Array, argument: int
+) -> None:
+    # Tracing under jit refuses host synchronization on runtime data.
+    compiled_solution = jax.jit(solution)
+    direction = jnp.zeros_like(theta).at[argument].set(1.0)
+    reference = _central_difference(compiled_solution, theta, direction)
+    _, tangent = jax.jvp(compiled_solution, (theta,), (direction,))
+    _, pullback = jax.vjp(compiled_solution, theta)
+    cotangent = jnp.linspace(-0.4, 0.9, reference.size)
+
+    assert np.linalg.norm(reference) > 1.0e-2
+    np.testing.assert_allclose(tangent, reference, rtol=_RTOL, atol=_ATOL)
+    np.testing.assert_allclose(
+        pullback(cotangent)[0][argument],
+        np.dot(np.asarray(cotangent), reference),
+        rtol=_RTOL,
+        atol=_ATOL,
+    )
+
+
+@pytest.mark.parametrize("argument", range(3), ids=_RUNTIME_ARGUMENT_IDS)
+@pytest.mark.parametrize(
+    ("action_kind", "realization"),
+    _RUNTIME_CONFIGURATIONS,
+    ids=_RUNTIME_CONFIGURATION_IDS,
+)
+def test_runtime_solve_derivatives_match_central_differences(
+    action_kind: str, realization: str, argument: int
+) -> None:
+    _assert_solution_derivative(
+        _runtime_solution(action_kind, realization), _RUNTIME_PARAMETERS, argument
+    )
+
+
+@pytest.mark.parametrize("argument", range(2), ids=_RUNTIME_ARGUMENT_IDS[:2])
+def test_structural_sparse_solve_derivatives_match_central_differences(
+    argument: int,
+) -> None:
+    _assert_solution_derivative(_structural_solution(), _RUNTIME_PARAMETERS[:2], argument)
+
+
+@pytest.mark.parametrize(
+    ("action_kind", "realization"),
+    _RUNTIME_CONFIGURATIONS,
+    ids=_RUNTIME_CONFIGURATION_IDS,
+)
+def test_runtime_objective_gradient_compiles_under_jit(
+    action_kind: str, realization: str
+) -> None:
+    solution = _runtime_solution(action_kind, realization)
+
+    def objective(theta: Array) -> Array:
+        state = solution(theta)
+        return jnp.sum(jnp.linspace(0.5, 1.5, state.size) * state**2)
+
+    gradient = jax.jit(jax.grad(objective))(_RUNTIME_PARAMETERS)
+    compiled_objective = jax.jit(objective)
+    reference = [
+        _central_difference(compiled_objective, _RUNTIME_PARAMETERS, direction)
+        for direction in jnp.eye(3)
+    ]
+
+    np.testing.assert_allclose(gradient, reference, rtol=_RTOL, atol=_ATOL)
+
+
+def test_adjoint_solve_reproduces_runtime_parameter_gradient() -> None:
+    discretization, constraint, compiled = _runtime_problem("tensor", "matrix_free")
+    policy = _mathematical_policy()
+
+    def reduced_state(theta: Array) -> Array:
+        context = _runtime_context(discretization, constraint, theta)
+        system, right_hand_side = compiled.linear_system(context)
+        return phx.linalg.solve(system, right_hand_side, policy=policy).value
+
+    def objective(state: Array) -> Array:
+        return jnp.sum(jnp.linspace(0.5, 1.5, state.size) * state**2)
+
+    @jax.jit
+    def adjoint_gradient(theta: Array) -> Array:
+        state = reduced_state(theta)
+        multiplier = compiled.solve_adjoint(
+            state,
+            jax.grad(objective)(state),
+            _runtime_context(discretization, constraint, theta),
+            linear_policy=policy,
+        )
+        _, pullback = jax.vjp(
+            lambda value: compiled.residual(
+                state, _runtime_context(discretization, constraint, value)
+            ),
+            theta,
+        )
+        return -pullback(multiplier.value)[0]
+
+    compiled_objective = jax.jit(lambda theta: objective(reduced_state(theta)))
+    reference = [
+        _central_difference(compiled_objective, _RUNTIME_PARAMETERS, direction)
+        for direction in jnp.eye(3)
+    ]
+
+    np.testing.assert_allclose(
+        adjoint_gradient(_RUNTIME_PARAMETERS), reference, rtol=_RTOL, atol=_ATOL
+    )
+
+
+@pytest.mark.parametrize(
+    ("action_kind", "realization"),
+    _RUNTIME_CONFIGURATIONS,
+    ids=_RUNTIME_CONFIGURATION_IDS,
+)
+def test_runtime_linearization_transpose_matches_forward_action(
+    action_kind: str, realization: str
+) -> None:
+    discretization, constraint, compiled = _runtime_problem(action_kind, realization)
+    context = _runtime_context(discretization, constraint, _RUNTIME_PARAMETERS)
+    state = jnp.linspace(-0.3, 0.8, compiled.state_space.size)
+    direction = jnp.cos(jnp.arange(state.size, dtype=jnp.float64))
+    covector = jnp.linspace(0.9, -0.6, state.size)
+    operator = compiled.linearization_operator(state, context)
+    reference = _central_difference(
+        lambda value: compiled.residual(value, context), state, direction
+    )
+
+    np.testing.assert_allclose(operator.mv(direction), reference, rtol=_RTOL, atol=_ATOL)
+    np.testing.assert_allclose(
+        jnp.dot(covector, operator.mv(direction)),
+        jnp.dot(direction, operator.transpose_mv(covector)),
+        rtol=1.0e-12,
+        atol=1.0e-12,
     )

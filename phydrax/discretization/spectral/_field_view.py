@@ -271,6 +271,7 @@ def prepare_spectral_field_reconstruction(
         maximum_derivative_order=int(maximum_derivative_order),
         field_space_id=field_space_id,
         support_id=support_id,
+        coefficient_dtype=discretization.plan.precision.coefficient_dtype,
     )
 
 

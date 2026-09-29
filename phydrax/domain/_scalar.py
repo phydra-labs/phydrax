@@ -167,6 +167,9 @@ class ScalarInterval(AbstractScalarDomain):
     def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, ScalarInterval):
             return False
+        self._require_concrete_support(
+            other, self.start, self.end, other.start, other.end
+        )
         start_eq = np.isclose(
             np.asarray(self.start),
             np.asarray(other.start),

@@ -5,7 +5,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import cast, Literal, Protocol, TYPE_CHECKING, TypeAlias
+from math import prod
+from typing import (
+    assert_never,
+    cast,
+    final,
+    get_args,
+    Literal,
+    Protocol,
+    TYPE_CHECKING,
+    TypeAlias,
+)
 
 import equinox as eqx
 import jax
@@ -21,10 +31,19 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
+    AbstractSideFluxEvaluator,
+    BoundaryImposition,
     DiscretizationBundle,
     DiscretizationKey,
     DiscretizationRecord,
     DiscretizationRole,
+    DofLayout,
+    ImpositionKind,
+    PreparedFluxAction,
+    PreparedTraceAction,
+    SideActionDescriptor,
+    TensorDofLayout,
+    TraceInverseEvidence,
 )
 from ..discretization._constraints import AbstractDiscreteDirichletConstraint
 from ..discretization._local_variational import (
@@ -49,6 +68,7 @@ from ..linalg import (
     AbstractLinearOperator,
     AbstractVectorSpace,
     adjoint,
+    ArraySpace,
     assemble_diagonal,
     BlockLinearOperator,
     BlockSpace,
@@ -1386,6 +1406,71 @@ def _sipg_constant_subspace(
     )
 
 
+def _rule_coefficient_values(
+    coefficient: VariationalCoefficient,
+    discretization: FiniteElementDiscretization,
+    context: FiniteElementExecutionContext,
+    block_index: int,
+    rule: ReferenceRule,
+    rule_data: ReferenceCellData,
+    physical_points: Array,
+    entity_indices: np.ndarray,
+    /,
+) -> Array:
+    """Coefficient values at one block's cell-rule points, broadcast over them."""
+    coefficient_dofs = None
+    coefficient_basis = None
+    coefficient_orientations = None
+    coefficient_field_space_id = coefficient.field_space_id
+    if coefficient.location == "dof":
+        coefficient_fields = tuple(
+            index
+            for index, space in enumerate(discretization.field_spaces)
+            if space.field_space_id == coefficient_field_space_id
+        )
+        if len(coefficient_fields) != 1:
+            raise ValueError(
+                "Tensor-diffusion DOF coefficient field is not uniquely available."
+            )
+        coefficient_field_index = coefficient_fields[0]
+        coefficient_dofs = discretization.dof_maps[coefficient_field_index].cell_dofs[
+            block_index
+        ]
+        coefficient_basis = discretization.elements[coefficient_field_index][
+            block_index
+        ].tabulate(rule_data.points)[0]
+        coefficient_orientations = discretization.dof_maps[
+            coefficient_field_index
+        ].orientations[block_index]
+    values = coefficient.evaluate(
+        physical_points,
+        context,
+        entity_indices=entity_indices,
+        dof_indices=coefficient_dofs,
+        dof_orientations=coefficient_orientations,
+        basis_values=coefficient_basis,
+        support_id=(
+            discretization.support.support_id
+            if coefficient.support_id is not None
+            else None
+        ),
+        entity_set_id=(
+            discretization.cell_domain.entity_set_id
+            if coefficient.entity_set_id is not None
+            else None
+        ),
+        field_space_id=coefficient_field_space_id,
+        rule_id=(_rule_id(rule) if coefficient.rule_id is not None else None),
+    )
+    point_shape = physical_points.shape[:-1]
+    dimension = physical_points.shape[-1]
+    if values.shape == ():
+        return jnp.broadcast_to(values, point_shape)
+    if values.shape == (dimension, dimension):
+        return jnp.broadcast_to(values, point_shape + (dimension, dimension))
+    return values
+
+
 def _assemble_tensor_diffusion_action(
     action: TensorDiffusionAction,
     discretization: FiniteElementDiscretization,
@@ -1413,62 +1498,18 @@ def _assemble_tensor_diffusion_action(
         entity_indices = np.arange(
             cell_start, cell_start + block.cell_count, dtype=np.int32
         )
-        coefficient_dofs = None
-        coefficient_basis = None
-        coefficient_orientations = None
-        coefficient_field_space_id = action.diffusivity.field_space_id
-        if action.diffusivity.location == "dof":
-            coefficient_fields = tuple(
-                index
-                for index, space in enumerate(discretization.field_spaces)
-                if space.field_space_id == coefficient_field_space_id
-            )
-            if len(coefficient_fields) != 1:
-                raise ValueError(
-                    "Tensor-diffusion DOF coefficient field is not uniquely available."
-                )
-            coefficient_field_index = coefficient_fields[0]
-            coefficient_dofs = discretization.dof_maps[coefficient_field_index].cell_dofs[
-                block_index
-            ]
-            coefficient_basis = discretization.elements[coefficient_field_index][
-                block_index
-            ].tabulate(rule_data.points)[0]
-            coefficient_orientations = discretization.dof_maps[
-                coefficient_field_index
-            ].orientations[block_index]
-        coefficient_values = action.diffusivity.evaluate(
-            geometry.physical_points,
+        coefficient_values = _rule_coefficient_values(
+            action.diffusivity,
+            discretization,
             context,
-            entity_indices=entity_indices,
-            dof_indices=coefficient_dofs,
-            dof_orientations=coefficient_orientations,
-            basis_values=coefficient_basis,
-            support_id=(
-                discretization.support.support_id
-                if action.diffusivity.support_id is not None
-                else None
-            ),
-            entity_set_id=(
-                discretization.cell_domain.entity_set_id
-                if action.diffusivity.entity_set_id is not None
-                else None
-            ),
-            field_space_id=(
-                coefficient_field_space_id
-                if coefficient_field_space_id is not None
-                else None
-            ),
-            rule_id=(_rule_id(rule) if action.diffusivity.rule_id is not None else None),
+            block_index,
+            rule,
+            rule_data,
+            geometry.physical_points,
+            entity_indices,
         )
         point_shape = geometry.physical_points.shape[:-1]
         dimension = geometry.physical_points.shape[-1]
-        if coefficient_values.shape == ():
-            coefficient_values = jnp.broadcast_to(coefficient_values, point_shape)
-        elif coefficient_values.shape == (dimension, dimension):
-            coefficient_values = jnp.broadcast_to(
-                coefficient_values, point_shape + (dimension, dimension)
-            )
         tensor = action.physical_tensor(
             coefficient_values,
             dimension,
@@ -1500,6 +1541,95 @@ def _assemble_tensor_diffusion_action(
     )
 
 
+def _dirichlet_rows(
+    constraint: AbstractDiscreteDirichletConstraint, layout: DofLayout, /
+) -> Array:
+    """Coefficient rows with at least one constrained component.
+
+    Rows are C-order flat indices of the field's row axes (the tensor axes of
+    a tensor DOF layout, otherwise the leading axis), the index space of
+    side-trace support rows; the remaining axes are components.
+    """
+    full_space = constraint.constraint_map.full_space
+    if not isinstance(full_space, ArraySpace):
+        raise TypeError("Discrete Dirichlet constraints act on array field spaces.")
+    row_axes = len(layout.axis_shape) if isinstance(layout, TensorDofLayout) else 1
+    width = prod(full_space.shape[row_axes:])
+    rows = np.unique(np.asarray(constraint.constrained_dofs) // width)
+    return jnp.asarray(rows.astype(np.int32))
+
+
+def _sipg_boundary_kind(boundary: SIPGBoundaryCondition, /) -> ImpositionKind:
+    match boundary.kind:
+        case "dirichlet":
+            return "weak"
+        case "neumann":
+            return "natural"
+        case "robin":
+            return "robin"
+        case _:
+            assert_never(boundary.kind)
+
+
+def _boundary_imposition_kind(action: FiniteElementAction, /) -> ImpositionKind | None:
+    """Classify how one form action imposes a boundary law (None: no boundary law)."""
+    match action:
+        case BoundaryLoadAction():
+            return "natural"
+        case ExteriorFacetAction():
+            return "weak"
+        case SIPGFacetAction():
+            return (
+                None if action.boundary is None else _sipg_boundary_kind(action.boundary)
+            )
+        case LocalFunctionalAction():
+            exterior = (
+                action.domain is not None and action.domain.kind == "exterior_facet"
+            )
+            return "weak" if exterior else None
+        case (
+            DiffusionAction()
+            | TensorDiffusionAction()
+            | MassAction()
+            | SourceAction()
+            | CellResidualAction()
+            | PairwiseVolumeFluxAction()
+            | InteriorFacetAction()
+            | CellEnergyAction()
+            | CellBilinearAction()
+            | PreparedOperatorAction()
+        ):
+            return None
+        case _:
+            assert_never(action)
+
+
+def _facet_subdomain(
+    discretization: AbstractPreparedLocalDiscretization, kind: str, facets: np.ndarray, /
+) -> IntegrationDomain:
+    """The exterior- or interior-facet domain restricted to `facets` in their order."""
+    match kind:
+        case "exterior_facet" | "interior_facet":
+            base = discretization.integration_domain(kind)
+        case _:
+            raise ValueError("Side actions act on exterior or interior facets.")
+    base_facets = np.asarray(base.entity_indices)
+    rows = np.minimum(np.searchsorted(base_facets, facets), base_facets.size - 1)
+    if base_facets.size == 0 or not np.array_equal(base_facets[rows], facets):
+        raise ValueError(f"The trace facets are not {kind} facets of this problem.")
+    return IntegrationDomain(
+        kind,
+        facets,
+        base.support_id,
+        base.entity_set_id,
+        owner_cells=np.asarray(base.owner_cells)[rows],
+        neighbor_cells=np.asarray(base.neighbor_cells)[rows],
+        owner_local_entities=np.asarray(base.owner_local_entities)[rows],
+        neighbor_local_entities=np.asarray(base.neighbor_local_entities)[rows],
+        selection_id=base.selection_id,
+    )
+
+
 class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     form: FiniteElementForm
     discretization: AbstractPreparedLocalDiscretization
@@ -1510,6 +1640,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     _workset_program: WorksetProgram
     _kernel_table: KernelTable
     lift: object
+    dirichlet_rows: tuple[Array | None, ...]
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
@@ -1595,6 +1726,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 "DG SIPG Dirichlet data must use Nitsche boundary terms, not strong finite-element constraints."
             )
         constraint_values = []
+        dirichlet_rows: list[Array | None] = []
         lifts = []
         for field_name in form.field_names:
             field_index = discretization._field_index(field_name)
@@ -1647,6 +1779,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     )
             constraint_values.append(None if constraint_value is None else constraint_map)
             lifts.append(lift_value)
+            dirichlet_rows.append(
+                _dirichlet_rows(
+                    constraint_value, discretization.field_spaces[field_index].layout
+                )
+                if isinstance(constraint_value, AbstractDiscreteDirichletConstraint)
+                else None
+            )
         constraints_ = tuple(constraint_values)
         lift = lifts[0] if len(lifts) == 1 else tuple(lifts)
         from .fem import (
@@ -1701,6 +1840,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         self._workset_program = workset_program
         self._kernel_table = kernel_table
         self.lift = lift
+        self.dirichlet_rows = tuple(dirichlet_rows)
         self.discretization_bundle = DiscretizationBundle(
             (
                 DiscretizationRecord(
@@ -2020,6 +2160,186 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def weak_residual(self, state: object, args: object = None, /) -> PyTree[Array]:
         """Return the assembled dual-valued weak residual without a mass inverse."""
         return self.residual(state, args)
+
+    def boundary_impositions(self) -> tuple[BoundaryImposition, ...]:
+        """Report the provenance of every boundary law this problem imposes.
+
+        Strong rows come from discrete Dirichlet constraints (a row is reported
+        when any of its components is constrained). Boundary loads and SIPG
+        Neumann data are natural, SIPG Robin data are Robin terms, and SIPG
+        Dirichlet (Nitsche) terms, exterior-facet residual actions, and
+        exterior-facet functional terms are weak impositions acting through the
+        field's own trace. Plain `ConstraintMap` values and homogeneous
+        periodic/hanging-node constraints restrict the space and are not
+        boundary laws, so they are not reported. The order is canonical:
+        form field order, then imposition kind, then source.
+        """
+        kinds = get_args(ImpositionKind)
+        impositions = [
+            (position, kind, source, imposition)
+            for position, field_name in enumerate(self.form.field_names)
+            for kind, source, imposition in self._field_impositions(field_name)
+        ]
+        impositions.sort(key=lambda item: (item[0], kinds.index(item[1]), item[2]))
+        return tuple(item[3] for item in impositions)
+
+    def _field_space_id(self, field_name: str, /) -> str:
+        index = self.discretization._field_index(field_name)
+        return self.discretization.field_spaces[index].field_space_id
+
+    def _field_impositions(
+        self, field_name: str, /
+    ) -> list[tuple[ImpositionKind, str, BoundaryImposition]]:
+        """Strong and facet impositions acting on one field of the form."""
+        space_id = self._field_space_id(field_name)
+        position = self.form.field_names.index(field_name)
+        rows = self.dirichlet_rows[position]
+        constraint = self.constraints[position]
+        result: list[tuple[ImpositionKind, str, BoundaryImposition]] = []
+        if rows is not None and constraint is not None:
+            result.append(
+                (
+                    "strong",
+                    constraint.constraint_id,
+                    BoundaryImposition(
+                        "strong",
+                        field_space_id=space_id,
+                        source_id=constraint.constraint_id,
+                        rows=np.asarray(rows),
+                    ),
+                )
+            )
+        for action in self.form.actions:
+            kind = _boundary_imposition_kind(action)
+            if kind is None or field_name not in _action_output_fields(action):
+                continue
+            domain = _action_domain(action, self.discretization)
+            result.append(
+                (
+                    kind,
+                    action.action_id,
+                    BoundaryImposition(
+                        kind,
+                        field_space_id=space_id,
+                        source_id=action.action_id,
+                        entity_set_id=domain.entity_set_id,
+                        facets=np.asarray(domain.entity_indices),
+                    ),
+                )
+            )
+        return result
+
+    def prepare_conormal_flux(self, trace: PreparedTraceAction, /) -> PreparedFluxAction:
+        """Publish the residual-reaction conormal flux on the rows of one trace.
+
+        The flux evaluates the full weak residual of this problem's physical
+        operator on `trace.support_rows` of the traced field (the field block
+        of a mixed form). At a state satisfying the remaining rows this is the
+        outward conormal flux tested against the facet basis functions,
+        including every facet of their support. The trace must be an exterior
+        facet trace of an H1 field of this problem's local discretization (finite
+        elements, explicit polygons, or isogeometric patches).
+        """
+        field_position = self._traced_field_position(trace)
+        descriptor = trace.descriptor
+        discretization = self.discretization
+        field_index = discretization._field_index(self.form.field_names[field_position])
+        if descriptor.domain_kind != "exterior_facet":
+            raise ValueError(
+                "Residual reactions are published on exterior facets; interior "
+                "facets carry two-sided fluxes that no single row set represents."
+            )
+        match discretization:
+            case FiniteElementDiscretization():
+                h1 = all(
+                    element.conformity == "H1"
+                    for element in discretization.elements[field_index]
+                )
+            case _:
+                h1 = discretization.field_spaces[field_index].conformity == "H1"
+        if not h1:
+            raise ValueError(
+                "Residual-reaction fluxes require an H1 field whose facet-closure "
+                "rows carry the boundary trace."
+            )
+        flux = SideActionDescriptor(
+            owner_id=self.compilation_id,
+            field_space_id=descriptor.field_space_id,
+            quantity="conormal-flux",
+            representation="residual-reaction",
+            orientation="outward",
+            approximation="variational-reaction",
+            side=descriptor.side,
+            domain=_facet_subdomain(
+                discretization, "exterior_facet", np.asarray(descriptor.facets)
+            ),
+            revision_id=descriptor.revision_id,
+            rule=None,
+            trace_degree=None,
+            quadrature_exact_degree=None,
+        )
+        evaluator = _FiniteElementReactionEvaluator(
+            self, field_position, trace.support_rows, trace.row_shape
+        )
+        return PreparedFluxAction(flux, trace, evaluator)
+
+    def _traced_field_position(self, trace: PreparedTraceAction, /) -> int:
+        """Form position of the field a trace of this problem's discretization acts on."""
+        if not isinstance(trace, PreparedTraceAction):
+            raise TypeError("trace must be a PreparedTraceAction.")
+        descriptor = trace.descriptor
+        discretization = self.discretization
+        if descriptor.owner_id != discretization.prepared_id:
+            raise ValueError(
+                "The trace was prepared by another discretization than this problem's."
+            )
+        positions = [
+            position
+            for position, name in enumerate(self.form.field_names)
+            if self._field_space_id(name) == descriptor.field_space_id
+        ]
+        if len(positions) != 1:
+            raise ValueError("The trace acts on a field that is not solved by this form.")
+        field_index = discretization._field_index(self.form.field_names[positions[0]])
+        if not discretization.field_spaces[field_index].vector_space.compatible(
+            trace.coefficient_space
+        ):
+            raise ValueError("The trace acts on another coefficient space.")
+        return positions[0]
+
+    def prepare_pointwise_flux(self, trace: PreparedTraceAction, /) -> PreparedFluxAction:
+        """Publish the exact pointwise conormal flux at the sites of one value trace.
+
+        Densities `q = n . K grad(u)` of the form's declared `DiffusionAction` and
+        `TensorDiffusionAction` terms (summed over the actions whose cell domain
+        contains the side cell) at `trace.sites`, with the trace's outward
+        normals, evaluated from the discrete field of the side cell
+        (`representation="quadrature-values"`, `approximation="exact"`). The
+        flux is linear in the full coefficients. Its `trace_degree` is the
+        polynomial degree of the flux along the facets, or None for callable
+        diffusivities and non-affine side cells. Forms with any other term
+        acting on the field (other than mass, source, and boundary terms) are
+        refused: their boundary flux law is not declared. The trace must be a
+        scalar value trace prepared on the problem's default runtime.
+        """
+        from .fem._pointwise_flux import prepare_finite_element_pointwise_flux
+
+        return prepare_finite_element_pointwise_flux(
+            self, self._traced_field_position(trace), trace
+        )
+
+    def certify_flux_stability(self, flux: PreparedFluxAction, /) -> TraceInverseEvidence:
+        """Certify the discrete trace-inverse constants of one pointwise flux.
+
+        For every facet of `flux` (published by `prepare_pointwise_flux`) the
+        sharp constant `C_F = max ||q(v)||^2_F / a_K(v, v)` over the side cell's
+        local space, where `a_K` is the cell energy of the same diffusion terms
+        on the owner's own cell rules and `||.||_F` is integrated exactly on a
+        Gauss-Legendre facet rule. Requires a polynomial facet flux degree.
+        """
+        from .fem._pointwise_flux import certify_finite_element_flux_stability
+
+        return certify_finite_element_flux_stability(self, flux)
 
     def mass_inverted_rate(
         self,
@@ -2943,6 +3263,21 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
         return full_mass, reduced_mass
 
+    def prepare_mass(self, /, *, mass_policy: object = None) -> PreparedFiniteElementMass:
+        """Compile the unit capacity form once, outside any runtime trace.
+
+        ``mass_policy`` is a ``FiniteElementMassPolicy`` (exact by default). The
+        returned product evaluates ``coefficient * M`` for runtime arguments.
+        """
+        from .fem._execution import FiniteElementMassPolicy
+
+        policy = FiniteElementMassPolicy() if mass_policy is None else mass_policy
+        if not isinstance(policy, FiniteElementMassPolicy):
+            raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
+        return PreparedFiniteElementMass(
+            self, self._compile_unit_mass_problem(policy), policy
+        )
+
     def as_dae_system(
         self,
         /,
@@ -2965,6 +3300,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             if system_id is None
             else str(system_id)
         )
+        # Host compilation of the unit capacity form stays outside the traced
+        # residual and mass callbacks.
+        compiled_mass = self._compile_unit_mass_problem(mass_policy)
 
         def execution_context(
             time: ArrayLike, args: object
@@ -2984,12 +3322,16 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             time: ArrayLike, state: object, args: object
         ) -> AbstractLinearOperator:
             context = execution_context(time, args)
-            _, reduced_mass = self._mass_operators(context, coefficient_, mass_policy)
+            _, reduced_mass = self._mass_operators(
+                context, coefficient_, mass_policy, compiled_mass
+            )
             return reduced_mass
 
         def vector_field(time: ArrayLike, state: object, args: object) -> PyTree[Array]:
             context = execution_context(time, args)
-            full_mass, _ = self._mass_operators(context, coefficient_, mass_policy)
+            full_mass, _ = self._mass_operators(
+                context, coefficient_, mass_policy, compiled_mass
+            )
             residual = self.residual(state, context)
             if self.constraint is not None and context.lift_rate is not None:
                 lift_rate = self.full_space.validate(context.lift_rate)
@@ -3132,6 +3474,83 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         return GeneralizedEigenproblem(stiffness, mass)
 
 
+@final
+class PreparedFiniteElementMass(StrictModule, NonTrainableState):
+    """Host-compiled unit capacity form of one compiled finite-element problem.
+
+    ``operator(args, coefficient=c)`` is ``c * M`` evaluated with the runtime
+    arguments (execution context) of the owner, without host preparation, so it
+    may run inside traced residuals. The full operator maps full coefficients
+    to full-row covectors; the reduced one is ``P^T M P`` in solve coordinates.
+    """
+
+    problem: CompiledFiniteElementProblem
+    unit_mass: CompiledFiniteElementProblem
+    mass_policy: object
+
+    def operator(
+        self,
+        args: object = None,
+        /,
+        *,
+        coefficient: ArrayLike = 1.0,
+        return_full: bool = False,
+    ) -> AbstractLinearOperator:
+        coefficient_ = jnp.asarray(coefficient)
+        if coefficient_.shape != ():
+            raise ValueError("FE mass coefficient must be scalar.")
+        full_mass, reduced_mass = self.problem._mass_operators(
+            self.problem._execution_context(args),
+            coefficient_,
+            self.mass_policy,
+            self.unit_mass,
+        )
+        return full_mass if return_full else reduced_mass
+
+
+@final
+class _FiniteElementReactionEvaluator(AbstractSideFluxEvaluator):
+    """Full weak residual of one compiled FE problem on the rows of one side.
+
+    ``row_shape`` is the traced field's row layout: the residual's leading
+    axes that ``rows`` index after C-order flattening.
+    """
+
+    problem: CompiledFiniteElementProblem
+    rows: Array
+    field_position: int = eqx.field(static=True)
+    row_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        problem: CompiledFiniteElementProblem,
+        field_position: int,
+        rows: ArrayLike,
+        row_shape: tuple[int, ...],
+        /,
+    ) -> None:
+        if not isinstance(problem, CompiledFiniteElementProblem):
+            raise TypeError("problem must be a CompiledFiniteElementProblem.")
+        if not 0 <= field_position < len(problem.form.field_names):
+            raise ValueError("field_position must name one field of the form.")
+        self.problem = problem
+        self.rows = jnp.asarray(rows, dtype=jnp.int32)
+        self.field_position = field_position
+        self.row_shape = row_shape
+
+    @property
+    def state_space(self) -> AbstractVectorSpace:
+        return self.problem.full_space
+
+    def evaluate(self, state: PyTree[Array], args: object, /) -> Array:
+        residual = self.problem.full_residual(state, args)
+        if len(self.problem.form.field_names) != 1:
+            residual = residual[self.field_position]
+        values = jnp.asarray(residual)
+        count = len(self.row_shape)
+        return values.reshape((prod(self.row_shape), *values.shape[count:]))[self.rows]
+
+
 def compile_finite_element_problem(
     form: FiniteElementForm,
     discretization: AbstractPreparedLocalDiscretization | FiniteElementHPEpoch,
@@ -3252,6 +3671,7 @@ __all__ = [
     "LocalFunctionalAction",
     "MassAction",
     "PairwiseVolumeFluxAction",
+    "PreparedFiniteElementMass",
     "PreparedOperatorAction",
     "SIPGBoundaryCondition",
     "SIPGFacetAction",

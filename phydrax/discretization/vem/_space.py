@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
+from ...typing import parse
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from .._core import (
@@ -37,6 +38,13 @@ from .._polygon_geometry import (
     PolygonTriangulation,
     prepare_polygon_triangulation,
 )
+from .._polygon_query import (
+    polygon_trace_action,
+    polygonal_connectivity_of,
+    prepare_polygon_facet_sites,
+    subset_polygon_domain,
+)
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import (
     BlockDofLayout,
     DiscreteFieldSpace,
@@ -44,6 +52,8 @@ from .._spaces import (
     FieldRepresentation,
 )
 from .._support import DiscreteSupport
+from .._topology import EntitySelection
+from .._views import FieldTraceSide
 from ._dofs import VirtualElementDofMap
 from ._precision import VirtualElementPrecisionPolicy, VirtualElementResourceBudget
 from ._projection import (
@@ -459,6 +469,142 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             raise ValueError("numeric_version must be non-empty.")
         return self._runtime(coordinates, version)
 
+    def edge_trace_routes(self, edges: ArrayLike, /) -> Array:
+        """Return the global DOF rows of the edge trace basis on `edges`.
+
+        The result has shape `(edges, k + 1)` and pairs with
+        `VirtualElementSpec.edge_trace_basis`: H1 value traces list the
+        canonical start vertex, the `k - 1` interior Gauss--Lobatto edge DOFs,
+        and the end vertex; H(div)/H(curl) traces list the Legendre moment DOFs
+        of each edge by mode. Discontinuous L2 spaces have no trace.
+        """
+        element = self.field.element
+        edges_ = jnp.asarray(edges, dtype=jnp.int32)
+        if edges_.ndim != 1:
+            raise ValueError("Trace edge indices must be one rank-1 array.")
+        offset = self.dof_map.vertex_dof_count
+        degree = element.degree
+        match element.trace_kind:
+            case "value":
+                endpoints = jnp.asarray(
+                    polygonal_connectivity_of(self.mesh).edges, dtype=jnp.int32
+                )[edges_]
+                interior = (
+                    offset
+                    + edges_[:, None] * (degree - 1)
+                    + jnp.arange(degree - 1, dtype=jnp.int32)[None, :]
+                )
+                return jnp.concatenate(
+                    (endpoints[:, :1], interior, endpoints[:, 1:]), axis=1
+                )
+            case "normal" | "tangential":
+                modes = jnp.arange(degree + 1, dtype=jnp.int32)
+                return offset + edges_[:, None] * (degree + 1) + modes[None, :]
+            case "none":
+                raise ValueError(
+                    "Discontinuous L2 virtual elements have no boundary trace."
+                )
+            case kind:
+                raise ValueError(f"Unknown virtual-element trace kind {kind!r}.")
+
+    def integration_domain(
+        self,
+        kind: str,
+        selection: EntitySelection | None = None,
+        /,
+    ) -> IntegrationDomain:
+        """Cell or facet domain of this space, restricted to a selected entity set.
+
+        ``selection`` masks the entities of the domain's entity set (cells for
+        ``"cell"``, edges for the facet kinds); the restricted domain keeps the
+        owner/neighbor routes of the selected rows in canonical order.
+        """
+        match kind:
+            case "cell":
+                base = self.cell_domain
+            case "exterior_facet":
+                base = self.exterior_facet_domain
+            case "interior_facet":
+                base = self.interior_facet_domain
+            case _:
+                raise ValueError("Unknown virtual-element integration-domain kind.")
+        if selection is None:
+            return base
+        if not isinstance(selection, EntitySelection):
+            raise TypeError("selection must be EntitySelection or None.")
+        if selection.entity_set_id != base.entity_set_id:
+            raise ValueError("Entity selection does not match the domain entity set.")
+        mask = np.asarray(selection.mask, dtype=np.bool_)
+        entities = np.asarray(base.entity_indices, dtype=np.int32)
+        return subset_polygon_domain(base, np.flatnonzero(mask[entities]))
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        runtime: VirtualElementRuntimeData | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the exact edge trace of the field on selected polygon edges.
+
+        `ConformingH1` fields publish the degree-`k` value trace (Lagrange on
+        the Gauss--Lobatto edge nodes); `ConformingHdiv` fields publish the
+        normal trace and `ConformingHcurl` fields the tangential trace, both
+        from their Legendre moment DOFs and oriented `"outward"` relative to
+        the side cell (the tangent is the side cell's counter-clockwise edge
+        direction, the `normals` rotated by +90 degrees). These traces are the
+        virtual field's own, exact edge traces (`trace_degree=k`), distinct
+        from the projected interior channels. Sites follow the owner cell's
+        local edge parametrization and are shared by both sides of an interior
+        facet. Discontinuous L2 fields have no boundary trace; other
+        quantities, `side="neighbor"` on exterior facets, and `side="average"`
+        are refused.
+        """
+        if str(field_name) != self.field.name:
+            raise KeyError(f"Unknown virtual-element field {field_name!r}.")
+        quantity_ = parse(quantity, SideTraceQuantity, "quantity")
+        element = self.field.element
+        if element.trace_kind == "none":
+            raise ValueError(
+                "Discontinuous L2 virtual elements have no L2 boundary trace; their "
+                "DOFs are cell moments."
+            )
+        if quantity_ != element.trace_kind:
+            raise ValueError(
+                f"{element.family} virtual elements publish "
+                f"{element.trace_kind!r} traces, not {quantity_!r} traces."
+            )
+        runtime_ = self.default_runtime if runtime is None else runtime
+        if not virtual_element_runtime_matches(self, runtime_):
+            raise ValueError("The VEM trace runtime is incompatible with the space.")
+        space = self.field_space.vector_space
+        if not isinstance(space, ArraySpace):
+            raise TypeError("Virtual-element fields are array valued.")
+        sites = prepare_polygon_facet_sites(
+            self.mesh, runtime_.coordinates, runtime_.runtime_id, domain, rule, side
+        )
+        basis = np.asarray(
+            element.edge_trace_basis(2.0 * sites.canonical_parameters - 1.0)
+        )
+        if quantity_ != "value":
+            basis = basis * sites.side_signs[:, None, None]
+        return polygon_trace_action(
+            sites,
+            domain,
+            rule,
+            np.asarray(self.edge_trace_routes(sites.edges)),
+            basis,
+            space,
+            owner_id=self.prepared_id,
+            field_space_id=self.field_space.field_space_id,
+            quantity=quantity_,
+            trace_degree=element.degree,
+        )
+
     @property
     def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision_policy.evidence()
@@ -472,8 +618,35 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         return self.field_spaces[0]
 
 
+def virtual_element_runtime_matches(
+    discretization: VirtualElementDiscretization,
+    runtime: VirtualElementRuntimeData,
+    /,
+) -> bool:
+    """Whether `runtime` realizes the topology, layout, and field of the space."""
+    if not isinstance(runtime, VirtualElementRuntimeData):
+        raise TypeError("runtime must be VirtualElementRuntimeData.")
+    expected_runtime_id = canonical_fingerprint(
+        {
+            "kind": "virtual-element-runtime",
+            "topology": discretization.mesh.topology_id,
+            "geometry_layout": discretization.mesh.geometry_layout_id,
+            "numeric_version": runtime.numeric_version,
+            "field": discretization.field.field_spec_id,
+        }
+    )
+    family = discretization.field.element.family
+    return (
+        runtime.runtime_id == expected_runtime_id
+        and runtime.topology_id == discretization.mesh.topology_id
+        and runtime.geometry_layout_id == discretization.mesh.geometry_layout_id
+        and all(projection.family == family for projection in runtime.projections)
+    )
+
+
 __all__ = [
     "VirtualElementDiscretization",
     "VirtualElementPlan",
     "VirtualElementRuntimeData",
+    "virtual_element_runtime_matches",
 ]

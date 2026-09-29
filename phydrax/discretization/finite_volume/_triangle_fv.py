@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,17 +24,25 @@ from .._core import (
     DiscretizationRole,
     PreparationReport,
 )
+from .._integration_domain import IntegrationDomain
 from .._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
     validate_prepared_metadata,
 )
 from .._measure import DiscreteMeasure
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
+from .._topology import EntitySelection
 from .._triangular import triangle_connectivity, TriangleConnectivity
+from .._views import FieldTraceSide
 from ._geometry_protocol import FiniteVolumeFaceBlock
 from ._structured import _component_names
+
+
+if TYPE_CHECKING:
+    from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
 
 
 def _normalized_triangles(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
@@ -483,6 +491,69 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     @property
     def state_shape(self) -> tuple[int, ...]:
         return (self.cell_count, self.component_count)
+
+    def integration_domain(
+        self, kind: str, selection: EntitySelection | None = None, /
+    ) -> IntegrationDomain:
+        """Cell or edge domain in the edge table's order and orientation."""
+        from ._side_trace import finite_volume_integration_domain
+
+        return finite_volume_integration_domain(self, kind, selection)
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        reconstruction: FiniteVolumeFaceReconstruction | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the cell-average or linear face state on selected edges.
+
+        `reconstruction=None` publishes the side cell average
+        (`representation="cell-average"`); `TriangleKExactReconstructionPlan`
+        (degree two) and unlimited `TriangleMUSCLReconstructionPlan` (degree
+        one) publish `"face-state"` routes with exact transposes. Limited MUSCL
+        is nonlinear; use `prepare_nonlinear_face_trace`.
+        """
+        from ._side_trace import prepare_finite_volume_side_trace
+
+        return prepare_finite_volume_side_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            reconstruction=reconstruction,
+        )
+
+    def prepare_nonlinear_face_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        reconstruction: FiniteVolumeFaceReconstruction,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+    ) -> PreparedNonlinearFaceTrace:
+        """Prepare limited-MUSCL face states with a local linearization."""
+        from ._side_trace import prepare_finite_volume_nonlinear_face_trace
+
+        return prepare_finite_volume_nonlinear_face_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            reconstruction=reconstruction,
+            quantity=quantity,
+            side=side,
+        )
 
 
 def _triangle_quality(

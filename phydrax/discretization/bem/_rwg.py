@@ -17,8 +17,46 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, DenseLinearOperator
+from .._boundary_trace_space import (
+    boundary_geometry_revision,
+    BoundaryTraceSpaceCapability,
+    sparse_gram_trace_space,
+)
 from .._spaces import EntityDofLayout
 from ._surface_complex import OrientedTriangleSurfaceComplex3D
+
+
+def rwg_gram_entries(
+    surface: OrientedTriangleSurfaceComplex3D, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return host `(targets, sources, values)` of the exact RWG area Gram map.
+
+    On a flat triangle `x = Σ_a λ_a v_a` and `∫ λ_a λ_b dA = A (1 + δ_ab) / 12`,
+    so `∫ (x - p_i)·(x - p_j) dA = A/12 [(Σ_a d_ia)·(Σ_b d_jb) + Σ_a d_ia·d_ja]`
+    with `d_ia = v_a - p_i`; each RWG piece is `s_i l_i / (2A) (x - p_i)`.
+    """
+    points = np.asarray(surface.vertices, dtype=np.float64)
+    corners = points[np.asarray(surface.triangles)]
+    opposite = points[np.asarray(surface.opposite_vertices)]
+    edges = np.asarray(surface.face_edges, dtype=np.int32)
+    areas = np.asarray(surface.face_areas, dtype=np.float64)
+    scale = (
+        np.asarray(surface.face_edge_signs, dtype=np.float64)
+        * np.asarray(surface.edge_lengths, dtype=np.float64)[edges]
+        / (2.0 * areas[:, None])
+    )
+    offsets = corners[:, None, :, :] - opposite[:, :, None, :]
+    summed = np.sum(offsets, axis=2)
+    flat = offsets.reshape((offsets.shape[0], 3, 9))
+    moments = np.matmul(summed, np.swapaxes(summed, 1, 2)) + np.matmul(
+        flat, np.swapaxes(flat, 1, 2)
+    )
+    local = (
+        (areas / 12.0)[:, None, None] * moments * scale[:, :, None] * scale[:, None, :]
+    )
+    targets = np.repeat(edges, 3, axis=1).reshape((-1,))
+    sources = np.tile(edges, (1, 3)).reshape((-1,))
+    return targets, sources, local.reshape((-1,))
 
 
 class TangentialTracePairing3D(StrictModule, NonTrainableState):
@@ -205,3 +243,38 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
                 traces.append(jnp.dot(value, outward_conormal))
             defects.append(jnp.abs(traces[0] + traces[1]))
         return jnp.max(jnp.stack(defects))
+
+    def trace_capability(
+        self, /, *, gram_tolerance: float = 1.0e-13
+    ) -> BoundaryTraceSpaceCapability:
+        """Publish the RWG surface-current trace space with its area Gram pairing.
+
+        The capability's `gram_space` pairs the native RWG coordinates by
+        `∫ conj(j)·k dA` through the exact RWG Gram map; its inverse is a
+        prepared conjugate-gradient solve to `gram_tolerance`. RWG currents are
+        an H(div_Γ) representation and never a scalar Cauchy trace.
+        """
+        targets, sources, values = rwg_gram_entries(self.surface)
+        gram_space, mass = sparse_gram_trace_space(
+            targets,
+            sources,
+            values,
+            size=self.size,
+            dtype=self.vector_space.dtype,
+            space_id=canonical_fingerprint(
+                {"kind": "rwg-surface-current-trace-space-3d", "space": self.space_id}
+            ),
+            gram_tolerance=gram_tolerance,
+        )
+        return BoundaryTraceSpaceCapability(
+            owner_id=self.space_id,
+            quantity="surface-current",
+            representation="rwg",
+            coefficient_space=self.vector_space,
+            gram_space=gram_space,
+            mass=mass,
+            ambient_dimension=3,
+            revision_id=boundary_geometry_revision(
+                self.surface.vertices, self.surface.triangles
+            ),
+        )

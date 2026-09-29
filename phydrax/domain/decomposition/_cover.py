@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import parse
@@ -413,6 +414,43 @@ class SubdomainCover(StrictModule, NonTrainableState):
     @property
     def pairing_ids(self) -> tuple[str, ...]:
         return tuple(pairing.pairing_id for pairing in self.pairings)
+
+    @property
+    def revision(self) -> str:
+        """Content revision of this cover for revision-bound interface bindings.
+
+        Declared cover, patch, and pairing IDs, pairing topology, codimension,
+        normal presence, coordinate labels, and every numeric array leaf (patch
+        bounds, map parameters) are content-addressed. Maps authored as opaque
+        Python callables are identified only through the declared IDs, so
+        replacing such a map requires a new ``cover_id``.
+        """
+        return canonical_fingerprint(
+            {
+                "kind": "subdomain-cover-revision",
+                "cover_id": self.cover_id,
+                "ambient": list(self.ambient.labels),
+                "patches": [
+                    [patch.patch_id, list(patch.domain.labels)] for patch in self.patches
+                ],
+                "pairings": [
+                    [
+                        pairing.pairing_id,
+                        pairing.left_patch_id,
+                        pairing.right_patch_id,
+                        pairing.topology,
+                        pairing.codimension,
+                        pairing.normal is not None,
+                    ]
+                    for pairing in self.pairings
+                ],
+                "exact_coverage": self.exact_coverage,
+                "maximum_overlap": self.maximum_overlap,
+                "arrays": array_tree_fingerprint(
+                    (self.ambient, self.patches, self.pairings)
+                ),
+            }
+        )
 
     @property
     def adjacency(self) -> tuple[tuple[str, tuple[str, ...]], ...]:

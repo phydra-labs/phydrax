@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._interpolation._bspline import bspline_jet_stencil
 from ..._interpolation._rational_spline import RationalSplineJet
 from ..._interpolation._tensor_bspline import TensorBSplineJetPlan
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
@@ -22,11 +23,103 @@ from .._local_variational import (
     LocalMetricResult,
     LocalReferenceActions,
 )
+from ._basis import TensorSplineBasisSpec
 from ._geometry import (
     IsogeometricGeometryEvidence,
     IsogeometricH1QualificationPolicy,
     IsogeometricRuntimeData,
 )
+
+
+def isogeometric_axis_spans(basis: TensorSplineBasisSpec, parameters: Array, /) -> Array:
+    """Right-continuous active span of every parameter `(n, d)` on every axis."""
+    spans = []
+    for axis_index, axis in enumerate(basis.axes):
+        span = jnp.searchsorted(axis.knots, parameters[:, axis_index], side="right") - 1
+        spans.append(jnp.clip(span, axis.degree, axis.control_count - 1))
+    return jnp.stack(spans, axis=-1).astype(jnp.int32)
+
+
+def _tensor_factors(factors: list[Array], /) -> Array:
+    result = factors[0]
+    for factor in factors[1:]:
+        result = (result[:, :, None] * factor[:, None, :]).reshape((result.shape[0], -1))
+    return result
+
+
+def isogeometric_point_jets(
+    basis: TensorSplineBasisSpec,
+    weights: Array,
+    parameters: Array,
+    spans: Array,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Rational local basis values and parameter gradients at scattered points.
+
+    `parameters` `(n, d)` are evaluated on the polynomial pieces of the
+    explicit per-axis `spans` `(n, d)`, so a point on a knot line yields the
+    one-sided limit of the selected span. `weights` has the basis control
+    shape. Returns the values `(n, L)`, parameter gradients `(n, L, d)`, and
+    the C-order flattened control rows `(n, L)` of the `L` local functions.
+    """
+    values, derivatives, rows = [], [], []
+    for axis_index, axis in enumerate(basis.axes):
+        stencil = bspline_jet_stencil(
+            axis.knots,
+            parameters[:, axis_index],
+            degree=axis.degree,
+            maximum_order=1,
+            spans=spans[:, axis_index],
+            bounds="extrapolate",
+        )
+        values.append(stencil.jets[:, 0, :])
+        derivatives.append(stencil.jets[:, 1, :])
+        rows.append(stencil.indices)
+    dimension = basis.parametric_dimension
+    polynomial = _tensor_factors(values)
+    polynomial_gradient = jnp.stack(
+        [
+            _tensor_factors(
+                [
+                    derivatives[axis] if axis == direction else values[axis]
+                    for axis in range(dimension)
+                ]
+            )
+            for direction in range(dimension)
+        ],
+        axis=-1,
+    )
+    flat_rows = rows[0]
+    for axis in range(1, dimension):
+        flat_rows = (
+            flat_rows[:, :, None] * basis.control_shape[axis] + rows[axis][:, None, :]
+        ).reshape((flat_rows.shape[0], -1))
+    local_weights = weights.reshape((-1,))[flat_rows]
+    denominator = ein.contract("nl,nl->n", polynomial, local_weights)
+    denominator_gradient = ein.contract("nlr,nl->nr", polynomial_gradient, local_weights)
+    rational = polynomial * local_weights / denominator[:, None]
+    rational_gradient = (
+        polynomial_gradient * local_weights[:, :, None]
+        - rational[:, :, None] * denominator_gradient[:, None, :]
+    ) / denominator[:, None, None]
+    return rational, rational_gradient, flat_rows.astype(jnp.int32)
+
+
+def isogeometric_point_map(
+    basis: TensorSplineBasisSpec,
+    control_points: Array,
+    weights: Array,
+    parameters: Array,
+    spans: Array,
+    /,
+) -> tuple[Array, Array]:
+    """NURBS map points `(n, D)` and Jacobians `(n, D, d)` on explicit spans."""
+    values, gradients, rows = isogeometric_point_jets(basis, weights, parameters, spans)
+    local = control_points.reshape((-1, control_points.shape[-1]))[rows]
+    return (
+        ein.contract("nl,nlx->nx", values, local),
+        ein.contract("nlr,nlx->nxr", gradients, local),
+    )
 
 
 def _query_view(
@@ -527,4 +620,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
 __all__ = [
     "IsogeometricGeometryActions",
     "IsogeometricReferenceActions",
+    "isogeometric_axis_spans",
+    "isogeometric_point_jets",
+    "isogeometric_point_map",
 ]

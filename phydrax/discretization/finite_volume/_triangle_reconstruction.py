@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -148,15 +148,59 @@ class PreparedTriangleWLSQ(StrictModule, NonTrainableState):
         value = jnp.asarray(values)
         if value.shape[0] != self.discretization.cell_count:
             raise ValueError("WLSQ values must begin with triangle cell count.")
-        neighbors = value[self.neighbor_cells]
-        difference = neighbors - value[:, None, ...]
-        mask = self.valid.reshape(self.valid.shape + (1,) * (difference.ndim - 2))
-        difference = jnp.where(mask, difference, 0.0)
-        return ein.contract(
-            "cin,cn...->c...i",
-            self.factors.astype(value.dtype),
-            difference,
+        return _stencil_gradient(
+            value, value, self.neighbor_cells, self.valid, self.factors
         )
+
+    def cell_gradients(self, values: Array, cell_routes: Array, /) -> Array:
+        """WLSQ gradients of the selected cells only, `(routes, ..., 2)`."""
+        value = jnp.asarray(values)
+        if value.shape[0] != self.discretization.cell_count:
+            raise ValueError("WLSQ values must begin with triangle cell count.")
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        return _stencil_gradient(
+            value,
+            value[routes],
+            self.neighbor_cells[routes],
+            self.valid[routes],
+            self.factors[routes],
+        )
+
+
+def _stencil_gradient(
+    value: Array, base: Array, stencils: Array, valid: Array, factors: Array, /
+) -> Array:
+    difference = value[stencils] - base[:, None, ...]
+    mask = valid.reshape(valid.shape + (1,) * (difference.ndim - 2))
+    return ein.contract(
+        "cin,cn...->c...i",
+        factors.astype(value.dtype),
+        jnp.where(mask, difference, 0.0),
+    )
+
+
+def _limiter_factor(
+    limiter: TriangleLimiterKind,
+    epsilon: float,
+    delta: Array,
+    upper: Array,
+    lower: Array,
+    /,
+) -> Array:
+    """Barth--Jespersen or Venkatakrishnan factor of one reconstructed increment."""
+    allowed = jnp.where(delta >= 0.0, upper, lower)
+    ratio = allowed / jnp.where(jnp.abs(delta) > epsilon, delta, 1.0)
+    match limiter:
+        case "barth_jespersen":
+            return jnp.clip(ratio, 0.0, 1.0)
+        case "venkatakrishnan":
+            numerator = ratio**2 + 2.0 * ratio + epsilon
+            denominator = ratio**2 + ratio + 2.0 + epsilon
+            return jnp.clip(numerator / denominator, 0.0, 1.0)
+        case "unlimited":
+            return jnp.ones_like(delta)
+        case _:
+            assert_never(limiter)
 
 
 class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
@@ -218,15 +262,13 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
             maximum = jnp.max(jnp.where(mask, gathered, value[:, None, ...]), axis=1)
 
             def factors(cell_values: Array, delta: Array, cell_indices: Array) -> Array:
-                upper = maximum[cell_indices] - cell_values[cell_indices]
-                lower = minimum[cell_indices] - cell_values[cell_indices]
-                allowed = jnp.where(delta >= 0.0, upper, lower)
-                ratio = allowed / jnp.where(jnp.abs(delta) > self.epsilon, delta, 1.0)
-                if self.limiter == "barth_jespersen":
-                    return jnp.clip(ratio, 0.0, 1.0)
-                numerator = ratio**2 + 2.0 * ratio + self.epsilon
-                denominator = ratio**2 + ratio + 2.0 + self.epsilon
-                return jnp.clip(numerator / denominator, 0.0, 1.0)
+                return _limiter_factor(
+                    self.limiter,
+                    self.epsilon,
+                    delta,
+                    maximum[cell_indices] - cell_values[cell_indices],
+                    minimum[cell_indices] - cell_values[cell_indices],
+                )
 
             owner_face_factor = factors(value, owner_delta, owner)
             neighbor_face_factor = factors(value, neighbor_delta, safe_neighbor)
@@ -241,6 +283,56 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
         left = value[owner] + owner_factor[owner] * owner_delta
         right = value[safe_neighbor] + owner_factor[safe_neighbor] * neighbor_delta
         return left, right
+
+    def cell_limiter_factors(self, state: Array, cell_routes: Array, /) -> Array:
+        """Limiter factors of the selected cells, `(routes, ...)`.
+
+        A cell's factor is the minimum over its three edge-center increments,
+        the same factor `reconstruct` applies on every face of the cell.
+        """
+        discretization = self.gradient.discretization
+        value = jnp.asarray(state)
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        base = value[routes]
+        if self.limiter == "unlimited":
+            return jnp.ones_like(base)
+        gradient = self.gradient.cell_gradients(value, routes)
+        centers = discretization.cell_centers.astype(value.dtype)[routes]
+        edges = jnp.asarray(discretization.connectivity.cell_edges[:, :3])[routes]
+        offsets = (
+            discretization.face_centers.astype(value.dtype)[edges] - centers[:, None]
+        )
+        delta = ein.contract("r...i,rei->re...", gradient, offsets)
+        gathered = value[self.gradient.neighbor_cells[routes]]
+        valid = self.gradient.valid[routes]
+        mask = valid.reshape(valid.shape + (1,) * (gathered.ndim - 2))
+        minimum = jnp.min(jnp.where(mask, gathered, base[:, None, ...]), axis=1)
+        maximum = jnp.max(jnp.where(mask, gathered, base[:, None, ...]), axis=1)
+        factor = _limiter_factor(
+            self.limiter,
+            self.epsilon,
+            delta,
+            (maximum - base)[:, None, ...],
+            (minimum - base)[:, None, ...],
+        )
+        return jnp.min(factor, axis=1)
+
+    def evaluate_cells(self, state: Array, cell_routes: Array, points: Array, /) -> Array:
+        """Limited linear reconstruction of the selected cells at their own points.
+
+        `points` has shape `(routes, points, 2)`; the result has shape
+        `(routes, points, ...)` and equals `reconstruct` at face centers.
+        """
+        discretization = self.gradient.discretization
+        value = jnp.asarray(state)
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        centers = discretization.cell_centers.astype(value.dtype)[routes]
+        offsets = jnp.asarray(points, dtype=value.dtype) - centers[:, None, :]
+        delta = ein.contract(
+            "r...i,rqi->rq...", self.gradient.cell_gradients(value, routes), offsets
+        )
+        factor = self.cell_limiter_factors(value, routes)
+        return value[routes, None, ...] + factor[:, None, ...] * delta
 
 
 __all__ = [

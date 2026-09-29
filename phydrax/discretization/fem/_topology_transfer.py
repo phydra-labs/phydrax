@@ -22,6 +22,7 @@ from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
 from ...linalg import (
     AbstractLinearOperator,
+    adjoint,
     ArraySpace,
     estimate_condition_number,
     OperatorCapabilities,
@@ -33,6 +34,7 @@ from ...linalg import (
     SparseFactorizationPolicy,
     SparseFactorizationStatus,
     SpectralEstimate,
+    transpose,
 )
 from ...linalg._operators import _generic_adjoint, _materialize_by_basis
 from ...sparse import (
@@ -43,6 +45,9 @@ from ...sparse import (
     SparseLinearMap,
 )
 from .._cell_mesh import CellMesh
+from .._spaces import DiscreteFieldSpace
+from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
+from .._transfer import FieldTransfer, TransferProperties
 from ._generic import FiniteElementDiscretization
 from ._reference import FiniteElementSpec, lagrange_element
 
@@ -61,6 +66,23 @@ _LAGRANGE_FAMILIES = ("Lagrange", "DiscontinuousLagrange")
 
 def _claim_tolerance(dtype: np.dtype, scale: np.ndarray, /) -> np.ndarray:
     return _CLAIM_ULPS * np.finfo(dtype).eps * np.maximum(scale, 1.0)
+
+
+def _measure_defect_bound(
+    dtype: np.dtype,
+    action_condition: float,
+    source_mass: np.ndarray,
+    target_mass: np.ndarray,
+    /,
+) -> float:
+    """Certified per-DOF bound on ``|P^T target_mass - source_mass|``.
+
+    Conservation is a relative statement about the measures themselves, so the
+    bound scales with their total magnitude and carries no unit floor (DOF
+    measures of 1e-9 m^3 are as conservative as those of 1 m^3).
+    """
+    total = np.sum(np.abs(target_mass)) + np.sum(np.abs(source_mass))
+    return float(action_condition * _CLAIM_ULPS * np.finfo(dtype).eps * total)
 
 
 def _block_action(action: Callable[[Array], Array], values: ArrayLike, /) -> Array:
@@ -100,6 +122,7 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     preserves_linear: bool = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     positivity_preserving: bool = eqx.field(static=True)
+    action_condition: float = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
     def __init__(
@@ -177,6 +200,7 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
             self.conservative,
             self.positivity_preserving,
         ) = claims
+        self.action_condition = condition
         self.transfer_id = canonical_fingerprint(
             {
                 "kind": "finite-element-topology-transfer",
@@ -193,6 +217,7 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
                 "preserves_linear": claims[1],
                 "conservative": claims[2],
                 "positivity_preserving": claims[3],
+                "action_condition": condition,
             }
         )
 
@@ -213,6 +238,92 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         """Pull target duals back through the algebraic transpose of the primal map."""
 
         return _block_action(self.primal.transpose_mv_block, dual)
+
+    def epoch_transition(
+        self,
+        source_field: DiscreteFieldSpace,
+        target_field: DiscreteFieldSpace,
+        source_epoch: TopologyEpoch,
+        target_epoch: TopologyEpoch,
+        source_measures: ArrayLike,
+        target_measures: ArrayLike,
+        /,
+    ) -> TopologyEpochTransition:
+        """Bind this certified transfer as an explicit topology-epoch transition.
+
+        The epochs must realize exactly this transfer's source and target
+        topologies. Field-transfer properties are this artifact's certified claims,
+        never caller assertions; the raw transpose is the dual pullback and the
+        Hilbert adjoint is the declared one, else the adjoint under the coefficient
+        pairings. Only conservative transfers qualify; the measures are the DOF
+        integrals the transition reports content against, and they must satisfy
+        this transfer's conservation certificate, whose per-DOF measure-defect
+        bound the transition carries into its content tolerance.
+        """
+
+        if not isinstance(source_epoch, TopologyEpoch) or not isinstance(
+            target_epoch, TopologyEpoch
+        ):
+            raise TypeError("Epoch transitions need TopologyEpoch endpoints.")
+        if (
+            source_epoch.topology_id != self.source_topology_id
+            or target_epoch.topology_id != self.target_topology_id
+        ):
+            raise ValueError("Topology epochs do not realize this transfer's topologies.")
+        if not self.conservative:
+            raise ValueError(
+                "Only a certified conservative transfer forms a topology transition."
+            )
+        source_space = self.primal.source
+        if not isinstance(source_space, ArraySpace):
+            raise RuntimeError("Topology transfer primal lost its ArraySpace source.")
+        dtype = np.dtype(source_space.dtype)
+        source_mass = np.asarray(source_measures, dtype=dtype)
+        target_mass = np.asarray(target_measures, dtype=dtype)
+        if source_mass.shape != (self.source_size,) or target_mass.shape != (
+            self.target_size,
+        ):
+            raise ValueError("Transition measures must align with source/target DOFs.")
+        bound = _measure_defect_bound(
+            dtype, self.action_condition, source_mass, target_mass
+        )
+        pulled = np.asarray(
+            _block_action(self.primal.transpose_mv_block, target_mass), dtype=dtype
+        )
+        if np.any(np.abs(pulled - source_mass) > bound):
+            raise ValueError(
+                "Transition measures are not conserved by this transfer within its "
+                "certified bound."
+            )
+        exact_on = ("constants", "linears") if self.preserves_linear else ("constants",)
+        transfer = FieldTransfer(
+            source_field,
+            target_field,
+            self.primal,
+            dual_pullback_operator=transpose(self.primal),
+            hilbert_adjoint_operator=(
+                adjoint(self.primal)
+                if self.hilbert_adjoint is None
+                else self.hilbert_adjoint
+            ),
+            properties=TransferProperties(
+                constant_preserving=self.preserves_constants,
+                conservative=True,
+                positivity_preserving=self.positivity_preserving,
+                adjoint_paired=True,
+                differentiable_geometry=False,
+                exact_on=exact_on if self.preserves_constants else (),
+            ),
+            transfer_id=self.transfer_id,
+        )
+        return TopologyEpochTransition(
+            source_epoch,
+            target_epoch,
+            transfer,
+            source_measures,
+            target_measures,
+            measure_defect_bound=bound,
+        )
 
 
 def _row_scales(
@@ -307,10 +418,8 @@ def _certify_claims(
         pulled = np.asarray(
             _block_action(primal.transpose_mv_block, target_mass), dtype=dtype
         )
-        scale = np.full(
-            pulled.shape, np.sum(np.abs(target_mass)) + np.sum(np.abs(source_mass))
-        )
-        if exceeds(pulled - source_mass, scale):
+        bound = _measure_defect_bound(dtype, action_condition, source_mass, target_mass)
+        if np.any(np.abs(pulled - source_mass) > bound):
             raise ValueError("Transfer claims conservation but changes DOF measures.")
 
 

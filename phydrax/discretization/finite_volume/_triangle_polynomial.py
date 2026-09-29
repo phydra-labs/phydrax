@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections import deque
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -202,13 +203,86 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
         value = jnp.asarray(values)
         if value.shape[0] != self.discretization.cell_count:
             raise ValueError("Quadratic values must begin with triangle cell count.")
-        difference = value[self.neighbor_cells] - value[:, None, ...]
-        mask = self.valid.reshape(self.valid.shape + (1,) * (difference.ndim - 2))
-        return ein.contract(
-            "cin,cn...->c...i",
-            self.factors.astype(value.dtype),
-            jnp.where(mask, difference, 0.0),
+        return _stencil_coefficients(
+            value, value, self.neighbor_cells, self.valid, self.factors
         )
+
+    def cell_coefficients(self, values: Array, cell_routes: Array, /) -> Array:
+        """Modal coefficients of the selected cells only, `(routes, ..., 5)`."""
+        value = jnp.asarray(values)
+        if value.shape[0] != self.discretization.cell_count:
+            raise ValueError("Quadratic values must begin with triangle cell count.")
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        return _stencil_coefficients(
+            value,
+            value[routes],
+            self.neighbor_cells[routes],
+            self.valid[routes],
+            self.factors[routes],
+        )
+
+    def basis_derivative(
+        self, cell_routes: Array, points: Array, derivative: tuple[int, int], /
+    ) -> Array:
+        """Exact coordinate derivative of the mean-free quadratic cell basis.
+
+        `points` has shape `(routes, points, 2)`; the basis is
+        `(x - c)^e / h^|e|` minus the cell moment of each quadratic monomial, so
+        the zero multi-index returns the basis and higher derivatives drop the
+        constant moments. The result has shape `(routes, points, 5)`.
+        """
+        orders = tuple(derivative)
+        if len(orders) != 2 or any(
+            isinstance(order, bool) or not isinstance(order, Integral) or order < 0
+            for order in orders
+        ):
+            raise ValueError("derivative must give one non-negative order per axis.")
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        evaluation = jnp.asarray(points)
+        dtype = evaluation.dtype
+        offset = (
+            evaluation - self.discretization.cell_centers.astype(dtype)[routes, None, :]
+        )
+        scale = self.characteristic_lengths.astype(dtype)[routes, None, None]
+        exponents = np.asarray(_QUADRATIC_EXPONENTS, dtype=np.int64)
+        coefficient = np.ones((exponents.shape[0],), dtype=np.float64)
+        for axis, order in enumerate(orders):
+            for count in range(int(order)):
+                coefficient = coefficient * (exponents[:, axis] - count)
+        reduced = np.maximum(exponents - np.asarray(orders, dtype=np.int64), 0)
+        monomials = jnp.prod(
+            offset[..., None, :] ** jnp.asarray(reduced, dtype=dtype), axis=-1
+        )
+        values = (
+            jnp.asarray(coefficient, dtype=dtype)
+            * monomials
+            / scale ** jnp.asarray(np.sum(exponents, axis=1), dtype=dtype)
+        )
+        if any(orders):
+            return values
+        moments = self.moments.astype(dtype)[routes, None, :]
+        return (
+            values
+            - jnp.concatenate(
+                (jnp.zeros(moments.shape[:-1] + (2,), dtype=dtype), moments), axis=-1
+            )
+            / scale**2
+        )
+
+
+_QUADRATIC_EXPONENTS = ((1, 0), (0, 1), (2, 0), (1, 1), (0, 2))
+
+
+def _stencil_coefficients(
+    value: Array, base: Array, stencils: Array, valid: Array, factors: Array, /
+) -> Array:
+    difference = value[stencils] - base[:, None, ...]
+    mask = valid.reshape(valid.shape + (1,) * (difference.ndim - 2))
+    return ein.contract(
+        "cin,cn...->c...i",
+        factors.astype(value.dtype),
+        jnp.where(mask, difference, 0.0),
+    )
 
 
 class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
@@ -237,22 +311,7 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
         safe_neighbor = jnp.maximum(neighbor, 0)
 
         def basis(cell_indices: Array) -> Array:
-            centers = discretization.cell_centers.astype(value.dtype)
-            offset = points - centers[cell_indices, None, :]
-            moments = self.prepared.moments.astype(value.dtype)[cell_indices, None, :]
-            scale = self.prepared.characteristic_lengths.astype(value.dtype)[
-                cell_indices, None
-            ]
-            return jnp.stack(
-                (
-                    offset[..., 0] / scale,
-                    offset[..., 1] / scale,
-                    (offset[..., 0] ** 2 - moments[..., 0]) / scale**2,
-                    (offset[..., 0] * offset[..., 1] - moments[..., 1]) / scale**2,
-                    (offset[..., 1] ** 2 - moments[..., 2]) / scale**2,
-                ),
-                axis=-1,
-            )
+            return self.prepared.basis_derivative(cell_indices, points, (0, 0))
 
         left_delta = ein.contract("f...i,fqi->fq...", coefficients[owner], basis(owner))
         right_delta = ein.contract(
