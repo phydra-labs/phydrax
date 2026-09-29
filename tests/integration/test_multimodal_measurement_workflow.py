@@ -56,7 +56,8 @@ def test_ct_and_mri_predictions_compare_in_native_measurement_spaces() -> None:
         field_id="ct-predicted",
     )
     comparison = phx.observation.MeasurementComparisonPlan(observed).evaluate(predicted)
-    np.testing.assert_allclose(comparison.quadratic, 0.0)
+    np.testing.assert_allclose(comparison.residual, 0.0)
+    assert comparison.noise_model == "unquantified"
     assert bool(comparison.successful)
 
     coils = phx.imaging.mri.CoilSensitivityField(

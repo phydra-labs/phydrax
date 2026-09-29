@@ -6,8 +6,11 @@
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -118,3 +121,34 @@ def test_state_design_linearization_scenario_2() -> None:
     assert not bool(result.successful)
     assert not bool(result.state_acceptance.admissible)
     assert int(result.status) == int(opt.OptimizationStatus.CERTIFICATION_FAILED)
+
+
+def test_component_admission_design_refuses_a_binding_other_than_the_admitted_one() -> (
+    None
+):
+    surrogate = phx.bind_component(
+        phx.nn.models.InputConvexNetwork(
+            in_size="scalar", width_size=8, depth=2, key=jr.key(0)
+        ),
+        phx.ComponentAuthority.SURROGATE,
+    )
+    accelerator = phx.bind_component(
+        phx.nn.models.InputConvexNetwork(
+            in_size="scalar", width_size=8, depth=2, key=jr.key(1)
+        ),
+        phx.ComponentAuthority.ACCELERATOR,
+    )
+    admission = opt.StateDesignComponentAdmission(
+        surrogate, kind=phx.ObjectiveKind.PHYSICAL_RESIDUAL
+    )
+
+    design = admission.design(surrogate)
+    expected, _, _ = phx.partition_parameters(surrogate.model)
+    for leaf, reference in zip(
+        jax.tree.leaves(design), jax.tree.leaves(expected), strict=True
+    ):
+        np.testing.assert_array_equal(leaf, reference)
+    # The accelerator's lane has the admitted layout, but its authority does not
+    # admit this design; the admission must not transfer to it.
+    with pytest.raises(ValueError, match="accelerator authority"):
+        admission.design(accelerator)

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         DifferentialVectorField,
         WienerCoefficient,
     )
+    from ..solver.coupling import PreparedCoupledTransition
 
 
 JumpTransitionAlgorithm: TypeAlias = Literal["next_reaction", "direct_ssa"]
@@ -985,7 +986,154 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
         raise ValueError("Sampled pathwise transitions do not provide a density.")
 
 
+class CoupledTransitionKernel(AbstractTransitionKernel):
+    """Accepted coupled transient step with declared additive Gaussian process noise.
+
+    ``x' = f(x) + L w`` with ``w ~ N(0, I_r)``, where ``f`` is one accepted
+    step of an autonomous `phydrax.solver.coupling.PreparedCoupledTransition`
+    between the step's physical times (every refresh parameter value is read
+    from ``context.args``) and ``L`` is the declared ``(n, r)`` process-noise
+    factor. The normalized density ``N(x'; f(x), L Lᵀ)`` exists only for a
+    nonsingular covariance: a deterministic simulator (no factor) or a
+    rank-deficient factor has none and ``has_log_density`` is false. The key
+    supplied by the consumer is the only randomness, so its semantic
+    case/step/member addressing is preserved. A failed step is an invalid
+    sample carrying the step status, never a repaired draw; its density is NaN.
+    """
+
+    transition: Any
+    noise_factor: Array | None = fixed_field()
+    noise_cholesky: Array | None = fixed_field()
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
+    approximation_id: str = eqx.field(static=True)
+    has_log_density: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        transition: PreparedCoupledTransition,
+        /,
+        *,
+        noise_factor: ArrayLike | None = None,
+    ) -> None:
+        from ..solver.coupling import PreparedCoupledTransition
+
+        if not isinstance(transition, PreparedCoupledTransition):
+            raise TypeError("transition must be a PreparedCoupledTransition.")
+        if transition.control is not None:
+            raise ValueError(
+                "CoupledTransitionKernel requires an autonomous coupled transition; "
+                "known forcing values are refresh parameters in context.args."
+            )
+        size = transition.state_size
+        factor = None
+        cholesky = None
+        if noise_factor is not None:
+            # Host admission boundary: the declared noise is fixed structure.
+            host = np.asarray(noise_factor, dtype=np.float64)
+            if host.ndim != 2 or host.shape[0] != size or host.shape[1] < 1:
+                raise ValueError(f"noise_factor must have shape ({size}, r).")
+            if not np.all(np.isfinite(host)):
+                raise ValueError("noise_factor must be finite.")
+            factor = jnp.asarray(host)
+            if np.linalg.matrix_rank(host) == size:
+                # The Cholesky factor of L Lᵀ is Rᵀ from the QR of Lᵀ (sign-
+                # normalized): forming L Lᵀ squares the condition number and
+                # loses the log-determinant for ill-conditioned full-rank L.
+                # A full SVD rank bounds every |R_ii| below by σ_min(L) > 0.
+                upper = np.linalg.qr(host.T, mode="r")
+                upper = np.sign(np.diag(upper))[:, None] * upper
+                cholesky = jnp.asarray(upper.T)
+        self.transition = transition
+        self.noise_factor = factor
+        self.noise_cholesky = cholesky
+        self.state_shape = (size,)
+        self.process_id = transition.transition_id
+        self.approximation_id = (
+            "coupled-transient-step"
+            if factor is None
+            else "coupled-transient-step-additive-gaussian"
+        )
+        self.has_log_density = cholesky is not None
+
+    def _steps(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> tuple[Array, Array, Array, tuple[int, ...]]:
+        values = jnp.asarray(state, dtype=jnp.float64)
+        batch_shape = _leading_shape(
+            values.shape, self.state_shape, owner="coupled transition state"
+        )
+        transition = self.transition
+        parameters = transition.parameter_values(None, context.args)
+        steps = jax.vmap(lambda member: transition.step(t0, t1, member, parameters))(
+            values.reshape((-1,) + self.state_shape)
+        )
+        return (
+            steps.accepted.reshape(values.shape),
+            steps.successful.reshape(batch_shape),
+            steps.status.reshape(batch_shape),
+            batch_shape,
+        )
+
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
+        mean, successful, status, batch_shape = self._steps(state, t0, t1, context)
+        values = mean
+        if self.noise_factor is not None:
+            draws = jr.normal(key, batch_shape + (self.noise_factor.shape[1],))
+            values = mean + draws @ self.noise_factor.T
+        return _transition_sample(
+            jnp.where(successful[..., None], values, jnp.nan),
+            successful,
+            status,
+            process_id=self.process_id,
+            approximation_id=self.approximation_id,
+        )
+
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
+        cholesky = self.noise_cholesky
+        if cholesky is None:
+            raise ValueError(
+                "This coupled transition has no normalized density: a deterministic "
+                "simulator or a singular process-noise covariance is not a "
+                "log-density model."
+            )
+        mean, successful, _, _ = self._steps(state, t0, t1, context)
+        residual = jnp.asarray(next_state, dtype=jnp.float64) - mean
+        whitened = jax.scipy.linalg.solve_triangular(
+            cholesky, residual.reshape((-1, self.state_shape[0])).T, lower=True
+        ).T.reshape(residual.shape)
+        size = self.state_shape[0]
+        value = (
+            -0.5 * jnp.sum(whitened**2, axis=-1)
+            - jnp.sum(jnp.log(jnp.diag(cholesky)))
+            - 0.5 * size * jnp.log(2.0 * jnp.pi)
+        )
+        return jnp.where(successful, value, jnp.nan)
+
+
 __all__ = [
+    "CoupledTransitionKernel",
     "DifferentialTransitionKernel",
     "FiniteStateTransitionKernel",
     "JumpDifferentialTransitionKernel",

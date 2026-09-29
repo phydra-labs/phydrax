@@ -435,6 +435,7 @@ from ._state_compression import (
 from ._state_design_linearization import (
     prepare_state_design_linearization,
     state_design_response_vjp,
+    StateDesignComponentAdmission,
     StateDesignLinearization,
     StateDesignResponseVJP,
 )
@@ -852,6 +853,7 @@ __all__ = [
     "hypervolume",
     "nondominated_mask",
     "prepare_state_design_linearization",
+    "StateDesignComponentAdmission",
     "StateDesignLinearization",
     "StateDesignResponseVJP",
     "state_design_response_vjp",

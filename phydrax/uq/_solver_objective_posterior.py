@@ -31,9 +31,13 @@ def posterior_problem_from_solver_objective(
     component (`jax.flatten_util.ravel_pytree` order), so `parameter_space` must
     describe one real vector of that size; its priors and bijectors stay the
     caller's explicit choice. Every case must be residual-valued, with the
-    residual whitened by its observation noise: the log likelihood is
+    residual whitened by its fixed observation noise: the log likelihood is
     `-0.5 * ||r||^2` over the concatenated case residuals, and
-    `gauss_newton_residual` returns `r`.
+    `gauss_newton_residual` returns `r`. The omitted normalization is constant
+    only because the noise is fixed; noise that depends on the posterior
+    position belongs in a normalized likelihood such as
+    `FixedObservationLikelihood` or `LinearizedGaussianMeasurementLikelihood`,
+    whose values and derivatives include the covariance log determinant.
 
     Failure reduction is fail-closed: a failed or nonfinite case makes the whole
     residual not a number and the log likelihood `-inf`, so EKI raises and

@@ -33,7 +33,41 @@ class PhysicalPODResult(StrictModule, NonTrainableState):
 
 
 class PhysicalPODPlan(StrictModule, NonTrainableState):
-    """Method-of-snapshots POD in an arbitrary declared vector-space pairing."""
+    r"""Method-of-snapshots POD in an arbitrary declared vector-space pairing.
+
+    `fit` forms the weighted snapshot Gram matrix $G_{ij} = \langle w_i, w_j\rangle$
+    of the $N$ (centered, weighted) snapshots in a space of $m$ coordinates and
+    takes its eigenpairs, so the singular values are $\sigma_i = \sqrt{\lambda_i}$.
+    The computed eigenvalues carry an absolute error of about
+    $\tau\lambda_1$ with $\tau = (N + \sqrt{m})\,\varepsilon$ ($\varepsilon$ the
+    machine epsilon of the snapshot dtype): $N\varepsilon\lVert G\rVert$ from
+    the backward-stable symmetric eigensolver and $\sqrt{m}\,\varepsilon$ from
+    the rounding of length-$m$ inner products (the probabilistic bound of
+    Higham and Mary). Squaring the singular values therefore resolves them only
+    to about $\sqrt{\tau}\,\sigma_1$, not $\varepsilon\sigma_1$. A direction with
+    $\lambda_i \le \tau\lambda_1$, i.e. $\sigma_i \le \sqrt{\tau}\,\sigma_1$, is
+    indistinguishable from roundoff: its eigenvector is arbitrary and its
+    $1/\sigma_i$ scaling amplifies noise, so it never enters the basis. Data
+    whose trailing singular values matter below that floor needs an SVD of the
+    snapshots in orthonormal coordinates instead.
+
+    The returned rank is the smallest of:
+
+    - ``maximum_rank``;
+    - the resolved directions with $\sigma_i >$ ``minimum_singular_value`` (an
+      absolute threshold declared by the caller, applied on top of the relative
+      resolution floor and never below it; at least one direction is kept);
+    - the energy rank: the smallest $k$ whose resolved tail
+      $\sum_{k \le i < r} \lambda_i / \sum_i \lambda_i$ is at most
+      ``1 - retained_energy``, where $r$ is the number of resolved directions.
+      With the default ``retained_energy=1.0`` this is exactly $r$: all
+      resolved directions and no roundoff direction, a decision that does not
+      depend on the last ulp of the cumulative energy.
+
+    The result's ``retained_energy``/``tail_energy`` are fractions of the total
+    Gram energy (the tail includes energy below the resolution floor), and
+    ``target_met`` states that the returned rank reaches the energy rank.
+    """
 
     maximum_rank: int = eqx.field(static=True)
     retained_energy: float = eqx.field(static=True)
@@ -127,17 +161,29 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
         eigenvalues = jnp.maximum(jnp.real(eigenvalues[order]), 0.0)
         eigenvectors = eigenvectors[:, order]
         singular_values = jnp.sqrt(eigenvalues)
-        energy = eigenvalues / jnp.maximum(
-            jnp.sum(eigenvalues), jnp.finfo(eigenvalues.dtype).tiny
+        host_eigenvalues = np.asarray(eigenvalues)
+        total = max(
+            float(np.sum(host_eigenvalues)), np.finfo(host_eigenvalues.dtype).tiny
         )
-        cumulative = jnp.cumsum(energy)
-        energy_rank = int(
-            np.searchsorted(np.asarray(cumulative), self.retained_energy) + 1
+        # Gram eigenvalues are accurate to (N + sqrt(m)) eps lambda_1 absolutely;
+        # below that floor a direction is roundoff (see the class docstring).
+        tolerance = (sample_count + np.sqrt(space.size)) * np.finfo(
+            host_eigenvalues.dtype
+        ).eps
+        resolved = int(np.sum(host_eigenvalues > tolerance * host_eigenvalues[0]))
+        # Energy left out by keeping the leading k resolved directions, summed
+        # from the smallest so an all-resolved tail is exactly zero.
+        resolved_tail = (
+            np.concatenate(
+                (np.cumsum(host_eigenvalues[:resolved][::-1])[::-1], np.zeros((1,)))
+            )
+            / total
         )
+        energy_rank = max(int(np.argmax(resolved_tail <= 1.0 - self.retained_energy)), 1)
         numerical_rank = int(
-            np.sum(np.asarray(singular_values) > self.minimum_singular_value)
+            np.sum(np.asarray(singular_values)[:resolved] > self.minimum_singular_value)
         )
-        rank = min(self.maximum_rank, sample_count, max(numerical_rank, 1), energy_rank)
+        rank = min(self.maximum_rank, max(numerical_rank, 1), energy_rank)
         selected_values = singular_values[:rank]
         selected_vectors = eigenvectors[:, :rank]
         coefficients = root[:, None] * selected_vectors / selected_values[None, :]
@@ -165,14 +211,9 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
             in_axes=1,
         )(basis)
         defect = jnp.max(jnp.abs(gram_basis - jnp.eye(rank, dtype=gram_basis.dtype)))
-        retained = jnp.sum(eigenvalues[:rank]) / jnp.maximum(
-            jnp.sum(eigenvalues), jnp.finfo(eigenvalues.dtype).tiny
-        )
-        tail = jnp.maximum(1.0 - retained, 0.0)
-        target_met = bool(
-            np.asarray(retained) + 32.0 * np.finfo(host_weights.dtype).eps
-            >= self.retained_energy
-        )
+        retained = jnp.sum(eigenvalues[:rank]) / total
+        tail = jnp.sum(eigenvalues[rank:]) / total
+        target_met = rank >= energy_rank
         result_id = canonical_fingerprint(
             {
                 "kind": "physical-pod-result",

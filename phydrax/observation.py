@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import assert_never, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
@@ -32,6 +33,7 @@ from ._observation_covariance import (
     ObservationCovarianceAction,
     PrecisionOperatorCovarianceAction,
     prepare_observation_covariance,
+    restrict_observation_covariance,
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -155,12 +157,18 @@ class PrecisionCovarianceAction(StrictModule, NonTrainableState):
         logdet = jax.lax.stop_gradient(jnp.asarray(logdet_covariance, dtype=matrix.dtype))
         if matrix.shape != (layout.size, layout.size) or logdet.shape != ():
             raise ValueError("Precision/covariance determinant shapes are invalid.")
+        # Symmetry is judged against sqrt(P_ii P_jj), which bounds |P_ij| for a
+        # positive definite precision, so the test is invariant under the unit
+        # scaling D P D of the observed coordinates.
+        diagonal = jnp.diag(matrix)
+        root = jnp.sqrt(jnp.abs(diagonal))
+        scale = root[:, None] * root[None, :]
         matrix = eqx.error_if(
             matrix,
             jnp.any(~jnp.isfinite(matrix))
             | ~jnp.isfinite(logdet)
-            | jnp.any(jnp.abs(matrix - matrix.T) > 1.0e-10)
-            | jnp.any(jnp.diag(matrix) <= 0.0),
+            | jnp.any(jnp.abs(matrix - matrix.T) > 1.0e-10 * scale)
+            | jnp.any(diagonal <= 0.0),
             "Precision action must be finite, symmetric, and positive on the diagonal.",
         )
         self.precision = matrix
@@ -1971,23 +1979,249 @@ class ObservationRecord:
         return None
 
 
+MeasurementNoiseModel: TypeAlias = Literal[
+    "unquantified", "reference_weighting", "independent_uncertainty", "covariance"
+]
+MeasurementWhitening: TypeAlias = Literal[
+    "unavailable", "diagonal", "cholesky", "kronecker_cholesky", "circulant"
+]
+
+
 class MeasurementComparisonResult(StrictModule):
-    """Residual and likelihood-ready evidence on one compatible support."""
+    """Residual, weighting, and normalized-likelihood evidence on one support.
+
+    `residual` is `predicted - observed` in the observed value shape and zero on
+    inactive samples. `whitened_residual` exists only when an actual factor `W`
+    with `W^T W` equal to the declared precision backs it, so its squared norm
+    equals `quadratic`; `whitening` names that factor. Diagonal weighting keeps
+    value coordinates, while a correlated covariance whitens in its layout
+    coordinates. Precision-only and diagonal-plus-low-rank covariances report
+    `quadratic` and `logdet_covariance` without inventing a residual factor.
+
+    `log_likelihood` is the normalized Gaussian log density
+    `-(quadratic + logdet_covariance + active_value_count * log(2 pi)) / 2` and
+    exists only for a real-valued declared noise model. Unquantified data carry
+    no weighting; an explicit reference weighting defines a least-squares
+    misfit but no likelihood.
+    """
 
     residual: Array
-    standardized_residual: Array
-    quadratic: Array
+    whitened_residual: Array | None
+    quadratic: Array | None
+    logdet_covariance: Array | None
+    log_likelihood: Array | None
     active_count: Array
+    active_value_count: Array
     finite: Array
     uncertainty_positive: Array
+    active_set_consistent: Array
     successful: Array
+    noise_model: MeasurementNoiseModel = eqx.field(static=True)
+    whitening: MeasurementWhitening = eqx.field(static=True)
+
+
+class _NoiseTerms(NamedTuple):
+    whitening: MeasurementWhitening
+    whitened_residual: Array | None
+    quadratic: Array | None
+    logdet_covariance: Array | None
+    log_likelihood: Array | None
+    active_value_count: Array
+    uncertainty_positive: Array
+    active_set_consistent: Array
+
+
+def _gaussian_log_likelihood(
+    quadratic: Array, logdet_covariance: Array, dimension: Array, /
+) -> Array:
+    return -0.5 * (quadratic + logdet_covariance + dimension * math.log(2.0 * math.pi))
+
+
+def _diagonal_terms(
+    residual: Array, active: Array, scale: Array | None, /, *, normalized: bool
+) -> _NoiseTerms:
+    if scale is None:
+        raise RuntimeError("Measurement comparison lost its declared diagonal scale.")
+    scale = jnp.broadcast_to(
+        scale.reshape(scale.shape + (1,) * (residual.ndim - scale.ndim)),
+        residual.shape,
+    )
+    positive = scale > 0.0
+    weighted = active & positive
+    safe = jnp.where(weighted, scale, jnp.ones_like(scale))
+    whitened = jnp.where(weighted, residual / safe, jnp.zeros_like(residual))
+    quadratic = jnp.sum(jnp.real(jnp.conj(whitened) * whitened))
+    count = jnp.sum(active)
+    positive_on_active = jnp.all(jnp.where(active, positive, True))
+    consistent = jnp.asarray(True)
+    # A standard uncertainty declares neither a circular nor a per-component
+    # complex convention, so complex data receive no implied normalization.
+    if not normalized or jnp.iscomplexobj(residual):
+        return _NoiseTerms(
+            "diagonal",
+            whitened,
+            quadratic,
+            None,
+            None,
+            count,
+            positive_on_active,
+            consistent,
+        )
+    logdet = jnp.sum(jnp.where(weighted, 2.0 * jnp.log(safe), jnp.zeros_like(safe)))
+    log_likelihood = _gaussian_log_likelihood(
+        quadratic, logdet, count.astype(quadratic.dtype)
+    )
+    return _NoiseTerms(
+        "diagonal",
+        whitened,
+        quadratic,
+        logdet,
+        log_likelihood,
+        count,
+        positive_on_active,
+        consistent,
+    )
+
+
+def _whitened_quadratic(
+    whitening: MeasurementWhitening, whitened: Array, /
+) -> tuple[MeasurementWhitening, Array | None, Array]:
+    return whitening, whitened, jnp.real(jnp.vdot(whitened, whitened))
+
+
+def _covariance_quadratic(
+    covariance: CovarianceAction, residual: Array, /
+) -> tuple[MeasurementWhitening, Array | None, Array]:
+    match covariance:
+        case DiagonalCovarianceAction():
+            return _whitened_quadratic("diagonal", covariance.whiten(residual))
+        case CholeskyCovarianceAction():
+            return _whitened_quadratic("cholesky", covariance.whiten(residual))
+        case KroneckerCholeskyCovarianceAction():
+            return _whitened_quadratic("kronecker_cholesky", covariance.whiten(residual))
+        case CirculantCovarianceAction():
+            return _whitened_quadratic("circulant", covariance.whiten(residual))
+        case (
+            PrecisionCovarianceAction()
+            | LowRankDiagonalCovarianceAction()
+            | PrecisionOperatorCovarianceAction()
+        ):
+            return "unavailable", None, covariance.quadratic(residual)
+        case _:
+            assert_never(covariance)
+
+
+def _covariance_terms(
+    covariance: CovarianceAction | None,
+    residual: Array,
+    active: Array,
+    active_indices: Array | None,
+    /,
+) -> _NoiseTerms:
+    if covariance is None or active_indices is None:
+        raise RuntimeError("Measurement comparison lost its declared covariance.")
+    coordinates = jnp.take(residual.reshape((-1,)), active_indices)
+    consistent = jnp.all(jnp.take(active.reshape((-1,)), active_indices))
+    whitening, whitened, quadratic = _covariance_quadratic(covariance, coordinates)
+    logdet = covariance.logdet_covariance
+    dimension = jnp.asarray(covariance.layout.size)
+    log_likelihood = _gaussian_log_likelihood(
+        quadratic, logdet, dimension.astype(quadratic.dtype)
+    )
+    return _NoiseTerms(
+        whitening,
+        whitened,
+        quadratic,
+        logdet,
+        log_likelihood,
+        dimension,
+        jnp.asarray(True),
+        consistent,
+    )
+
+
+def _declared_noise_model(
+    observed: PreparedQuantityField,
+    covariance: CovarianceAction | None,
+    reference_scale: ArrayLike | None,
+    /,
+) -> MeasurementNoiseModel:
+    if reference_scale is not None and (
+        covariance is not None or observed.standard_uncertainty is not None
+    ):
+        raise ValueError(
+            "reference_scale weights unquantified data; the comparison already "
+            "declares a noise model."
+        )
+    if covariance is not None:
+        return "covariance"
+    if observed.standard_uncertainty is not None:
+        return "independent_uncertainty"
+    if reference_scale is not None:
+        return "reference_weighting"
+    return "unquantified"
+
+
+def _covariance_active_indices(
+    observed: PreparedQuantityField, covariance: CovarianceAction, /
+) -> Array:
+    if jnp.issubdtype(observed.values.dtype, jnp.complexfloating):
+        raise ValueError(
+            "Correlated complex measurements are not supported by this comparison plan."
+        )
+    # Host preparation: the correlated active set is fixed before execution.
+    mask = np.asarray(observed.valid_mask)
+    shape = observed.values.shape
+    active = np.broadcast_to(
+        mask.reshape(mask.shape + (1,) * (len(shape) - mask.ndim)), shape
+    )
+    indices = np.flatnonzero(active)
+    if indices.size != covariance.layout.size:
+        raise ValueError(
+            "Covariance must be declared on the active observed values "
+            f"({indices.size} of {active.size}); restrict it with "
+            "restrict_observation_covariance or prepare an active-set covariance."
+        )
+    return jnp.asarray(indices, dtype=jnp.int32)
+
+
+def _reference_scale(value: ArrayLike, observed: PreparedQuantityField, /) -> Array:
+    scale = _floating_array(value)
+    if jnp.issubdtype(scale.dtype, jnp.complexfloating) or scale.shape not in {
+        (),
+        observed.valid_mask.shape,
+        observed.values.shape,
+    }:
+        raise ValueError(
+            "reference_scale must be real and scalar or have sample or value shape."
+        )
+    return eqx.error_if(
+        scale,
+        jnp.any(~jnp.isfinite(scale)) | jnp.any(scale <= 0.0),
+        "reference_scale must be finite and strictly positive.",
+    )
 
 
 class MeasurementComparisonPlan(StrictModule, NonTrainableState):
-    """Compare one prediction with an observed prepared quantity field."""
+    """Compare one prediction with an observed prepared quantity field.
+
+    The noise model is declared, never implied. A `covariance` is the
+    correlated noise model on the active observed values, fixed at
+    construction: an incomplete observed validity mask requires a covariance
+    over exactly those values, for example from
+    `restrict_observation_covariance`, and a prediction invalid on any of them
+    fails the comparison instead of zero-filling a correlated residual. Without
+    a covariance, the observed `standard_uncertainty` is independent Gaussian
+    noise on the dynamically active values. Absent both, the data are
+    unquantified; `reference_scale` then declares an explicit least-squares
+    reference weighting that yields a quadratic misfit but no likelihood.
+    """
 
     observed: PreparedQuantityField
     covariance: CovarianceAction | None
+    reference_scale: Array | None
+    active_indices: Array | None
+    noise_model: MeasurementNoiseModel = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1996,6 +2230,7 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         /,
         *,
         covariance: CovarianceAction | None = None,
+        reference_scale: ArrayLike | None = None,
     ) -> None:
         if not isinstance(observed, PreparedQuantityField):
             raise TypeError("observed must be PreparedQuantityField.")
@@ -2010,26 +2245,61 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         )
         if covariance is not None and not isinstance(covariance, covariance_types):
             raise TypeError("covariance must be a supported CovarianceAction or None.")
-        if covariance is not None:
-            if jnp.issubdtype(observed.values.dtype, jnp.complexfloating):
-                raise ValueError(
-                    "Correlated complex measurements are not supported by this comparison plan."
-                )
-            if observed.values.size != covariance.layout.size:
-                raise ValueError("Covariance layout size must match observed values.")
-            if not bool(jnp.all(observed.valid_mask)):
-                raise ValueError(
-                    "Correlated comparison requires complete observed validity."
-                )
+        noise_model = _declared_noise_model(observed, covariance, reference_scale)
+        active_indices = (
+            None
+            if covariance is None
+            else _covariance_active_indices(observed, covariance)
+        )
+        scale = (
+            None
+            if reference_scale is None
+            else _reference_scale(reference_scale, observed)
+        )
         self.observed = observed
         self.covariance = covariance
+        self.reference_scale = scale
+        self.active_indices = active_indices
+        self.noise_model = noise_model
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "measurement-comparison-plan",
                 "observed": observed.prepared_id,
+                "noise_model": noise_model,
                 "covariance": None if covariance is None else covariance.action_id,
+                "reference_scale": (
+                    None if scale is None else array_tree_fingerprint(scale)
+                ),
             }
         )
+
+    def _noise_terms(self, residual: Array, active: Array, /) -> _NoiseTerms:
+        match self.noise_model:
+            case "unquantified":
+                return _NoiseTerms(
+                    "unavailable",
+                    None,
+                    None,
+                    None,
+                    None,
+                    jnp.sum(active),
+                    jnp.asarray(True),
+                    jnp.asarray(True),
+                )
+            case "reference_weighting":
+                return _diagonal_terms(
+                    residual, active, self.reference_scale, normalized=False
+                )
+            case "independent_uncertainty":
+                return _diagonal_terms(
+                    residual, active, self.observed.standard_uncertainty, normalized=True
+                )
+            case "covariance":
+                return _covariance_terms(
+                    self.covariance, residual, active, self.active_indices
+                )
+            case _:
+                assert_never(self.noise_model)
 
     def evaluate(
         self, predicted: PreparedQuantityField, /
@@ -2049,48 +2319,44 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
             if left != right:
                 raise ValueError(f"Predicted and observed {role} identities differ.")
         valid = predicted.valid_mask & expected.valid_mask
-        expanded = valid.reshape(
-            valid.shape + (1,) * (predicted.values.ndim - valid.ndim)
+        active = jnp.broadcast_to(
+            valid.reshape(valid.shape + (1,) * (predicted.values.ndim - valid.ndim)),
+            predicted.values.shape,
         )
-        residual = jnp.where(expanded, predicted.values - expected.values, 0.0)
-        uncertainty_positive = jnp.asarray(True)
-        if self.covariance is not None:
-            standardized = residual
-            quadratic = self.covariance.quadratic(residual.reshape((-1,)))
-        elif expected.standard_uncertainty is not None:
-            uncertainty = expected.standard_uncertainty
-            if uncertainty.shape == valid.shape and residual.ndim > valid.ndim:
-                uncertainty = uncertainty.reshape(
-                    uncertainty.shape + (1,) * (residual.ndim - valid.ndim)
-                )
-            positive = uncertainty > 0.0
-            uncertainty_positive = jnp.all(jnp.where(expanded, positive, True))
-            standardized = jnp.where(expanded & positive, residual / uncertainty, 0.0)
-            quadratic = jnp.sum(jnp.real(jnp.conj(standardized) * standardized))
-        else:
-            standardized = residual
-            quadratic = jnp.sum(jnp.real(jnp.conj(residual) * residual))
-        finite = (
-            jnp.all(jnp.isfinite(residual))
-            & jnp.all(jnp.isfinite(standardized))
-            & jnp.isfinite(quadratic)
-        )
+        residual = jnp.where(active, predicted.values - expected.values, 0.0)
+        terms = self._noise_terms(residual, active)
+        finite = jnp.all(jnp.isfinite(residual))
+        for value in (
+            terms.whitened_residual,
+            terms.quadratic,
+            terms.logdet_covariance,
+            terms.log_likelihood,
+        ):
+            if value is not None:
+                finite = finite & jnp.all(jnp.isfinite(value))
         active_count = jnp.sum(valid)
         successful = (
             finite
-            & uncertainty_positive
+            & terms.uncertainty_positive
+            & terms.active_set_consistent
             & (active_count > 0)
             & predicted.successful
             & expected.successful
         )
         return MeasurementComparisonResult(
-            residual,
-            standardized,
-            quadratic,
-            active_count,
-            finite,
-            uncertainty_positive,
-            successful,
+            residual=residual,
+            whitened_residual=terms.whitened_residual,
+            quadratic=terms.quadratic,
+            logdet_covariance=terms.logdet_covariance,
+            log_likelihood=terms.log_likelihood,
+            active_count=active_count,
+            active_value_count=terms.active_value_count,
+            finite=finite,
+            uncertainty_positive=terms.uncertainty_positive,
+            active_set_consistent=terms.active_set_consistent,
+            successful=successful,
+            noise_model=self.noise_model,
+            whitening=terms.whitening,
         )
 
 
@@ -2115,6 +2381,7 @@ __all__ = [
     "ObservationCovarianceAction",
     "PrecisionOperatorCovarianceAction",
     "prepare_observation_covariance",
+    "restrict_observation_covariance",
     "DiffusionEvaluationResult",
     "DiffusionForwardResult",
     "DiffusionModelPlan",
@@ -2133,6 +2400,8 @@ __all__ = [
     "MeanSquareDisplacementResult",
     "MeasurementComparisonPlan",
     "MeasurementComparisonResult",
+    "MeasurementNoiseModel",
+    "MeasurementWhitening",
     "ObservationProduct",
     "ObservationRecord",
     "LinearNuisancePlan",

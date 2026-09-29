@@ -137,7 +137,6 @@ def test_functional_training_transforms_scenario_1() -> None:
     )
     trained = solver.solve(
         num_iter=1,
-        # ty: ignore[invalid-argument-type]
         optim=phx.optim.GaussNewton(),
         keep_best=False,
         log_every=0,
