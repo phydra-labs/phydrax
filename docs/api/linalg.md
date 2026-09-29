@@ -786,6 +786,65 @@ precedes Schur reconstruction and Schur-action refresh, preventing stale Schur
 state. Triangular forms remain nonsymmetric unless the complete action has
 independent valid evidence.
 
+### Named block coordinates
+
+`BlockSelection` names members of an existing `BlockSpace` by path, so nested
+fields are addressed as `("fluid", "velocity")` rather than by position. A member
+is one path, a tuple of paths (a named group whose inner names are the
+`"/"`-joined paths), or a `CoordinateBlock` that identifies explicit canonical
+coordinate ranges of any source space with another member space. Selections are
+coordinate identifications: `BlockRestrictionLinearOperator` gathers members,
+`BlockProlongationLinearOperator` embeds them with zeros elsewhere, and each is the
+exact coordinate transpose of the other. Hilbert adjoints are evaluated against the
+declared pairings. Path members keep the source member spaces, so their embedding
+is also the Hilbert adjoint; a `CoordinateBlock` onto a differently paired space
+keeps its transpose and adjoint distinct.
+
+`assemble_block_operator` builds an explicit `BlockLinearOperator` from
+`(row_path, column_path, operator)` entries, including entries whose row and
+column paths end at different depths. `select_block_operator(A, rows, columns)`
+returns the exact block grid `restrict(rows) @ A @ prolong(columns)`. It indexes
+explicit grids instead of composing them, descends identity-ordered
+`MappedBlockLinearOperator` values and the canonical coordinate view used by
+Newton solves, and wraps only opaque leaves; every block keeps the materialization
+and transpose capabilities of its source. A selection covering every block
+regroups an N-field operator into the explicit 2 by 2 grid consumed by
+`BlockFactorizationPreconditionerBuilder`. A principal compression by one path
+selection inherits self-adjoint and definiteness claims.
+
+`SubspaceCorrectionTerm` consumes named transfers directly. When its restriction
+and prolongation are named block transfers, the local setup operator is that exact
+block grid, so block-structured local solvers receive their pivot and coupling
+blocks. A path restriction paired with the prolongation of the same selection is
+recognized as a Hilbert-adjoint pair when certifying self-adjoint corrections.
+
+```python
+space = la.BlockSpace((fluid, multiplier), names=("fluid", "multiplier"))
+split = la.BlockSelection(
+    space,
+    (
+        ("pivot", (("fluid", "velocity"), ("fluid", "pressure"))),
+        ("constraint", (("multiplier",),)),
+    ),
+)
+term = la.SubspaceCorrectionTerm(
+    la.BlockRestrictionLinearOperator(split),
+    la.BlockProlongationLinearOperator(split),
+    la.BlockFactorizationPreconditionerBuilder(pivot_builder, schur_builder, "ldu"),
+)
+preconditioner = la.AdditiveSubspaceCorrectionBuilder((term,))
+```
+
+`MappedBlockLinearOperator(block, row_map=..., column_map=...)` applies a named
+block operator to native coordinates through two bijective `BlockSelection` maps.
+Its coordinate transpose applies the reversed maps around the block transpose, and
+`coordinate_transpose()` returns that operator with an explicit transposed grid.
+Its Hilbert adjoint uses the native pairings. `with_inactive_identity` blends
+every block leaf with the matching canonical identity piece for identity-ordered
+maps, which keeps the named structure available for the inactive replay roots of
+the DAE runtime; DAE stage and event setups returning permuted mapped operators
+use the runtime's generic inactive-root identity instead.
+
 ### Explicit multigrid hierarchy
 
 `MultigridLevelBuilder` owns a level operator, restriction/prolongation pair,
@@ -998,13 +1057,43 @@ dense solves. `rhs-only` stops every problem coefficient while retaining the
 right-hand-side derivative. Minimum-norm differentiation uses the same
 source-space pairing and active numerical-rank subspace as the forward solve.
 
-Implicit tangent and adjoint systems have an independent
-`LinearDerivativeSolvePolicy`. Its tolerances and bounded step capacity are
-checked against the true derivative residual. In status mode an unsuccessful
-primal or derivative solve leaves the primal result inspectable but produces
-NaN derivatives; error mode raises. Matrix-free implicit actions use the
-checked native callable Krylov route; tree factorizations retain their native
-direct tangent and transpose solves.
+Implicit tangent and adjoint systems follow the declared
+`LinearDerivativeSolvePolicy`, whose `route` (`DerivativeSolveRoute`) selects
+how they execute. The default `route="krylov"` runs the callable GMRES route:
+its tolerances and bounded step capacity (`maximum_steps`, default the system
+dimension) are checked against the true derivative residual. Its restart is at
+least the declared `restart` of a `GMRES` or `FGMRES` primal (at most the step
+capacity), is unrestarted under the step capacity for `BlockCG` and
+`BlockGMRES`, and is 30 for every other method, so a system the primal solves
+within its Krylov basis is not differentiated with a shorter, stalling restart.
+In status mode an unsuccessful primal or
+derivative solve leaves the primal result inspectable but produces NaN
+derivatives; error mode raises. Matrix-free implicit actions use this checked
+native callable Krylov route; tree factorizations retain their native direct
+tangent and transpose solves.
+
+`route="primal-factors"` declares that the derivative solves reuse the primal
+square direct factorization. The linearized residual of a linear system is the
+operator itself, so tangent solves reuse the prepared factors and cotangent
+solves reuse them for the algebraic transpose (`lu_solve(..., trans=1)` for
+LU, the conjugated triangular factors for Cholesky). No refactorization or
+Krylov iteration runs, which makes the derivative exact to roundoff for
+indefinite operators such as coupled saddle systems, where a restarted Krylov
+derivative solve can stall; mixed-precision LU applies its iterative
+refinement to the tangent or transposed system. Each derivative column is still
+accepted by its true residual against the declared relative and absolute
+tolerances, with NaN in status mode and an error in error mode. Planning
+refuses the route unless the selected method is `DenseLU` or `DenseCholesky`
+on a `LinearSystem` without a declared `nullspace_policy`, and the policy
+refuses `maximum_steps` (no iteration runs) and `require_nullspace` (the route
+serves systems without a declared nullspace).
+
+```python
+policy = phx.linalg.LinearSolvePolicy(
+    phx.linalg.DenseLU(),
+    derivative_solve=phx.linalg.LinearDerivativeSolvePolicy(route="primal-factors"),
+)
+```
 
 Prepared nonlinear linearizations use `prepare_linearization`, then
 `JacobianLinearOperator`. The artifact stores one primal evaluation plus JVP and
@@ -1360,8 +1449,10 @@ The low-rank ADI lifecycle never forms `B B*`, materializes the operator, or
 constructs dense `X`. It delegates each shift to the reusable shifted-Krylov
 contract, compresses the accumulated factor, and reports effective/raw rank,
 truncation loss, per-shift status/residual/iterations, factor storage, avoided
-explicit-solution storage, and an original-equation Frobenius residual computed by
-a low-rank Gram identity. Numeric refresh preserves the symbolic shifted plan.
+explicit-solution storage, and an original-equation Frobenius residual computed on
+the QR-reduced low-rank residual core, so it reaches working precision rather than
+the square-root-of-epsilon floor of a squared Gram trace. Numeric refresh preserves
+the symbolic shifted plan.
 
 This route currently supports only unbatched Euclidean vector spaces and continuous
 Lyapunov structure with explicit open-left-half-plane shifts. Real-coordinate
@@ -1927,6 +2018,38 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.BlockLinearOperator
+
+---
+
+::: phydrax.linalg.BlockSelection
+
+---
+
+::: phydrax.linalg.CoordinateBlock
+
+---
+
+::: phydrax.linalg.BlockPath
+
+---
+
+::: phydrax.linalg.BlockRestrictionLinearOperator
+
+---
+
+::: phydrax.linalg.BlockProlongationLinearOperator
+
+---
+
+::: phydrax.linalg.MappedBlockLinearOperator
+
+---
+
+::: phydrax.linalg.select_block_operator
+
+---
+
+::: phydrax.linalg.assemble_block_operator
 
 ---
 

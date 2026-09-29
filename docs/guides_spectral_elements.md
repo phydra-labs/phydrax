@@ -65,6 +65,13 @@ evaluated per physical face and scattered to both cells with opposite
 orientation. Hexahedral faces support the complete quadrilateral rotation and
 reflection group.
 
+Side traces of SEM fields use the finite-element provider
+(`discretization.prepare_side_trace`); a
+`FacetTraceRule("gauss-lobatto-legendre", points=p + 1)` places the trace sites
+on the collocated facet GLL nodes, and interior facets share one physical site
+set for the owner and neighbor sides. See
+[Finite elements](guides_finite_elements.md#side-traces-reaction-fluxes-and-imposition-provenance).
+
 ## DGSEM and entropy evidence
 
 `TensorGLLSBPPlan` verifies positive norm weights, zero derivative of constants,

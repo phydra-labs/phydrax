@@ -27,21 +27,18 @@ when any selected gate failed or was inconclusive.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import importlib.metadata
 import json
 import os
 import platform
 import re
-import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import jax
-import pytest
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.qualification import (
@@ -52,6 +49,7 @@ from phydrax.qualification import (
     SupportTuple,
     validate_qualification_causality,
 )
+from tools._pytest_outcomes import NODE_OUTCOMES, NodeOutcome, PytestRun, run_pytest
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -69,8 +67,6 @@ ISSUED_TICK = 4
 EXPIRES_TICK = 5
 
 _SCENARIO_NAME = re.compile(r"test_g([1-9][0-9]*)_")
-_SCENARIO_OUTCOMES = ("passed", "failed", "skipped")
-_MESSAGE_LIMIT = 240
 
 
 @dataclass(frozen=True)
@@ -241,23 +237,6 @@ _GATE_IDS = tuple(gate.gate_id for gate in GATES)
 
 
 @dataclass(frozen=True)
-class ScenarioOutcome:
-    """Consumer-visible outcome of one gate-suite pytest node."""
-
-    nodeid: str
-    outcome: str
-    message: str
-
-
-@dataclass(frozen=True)
-class ScenarioRun:
-    """Every observed gate-suite node, plus whether suite collection failed."""
-
-    scenarios: tuple[ScenarioOutcome, ...]
-    collection_failed: bool
-
-
-@dataclass(frozen=True)
 class _Campaign:
     campaign_spec_id: str
     replay_id: str
@@ -295,91 +274,14 @@ def selected_gates(gate_ids: Sequence[str] | None, /) -> tuple[str, ...]:
     return tuple(gate_id for gate_id in _GATE_IDS if gate_id in gate_ids)
 
 
-def _short_message(report: pytest.TestReport | pytest.CollectReport, /) -> str:
-    longrepr = report.longrepr
-    if isinstance(longrepr, tuple):
-        # Skip reports carry a (path, line, reason) location triple.
-        text = str(longrepr[2])
-    else:
-        crash = getattr(longrepr, "reprcrash", None)
-        if crash is not None:
-            text = crash.message
-        else:
-            lines = [line for line in report.longreprtext.splitlines() if line.strip()]
-            text = lines[-1] if lines else ""
-    first_line = text.strip().splitlines()[0] if text.strip() else ""
-    return first_line[:_MESSAGE_LIMIT]
-
-
-class _ScenarioCollector:
-    """Pytest plugin reducing setup/call/teardown reports to one outcome per node.
-
-    Distributed workers forward their reports to the controller's hooks, so the
-    same plugin observes serial and parallel runs.
-    """
-
-    def __init__(self) -> None:
-        self.phases: dict[str, dict[str, pytest.TestReport]] = {}
-        self.collection_failed = False
-
-    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        # ty: ignore[invalid-assignment]
-        self.phases.setdefault(report.nodeid, {})[report.when] = report
-
-    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
-        if report.failed:
-            self.collection_failed = True
-
-    def outcomes(self) -> tuple[ScenarioOutcome, ...]:
-        return tuple(
-            _node_outcome(nodeid, phases) for nodeid, phases in self.phases.items()
-        )
-
-
-def _node_outcome(
-    nodeid: str, phases: Mapping[str, pytest.TestReport], /
-) -> ScenarioOutcome:
-    ordered = [phases[when] for when in ("setup", "call", "teardown") if when in phases]
-    failed = [report for report in ordered if report.failed]
-    if failed:
-        return ScenarioOutcome(nodeid, "failed", _short_message(failed[0]))
-    skipped = [report for report in ordered if report.skipped]
-    if skipped:
-        return ScenarioOutcome(nodeid, "skipped", _short_message(skipped[0]))
-    if "call" in phases and phases["call"].passed:
-        return ScenarioOutcome(nodeid, "passed", "")
-    return ScenarioOutcome(nodeid, "failed", "scenario produced no call phase")
-
-
-def run_gate_scenarios(gate_ids: Sequence[str], /, *, workers: int) -> ScenarioRun:
+def run_gate_scenarios(gate_ids: Sequence[str], /, *, workers: int) -> PytestRun:
     """Execute the selected gate scenarios in-process and collect their outcomes."""
     gates = selected_gates(gate_ids)
-    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
-        raise ValueError("workers must be a positive integer.")
-    collector = _ScenarioCollector()
     keyword = " or ".join(f"test_g{gate_id[1:]}_" for gate_id in gates)
-    arguments = [
-        str(_PROJECT_ROOT / SUITE_PATH),
-        f"--rootdir={_PROJECT_ROOT}",
-        "-q",
-        "-p",
-        "no:cacheprovider",
-        "-k",
-        keyword,
-    ]
-    if workers > 1:
-        arguments += ["-n", str(workers)]
-    # Pytest progress goes to stderr so a printed report remains the only stdout.
-    with contextlib.redirect_stdout(sys.stderr):
-        exit_code = pytest.main(arguments, plugins=[collector])
-    aborted = exit_code in (
-        pytest.ExitCode.INTERRUPTED,
-        pytest.ExitCode.INTERNAL_ERROR,
-        pytest.ExitCode.USAGE_ERROR,
-    )
-    return ScenarioRun(
-        scenarios=collector.outcomes(),
-        collection_failed=collector.collection_failed or aborted,
+    return run_pytest(
+        [str(_PROJECT_ROOT / SUITE_PATH), "-k", keyword],
+        root=_PROJECT_ROOT,
+        workers=workers,
     )
 
 
@@ -387,6 +289,7 @@ def source_build_id(root: Path = _PROJECT_ROOT, /) -> str:
     """Content-address the package sources, the gate suite, and this runner."""
     paths = [*sorted((root / "phydrax").rglob("*.py")), root / SUITE_PATH]
     paths.append(root / "tools" / "ml_interoperability_qualification.py")
+    paths.append(root / "tools" / "_pytest_outcomes.py")
     return canonical_fingerprint(
         sorted(
             (
@@ -414,7 +317,7 @@ def runtime_environment() -> dict[str, object]:
 
 
 def _classify(
-    scenarios: Sequence[ScenarioOutcome], collection_failed: bool, /
+    scenarios: Sequence[NodeOutcome], collection_failed: bool, /
 ) -> tuple[str, str, int]:
     unqualified = sum(scenario.outcome != "passed" for scenario in scenarios)
     if collection_failed:
@@ -428,7 +331,7 @@ def _classify(
 
 def _gate_record(
     gate: QualificationGate,
-    scenarios: Sequence[ScenarioOutcome],
+    scenarios: Sequence[NodeOutcome],
     collection_failed: bool,
     campaign: _Campaign,
     /,
@@ -525,7 +428,7 @@ def _gate_record(
 
 
 def qualification_report(
-    run: ScenarioRun,
+    run: PytestRun,
     gate_ids: Sequence[str] | None,
     /,
     *,
@@ -536,12 +439,12 @@ def qualification_report(
 ) -> dict[str, object]:
     """Bind observed scenario outcomes into one causal record chain per gate."""
     gates = selected_gates(gate_ids)
-    by_gate: dict[str, list[ScenarioOutcome]] = {gate_id: [] for gate_id in gates}
-    nodeids = [scenario.nodeid for scenario in run.scenarios]
+    by_gate: dict[str, list[NodeOutcome]] = {gate_id: [] for gate_id in gates}
+    nodeids = [scenario.nodeid for scenario in run.nodes]
     if len(set(nodeids)) != len(nodeids):
         raise ValueError("Each gate scenario must be observed exactly once.")
-    for scenario in run.scenarios:
-        if scenario.outcome not in _SCENARIO_OUTCOMES:
+    for scenario in run.nodes:
+        if scenario.outcome not in NODE_OUTCOMES:
             raise ValueError(f"Unsupported scenario outcome {scenario.outcome!r}.")
         gate_id = scenario_gate(scenario.nodeid)
         if gate_id not in by_gate:

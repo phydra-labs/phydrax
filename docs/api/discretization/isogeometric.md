@@ -54,3 +54,26 @@ compiler API:
 The qualification tool's independently assembled sparse parity path is private
 to that tool. It checks public matrix-free execution and scatter; it is not an
 independent numerical oracle or a public IGA sparse-realization contract.
+
+## Prepared field queries and side traces
+
+Physical-point reconstruction inverts the runtime NURBS map in JAX and exposes
+the shared `PreparedFieldReconstruction.prepare_query` routes; side traces act on
+patch-boundary faces and interior knot faces with physical facet measures and
+outward normals. See the
+[guide section](../../guides_isogeometric_analysis.md#prepared-field-queries-and-side-traces).
+
+::: phydrax.discretization.iga.prepare_isogeometric_field_reconstruction
+
+---
+
+::: phydrax.discretization.iga.IsogeometricFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.iga.PreparedIsogeometricDiscretization.prepare_side_trace
+
+---
+
+::: phydrax.discretization.iga.PreparedIsogeometricDiscretization.integration_domain
+

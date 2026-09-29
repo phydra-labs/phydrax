@@ -149,6 +149,67 @@ pullback. It is not a reduced-only performance route.
 nonlinear least-squares runtime. Its residual is whitened in the declared physical
 dual norm.
 
+## Reduced regions of coupled problems
+
+One region of a spatial coupled problem (`phydrax.solver.coupling`) can be replaced by
+its `FullResidualGalerkin` model while every interface binding, law, parameter binding,
+and observation of the plan stays unchanged:
+
+```python
+cpl = phx.solver.coupling
+provider = cpl.ComponentResidualProvider(triangles, field="u")
+pod = phx.ml.decomposition.PhysicalPODPlan(rank, centered=False).fit(
+    provider.state_space, snapshots, source_artifact_ids=("training-solves",)
+)
+basis = phx.rom.ReducedBasisArtifact(
+    pod.subspace,
+    role="state",
+    state_contract_id=provider.residual_id,
+    support_id=provider.support_id,
+    measure_id="euclidean-coordinates",
+    geometry_id=provider.geometry_id,
+    source_artifact_ids=("training-solves",),
+)
+galerkin = phx.rom.FullResidualGalerkin(
+    phx.rom.trial_test_reduction_from_bases(basis), provider
+)
+reduced = cpl.ReducedComponent("triangles", galerkin)
+```
+
+`ComponentResidualProvider` publishes the steady residual of one single-field
+component on its solve coordinates (the free degrees of freedom after the owner's
+boundary elimination). Its `support_id` is the field's discrete space and its
+`geometry_id` the component's owner identity, so a basis fitted on another component,
+mesh, or field is refused by `FullResidualGalerkin`. The snapshots are the
+component's block of full-order `solve_coupled_problem` solutions at training
+parameters, `solution.state[i][0]` for the component's position `i` in the prepared
+chart.
+
+`ReducedComponent(name, galerkin)` keeps the full component's name. Its state block
+holds the reduced coordinates, its rows are the Galerkin rows `V^T R`, and its field
+chart is the owner's chart composed with `V`; traces, conormal reaction fluxes,
+boundary impositions, pointwise reconstruction, and the field-space identity are the
+full owner's, acting on the reconstructed field. A linear owner contributes the dense
+projected operator `V^T A V`; a nonaffine owner is solved by Newton. Parameters keep
+reaching the owner through its runtime arguments, so implicit parameter derivatives
+of the ROM-coupled solve are the ordinary coupled derivatives.
+
+The interface certificate of a ROM-coupled solution measures the ROM: a mortar's
+weak continuity is solved exactly at every rank, and its flux balance compares the
+full owner's reaction of the reconstructed field with the multiplier. That balance
+is the interface residual of the reduced model; it decays with the rank and passes
+acceptance only when the basis spans the region's parametric solution manifold.
+
+The basis, provider, and owner topology are fixed prepared structure: their array
+leaves resolve as `FIXED`, and a new basis is a new `ReducedComponent`, a new
+`owner_id`, and a new prepared problem, never an online gradient. A trainable model
+hidden inside the provider is refused because it would be frozen silently; bind
+learned values through a `ParameterBinding` instead. A Petrov–Galerkin reduction and
+an owner that publishes a kernel are refused. The model is full-order assisted
+(every residual and operator action calls the original owner); see
+`examples/coupled_rom_swap.py` and
+[Numerical interoperability](guides_numerical_interoperability.md#reduced-order-components).
+
 ## Hyperreduction
 
 The methods have different contracts:
@@ -212,7 +273,14 @@ executable Python callable or pickle payload.
 geometry, topology, quadrature, truth revision, and chunk identities.
 `PhysicalPODPlan` performs method-of-snapshots POD through an
 `AbstractVectorSpace` pairing and reports rank, retained/tail energy,
-orthogonality, and unmet-target status.
+orthogonality, and unmet-target status. Its eigenvalues of the snapshot Gram
+matrix are accurate to about $(N + \sqrt{m})\,\varepsilon\,\lambda_1$ for $N$
+snapshots of $m$ coordinates, so singular values below
+$\sqrt{(N + \sqrt{m})\,\varepsilon}\,\sigma_1$ are roundoff and never enter the
+basis; `retained_energy` (default `1.0`: every resolved direction) and an
+absolute `minimum_singular_value` can only lower the rank further. Snapshots
+whose trailing singular values matter below that floor need an SVD in
+orthonormal coordinates.
 
 ## Transient, mixed, and descriptor systems
 

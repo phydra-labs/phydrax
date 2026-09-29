@@ -62,3 +62,140 @@ lattice-Boltzmann and discrete-velocity methods.
 
 
 ::: phydrax.discretization.TransferProperties
+
+## Prepared field queries and side actions
+
+`PreparedFieldReconstruction.prepare_query(...)` locates fixed points once and
+returns a `PreparedFieldQuery` whose route is reused for every coefficient
+state; its `coverage` is `"complete"` or `"masked"` (`FieldQueryCoverage`) and
+its `approximation` is `"exact"`, `"h1-projection"`, or `"l2-projection"`
+(`FieldApproximation`). Side actions bind an owner's coefficient space to trace data on
+selected facets with separate primal, dual-pullback, load-injection, and
+Hilbert-adjoint maps; conormal fluxes and imposition provenance are published
+by compiled physics owners.
+
+::: phydrax.discretization.PreparedFieldQuery
+
+---
+
+::: phydrax.discretization.FieldQueryCoverage
+
+---
+
+::: phydrax.discretization.FieldApproximation
+
+---
+
+::: phydrax.discretization.FacetTraceRule
+
+---
+
+::: phydrax.discretization.FacetRuleFamily
+
+---
+
+::: phydrax.discretization.SideActionDescriptor
+
+---
+
+::: phydrax.discretization.SideTraceQuantity
+
+---
+
+::: phydrax.discretization.SideRepresentation
+
+---
+
+::: phydrax.discretization.SideApproximation
+
+---
+
+::: phydrax.discretization.SideOrientation
+
+---
+
+::: phydrax.discretization.AbstractSideRoute
+
+---
+
+::: phydrax.discretization.SideGatherRoute
+
+---
+
+::: phydrax.discretization.SideRouteMode
+
+---
+
+::: phydrax.discretization.PreparedTraceAction
+
+---
+
+::: phydrax.discretization.AbstractSideFluxEvaluator
+
+---
+
+::: phydrax.discretization.PreparedFluxAction
+
+---
+
+::: phydrax.discretization.TraceInverseEvidence
+
+---
+
+::: phydrax.discretization.certify_trace_inverse
+
+---
+
+::: phydrax.discretization.BoundaryImposition
+
+---
+
+::: phydrax.discretization.ImpositionKind
+
+---
+
+::: phydrax.discretization.SideTraceProvider
+
+---
+
+::: phydrax.discretization.ConormalFluxProvider
+
+---
+
+::: phydrax.discretization.BoundaryImpositionProvider
+
+## Boundary trace spaces
+
+Boundary-integral owners publish their boundary coefficient spaces as trace-space
+capabilities: the trace quantity (`BoundaryTraceQuantity`), representation
+(`BoundaryTraceRepresentation`), conformity (`BoundaryTraceConformity`), orientation
+(`BoundaryTraceOrientation`), coefficient-carrying entity (`BoundaryEntityKind`),
+the owner's native coordinate space, its physical Gram pairing and mass, and the
+geometry revision. Scalar Dirichlet/Neumann pairs are published together with their
+duality; tangential surface currents are never accepted as scalar Cauchy data.
+
+::: phydrax.discretization.BoundaryTraceSpaceCapability
+
+---
+
+::: phydrax.discretization.CauchyTraceCapability
+
+---
+
+::: phydrax.discretization.BoundaryTraceQuantity
+
+---
+
+::: phydrax.discretization.BoundaryTraceRepresentation
+
+---
+
+::: phydrax.discretization.BoundaryTraceConformity
+
+---
+
+::: phydrax.discretization.BoundaryTraceOrientation
+
+---
+
+::: phydrax.discretization.BoundaryEntityKind

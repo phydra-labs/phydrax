@@ -117,6 +117,10 @@ soap films and dry foams. See the
 
 ::: phydrax.applications.foams.PlateauBorderPreparationError
 
+::: phydrax.applications.foams.PlateauBorderAdaptation
+
+::: phydrax.applications.foams.PlateauBorderTransportError
+
 ::: phydrax.applications.foams.PlateauBorderRimResult
 
 ::: phydrax.applications.foams.PlateauBorderRimEvidence

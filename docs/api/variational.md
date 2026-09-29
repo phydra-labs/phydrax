@@ -132,4 +132,8 @@ The shared name “variational” does not imply one algorithm:
   operator inequality need not have a scalar potential;
 - nonsmooth subdifferentials and proximal maps remain in `phydrax.optim`;
 - arbitrary weak, Petrov–Galerkin, flux, and stabilization forms remain in
-  `phydrax.equations`.
+  `phydrax.equations`;
+- `phydrax.solver.coupling.VariationalComponent` publishes a compiled
+  finite-element or virtual-element problem to spatial coupled assembly; it
+  does not bind `Functional` declarations (see
+  [Spatial coupled problems](../guides_numerical_interoperability.md#spatial-coupled-problems)).

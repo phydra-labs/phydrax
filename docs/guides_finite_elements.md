@@ -340,6 +340,90 @@ flux_jump = phx.operators.grad(owner, var="x") - phx.operators.grad(neighbor, va
 other domain fields through ordinary `DomainFunction` algebra; see
 [Domains](guides_domain.md#discrete-field-views).
 
+## Side traces, reaction fluxes, and imposition provenance
+
+`discretization.prepare_side_trace(field, domain, rule=FacetTraceRule(...))`
+prepares the exact trace of an identity-mapped scalar-basis H1 or L2 field (any
+degree: simplex Lagrange, tensor GLL spectral elements, prisms; multi-block
+meshes) on selected exterior or interior facets produced by the same
+discretization. The sites are the owner cell's local-facet rule points: an
+interior facet traced with `side="neighbor"` addresses the same physical points
+through the dihedral map of the shared facet vertices, and the agreement is
+verified on the host. Weights are the physical facet measure, and unit normals
+point out of the traced side cell (`n ds = det(J) J^{-T} N_ref ds_ref`).
+`quantity="normal"` and `"tangential"` contract vector fields against that
+normal (`u . tau` with `tau = (-n_y, n_x)` in 2-D, `u - (u . n) n` in 3-D). The
+route gathers each facet's closure DOFs (H1) or nonzero-trace cell DOFs (L2)
+and never forms a coefficient-by-site matrix.
+
+```python
+rule = phx.discretization.FacetTraceRule("gauss-legendre", points=4)
+trace = discretization.prepare_side_trace("u", boundary_domain, rule=rule)
+values = trace.apply(coefficients)             # (facets, sites)
+load_rows = trace.inject_load(density)          # sum_q w_q g_q phi_i(x_q)
+
+flux = compiled.prepare_conormal_flux(trace)    # residual reaction
+reaction = flux.evaluate(compiled.expand(solution))
+impositions = compiled.boundary_impositions()
+```
+
+`CompiledFiniteElementProblem.prepare_conormal_flux(trace)` publishes the
+residual reaction of the compiled physical operator: the full weak residual on
+`trace.support_rows` of an H1 field of the problem (the field block of a mixed
+form) on exterior facets. At a solution it equals the outward conormal flux
+tested against the facet basis functions over their whole boundary support.
+`boundary_impositions()` reports discrete Dirichlet constraints as strong rows,
+boundary loads and SIPG Neumann data as natural facets, SIPG Robin data as
+Robin facets, and SIPG Dirichlet (Nitsche) terms, exterior-facet residual
+actions, and exterior functional terms as weak facets, in form-field, kind, and
+source order. Plain `ConstraintMap`, periodic, and hanging-node constraints
+restrict the space rather than impose a boundary law and are not reported.
+
+`compiled.prepare_pointwise_flux(trace)` publishes the exact pointwise
+conormal flux `q = n . K grad(u)` at the sites of a scalar value trace
+(`representation="quadrature-values"`, `approximation="exact"`, outward from
+the traced side cell, exterior or interior facets). `K` sums the form's
+`DiffusionAction`/`TensorDiffusionAction` diffusivities over the actions whose
+cell domain contains the side cell; the gradient is the discrete field's own
+gradient on the whole side cell, gathered through a prepared route with an
+exact scatter transpose. The flux is linear in the full coefficients. A form
+with any other term acting on the field (besides mass, source, and boundary
+terms) declares no boundary flux law and is refused, as are quadrature- or
+facet-located diffusivities. The descriptor's `trace_degree` is the flux's
+polynomial degree along the facets (for example `k - 1` for P_k simplices with
+cell-wise constant `K`); callable diffusivities and side cells that are not
+affine along a facet publish `None`.
+
+`compiled.certify_flux_stability(flux)` returns a
+`phydrax.discretization.TraceInverseEvidence` with, per facet, the sharp
+constant `C_F = max ||q(v)||²_F / a_K(v, v)` over the side cell's local space.
+`a_K` is the cell energy of the same diffusion terms on the owner's own cell
+rules, `||.||_F` uses a Gauss–Legendre facet rule exact for the squared flux,
+and each constant is the largest eigenvalue of the local pencil solved by the
+native batched dense Hermitian eigensolver (the energy, which sees only the
+symmetric part `S` of `K`, is deflated on the constants, which carry no flux).
+For P1 it equals `|F| w.S^-1 w / |K|` with `w = K^T n` (`|F| n.K n / |K|` for
+symmetric `K`). These are the flux and stability publications a Nitsche
+transmission law consumes.
+
+```python
+pointwise = compiled.prepare_pointwise_flux(trace)
+densities = pointwise.evaluate(compiled.expand(solution))   # (facets, sites)
+stability = compiled.certify_flux_stability(pointwise)
+stability.constants, stability.cell_multiplicity
+```
+
+Piola-mapped H(div)/H(curl) fields have no scalar-basis side trace and are
+refused; their normal/tangential traces would be facet-moment maps, which are
+not published. `side="average"` is refused: compose the owner and neighbor traces.
+
+`phydrax.solver.coupling.VariationalComponent(name, compiled, field="u")`
+publishes one scalar field of a compiled problem, with these traces, reaction
+and pointwise fluxes, stability evidence, and impositions, to spatial coupled
+assembly, for example a mortar transmission to a virtual-element region or a
+Nitsche transmission to another finite-element region; see
+[Spatial coupled problems](guides_numerical_interoperability.md#spatial-coupled-problems).
+
 ## Current limits
 
 Execution remains single-device unless a caller supplies a JAX named-axis

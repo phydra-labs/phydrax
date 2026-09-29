@@ -131,7 +131,7 @@ either kernel directly or beneath one `ScaleKernel`, resolves its drift, station
 covariance and factor, continuous process-noise covariance and factor, observation
 map, state dimension, and content identity, then checks the stationary Lyapunov
 residual. See
-[UQ → Filtering and smoothing → Exact temporal Matérn Gaussian processes](uq/filtering.md#exact-temporal-matern-gaussian-processes).
+[UQ → Filtering and smoothing → Bounded rational and separable state-space Gaussian processes](uq/filtering.md#bounded-rational-and-separable-state-space-gaussian-processes).
 
 This capability is intentionally narrower than general kernel algebra. Sums,
 products, amplitude wrappers, transformed inputs, vector length scales,

@@ -279,6 +279,7 @@ python examples/advanced_foam_burst.py
 python examples/advanced_foam_bubble_oscillation.py
 python examples/advanced_plateau_border_drainage.py
 python examples/advanced_foam_iridescence.py
+python examples/foam_junction_rebind.py
 python examples/advanced_biomembrane_remeshing.py
 ```
 
@@ -300,6 +301,10 @@ python examples/advanced_biomembrane_remeshing.py
   physical Plateau-border network with liquid, surfactant, and evaporation ledgers.
 - `advanced_foam_iridescence.py` renders drained and ruptured foam surfaces with
   support masks and verifies that rendering leaves the physical states unchanged.
+- `foam_junction_rebind.py` drains three double-bubble sheets into a declared
+  Plateau-border junction, splits a border through one accepted composition
+  rebind with explicit sheet and border content transports, renders the
+  published thickness one way, and refuses a rupture without a border rule.
 - `advanced_biomembrane_remeshing.py` sends a membrane face flip through the
   shared certified surface-event transaction with sparse conservative transfers.
 
@@ -320,6 +325,8 @@ python examples/material_point_commercial_mechanics.py
 python examples/material_point_commercial_scale.py
 python examples/electrostatic_pic.py
 python examples/electromagnetic_pic.py
+python examples/pic_field_solver_substitution.py
+python examples/pic_field_handoff.py
 python examples/flip_dam_break.py
 python examples/wet_granular_bridge.py
 python examples/superquadric_collision.py
@@ -442,6 +449,90 @@ python benchmarks/robotics_fixed_body_routes.py
 python benchmarks/robotics_analytic_wrap.py
 python benchmarks/robotics_mjx_muscle_projection.py
 ```
+
+## Numerical interoperability
+
+```text
+python examples/numerical_interface_binding.py
+python examples/prepared_field_observations.py
+python examples/exterior_laplace_galerkin.py
+python examples/coupled_scalar_regions.py
+python examples/nitsche_transmission.py
+python examples/sem_vem_bem_transmission.py
+python examples/coupled_inverse_problem.py
+python examples/coupled_learned_interface.py
+python examples/mixed_method_time_coupling.py
+python examples/named_block_dae.py
+python examples/coupled_transient_fields.py
+python examples/coupled_control.py
+python examples/coupled_data_assimilation.py
+python examples/coupled_rom_swap.py
+python examples/hybrid_pinn_classical.py
+python examples/adaptive_fe_fv_rebind.py
+python examples/fmi_host_coupling.py
+python examples/coupled_lane_worksets.py
+python benchmarks/numerical_interoperability.py --smoke
+```
+
+Each script exercises one family of
+[Numerical interoperability](../guides_numerical_interoperability.md) and prints
+its evidence and refusals:
+
+- `numerical_interface_binding.py` binds two independently meshed parts of one
+  B-Rep to one interface and refuses a stale part revision.
+- `prepared_field_observations.py` observes a refreshed finite-element field
+  through one prepared query, pulls a sensor residual back through the exact
+  transpose, and reports a rejected sensor under masked coverage.
+- `exterior_laplace_galerkin.py` recovers an off-center dipole field with the
+  2-D Galerkin boundary operator under panel refinement.
+- `coupled_scalar_regions.py` couples P1 triangles and polygonal virtual elements
+  across a nonmatching interface with a side-trace mortar.
+- `nitsche_transmission.py` solves a diffusivity jump on nonmatching P1 and P2
+  refinements with certified Nitsche penalties and couples a virtual-element
+  region one-sidedly.
+- `sem_vem_bem_transmission.py` solves one Laplace field across spectral,
+  virtual, and boundary elements in one certified solve, substitutes each volume
+  method, and prints the refinement campaigns.
+- `coupled_inverse_problem.py` infers a conductivity and a wall heat flux of the
+  finite-element / virtual-element plate from observations with declared
+  uncertainty through `SolverObjective` and `train_components`.
+- `coupled_learned_interface.py` trains a learned conductivity field through the
+  accepted solve and a learned preconditioner through fixed FGMRES work, and
+  shows that neither the preconditioner nor an untrusted initial guess changes
+  the accepted solution.
+- `mixed_method_time_coupling.py` couples a backward-Euler finite-element solid
+  and an SSPRK(3,3) finite-volume fluid across a nonmatching interface through
+  declared temporal conversions and a certified conservative map.
+- `named_block_dae.py` preconditions a reduced thermal DAE by its named
+  differential and algebraic blocks and checks the analytic decay.
+- `coupled_transient_fields.py` integrates finite-element / virtual-element heat
+  conduction with a moving lift as one index-one DAE, continues an adaptive run
+  across windows, and refuses the mortar-multiplier declaration.
+- `coupled_control.py` rolls out, linearizes, and runs a dense MPC on the wall
+  heat flux of a coupled transition against host references.
+  `coupled_data_assimilation.py` runs the ensemble transform Kalman filter on the
+  same transition against the exact linear-Gaussian Kalman filter. Both use
+  `examples/_coupled_heat_transient.py`.
+- `coupled_rom_swap.py` replaces the finite-element region of the plate by POD
+  Galerkin models of increasing rank under unchanged declarations.
+- `hybrid_pinn_classical.py` couples a surrogate network region to a
+  finite-element region through an accepted state-design response and one
+  Dirichlet–Neumann step.
+- `adaptive_fe_fv_rebind.py` refines one side of the mixed-method coupling at an
+  accepted boundary through one lifecycle composition rebind and continues the
+  windows.
+- `fmi_host_coupling.py` couples a compiled thermal-zone FMU to a native node
+  under explicit host orchestration; without FMPy or a C compiler it reports the
+  missing prerequisite.
+- `coupled_lane_worksets.py` evaluates a twelve-strip mortar chain per owner and
+  as bounded lane worksets and checks both against the exact harmonic field.
+
+`foam_junction_rebind.py` (threshold dynamics and explicit foam geometry) and
+`pic_field_solver_substitution.py` and `pic_field_handoff.py` (particle physics)
+are listed with their owners above. The benchmark rows of
+`benchmarks/numerical_interoperability.py` (selected with `--rows`) record
+preparation, compilation, runtime, and retained-byte evidence separately from the
+qualification scenarios.
 
 ## Meshing
 

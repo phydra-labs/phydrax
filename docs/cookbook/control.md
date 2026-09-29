@@ -414,6 +414,29 @@ assert bool(jnp.allclose(linearized.dynamics_bias, 0.0))
 For actions only, `phx.control.prepare_control_linearization` returns the same
 Jacobians as matrix-free `JacobianLinearOperator` values at one operating point.
 
+A coupled multi-method transient is controlled through the same ABIs. Its prepared
+coupled transition is a `DiscreteSystem` whose control input is a bound P6
+parameter, and its observation port is the output (`examples/coupled_control.py`):
+
+```python
+transition = phx.solver.coupling.prepare_coupled_transition(
+    transient,
+    step=0.1,
+    policy=dae_policy,
+    parameters={"wall-heat-flux": jnp.zeros((2,))},
+    control="wall-heat-flux",
+)
+dynamics = phx.control.DiscreteControlDynamics(transition.discrete_system())
+sensors = transition.observation_port(("conductor-sensor", "insulator-sensors"))
+local = phx.control.prepare_control_linearization(
+    dynamics, t, x, g, target_time=t + 0.1, step_index=k, output=sensors
+)
+```
+
+Every step is certified against the original coupled rows; a failed step rolls back
+and is refused by the linear-quadratic bridge. Dense stage Jacobians of a full-order
+plant are formed only within the declared `MaterializationPolicy`.
+
 ## Differentiate the MPC closed loop
 
 `prepare_receding_horizon_mpc_sensitivity` runs the audited MPC with cold-started dense

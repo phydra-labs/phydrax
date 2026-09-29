@@ -136,6 +136,18 @@ Most workflows are composing a few primitives:
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
   fixed-topology differentiable geometry.
+- **Numerical interoperability**: revision-bound interface bindings, prepared
+  field queries and side actions with exact coordinate duals, and spatial coupled
+  problems assembled from native finite-element, spectral-element, explicit
+  polygon, isogeometric, virtual-element, 2-D Galerkin boundary-element, 3-D
+  FEM–BEM, and reduced-order owners through matching, mortar, Nitsche,
+  conservative-flux, lumped-port, field-transfer, and boundary-integral laws.
+  Solutions are certified on the original equations and interface defects;
+  implicit parameter derivatives, observation bindings, transient DAE lowering,
+  exact condensation, coupled transitions for control and filtering, lifecycle
+  rebind transactions, FMI host coupling, and bounded lane worksets reuse the
+  existing owners. Unsupported combinations are refused and listed as explicit
+  nonclaims.
 - **Discrete structural form-finding**: sparse pin-jointed force-density
   equilibrium supports coordinate and general affine restraints, tension,
   compression, mixed signs, prepared linear/nonlinear refresh, weighted
@@ -476,7 +488,8 @@ actions, area measures, and SFNO interoperability. See the
 [`thermal dark-sector guide`](docs/guides_thermal_dark_sector.md), the
 [`off-shell/coherent transport guide`](docs/guides_off_shell_coherent_transport.md), the
 [`dark-radiation transport guide`](docs/guides_dark_radiation_transport.md), the
-[partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
+[partitioned coupling guide](docs/guides_partitioned_coupling.md), the
+[numerical interoperability guide](docs/guides_numerical_interoperability.md), and the
 [API](docs/api/discretization/index.md).
 
 Finite molecular learning and conservative atomistic dynamics live in

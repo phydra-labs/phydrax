@@ -26,7 +26,8 @@ The qualified surface is deliberately narrow:
 - dense matrix-free variational execution;
 - strong component-aware Dirichlet constraints;
 - fixed-topology differentiable geometry refresh;
-- direct value and piecewise-gradient reconstruction.
+- direct value and piecewise-gradient reconstruction;
+- prepared, evidenced field queries and exact prepared edge traces.
 
 Sparse realization, higher order, three-dimensional polyhedra, Hessian jets,
 interior-facet/DG terms, and mixed incompressibility are not provided. Nonmatching
@@ -113,6 +114,48 @@ Assembly and runtime refresh are differentiable while connectivity, arity, fan
 routes, witness weights, and admissibility remain fixed. Crossing an inversion,
 star-margin, factorization, or qualification boundary is a validity boundary rather
 than a differentiable repair.
+
+## Prepared queries and side traces
+
+`phydrax.discretization.explicit_polygon_h1.prepare_explicit_polygon_h1_field_reconstruction`
+returns a `PreparedFieldReconstruction` with `approximation="exact"`, `C^0`
+regularity, first derivatives, and a cell-sided trace policy. Its support
+geometry is the region covered by the witness fans. `prepare_query` locates
+fixed points once (bounded BVH candidate cells, fixed point batches, no
+point-by-cell tensor) and reuses the gather/scatter route for every coefficient
+refresh. Points outside the mesh are `OUTSIDE_SUPPORT` and can be masked with
+`coverage="masked"`.
+
+The discrete gradient is constant on each fan triangle. A derivative query on a
+shared cell edge needs a bound trace side; a derivative query on an interior
+fan edge or at a polygon vertex reports `SIDE_UNRESOLVED` for every side,
+because the gradient jumps inside the cell there. No fan triangle is chosen
+silently, and Hessians remain unavailable.
+
+`ExplicitPolygonH1Discretization.prepare_side_trace(field, domain, rule=...)`
+prepares the exact value trace on the selected exterior or interior facets of
+`integration_domain(...)`. The trace is linear in the two edge vertex values
+(`trace_degree=1`) and equals `evaluate_explicit_polygon_h1_trace`. Sites follow
+the owner cell's local edge parametrization and are the same physical points
+for `side="owner"` and `side="neighbor"`; `normals` point out of the side cell
+and `weights` are the physical edge measure. Only `quantity="value"` exists;
+`side="neighbor"` on exterior facets and `side="average"` are refused.
+
+```python
+from phydrax.discretization import FacetTraceRule
+from phydrax.discretization.explicit_polygon_h1 import (
+    prepare_explicit_polygon_h1_field_reconstruction,
+)
+
+reconstruction = prepare_explicit_polygon_h1_field_reconstruction(space)
+query = reconstruction.prepare_query(points, derivative=(1, 0))
+slopes = query.apply(full_solution)
+trace = space.prepare_side_trace(
+    "u", space.exterior_facet_domain, rule=FacetTraceRule(points=3)
+)
+boundary_values = trace.apply(full_solution)
+boundary_load = trace.inject_load(density)
+```
 
 ## References
 

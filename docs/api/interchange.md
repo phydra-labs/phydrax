@@ -856,7 +856,8 @@ differential evolution); none is selected silently.
 
 These host-only boundaries require explicit runtime/version/license provenance.
 They do not execute inside JAX transformations or provide surrogate derivatives.
-FMI support is synchronous FMI 2.0 Co-Simulation; HELICS support is value
+FMI support is synchronous FMI 2.0 Co-Simulation, whose communication variables
+bind physical coupling ports for host coupling; HELICS support is value
 federation. See [the energy interchange guide](../guides_energy_interchange.md)
 for lifecycle, capabilities, unsupported features, and ownership.
 

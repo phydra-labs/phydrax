@@ -49,7 +49,11 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     result, distribution = measure_repeated(
         lambda: compiled(observed), warmup=1, repeats=repeats
     )
-    if not bool(result.successful) or float(result.quadratic) != 0.0:
+    if (
+        not bool(result.successful)
+        or result.quadratic is None
+        or float(result.quadratic) != 0.0
+    ):
         raise RuntimeError("Measurement benchmark failed exact self-comparison.")
     return {
         "environment": capture_environment().to_dict(),

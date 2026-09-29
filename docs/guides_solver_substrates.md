@@ -127,6 +127,11 @@ refused by gradient optimizers and trained explicitly with a
 distribution-evolution optimizer or calibrated with
 `phydrax.uq.posterior_problem_from_solver_objective` and `fit_eki`.
 
+Coupled spatial problems train the same way. A learned conductivity or other
+physical input is bound as a `ParameterBinding` value of the prepared coupled
+problem and scored through its observation bindings; see
+[Inverse problems and learned components](guides_numerical_interoperability.md#inverse-problems-and-learned-components).
+
 ```python executable
 from typing import ClassVar
 
@@ -264,6 +269,14 @@ stored array contents. `RuntimeCheckpointEncodingPlan` may map selected full-com
 Hermitian state leaves to independent real coordinates in the archive; unbound leaves
 stay in their native representation, and restore requires the identical tree paths,
 shapes, dtypes, coordinate evidence, and runtime identities.
+
+`RuntimeRestartRelation.identity(topology_id)` is the bitwise same-topology
+relation. A checkpoint restores into a changed topology only through an explicit
+relation with a restorer; `RuntimeRestartRelation.from_composition_rebind(receipt,
+restorer, classification=...)` derives it from a published
+`phx.lifecycle.CompositionRebindReceipt`, binding the source and published
+composition `structure_id`s and the receipt identity, and refuses refused or
+structure-preserving rebinds.
 
 `ProductionRunPlan` declares a positive nominal step, an absolute `end_time`, an
 absolute `maximum_steps` capacity, checkpoint cadence, and compiled segment length.
@@ -460,6 +473,14 @@ unstructured time evolution; diagonal metadata is not substituted for those oper
 rank/condition-certified nodal polynomial calculus over `PointTopology`. Its
 `DissipativePointDiffusion` supplies a negative-semidefinite factorization; no generic
 conservation claim is inferred from local polynomial reproduction.
+Point values are observed through `prepare_point_cloud_field_reconstruction`, a
+moving least-squares reconstruction with `partial` support coverage. Its prepared
+queries (`prepare_query(points, coverage="masked")`) keep every requested point's
+status, local-fit condition estimate, and neighbor count, admit only well-conditioned
+neighborhoods, and refuse incomplete coverage when `coverage="complete"`. Point
+clouds publish no facet trace: their boundary points, normals, and boundary weights
+serve point collocation and point-SBP evidence, not a weak trace with a facet
+measure.
 
 ## Staggered acoustics
 
@@ -546,6 +567,40 @@ reflections, conforming interfaces, and nested 2:1 traces.
 `NormCompatibleInterpolationPlan` builds local polynomial prolongation and norm-adjoint
 restriction. `MultiblockSATCoupling` uses these transfers for energy-conserving central
 or dissipative upwind scalar-advection coupling.
+
+### Boundary traces and prepared queries
+
+`SBPGridNorm` declares the tensor diagonal norm `H = H_1 ⊗ … ⊗ H_d` of one grid
+from one prepared `SBPDerivativePlan` per axis. `pairing(layout=...)` returns `H`
+as a `DiagonalPairing` on grid-shaped or flat node-row coefficients, and each
+axis carries `SBPClosureEvidence`: the declared interior and closure orders
+and the polynomial degree the norm integrates exactly (`2p - 1` for closure
+order `p`, derived from the norm coefficients; constants only for a periodic
+uniform norm).
+
+`PreparedFiniteDifferenceDiscretization.prepare_side_trace("u", domain,
+norm=norm)` publishes the exact nodal boundary restriction of the primary nodal
+field as a `PreparedTraceAction`. The exterior facets are the (bounded face,
+boundary node) incidences with one site each (faces in axis order, lower before
+upper, nodes row-major; a corner node once per face it bounds);
+`boundary_face_selection(axis, side)` selects one face and
+`integration_domain("exterior_facet", selection)` builds the domain. The trace
+measure is the tangential factor of `H` at each node, so the face quadrature is
+exact through the tangential closure degree reported as
+`quadrature_exact_degree`; normals are the outward axis vectors. The coefficient
+space is the flat node-row layout of `flatten`, paired by `H`, so
+`hilbert_adjoint(norm.pairing(layout="rows"))` is the SBP adjoint while
+`dual_pullback` and `inject_load` stay coordinate duals. Vector fields with
+`component_shape=(d,)` also publish outward `"normal"` and `"tangential"`
+traces. A facet rule, interior facets, periodic faces, cell-centered axes, and
+`"conormal-flux"` are refused: SBP traces infer no flux; SAT fluxes remain owned
+by `SATBoundaryPlan` and the equations that declare them.
+
+Interior values need a declared interpolation:
+`prepare_finite_difference_field_reconstruction(fd, interpolation=...)` with
+`MultilinearGridInterpolation` (values only) or `BSplineGridInterpolation(p)`
+(derivatives through order `p - 1`), whose `prepare_query` binds fixed points
+once and reuses the route for every coefficient refresh.
 
 ## Polygonal virtual elements
 

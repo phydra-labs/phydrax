@@ -64,6 +64,8 @@ plugins:
             python:
                 options:
                     force_inspection: true
+                    extensions:
+                        - mkdocstrings_setup.py:RuntimeTypeAliases
                     preload_modules:
                         - mkdocstrings_setup
                     heading_level: 4
@@ -453,6 +455,7 @@ nav:
         - Production aerothermodynamics: "guides_aerothermodynamics.md"
         - Advanced multiphysics: "guides_advanced_multiphysics.md"
         - Partitioned multiphysics coupling: "guides_partitioned_coupling.md"
+        - Numerical interoperability: "guides_numerical_interoperability.md"
         - Astrodynamics: "guides_astrodynamics.md"
         - Astrophysical observations: "guides_astrophysics_observations.md"
         - Gravitational-wave inference: "guides_gravitational_wave_inference.md"
@@ -865,7 +868,7 @@ nav:
             - Advanced multiphysics: "api/solver/advanced_multiphysics.md"
             - Chemical execution: "api/solver/chemistry.md"
             - Thermodynamic equilibrium: "api/solver/thermodynamic_equilibrium.md"
-            - Partitioned coupling: "api/solver/coupling.md"
+            - Coupling: "api/solver/coupling.md"
             - Maxwell: "api/solver/maxwell.md"
             - Spectral Maxwell (PSATD): "api/solver/spectral_maxwell.md"
             - Boosted-frame PIC: "api/solver/boosted_frame.md"

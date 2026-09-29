@@ -179,6 +179,15 @@ face transfers and their nondifferentiable `TopologyEpochTransition`s, so an
 application can reuse each route for all of its field components.
 `derivative_available` is always `False`.
 
+`multiregion_topology_epoch(topology, positions)` returns the epoch a pass
+certifies for the current geometry (incidence, stable lineage and exact active
+positions); it equals the pass's `source_epoch`. A cross-owner
+`phx.lifecycle` rebind uses its `epoch_id` as the structure identity of
+epoch-owned state, so `transition.composition_transport(source, target)` binds
+sheet-slot content across the pass, and consumers such as the Plateau-border
+network re-prepare on `target_epoch` (see the
+[foam guide](guides_soap_films_and_foams.md#border-content-across-topology-events)).
+
 Whole-sheet `BURST` uses `apply_surface_burst`, because vanished sheet content
 cannot satisfy the ordinary surviving-sheet transfer. Stable face IDs must
 name the complete separating sheet. The transaction deletes it, merges the two

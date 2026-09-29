@@ -1099,10 +1099,30 @@ methods claims a global optimum.
 #### Accepted response pullbacks and block evidence
 
 `prepare_state_design_linearization(problem, design, initial_state, *,
-args=None, linear_policy=None)` solves and independently accepts one physical
-state, then stores an immutable matrix-free residual linearization. Changing
-the design, arguments, or realization requires a new preparation; this function
-does not run a design optimizer.
+args=None, linear_policy=None, component=None)` solves and independently accepts
+one physical state, then stores an immutable matrix-free residual linearization.
+Changing the design, arguments, or realization requires a new preparation; this
+function does not run a design optimizer.
+
+When the design is the PARAMETER lane of a bound model, pass the owner's
+`StateDesignComponentAdmission(binding, *, kind, surfaces=(MODEL_PARAMETER,),
+policy=None)` as `component`. The admission forms the binding's contract for
+`DifferentiationRequest(surfaces, authority=binding.authority)` under `policy`,
+requires the model's `DIRECT` route, and requires
+`authority_admits(binding.authority, DIRECT, kind)`: a `SURROGATE` network
+supplies a `PHYSICAL_RESIDUAL` or `DATA_FIT` design and is refused for
+`SOLUTION_MAP`. `kind` is the caller's declaration of the objective's meaning;
+it is not inferred from the response. `admission.design(binding)` returns the
+admitted lane and refuses a binding whose authority, slot, or model execution
+contract differs from the admitted binding. Arrays carry no binding identity, so
+`prepare_state_design_linearization` checks only that the design has the
+admitted lane's PyTree structure, shapes, and dtypes before the state solve;
+obtain the design through `admission.design(binding)`.
+`StateDesignLinearization.component` and
+`StateDesignResponseVJP.component` carry the admission beside the separate
+accepted-primal (`state_acceptance`) and accepted-adjoint
+(`adjoint_acceptance`) evidence. The owner's accepted response never widens
+what the component's authority admits.
 
 `state_design_response_vjp(linearization, response=None, cotangent=None, *,
 depends_on_state=True)` pulls a response cotangent back to the design through
@@ -1613,6 +1633,10 @@ single-process measurements, not backend-independent performance claims.
 ---
 
 ::: phydrax.optim.AdjointAcceptanceEvidence
+
+---
+
+::: phydrax.optim.StateDesignComponentAdmission
 
 ---
 

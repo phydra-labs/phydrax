@@ -511,6 +511,21 @@ No communication, mesh, or fallback-solver stack is introduced. See
 [Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
 [API → Solver → Partitioned coupling](api/solver/coupling.md).
 
+Numerical interoperability binds those owners instead of replacing them. An
+`InterfaceBinding` ties one physical interface to its geometry revision and each
+endpoint's native support; prepared queries and side actions read fields with
+exact coordinate transposes and labeled projections. `CoupledProblemPlan`
+assembles finite-element, spectral-element, explicit polygon, isogeometric,
+virtual-element, 2-D Galerkin boundary-element, 3-D FEM–BEM, and reduced-order
+components through matching, mortar, Nitsche, conservative-flux, port,
+field-transfer, and boundary-integral laws, solves natively, and accepts only
+certified original equations and interface defects. Parameter and observation
+bindings, implicit derivatives, transient and condensed forms, coupled
+transitions for control and state-space inference, lifecycle rebinds, FMI host
+coupling, and lane worksets reuse the same declarations. See
+[Guide → Numerical interoperability](guides_numerical_interoperability.md) and
+[API → Solver → Partitioned coupling](api/solver/coupling.md).
+
 ### Native rigid and soft robotics as a composition
 
 `phydrax.applications.robotics` adapts explicitly rooted, descriptor-bounded

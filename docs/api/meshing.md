@@ -194,6 +194,7 @@ certification, and topology-transition contracts.
         - TiogaRegistration
         - MeshPart
         - MeshAssembly
+        - MeshInterfaceAttachment
         - MeshDistribution
         - MeshPartitionKind
         - MeshPartitionPolicy

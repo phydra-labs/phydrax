@@ -65,6 +65,8 @@ Labeled non-manifold triangle complexes for soap films and dry foams. See the
 
 ::: phydrax.geometry.multiregion_surface.SurfaceBurstResult
 
+::: phydrax.geometry.multiregion_surface.multiregion_topology_epoch
+
 
 `SurfaceEventProposal` accepts `EdgeSplitProposal`, `EdgeCollapseProposal`,
 `EdgeFlipProposal`, `T1PopProposal`, `PinchProposal`, `MergeProposal`,

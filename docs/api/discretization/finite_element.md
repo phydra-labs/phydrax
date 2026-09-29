@@ -115,6 +115,18 @@ cell map.
 
 ---
 
+::: phydrax.discretization.fem.prepare_finite_element_side_trace
+
+---
+
+::: phydrax.discretization.FiniteElementDiscretization.prepare_side_trace
+
+---
+
+::: phydrax.discretization.fem.reference_facet_embedding
+
+---
+
 ::: phydrax.discretization.PreparedFieldReconstruction
 
 ---
@@ -295,6 +307,31 @@ host-epoch Bernstein certificate of a moved state.
 
 ::: phydrax.equations.CompiledFiniteElementProblem
 
+---
+
+::: phydrax.equations.CompiledFiniteElementProblem.prepare_conormal_flux
+
+---
+
+::: phydrax.equations.CompiledFiniteElementProblem.prepare_pointwise_flux
+
+---
+
+::: phydrax.equations.CompiledFiniteElementProblem.certify_flux_stability
+
+---
+
+::: phydrax.equations.CompiledFiniteElementProblem.prepare_mass
+
+---
+
+::: phydrax.equations.PreparedFiniteElementMass
+
+---
+
+::: phydrax.equations.CompiledFiniteElementProblem.boundary_impositions
+
+---
 
 ::: phydrax.equations.compile_finite_element_problem
 

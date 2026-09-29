@@ -124,10 +124,61 @@ IGA sparse backend. `python tools/iga_h1_benchmarks.py` writes
 shared synchronized timing helpers. It is record-only: solver status and
 residual are recorded, but elapsed time has no pass threshold.
 
+## Prepared field queries and side traces
+
+`prepare_isogeometric_field_reconstruction(discretization, "u", ...)` returns a
+`PreparedFieldReconstruction` that evaluates a field at physical points. Each
+point is mapped back to the parameter box by a fixed number of clamped Newton
+steps on the runtime NURBS map, seeded from samples of every
+integration-overlay cell; this inverse map runs in JAX, so a prepared query
+locates once and `apply`/`transpose` reuse the route for any coefficients.
+Points whose closest parameter lies on the patch box with a nonzero residual are
+`OUTSIDE_SUPPORT`; unconverged interior iterations are `LOCATION_FAILED`.
+Values and first physical derivatives are exact: physical-linear fields are
+reproduced exactly on the rational quarter annulus, and tensor polynomials of
+the field degree on affine patches. On a knot line where the requested order
+exceeds the field or geometry continuity, a trace side is required
+(`side="owner", cell_ids=...` names the C-ordered overlay cell). Coefficients
+use the public tensor layout `control_shape + component_shape`.
+
+The support region of an axis-aligned affine patch is derived. A curved patch
+needs an explicit `support_geometry`: its boundary must contain the patch
+boundary, its interior must contain the patch interior, and a declared interior
+measure must equal the patch measure.
+
+```python
+region = (
+    (phx.geometry.Ball((0.0, 0.0), 2.0) - phx.geometry.Ball((0.0, 0.0), 1.0))
+    & phx.geometry.Orthotope((1.0, 1.0), (2.0, 2.0))
+).compile()
+reconstruction = phx.discretization.iga.prepare_isogeometric_field_reconstruction(
+    annulus, "u", support_geometry=region
+)
+slopes = reconstruction.prepare_query(points, derivative=(1, 0))
+```
+
+`discretization.prepare_side_trace(field, domain, rule=FacetTraceRule(...))`
+publishes the exact trace on patch-boundary faces (`exterior_facet`) or on the
+interior knot faces between overlay cells
+(`integration_domain("interior_facet")`). Sites are the owner cell's facet rule
+points, shared by the `"owner"` and `"neighbor"` sides; weights are the rule
+weights times the physical surface Jacobian; normals point out of the traced
+cell. `"normal"` and `"tangential"` traces contract vector fields with the
+outward normal. The trace acts on the compiled field's public control layout
+`(*control_shape, *component_shape)`, the same coefficients the finite-element
+compiler solves for, so its dual pullbacks, residual-reaction fluxes, and coupling
+laws act on that field directly. `support_rows` are the C-order flattened control
+indices (`trace.row_shape` is the control shape; `trace.flatten_rows` and
+`local_field_binding(name).flatten` apply the same exact map). Trace degrees are
+reported only for polynomial (uniform-weight) fields, and for normal/tangential
+traces only on affine patches. Local variational regions remain cell and
+exterior-facet only.
+
 ## Explicit S1 boundary
 
 S1 does not support trimming, holes described by trim curves, multipatch coupling,
-interfaces, extraordinary points, hierarchical or locally refined splines,
+multipatch interfaces (interior knot faces of one patch are traced, not coupled),
+extraordinary points, hierarchical or locally refined splines,
 trainable knots, anisotropic degree, periodic knots, 3D volume maps, embedded
 shell/surface mechanics, vector or mixed fields, H(div)/H(curl) mappings, contact,
 or public sparse assembly. It does not infer quadrature order. A positive weight

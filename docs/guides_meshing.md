@@ -518,6 +518,19 @@ without a policy the advance returns the unexecuted request (candidate mesh and
 assessment and, for executed remeshes, the `CellMeshTransition` and adaptation
 transfer consumed by the solver transaction.
 
+An adapted mesh reaches a running coupled problem only through one accepted
+cross-owner rebind (`phx.lifecycle.CompositionRebind`). A certified conservative
+`FiniteElementTopologyTransfer` (the adaptation transfer, or
+`vertex_interpolation_transfer` with P1 coordinates and basis integrals) becomes a
+topology-epoch transition with `transfer.epoch_transition(source_field,
+target_field, source_epoch, target_epoch, source_measures, target_measures)`; its
+claims come from the transfer's own certification. The transition's
+`composition_transport(source_entry, target_entry)` reports the conserved content
+and succeeds only if the staged field is the transfer image, so observations,
+factorizations, and interface routes bound to the old topology must be
+reprepared or the rebind refuses them (see the lifecycle section of the
+numerical interoperability guide and `examples/adaptive_fe_fv_rebind.py`).
+
 ## Device adaptation epochs
 
 ```python
@@ -787,6 +800,37 @@ uses clipped barycentric weights. Overset coupling is interpolation, never a
 conservative overlap remap (`conservative` is false). Searches that leave a
 receptor without an admissible donor raise `CouplingSearchError`, whose
 `CouplingSearchEvidence` reports every receptor's `CouplingSearchStatus`.
+
+### Interface attachments
+
+`MeshInterfaceAttachment(part, scope, association, geometry_entity_ids,
+tolerance=..., region=...)` attaches exact entities of one named `MeshPart` to
+declared authoritative geometry entities, for example the `BRepEntityId`
+strings of one B-Rep edge or face. The scope may be a part-bound `MeshingScope`
+or a `MeshPatch`, `MeshZone`, or `MeshLabel` certified on the part's carrier;
+organization evidence is recorded in `organization_ids`. The witness is a
+`GeometryAssociation` certified on the same carrier: every attached entity must
+be resolved, unambiguous, classified on a declared entity within `tolerance`,
+and every declared entity must be attached. An association of another carrier,
+another entity set, or another geometry revision is refused; equal shapes or
+names never substitute for it. The attachment does not classify anything
+itself.
+
+A sided attachment records which side of the authoritative oriented normal it
+lies on. With `region=` (the cells of the attached side of a volume carrier),
+every attached facet must bound exactly one region cell, and
+`orientation = +1` means the region's outward normal equals the B-Rep face
+normal (three dimensions) or the B-Rep edge tangent rotated clockwise,
+`(t_y, -t_x)` (two dimensions); `-1` means it is opposed. A codimension-one
+carrier (a surface mesh) declares instead with `carrier_side=InterfaceSide`
+which side of its own cell orientation it represents. Without either, the
+attachment is unsided. `require_current(part)` and
+`MeshAssembly.require_attachment(attachment)` refuse a part whose revision
+changed; moving or remeshing a part therefore requires a new attachment, while
+redistributing its ownership does not. Attachments currently require a
+certified cell carrier, since only cell results carry geometry associations.
+See [Numerical interoperability](guides_numerical_interoperability.md#interface-bindings)
+for the solver-level bindings that consume them.
 
 ## Learned proposals remain untrusted
 

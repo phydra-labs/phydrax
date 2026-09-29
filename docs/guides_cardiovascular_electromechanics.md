@@ -65,6 +65,8 @@ Each descriptor binds exact `DiscreteFieldSpace` instances. If source and target
 
 This permits, for example, an EP nodal mesh and a distinct mechanics quadrature mesh. Build the interpolation/restriction from the PhydraX discretization substrate and pass it to the typed descriptor. The coupling graph then applies that operator; application code does not duplicate transfer logic.
 
+The descriptor typing is an electromechanics-level contract. The generated `solver.coupling` ports are untyped instantaneous endpoint spaces over the bound `DiscreteFieldSpace`s: they declare no `CouplingQuantity` or `CouplingMeasurement` inventory, and their exchanges declare no temporal conversion. Their reference scales define only the interface residual norm. A physical inventory exchange would use typed ports with an explicit `CouplingMeasurement`.
+
 ## One-way multirate coupling
 
 `OneWayElectromechanicsPlan` constructs a directed EP→mechanics `CouplingGraph` with an explicit Gauss–Seidel sweep ordered as electrophysiology then mechanics. `ElectromechanicsCadence(ep_substeps, mechanics_substeps=1)` declares the work per physical coupling window. Participant callbacks receive the exact count and return it as `completed_substeps`; a mismatch fails the participant and causes native coupling rollback.

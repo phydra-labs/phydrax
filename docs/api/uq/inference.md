@@ -1981,7 +1981,9 @@ semantics remain in `phydrax.finance.econometrics`.
 
 The observation actions below share one labeled `CoordinateLayout`. A method is
 exposed only when its representation supports it; for example, whitening is not
-invented for a generic precision operator.
+invented for a generic precision operator. `restrict_observation_covariance`
+returns the exact Gaussian marginal on active coordinates where a
+structure-preserving marginal exists, and refuses it otherwise.
 
 ::: phydrax.observation.DiagonalCovarianceAction
 
@@ -1992,6 +1994,8 @@ invented for a generic precision operator.
 ::: phydrax.observation.KroneckerCholeskyCovarianceAction
 
 ::: phydrax.observation.CirculantCovarianceAction
+
+::: phydrax.observation.restrict_observation_covariance
 
 ::: phydrax.observation.LinearNuisancePlan
 

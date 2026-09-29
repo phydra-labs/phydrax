@@ -75,6 +75,16 @@ because its curvature needs FunctionalSolver residual terms. With
 `checkpoint`, the committed state is published after every attempt and a
 matching checkpoint resumes exactly; identity mismatches fail closed.
 
+For a prepared coupled spatial problem (`phydrax.solver.coupling`), `solve`
+is the fixed prepared problem, `bind` supplies the trained values or model as
+`ParameterBinding` values, and `measure` calls `solve_coupled_problem`. It
+returns `SolverCaseResult(accepted=solution.accepted, residual=...)` built from
+`MeasurementComparisonPlan` residuals of `solution.observation(...)`. Only
+physical parameters and solver arguments that the problem's
+`derivative_capability` admits under the solve policy are differentiated;
+refused ones raise `derivative-unsupported`. See
+[Inverse problems and learned components](../../guides_numerical_interoperability.md#inverse-problems-and-learned-components).
+
 ::: phydrax.solver.AbstractSolverObjective
     options:
         members:

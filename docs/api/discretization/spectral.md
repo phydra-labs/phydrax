@@ -52,13 +52,19 @@
 `TensorSpectralDiscretization.evaluate` and `derivative_at` synthesize modal
 coefficients at arbitrary points; `prepare_spectral_field_reconstruction`
 wraps that synthesis as a smooth `PreparedFieldReconstruction` for
-`DiscreteFieldFunctionView`.
+`DiscreteFieldFunctionView` and prepared queries.
+`TensorSpectralDiscretization.prepare_side_trace` publishes the exact trace on
+bounded faces through a sum-factorized `SpectralFaceRoute`.
 
 ::: phydrax.discretization.prepare_spectral_field_reconstruction
 
 ---
 
 ::: phydrax.discretization.SpectralFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.SpectralFaceRoute
 
 ## Transfer and diagnostics
 

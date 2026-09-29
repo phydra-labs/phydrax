@@ -119,3 +119,35 @@
 ---
 
 ::: phydrax.equations.evaluate_virtual_element_trace
+
+## Prepared channels, traces, and fluxes
+
+::: phydrax.equations.vem.VirtualElementReconstructionChannel
+
+---
+
+::: phydrax.equations.vem.prepare_virtual_element_field_reconstruction
+
+---
+
+::: phydrax.discretization.VirtualElementDiscretization.prepare_side_trace
+
+---
+
+::: phydrax.discretization.VirtualElementDiscretization.edge_trace_routes
+
+---
+
+::: phydrax.discretization.VirtualElementSpec.edge_trace_basis
+
+---
+
+::: phydrax.equations.CompiledVirtualElementProblem.prepare_conormal_flux
+
+---
+
+::: phydrax.equations.CompiledVirtualElementProblem.prepare_projected_flux
+
+---
+
+::: phydrax.equations.CompiledVirtualElementProblem.boundary_impositions
