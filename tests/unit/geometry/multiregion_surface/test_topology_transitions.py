@@ -8,7 +8,6 @@ from phydrax.geometry.multiregion_surface import (
     MergeProposal,
     multiregion_sheet_views,
     MultiRegionRemeshPlan,
-    MultiRegionSurfaceCapacityPlan,
     MultiRegionSurfaceSeed,
     MultiRegionSurfaceState,
     MultiRegionSurfaceTopology,
@@ -30,118 +29,15 @@ from phydrax.geometry.multiregion_surface import (
     T1PopProposal,
     validate_multiregion_surface,
 )
+from tests._support.multiregion_foams import dry_foam_capacity_plan, t1_cluster
 
 
 DRY_FOAM = MultiRegionSurfaceValidationPolicy(profile="dry_foam")
 
 
-def _foam_plan(
-    seed: MultiRegionSurfaceSeed, resource: str, /
-) -> MultiRegionSurfaceCapacityPlan:
-    counts = seed.counts()
-    return MultiRegionSurfaceCapacityPlan(
-        vertex_capacity=2 * counts.vertex,
-        edge_capacity=2 * counts.edge,
-        face_capacity=2 * counts.face,
-        region_capacity=counts.region + 2,
-        region_pair_capacity=2 * counts.region_pair + 2,
-        maximum_edge_valence=3,
-        maximum_vertex_region_pairs=9,
-        resource_id=resource,
-        event_capacity=16,
-    )
-
-
-def _cluster(
-    film: float = 0.05, cap: float = 0.25, height: float = 0.5, turn: float = 0.0
-) -> MultiRegionSurfaceSeed:
-    """Cells D (upper column), E (lower column) and three wedges around a tiny D|E film.
-
-    The column is a frustum whose mid-plane triangle (the vanishing film,
-    circumradius ``film``) is bounded by three Plateau borders; slight
-    deterministic offsets keep every vertex in general position.
-    """
-    angles = np.radians(90.0 + turn + 120.0 * np.arange(3))
-    ring = np.stack((np.cos(angles), np.sin(angles), np.zeros(3)), axis=1)
-    points: list[np.ndarray] = []
-
-    def vertex(point: np.ndarray, key: int, level: int, /) -> int:
-        offset = 1.3e-3 * np.asarray(
-            (np.sin(3.1 * key + 7.0 * level), np.cos(2.3 * key + 5.0 * level), 0.0)
-        )
-        points.append(point + offset)
-        return len(points) - 1
-
-    inner = {
-        (k, s): vertex((film if s == 0 else cap) * ring[k] + (0.0, 0.0, s * height), k, s)
-        for k in range(3)
-        for s in (-1, 0, 1)
-    }
-    outer = {
-        (k, s): vertex(ring[k] + (0.0, 0.0, s * height), k + 5, s)
-        for k in range(3)
-        for s in (-1, 0, 1)
-    }
-    upper, lower, ambient = 0, 1, 5
-    wedge = (2, 3, 4)
-    centers = {
-        upper: np.asarray((0.0, 0.0, 0.5 * height)),
-        lower: np.asarray((0.0, 0.0, -0.5 * height)),
-    }
-    for k in range(3):
-        centers[wedge[k]] = 0.3 * (ring[k] + ring[(k + 1) % 3])
-    polygons = [
-        ([inner[(k, 0)] for k in range(3)], upper, lower),
-        ([inner[(k, 1)] for k in range(3)], upper, ambient),
-        ([inner[(k, -1)] for k in range(3)], lower, ambient),
-    ]
-    for k in range(3):
-        n = (k + 1) % 3
-        side, previous = wedge[k], wedge[(k - 1) % 3]
-        polygons += [
-            ([inner[(k, 0)], inner[(n, 0)], inner[(n, 1)], inner[(k, 1)]], upper, side),
-            ([inner[(k, -1)], inner[(n, -1)], inner[(n, 0)], inner[(k, 0)]], lower, side),
-            ([inner[(k, 1)], outer[(k, 1)], outer[(n, 1)], inner[(n, 1)]], side, ambient),
-            (
-                [inner[(k, -1)], outer[(k, -1)], outer[(n, -1)], inner[(n, -1)]],
-                side,
-                ambient,
-            ),
-            (
-                [outer[(k, -1)], outer[(n, -1)], outer[(n, 0)], outer[(k, 0)]],
-                side,
-                ambient,
-            ),
-            ([outer[(k, 0)], outer[(n, 0)], outer[(n, 1)], outer[(k, 1)]], side, ambient),
-            ([inner[(k, -1)], outer[(k, -1)], inner[(k, 0)]], previous, side),
-            ([inner[(k, 0)], outer[(k, -1)], outer[(k, 0)]], previous, side),
-            ([inner[(k, 0)], outer[(k, 0)], outer[(k, 1)]], previous, side),
-            ([inner[(k, 0)], outer[(k, 1)], inner[(k, 1)]], previous, side),
-        ]
-    coordinates = np.asarray(points)
-    faces, labels = [], []
-    for loop, left, right in polygons:
-        for index in range(1, len(loop) - 1):
-            triangle = [loop[0], loop[index], loop[index + 1]]
-            corners = coordinates[triangle]
-            normal = np.cross(corners[1] - corners[0], corners[2] - corners[0])
-            if np.dot(normal, np.mean(corners, axis=0) - centers[left]) < 0.0:
-                triangle = [triangle[0], triangle[2], triangle[1]]
-            faces.append(triangle)
-            labels.append((left, right))
-    return MultiRegionSurfaceSeed(
-        coordinates,
-        np.asarray(faces),
-        np.asarray(labels),
-        ("D", "E", "A", "B", "C", "ambient"),
-        ("finite",) * 5 + ("boundary",),
-        source="t1-cluster",
-    )
-
-
 def test_t1_pop_restores_region_graph_completeness_and_conserves_volumes() -> None:
-    seed = _cluster()
-    topology = seed.topology(_foam_plan(seed, "t1"))
+    seed = t1_cluster()
+    topology = seed.topology(dry_foam_capacity_plan(seed, "t1"))
     base = seed.state(topology)
     before = validate_multiregion_surface(topology, base, policy=DRY_FOAM)
     assert before.accepted
@@ -286,7 +182,7 @@ def test_merge_zips_facing_films_into_a_shared_wall() -> None:
         ("finite", "finite", "boundary"),
         source="two-bubbles",
     )
-    topology = seed.topology(_foam_plan(seed, "merge"))
+    topology = seed.topology(dry_foam_capacity_plan(seed, "merge"))
     base = seed.state(topology)
     prepared = PreparedMultiRegionSurface(topology, base)
     slot = np.asarray(prepared.slot_areas(base.positions))
@@ -364,8 +260,8 @@ def test_explicit_region_split_and_unknown_region() -> None:
 
 
 def test_t1_certificate_refuses_a_diagonal_film_whose_box_passes() -> None:
-    seed = _cluster(turn=45.0)
-    topology = seed.topology(_foam_plan(seed, "t1-diagonal"))
+    seed = t1_cluster(turn=45.0)
+    topology = seed.topology(dry_foam_capacity_plan(seed, "t1-diagonal"))
     state = seed.state(topology)
     film = seed.positions[[1, 4, 7]]
     extent = float(np.max(np.ptp(film, axis=0)))
@@ -389,8 +285,8 @@ def test_t1_certificate_refuses_a_diagonal_film_whose_box_passes() -> None:
 
 
 def test_t1_certificate_stays_bounded_on_a_refined_film() -> None:
-    seed = _cluster().subdivided(2)
-    topology = seed.topology(_foam_plan(seed, "t1-refined"))
+    seed = t1_cluster().subdivided(2)
+    topology = seed.topology(dry_foam_capacity_plan(seed, "t1-refined"))
     state = seed.state(topology)
     prepared = PreparedMultiRegionSurface(topology, state)
     films = propose_t1_pops(prepared, state, maximum_film_diameter=0.09)
@@ -443,7 +339,7 @@ def test_merge_detects_close_edges_of_large_far_centered_films() -> None:
             ("finite", "finite", "boundary"),
             source="edge-close-films",
         )
-        topology = seed.topology(_foam_plan(seed, "edge-close"))
+        topology = seed.topology(dry_foam_capacity_plan(seed, "edge-close"))
         return topology, seed.state(topology)
 
     policy = SurfaceMergePolicy(("ambient",), merge_distance=0.1)

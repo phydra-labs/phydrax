@@ -79,6 +79,7 @@ from ._topology_transitions import (
 from ._transaction import (
     apply_surface_burst,
     apply_surface_events,
+    multiregion_topology_epoch,
     SurfaceBurstResult,
     SurfaceEventProposal,
 )
@@ -159,6 +160,7 @@ __all__ = [
     "multiregion_surface_candidate_profiles",
     "multiregion_cell_complex",
     "multiregion_sheet_views",
+    "multiregion_topology_epoch",
     "propose_merges",
     "propose_pinches",
     "propose_remesh",

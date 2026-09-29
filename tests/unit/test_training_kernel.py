@@ -840,3 +840,159 @@ def test_evaluation_view_drives_evaluation_source_targets_from_the_start() -> No
         next_state.targets.target.weight,
         0.5 * state.targets.target.weight + next_state.parameters.weight,
     )
+
+
+_TRAINING_STATE_ENTRIES = (
+    "fit/accumulation",
+    "fit/history",
+    "fit/model-state",
+    "fit/optimizer",
+    "fit/parameters",
+    "fit/rng",
+    "fit/targets",
+)
+
+
+def _composed_run() -> Any:
+    kernel, state = _resumable_kernel()
+    state = _advance(kernel, state, 2)
+    source = phx.lifecycle.Composition(
+        kernel.composition_entries(state, owner_id="fit"), boundary_id="update-2"
+    )
+    return kernel, state, source
+
+
+def _kernel_entry(kernel: Any, state: Any) -> Any:
+    entries = kernel.composition_entries(state, owner_id="fit")
+    return next(entry for entry in entries if entry.entry_id == "fit/kernel")
+
+
+def test_composition_entries_classify_every_durable_training_state_field() -> None:
+    kernel, state, source = _composed_run()
+    assert {entry.entry_id: entry.role for entry in source.entries} == {
+        "fit/accumulation": "statistics",
+        "fit/history": "history",
+        "fit/kernel": "prepared-graph",
+        "fit/model-state": "model-state",
+        "fit/optimizer": "optimizer-state",
+        "fit/parameters": "model-parameter",
+        "fit/rng": "rng",
+        "fit/targets": "statistics",
+    }
+    kernel_entry = source.entry("fit/kernel")
+    assert {(item.entry_id, item.facet) for item in kernel_entry.dependencies} == {
+        ("fit/accumulation", "structure"),
+        ("fit/history", "structure"),
+        ("fit/model-state", "structure"),
+        ("fit/optimizer", "structure"),
+        ("fit/parameters", "semantics"),
+        ("fit/rng", "structure"),
+        ("fit/targets", "structure"),
+    }
+    assert source.entry("fit/parameters").structure_id == kernel.parameter_signature
+    window = kernel.accumulate(state, _payload(support=1.0))
+    with pytest.raises(ValueError, match="accepted-update boundary"):
+        kernel.composition_entries(window, owner_id="fit")
+    other, _ = _kernel(OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"))
+    with pytest.raises(ValueError, match="does not belong to this kernel"):
+        other.composition_entries(state, owner_id="fit")
+    discretization = phx.lifecycle.CompositionEntry(
+        jnp.zeros((3,)),
+        entry_id="mesh/discretization",
+        role="discretization",
+        owner_id="mesh",
+        structure_id="mesh-epoch-0",
+        revision_id="mesh-epoch-0",
+        semantics_id="mesh.cells",
+    )
+    bound = kernel.composition_entries(
+        state,
+        owner_id="fit",
+        model_state_dependencies=(discretization.binding("structure"),),
+    )
+    mesh_bound = phx.lifecycle.Composition(
+        (*bound, discretization), boundary_id="update-2"
+    )
+    refined = phx.lifecycle.CompositionEntry(
+        jnp.zeros((5,)),
+        entry_id="mesh/discretization",
+        role="discretization",
+        owner_id="mesh",
+        structure_id="mesh-epoch-1",
+        revision_id="mesh-epoch-1",
+        semantics_id="mesh.cells",
+    )
+    with pytest.raises(
+        ValueError, match="'fit/model-state' is stale against the structure"
+    ):
+        phx.lifecycle.CompositionRebind(
+            mesh_bound,
+            retain=tuple(
+                item for item in mesh_bound.entry_ids if item.startswith("fit/")
+            ),
+            reprepare=(refined,),
+        )
+
+
+def test_rebind_keeps_parameters_only_through_a_same_semantics_kernel_binding() -> None:
+    kernel, state, source = _composed_run()
+    moved = _Regressor(state.parameters.weight, jnp.asarray(0.0), jnp.asarray([1.0, 0.0]))
+    reprepared, _ = _kernel(
+        OptaxUpdateRule(optax.adam(0.05), rule_id="adam"),
+        objectives=(_fit(_noisy_squared_error),),
+        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.9),
+        tree=moved,
+    )
+    entry = _kernel_entry(reprepared, state)
+    assert entry.revision_id != source.entry("fit/kernel").revision_id
+    receipt = phx.lifecycle.commit_composition_rebind(
+        phx.lifecycle.CompositionRebind(
+            source, retain=_TRAINING_STATE_ENTRIES, reprepare=(entry,)
+        ),
+        accepted_boundary=True,
+    )
+    assert receipt.published
+    assert receipt.reprepared == ("fit/kernel",)
+    assert receipt.retained == _TRAINING_STATE_ENTRIES
+    assert receipt.composition.value("fit/kernel") is reprepared
+    assert receipt.composition.value("fit/parameters") is state.parameters
+    with pytest.raises(ValueError, match="survive only through an explicit"):
+        phx.lifecycle.CompositionRebind(
+            source, retain=_TRAINING_STATE_ENTRIES, invalidate=("fit/kernel",)
+        )
+
+
+def test_rebind_refuses_retained_optimizer_after_objective_or_schema_change() -> None:
+    kernel, state, source = _composed_run()
+    reweighted, _ = _kernel(
+        OptaxUpdateRule(optax.adam(0.05), rule_id="adam"),
+        objectives=(_fit(_noisy_squared_error, weight=2.0),),
+        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.9),
+    )
+    assert reweighted.parameter_signature == kernel.parameter_signature
+    with pytest.raises(
+        ValueError, match="'fit/kernel' is stale against the structure of 'fit/optimizer'"
+    ):
+        phx.lifecycle.CompositionRebind(
+            source,
+            retain=_TRAINING_STATE_ENTRIES,
+            reprepare=(_kernel_entry(reweighted, state),),
+        )
+    wide = _Regressor(
+        jnp.asarray([2.0, -1.0, 0.5]), jnp.asarray(0.0), jnp.asarray([0.5, 0.25, 0.1])
+    )
+    widened, wide_state = _kernel(
+        OptaxUpdateRule(optax.adam(0.05), rule_id="adam"),
+        objectives=(_fit(_noisy_squared_error),),
+        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.9),
+        tree=wide,
+    )
+    assert widened.parameter_signature != kernel.parameter_signature
+    with pytest.raises(
+        ValueError, match="'fit/kernel' is stale against the structure of 'fit/optimizer'"
+    ):
+        phx.lifecycle.CompositionRebind(
+            source,
+            retain=_TRAINING_STATE_ENTRIES,
+            reprepare=(_kernel_entry(widened, wide_state),),
+        )

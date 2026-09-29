@@ -274,6 +274,19 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         ):
             raise ValueError("Geometry association contains undeclared target IDs.")
 
+    def target_rows(self, target_global_ids: ArrayLike, /) -> np.ndarray:
+        """Host rows of exact target global IDs; every requested ID must be a row."""
+        requested = np.asarray(target_global_ids)
+        if requested.ndim != 1 or not np.issubdtype(requested.dtype, np.integer):
+            raise TypeError("target_global_ids must be one integer vector.")
+        targets = np.asarray(self.target_global_ids, dtype=np.int64)
+        order = np.argsort(targets, kind="stable")
+        position = np.minimum(np.searchsorted(targets[order], requested), order.size - 1)
+        rows = order[position]
+        if not np.array_equal(targets[rows], requested):
+            raise ValueError("Geometry association does not classify every requested ID.")
+        return rows
+
 
 def _row_metadata(
     count: int,

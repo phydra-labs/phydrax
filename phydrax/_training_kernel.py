@@ -16,7 +16,7 @@ import functools
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from enum import IntEnum
-from typing import Any, cast, ClassVar, final, NamedTuple
+from typing import Any, assert_never, cast, ClassVar, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -69,6 +69,10 @@ from ._training_objective import (
 )
 from ._tree_math import tree_inner, tree_norm, tree_where
 from .typing import PRNGKey
+
+
+if TYPE_CHECKING:
+    from .lifecycle import CompositionDependency, CompositionEntry, CompositionRole
 
 
 TargetPolicy = DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy
@@ -1376,6 +1380,143 @@ class PreparedTrainingKernel(StrictModule):
             raise ValueError(f"{self.context}: the kernel tracks no target parameters.")
         return combine_parameters(state.targets.target, state.model_state, self.fixed)
 
+    # Composition ----------------------------------------------------------------------
+
+    def composition_entries(
+        self,
+        state: TrainingKernelState,
+        /,
+        *,
+        owner_id: str,
+        model_state_dependencies: Sequence[CompositionDependency] = (),
+    ) -> tuple[CompositionEntry, ...]:
+        """Composition entries of one accepted-boundary state of this kernel.
+
+        Every durable field of `state` becomes one classified state entry
+        `<owner_id>/<name>`: `parameters` (model-parameter), `model-state`
+        (committed and window-threaded MODEL_STATE, bound to the caller's
+        `model_state_dependencies`, e.g. the discretization a mesh-dependent
+        state lives on), `optimizer` (rule state), `accumulation` (window
+        statistics), `rng` (root key), `history` (cursors, rejection counters,
+        boundary marker), and `targets` (EMA statistics or delayed-target
+        history) when a target policy is set. `<owner_id>/kernel`
+        (prepared-graph) is their consumer: it binds the parameters by semantics
+        (their explicit same-semantics binding) and every other entry by
+        structure.
+
+        Parameter structure is the parameter signature and parameter meaning is
+        the role schema with the parameter paths, so parameters survive a kernel
+        reprepare that keeps them. Model state is structured by its own
+        signature. Every other state structure names the checkpoint identity,
+        the objective identity, the rule, and the parameter signature, because
+        moments, statistics, cursors, and semantic RNG streams are indexed by
+        the parameter lane and accumulated under those objectives; parameters
+        cannot be bound by structure, so the optimizer encodes the parameter
+        signature in its own structure instead. After a parameter-schema or
+        objective change the reprepared kernel is stale against every retained
+        entry, so the rebind is refused unless an explicit owner transport
+        supplies it. Only the kernel consumes the parameters, so invalidating it
+        orphans them. `state` must pass this kernel's checkpoint structure
+        validation and sit at an accepted-update boundary.
+        """
+
+        # Lazy: the lifecycle package imports this kernel for coupled training.
+        from .lifecycle import CompositionEntry
+
+        arrays = _require_composable_state(self, state)
+        parameter_semantics = canonical_fingerprint(
+            {
+                "kind": "training-parameters",
+                "role_schema": self.role_schema_id,
+                "parameters": list(self.parameter_paths),
+            }
+        )
+        parameters = CompositionEntry(
+            state.parameters,
+            entry_id=f"{owner_id}/parameters",
+            role="model-parameter",
+            owner_id=owner_id,
+            structure_id=self.parameter_signature,
+            revision_id=_parameter_revision(self, state.parameters).revision_id,
+            semantics_id=parameter_semantics,
+        )
+        model_state = {
+            "model_state": state.model_state,
+            "pending_model_state": state.pending_model_state,
+        }
+        model = CompositionEntry(
+            model_state,
+            entry_id=f"{owner_id}/model-state",
+            role="model-state",
+            owner_id=owner_id,
+            structure_id=self.model_state_signature,
+            revision_id=canonical_fingerprint(
+                {
+                    "kind": "training-model-state-revision",
+                    "content": array_tree_fingerprint(model_state),
+                }
+            ),
+            semantics_id=canonical_fingerprint(
+                {"kind": "training-model-state", "role_schema": self.role_schema_id}
+            ),
+            dependencies=model_state_dependencies,
+        )
+        history = {
+            "cursors": arrays["cursors"],
+            "accepted_boundary": arrays["accepted_boundary"],
+        }
+        records: list[tuple[str, CompositionRole, Any, Any]] = [
+            ("optimizer", "optimizer-state", state.rule_state, arrays["rule_state"]),
+            ("accumulation", "statistics", state.accumulation, arrays["accumulation"]),
+            ("rng", "rng", state.root_key, arrays["root_key_data"]),
+            ("history", "history", history, history),
+        ]
+        target_role = _target_role(self.target_policy)
+        if target_role is not None:
+            records.append(("targets", target_role, state.targets, arrays["targets"]))
+        common = {
+            "checkpoint": self.checkpoint_id,
+            "objectives": self.objective_identity,
+            "rule": self.rule.rule_id,
+            "parameters": self.parameter_signature,
+            "key_impl": str(jr.key_impl(state.root_key)),
+        }
+        held = tuple(
+            _training_state_entry(record, owner_id, common, parameter_semantics)
+            for record in records
+        )
+        structure = canonical_fingerprint(
+            {
+                "kind": "training-kernel-structure",
+                "checkpoint": self.checkpoint_id,
+                "parameters": self.parameter_signature,
+                "model_state": self.model_state_signature,
+                "fixed": _structure_signature(self.fixed),
+            }
+        )
+        kernel = CompositionEntry(
+            self,
+            entry_id=f"{owner_id}/kernel",
+            role="prepared-graph",
+            owner_id=owner_id,
+            structure_id=structure,
+            revision_id=canonical_fingerprint(
+                {
+                    "kind": "training-kernel-revision",
+                    "structure": structure,
+                    "fixed": array_tree_fingerprint(self.fixed),
+                }
+            ),
+            semantics_id=canonical_fingerprint(
+                {"kind": "training-kernel", "owner": owner_id}
+            ),
+            dependencies=(
+                parameters.binding("semantics"),
+                *(item.binding("structure") for item in (model, *held)),
+            ),
+        )
+        return (parameters, model, *held, kernel)
+
     # Objective evaluation -------------------------------------------------------------
 
     def _numerator(
@@ -2190,6 +2331,80 @@ def _expected_structures(
         arrays["model_state"],
     )
     return {name: _structure_signature(value) for name, value in template.items()}
+
+
+def _require_composable_state(
+    kernel: PreparedTrainingKernel, state: TrainingKernelState, /
+) -> dict[str, Any]:
+    """Checkpoint arrays of an accepted-boundary state that belongs to `kernel`."""
+    if not isinstance(state, TrainingKernelState):
+        raise TypeError("state must be a TrainingKernelState.")
+    arrays = _checkpoint_arrays(state)
+    observed = {name: _structure_signature(value) for name, value in arrays.items()}
+    if (
+        canonical_fingerprint(observed["parameters"]) != kernel.parameter_signature
+        or canonical_fingerprint(observed["model_state"]) != kernel.model_state_signature
+        or observed != _expected_structures(kernel, arrays)
+    ):
+        raise ValueError(f"{kernel.context}: the state does not belong to this kernel.")
+    if not bool(np.all(jax.device_get(state.accepted_boundary))):
+        raise ValueError(
+            f"{kernel.context}: composition entries bind an accepted-update boundary; "
+            "an open window or rejected attempt is not composable state."
+        )
+    return arrays
+
+
+def _target_role(policy: TargetPolicy | None, /) -> CompositionRole | None:
+    """EMA targets are accumulated statistics; delayed targets are history."""
+    match policy:
+        case None:
+            return None
+        case ExponentialMovingAverageTargetPolicy():
+            return "statistics"
+        case DelayedTargetPolicy():
+            return "history"
+        case _:
+            assert_never(policy)
+
+
+def _training_state_entry(
+    record: tuple[str, CompositionRole, Any, Any],
+    owner_id: str,
+    common: Mapping[str, str],
+    parameter_semantics: str,
+    /,
+) -> CompositionEntry:
+    """State entry whose structure binds the kernel run identities in `common`."""
+    # Lazy: the lifecycle package imports this kernel for coupled training.
+    from .lifecycle import CompositionEntry
+
+    name, role, value, content = record
+    structure = canonical_fingerprint(
+        {
+            "kind": "training-state-structure",
+            "entry": name,
+            **common,
+            "layout": _structure_signature(content),
+        }
+    )
+    return CompositionEntry(
+        value,
+        entry_id=f"{owner_id}/{name}",
+        role=role,
+        owner_id=owner_id,
+        structure_id=structure,
+        revision_id=canonical_fingerprint(
+            {
+                "kind": "training-state-revision",
+                "structure": structure,
+                "content": array_tree_fingerprint(content),
+            }
+        ),
+        semantics_id=canonical_fingerprint(
+            {"kind": "training-state", "entry": name, "parameters": parameter_semantics}
+        ),
+    )
 
 
 def build_training_checkpoint(

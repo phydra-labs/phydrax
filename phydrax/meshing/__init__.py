@@ -135,6 +135,7 @@ from ._distribution import (
     prepare_distribution_transition,
     prepare_mesh_distribution,
 )
+from ._interface_binding import MeshInterfaceAttachment
 from ._interop import (
     CellMeshExportResult,
     CellMeshImportResult,
@@ -414,6 +415,7 @@ __all__ = [
     "MeshDistributionTransition",
     "MeshFileCarrier",
     "MeshFileProfile",
+    "MeshInterfaceAttachment",
     "MeshInteropPolicy",
     "MeshLabel",
     "MeshLineage",

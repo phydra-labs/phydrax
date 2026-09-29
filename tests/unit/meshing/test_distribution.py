@@ -508,3 +508,98 @@ def test_transition_contracts() -> None:
         phx.meshing.prepare_distribution_transition(
             distribution, target, lineage, policy=policy, ownership=np.zeros(parents.size)
         )
+
+
+def _cell_state(distribution: Any, values: Any) -> Any:
+    return phx.lifecycle.CompositionEntry(
+        jnp.asarray(values),
+        entry_id="solid/mass",
+        role="physical-state",
+        owner_id="solid",
+        structure_id=distribution.distribution_id,
+        revision_id=f"mass-{distribution.distribution_id}",
+        semantics_id="solid.cell-mass",
+    )
+
+
+def _repartition() -> Any:
+    part, parents = _quad_mesh(4, 4)
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.PROVIDER, 2)
+    cells = np.arange(parents.size)
+    distribution = phx.meshing.prepare_mesh_distribution(
+        part, policy=policy, ownership=cells % 2
+    )
+    return phx.meshing.prepare_distribution_transition(
+        distribution,
+        part,
+        _cell_lineage(part, part, parents),
+        policy=policy,
+        ownership=cells // (parents.size // 2),
+    )
+
+
+def test_migration_transport_publishes_a_conserving_repartition() -> None:
+    transition = _repartition()
+    assert int(transition.migrated_cells) > 0
+    ids = np.asarray(transition.source.cell_global_ids, dtype=np.float64)
+    mass = np.stack((1.5 * ids + 1.0, np.sin(ids)), axis=1)
+    source = _cell_state(transition.source, mass)
+    composition = phx.lifecycle.Composition((source,), boundary_id="window-3")
+    # A repartition renumbers nothing, so every row keeps its native position.
+    target = _cell_state(transition.target, mass)
+    transport = transition.composition_transport(source, target)
+    assert transport.kind == "ownership-migration"
+    np.testing.assert_allclose(transport.source_content, mass.sum(axis=0), rtol=1e-6)
+    np.testing.assert_allclose(transport.target_content, mass.sum(axis=0), rtol=1e-6)
+    receipt = phx.lifecycle.commit_composition_rebind(
+        phx.lifecycle.CompositionRebind(composition, transports=(transport,)),
+        accepted_boundary=True,
+    )
+    assert receipt.published
+    assert receipt.migrated == ("solid/mass",)
+    assert receipt.composition.entry("solid/mass").structure_id == (
+        transition.target.distribution_id
+    )
+    # Same content, but not the migration image: the route's evidence is refused.
+    shuffled = _cell_state(transition.target, np.roll(mass, 1, axis=0))
+    refused = phx.lifecycle.commit_composition_rebind(
+        phx.lifecycle.CompositionRebind(
+            composition,
+            transports=(transition.composition_transport(source, shuffled),),
+        ),
+        accepted_boundary=True,
+    )
+    assert not refused.published
+    assert refused.composition is composition
+
+
+def test_migration_transport_refuses_created_and_refined_rows() -> None:
+    source_part, _ = _quad_mesh(4, 4)
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.HILBERT, 2)
+    distribution = phx.meshing.prepare_mesh_distribution(source_part, policy=policy)
+    mass = jnp.ones((distribution.cell_global_ids.size,))
+    for options, message in (
+        ({"extend": 1}, "Created target rows"),
+        ({"refine": (0,)}, "deleted or refined rows"),
+    ):
+        target_part, parents = _quad_mesh(4, 4, **options)
+        transition = phx.meshing.prepare_distribution_transition(
+            distribution,
+            target_part,
+            _cell_lineage(source_part, target_part, parents),
+            policy=policy,
+        )
+        staged = _cell_state(
+            transition.target, transition.transfer(mass, reduction="sum")
+        )
+        with pytest.raises(ValueError, match=message):
+            transition.composition_transport(_cell_state(distribution, mass), staged)
+
+
+def test_migration_transport_refuses_entries_of_other_distributions() -> None:
+    transition = _repartition()
+    mass = jnp.ones((transition.source.cell_global_ids.size,))
+    with pytest.raises(ValueError, match="do not live on this transition"):
+        transition.composition_transport(
+            _cell_state(transition.target, mass), _cell_state(transition.target, mass)
+        )

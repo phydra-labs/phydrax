@@ -32,6 +32,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
+from ..lifecycle import CompositionRebindReceipt
 from ..linalg._real_coordinates import RealCoordinateEvidence
 from ..logging import emit
 from ..typing import parse
@@ -215,6 +216,44 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         """Construct the exact same-topology bitwise replay relation."""
 
         return cls(topology_id, topology_id, classification="bitwise")
+
+    @classmethod
+    def from_composition_rebind(
+        cls,
+        receipt: CompositionRebindReceipt,
+        restorer: Callable,
+        /,
+        *,
+        classification: ReplayClassification,
+        tolerance: float | None = None,
+    ) -> RuntimeRestartRelation:
+        """Restart relation across one published composition rebind.
+
+        A checkpoint of a composition binds its `structure_id` as the mesh identity.
+        A checkpoint written before a rebind restores into the rebound composition
+        only through this relation: its topology identities are the receipt's
+        source and published structure IDs, its identity is the receipt, and
+        `restorer` is the explicit replay of the rebind's owner transports on the
+        archived arrays. A refused or structure-preserving rebind admits none.
+        """
+
+        if not isinstance(receipt, CompositionRebindReceipt):
+            raise TypeError("receipt must be a CompositionRebindReceipt.")
+        if not receipt.published:
+            raise ValueError("A refused composition rebind admits no restart relation.")
+        if receipt.source_structure_id == receipt.composition.structure_id:
+            raise ValueError(
+                "The rebind preserved composition structure; restart through the "
+                "identity relation."
+            )
+        return cls(
+            receipt.source_structure_id,
+            receipt.composition.structure_id,
+            classification=classification,
+            relation_id=receipt.receipt_id,
+            tolerance=tolerance,
+            restorer=restorer,
+        )
 
     def restore_state(
         self,

@@ -293,7 +293,8 @@ def _xyz(value: Any, /) -> np.ndarray:
 def _box(shape: Any, /) -> np.ndarray:
     box = Bnd_Box()
     BRepBndLib.Add_s(shape, box)
-    return np.asarray(box.Get(), dtype=np.float64).reshape(2, 3)
+    # OCP 8 no longer converts ``Bnd_Box.Get``'s ``Limits`` struct; read the corners.
+    return np.stack((_xyz(box.CornerMin()), _xyz(box.CornerMax())))
 
 
 def _bound_shape(model: BRepModel, source: Any, /) -> Any:

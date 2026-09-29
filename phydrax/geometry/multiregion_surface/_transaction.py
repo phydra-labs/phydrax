@@ -36,6 +36,7 @@ from typing import assert_never, final, Literal, TypeAlias, TypeVar
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -908,6 +909,24 @@ def _epoch(topology: MultiRegionSurfaceTopology, points: np.ndarray, /) -> Topol
     )
 
 
+def multiregion_topology_epoch(
+    topology: MultiRegionSurfaceTopology, positions: ArrayLike, /
+) -> TopologyEpoch:
+    """The topology epoch an event pass certifies for ``topology`` at ``positions``.
+
+    The identity binds the incidence, the stable lineage, and the exact active
+    vertex positions, so it equals ``SurfaceEventPassEvidence.source_epoch`` of
+    a pass applied to this geometry. Consumers use its ``epoch_id`` as the
+    structure identity of epoch-owned state that crosses an event pass.
+    """
+    if not isinstance(topology, MultiRegionSurfaceTopology):
+        raise TypeError("topology must be a MultiRegionSurfaceTopology.")
+    points = np.asarray(positions, dtype=np.float64)
+    if points.shape != (topology.vertex_capacity, 3):
+        raise ValueError("positions must have shape (vertex_capacity, 3).")
+    return _epoch(topology, points[: topology.vertex_count])
+
+
 def _evidence(
     status: SurfaceEventPassStatus,
     records: Sequence[SurfaceEventRecord],
@@ -1639,4 +1658,5 @@ __all__ = [
     "SurfaceEventProposal",
     "apply_surface_burst",
     "apply_surface_events",
+    "multiregion_topology_epoch",
 ]

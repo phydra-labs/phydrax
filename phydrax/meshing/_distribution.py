@@ -17,6 +17,7 @@ from __future__ import annotations
 import operator
 from enum import StrEnum
 from math import prod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -51,6 +52,10 @@ from ._assembly import MeshPart
 from ._lineage import MeshLineage
 from ._metis import metis_identity, metis_partition, MetisPartitionError
 from ._result import CellMeshingResult
+
+
+if TYPE_CHECKING:
+    from ..lifecycle import CompositionEntry, CompositionTransport
 
 
 _MAXIMUM_CURVE_DEPTH = 21
@@ -1003,6 +1008,78 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
             raise ValueError("Transferred values must follow source native cell order.")
         return route_reduce(
             self.receive, gather_routes(self.send, values), reduction=reduction
+        )
+
+    def composition_transport(
+        self, source: CompositionEntry, target: CompositionEntry, /
+    ) -> CompositionTransport:
+        """Ownership-migration evidence of this transition for one cell-state entry.
+
+        Entry values are native-order rows of extensive cell content (leading
+        axis = cells); `source` lives on the source distribution and `target` on
+        the target distribution (entry structure identities are their
+        `distribution_id`). A migration moves every physical row between owners
+        and never creates or duplicates content: created target rows need an
+        explicit physical remap or initialization rule, and deleted or refined
+        source rows (a parent copied into several children) need a physical
+        remap, so all three are refused. Merged rows sum their sources, the only
+        route reduction that conserves extensive content. Partition cell weights
+        are load-balance costs, not measures, so they never scale content. The
+        transport reports per-component content over all rows with the
+        recursive-summation roundoff bound, and succeeds only when `target` is
+        the migration image of `source` within roundoff, so a staged value
+        cannot borrow this route's evidence.
+        """
+
+        # Lazy: the lifecycle package sits above the meshing owners.
+        from ..lifecycle import CompositionEntry, CompositionTransport
+
+        if not isinstance(source, CompositionEntry) or not isinstance(
+            target, CompositionEntry
+        ):
+            raise TypeError("Composition transports bind CompositionEntry values.")
+        if (
+            source.structure_id != self.source.distribution_id
+            or target.structure_id != self.target.distribution_id
+        ):
+            raise ValueError(
+                "Composition entries do not live on this transition's distributions."
+            )
+        if not np.all(np.asarray(self.target_defined)):
+            raise ValueError(
+                "Created target rows hold no migrated content; they need an explicit "
+                "physical remap or initialization rule, never an ownership migration."
+            )
+        sent = np.bincount(
+            np.asarray(self.send.source_indices), minlength=self.send.source_size
+        )
+        if np.any(sent != 1):
+            raise ValueError(
+                "Ownership migration moves every source row exactly once; deleted or "
+                "refined rows need an explicit physical remap."
+            )
+        values = jnp.asarray(source.value)
+        if not jnp.issubdtype(values.dtype, jnp.inexact):
+            raise TypeError("Migrated cell content must be a real or complex array.")
+        image = self.transfer(values, reduction="sum")
+        staged = jnp.asarray(target.value)
+        if staged.shape != image.shape or staged.dtype != image.dtype:
+            raise ValueError("Staged target does not match the migrated row layout.")
+        eps = jnp.finfo(jnp.real(image).dtype).eps
+        exact = jnp.abs(staged - image) <= 100 * eps * jnp.max(jnp.abs(image))
+        finite = jnp.all(jnp.isfinite(image)) & jnp.all(jnp.isfinite(staged))
+        # Both sums carry at most (rows - 1) eps sum|v| recursive-summation error.
+        tolerance = 2 * values.shape[0] * eps * jnp.sum(jnp.abs(values), axis=0)
+        return CompositionTransport(
+            "ownership-migration",
+            (source.entry_id,),
+            (target,),
+            source_structure_ids=(self.source.distribution_id,),
+            route_id=self.transition_id,
+            successful=finite & jnp.all(exact),
+            source_content=jnp.sum(values, axis=0),
+            target_content=jnp.sum(staged, axis=0),
+            content_tolerance=tolerance,
         )
 
 
