@@ -26,6 +26,12 @@ and hierarchical gravity are fixed-capacity plans. Adaptive schedules, hierarchy
 refresh, collision topology, event ordering, and provider selection remain explicit
 piecewise-differentiable boundaries.
 
+IAS15 constructs its real Gauss--Radau stage abscissae from Jacobi `(0, 1)`
+quadrature roots, not a general complex companion eigensolve. Real initial
+orbit states and real force outputs therefore remain real throughout the
+collocation recurrence; no imaginary component is discarded from a force or
+trajectory.
+
 ## Vehicles and mission analysis
 
 `CoupledVehiclePlan` evolves translation, quaternion attitude, tank masses, wheel

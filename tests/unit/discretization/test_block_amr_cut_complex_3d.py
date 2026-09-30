@@ -235,16 +235,36 @@ def test_cut_contracts() -> None:
         _resources(),
     ).prepare()
     cochain = phx.discretization.CutCellCochainPlan(complex_).prepare()
-    topology = cochain.topology.topology
+    topology = cochain.topology
     edge_count = topology.entities(1).count
     face_count = topology.entities(2).count
     edge_values = jnp.linspace(-0.3, 0.7, edge_count)
     face_values = jnp.linspace(0.2, 1.1, face_count)
-    curl = topology.incidences[1].exterior_derivative().mv(edge_values)
-    divergence_of_curl = topology.incidences[2].exterior_derivative().mv(curl)
+    curl = cochain.exterior_derivative(1, edge_values)
+    divergence_of_curl = cochain.exterior_derivative(2, curl)
 
     np.testing.assert_allclose(divergence_of_curl, 0.0, atol=2.0e-7)
-    assert bool(cochain.metrics.valid)
+    assert all(bool(hodge.valid) for hodge in cochain.hodges)
+    for degree in range(1, 4):
+        values = np.linspace(0.2, 1.1, cochain.cell_counts[degree])
+        lower_active = np.asarray(cochain.active_mask(degree - 1, "relative"))
+        upper_active = np.asarray(cochain.active_mask(degree, "relative"))
+        boundary = topology.incidences[degree - 1].scipy_boundary().toarray()
+        restricted = boundary[np.ix_(lower_active, upper_active)]
+        lower_weights = np.asarray(cochain.hodge_diagonal(degree - 1))
+        upper_weights = np.asarray(cochain.hodge_diagonal(degree))
+        expected = np.zeros(cochain.cell_counts[degree - 1])
+        expected[lower_active] = (
+            restricted @ (upper_weights[upper_active] * values[upper_active])
+        ) / lower_weights[lower_active]
+        relative = cochain.codifferential(
+            degree, jnp.asarray(values), boundary="relative"
+        )
+        np.testing.assert_allclose(relative, expected, atol=2.0e-7)
+        np.testing.assert_array_equal(np.asarray(relative)[~lower_active], 0.0)
+    boundary_vertices = np.asarray(complex_.mesh.boundary_masks[0])
+    absolute = cochain.codifferential(1, edge_values, boundary="absolute")
+    assert np.any(np.abs(np.asarray(absolute)[boundary_vertices]) > 1.0e-7)
     register = phx.solver.advanced.ElectromotiveForceRegister(
         jnp.zeros((edge_count,)),
         1.0e-3 * edge_values,
@@ -257,7 +277,6 @@ def test_cut_contracts() -> None:
         register,
     )
 
-    assert updated.shape == face_values.shape
     np.testing.assert_allclose(
         diagnostics.divergence_after,
         diagnostics.divergence_before,
@@ -284,15 +303,15 @@ def test_cut_contracts() -> None:
         state,
     )
 
-    assert transfer.evidence.valid
-    assert transfer.evidence.maximum_commuting_defect == 0.0
-    for degree, entities in enumerate(state.topology.topology.entity_sets):
+    assert bool(transfer.evidence.valid)
+    np.testing.assert_allclose(transfer.evidence.commuting_defects, 0.0)
+    for degree, entities in enumerate(state.topology.entity_sets):
         source = jnp.linspace(-0.4, 0.7, entities.count)
         target = jnp.linspace(0.2, 0.9, entities.count)
         mapped = transfer.apply(degree, source)
         pullback = transfer.transpose(degree, target)
         adjoint = transfer.adjoint(degree, target)
-        hodge = state.metrics.hodge_stars[degree]
+        hodge = state.hodge_diagonal(degree)
         np.testing.assert_allclose(mapped, source)
         np.testing.assert_allclose(
             jnp.vdot(mapped, target),
@@ -306,6 +325,67 @@ def test_cut_contracts() -> None:
             rtol=2.0e-6,
             atol=2.0e-7,
         )
+
+
+def test_relative_cut_transfer_adjoint_restricts_coupled_gram_before_solving() -> None:
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - 0.37,
+        "relative-transfer-plane",
+        28,
+    )
+    cut = phx.discretization.MultivaluedCutCellPlan(
+        _topology_x_cells(2),
+        _identity,
+        "identity-map",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        _resources(),
+    ).prepare()
+    plan = phx.discretization.CutCellCochainPlan(cut)
+    target = plan.prepare()
+    matrices = tuple(
+        np.diag(np.asarray(target.hodge_diagonal(k))) + 0.1
+        for k in range(target.dimension + 1)
+    )
+    hodges = []
+    for matrix in matrices:
+        rows, columns = np.triu_indices(matrix.shape[0])
+        hodges.append(
+            phx.discretization.SparseHodge(
+                rows, columns, matrix[rows, columns], matrix.shape[0]
+            )
+        )
+    source = phx.discretization.CochainDiscretization(
+        target.topology,
+        tuple(hodges),
+        boundary_masks=target.boundary_masks,
+        key=target.key,
+        numeric_revision="coupled-relative-cut-source",
+    )
+    transfer = phx.discretization.CutCellCochainTransferPlan(
+        plan,
+        plan,
+        source,
+        target,
+        boundary="relative",
+    )
+    degree = 2
+    indices = np.asarray(source.active_indices(degree, boundary="relative"))
+    boundary = np.asarray(source.boundary_masks[degree])
+    assert np.any(boundary) and indices.size > 0
+    count = source.topology.entities(degree).count
+    values = jnp.linspace(0.2, 1.1, count)
+    adjoint = transfer.adjoint(degree, values)
+    gram = matrices[degree][np.ix_(indices, indices)]
+    rhs = np.asarray(target.hodge_diagonal(degree))[indices] * np.asarray(values)[indices]
+    expected = np.zeros((count,), dtype=np.float64)
+    expected[indices] = np.linalg.solve(gram, rhs)
+    np.testing.assert_allclose(adjoint, expected, rtol=2.0e-7, atol=2.0e-8)
+    np.testing.assert_array_equal(np.asarray(adjoint)[boundary], 0.0)
+    wrong = np.linalg.solve(
+        matrices[degree],
+        np.asarray(target.hodge_diagonal(degree)) * np.asarray(values),
+    )[indices]
+    assert np.max(np.abs(wrong - expected[indices])) > 1.0e-4
 
 
 def test_block_amr_cut_complex_3d_scenario_2() -> None:

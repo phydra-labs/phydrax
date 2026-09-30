@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any, cast, Literal, TypeAlias
+from typing import Any, cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,7 @@ from ._operators import (
     _assemble_operator_diagonal,
     AbstractLinearOperator,
     AdjointLinearOperator,
+    BlockLinearOperator,
     ComposedLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
@@ -46,6 +47,10 @@ from ._structured_operators import (
     TriangularLinearOperator,
     TridiagonalLinearOperator,
 )
+
+
+if TYPE_CHECKING:
+    from ..sparse._linear import _SparseStoragePlan
 
 
 def assemble_diagonal(
@@ -166,6 +171,8 @@ SparseAssemblyKind: TypeAlias = Literal[
     "transpose",
     "adjoint",
     "block-diagonal",
+    "block",
+    "coordinate-view",
     "kronecker",
     "kronecker-sum",
 ]
@@ -261,6 +268,7 @@ class _SparseAssemblyRecipe(StrictModule):
     children: tuple["_SparseAssemblyRecipe", ...]
     input_indices: tuple[Array, ...]
     output_indices: tuple[Array, ...]
+    storage_plan: _SparseStoragePlan | None
     kind: SparseAssemblyKind = eqx.field(static=True)
     operator_type: type = eqx.field(static=True)
     shape: tuple[int, int] = eqx.field(static=True)
@@ -282,6 +290,7 @@ class _SparseAssemblyRecipe(StrictModule):
         input_indices: tuple[np.ndarray, ...] = (),
         output_indices: tuple[np.ndarray, ...] = (),
         payload: tuple[Any, ...] = (),
+        storage_plan: _SparseStoragePlan | None = None,
         contribution_count: int,
         symbolic_workspace_bytes: int,
         numeric_workspace_bytes: int,
@@ -295,6 +304,7 @@ class _SparseAssemblyRecipe(StrictModule):
         self.output_indices = tuple(
             jnp.asarray(indices, dtype=jnp.int32) for indices in output_indices
         )
+        self.storage_plan = storage_plan
         self.kind = kind
         self.operator_type = type(operator)
         self.shape = (operator.target.size, operator.source.size)
@@ -538,36 +548,7 @@ def _plan_sparse_recipe(
             "Sparse assembly recipes do not support operator batches."
         )
     if isinstance(operator, AbstractSparseLinearOperator):
-        storage = operator.sparse_storage()
-        if not storage.canonical or not storage.sorted_indices:
-            raise LinearCapabilityError(
-                "Sparse assembly requires canonical, row-sorted sparse leaves."
-            )
-        rows = np.repeat(
-            np.arange(storage.shape[0], dtype=np.int64),
-            np.diff(np.asarray(storage.indptr, dtype=np.int64)),
-        )
-        columns = np.asarray(storage.indices, dtype=np.int64)
-        canonical_rows, canonical_columns, mapping = _canonical_pattern(
-            rows,
-            columns,
-            storage.shape,
-            policy,
-        )
-        if canonical_rows.size != rows.size or not np.array_equal(
-            mapping, np.arange(rows.size)
-        ):
-            raise LinearCapabilityError(
-                "Sparse leaf storage is not canonical despite its declared contract."
-            )
-        return _make_sparse_recipe(
-            "sparse",
-            operator,
-            canonical_rows,
-            canonical_columns,
-            policy,
-            contribution_count=rows.size,
-        )
+        return _plan_sparse_storage(operator, policy)
     if isinstance(operator, IdentityLinearOperator):
         indices = np.arange(operator.source.size, dtype=np.int64)
         return _make_sparse_recipe(
@@ -623,181 +604,16 @@ def _plan_sparse_recipe(
             payload=(operator.lower, operator.unit_diagonal),
             contribution_count=rows.size,
         )
-    if isinstance(operator, TridiagonalLinearOperator):
-        size = operator.source.size
-        diagonal = np.arange(size, dtype=np.int64)
-        rows = np.concatenate((diagonal, np.arange(1, size), np.arange(size - 1)))
-        columns = np.concatenate((diagonal, np.arange(size - 1), np.arange(1, size)))
-        rows, columns, _ = _canonical_pattern(
-            rows,
-            columns,
-            (size, size),
-            policy,
-        )
-        return _make_sparse_recipe(
-            "tridiagonal",
-            operator,
-            rows,
-            columns,
-            policy,
-            contribution_count=rows.size,
-        )
-    if isinstance(operator, BandedLinearOperator):
-        row_parts = []
-        column_parts = []
-        size = operator.source.size
-        for offset in range(
-            -operator.upper_bandwidth,
-            operator.lower_bandwidth + 1,
-        ):
-            column_start = max(0, -offset)
-            column_stop = min(size, size - offset)
-            columns = np.arange(column_start, column_stop, dtype=np.int64)
-            row_parts.append(columns + offset)
-            column_parts.append(columns)
-        rows = _concatenate_indices(row_parts)
-        columns = _concatenate_indices(column_parts)
-        rows, columns, _ = _canonical_pattern(
-            rows,
-            columns,
-            (size, size),
-            policy,
-        )
-        return _make_sparse_recipe(
-            "banded",
-            operator,
-            rows,
-            columns,
-            policy,
-            payload=(
-                operator.lower_bandwidth,
-                operator.upper_bandwidth,
-            ),
-            contribution_count=rows.size,
-        )
-    if isinstance(operator, LocalBlockDiagonalLinearOperator):
-        local_rows = np.repeat(
-            np.arange(operator.output_block_size, dtype=np.int64),
-            operator.input_block_size,
-        )
-        local_columns = np.tile(
-            np.arange(operator.input_block_size, dtype=np.int64),
-            operator.output_block_size,
-        )
-        rows = np.concatenate(
-            [
-                local_rows + block * operator.output_block_size
-                for block in range(operator.num_blocks)
-            ]
-        )
-        columns = np.concatenate(
-            [
-                local_columns + block * operator.input_block_size
-                for block in range(operator.num_blocks)
-            ]
-        )
-        return _make_sparse_recipe(
-            "local-block",
-            operator,
-            rows,
-            columns,
-            policy,
-            payload=(
-                operator.num_blocks,
-                operator.input_block_size,
-                operator.output_block_size,
-            ),
-            contribution_count=rows.size,
-        )
-    if isinstance(operator, ScaledLinearOperator):
-        child = _plan_sparse_recipe(operator.operator, policy)
-        return _make_sparse_recipe(
-            "scale",
-            operator,
-            np.asarray(child.rows),
-            np.asarray(child.columns),
-            policy,
-            children=(child,),
-            contribution_count=child.rows.size,
-        )
-    if isinstance(operator, SumLinearOperator):
-        children = (
-            _plan_sparse_recipe(operator.left, policy),
-            _plan_sparse_recipe(operator.right, policy),
-        )
-        rows = np.concatenate(
-            tuple(np.asarray(child.rows, dtype=np.int64) for child in children)
-        )
-        columns = np.concatenate(
-            tuple(np.asarray(child.columns, dtype=np.int64) for child in children)
-        )
-        result_rows, result_columns, mapping = _canonical_pattern(
-            rows,
-            columns,
-            (operator.target.size, operator.source.size),
-            policy,
-        )
-        split = children[0].rows.size
-        return _make_sparse_recipe(
-            "sum",
-            operator,
-            result_rows,
-            result_columns,
-            policy,
-            children=children,
-            output_indices=(mapping[:split], mapping[split:]),
-            contribution_count=rows.size,
-        )
-    if isinstance(operator, ComposedLinearOperator):
-        return _plan_sparse_composition(operator, policy)
-    if isinstance(operator, TransposeLinearOperator):
-        child = _plan_sparse_recipe(operator.operator, policy)
-        rows, columns, mapping = _canonical_pattern(
-            np.asarray(child.columns),
-            np.asarray(child.rows),
-            (operator.target.size, operator.source.size),
-            policy,
-        )
-        return _make_sparse_recipe(
-            "transpose",
-            operator,
-            rows,
-            columns,
-            policy,
-            children=(child,),
-            output_indices=(mapping,),
-            contribution_count=child.rows.size,
-        )
-    if isinstance(operator, AdjointLinearOperator):
-        if not (
-            _has_diagonal_pairing(operator.operator.source)
-            and _has_diagonal_pairing(operator.operator.target)
-        ):
-            return _materialized_sparse_recipe(operator, policy)
-        child = _plan_sparse_recipe(operator.operator, policy)
-        rows, columns, mapping = _canonical_pattern(
-            np.asarray(child.columns),
-            np.asarray(child.rows),
-            (operator.target.size, operator.source.size),
-            policy,
-        )
-        return _make_sparse_recipe(
-            "adjoint",
-            operator,
-            rows,
-            columns,
-            policy,
-            children=(child,),
-            output_indices=(mapping,),
-            contribution_count=child.rows.size,
-        )
-    if isinstance(operator, BlockDiagonalLinearOperator):
-        return _plan_sparse_block_diagonal(operator, policy)
-    if isinstance(operator, KroneckerLinearOperator):
-        return _plan_sparse_kronecker(operator, policy)
-    if isinstance(operator, KroneckerSumLinearOperator):
-        return _plan_sparse_kronecker_sum(operator, policy)
-    return _materialized_sparse_recipe(operator, policy)
+    if isinstance(
+        operator,
+        (
+            TridiagonalLinearOperator,
+            BandedLinearOperator,
+            LocalBlockDiagonalLinearOperator,
+        ),
+    ):
+        return _plan_sparse_stencil(operator, policy)
+    return _plan_sparse_algebra(operator, policy)
 
 
 def _materialized_sparse_recipe(
@@ -854,6 +670,7 @@ def _make_sparse_recipe(
     input_indices: tuple[np.ndarray, ...] = (),
     output_indices: tuple[np.ndarray, ...] = (),
     payload: tuple[Any, ...] = (),
+    storage_plan: _SparseStoragePlan | None = None,
     contribution_count: int,
 ) -> _SparseAssemblyRecipe:
     rows_ = np.asarray(rows, dtype=np.int64).reshape((-1,))
@@ -896,7 +713,11 @@ def _make_sparse_recipe(
     mapping_entries = sum(
         np.asarray(indices).size for indices in (*input_indices, *output_indices)
     )
-    recipe_bytes = _array_storage_bytes(children) + 4 * (2 * nnz + mapping_entries)
+    recipe_bytes = (
+        _array_storage_bytes(children)
+        + _array_storage_bytes(storage_plan)
+        + 4 * (2 * nnz + mapping_entries)
+    )
     if recipe_bytes > policy.max_workspace_bytes:
         raise LinearCapabilityError(
             f"Sparse assembly recipe requires {recipe_bytes} bytes, exceeding "
@@ -924,6 +745,7 @@ def _make_sparse_recipe(
         input_indices=input_indices,
         output_indices=output_indices,
         payload=payload,
+        storage_plan=storage_plan,
         contribution_count=contributions,
         symbolic_workspace_bytes=symbolic_workspace_bytes,
         numeric_workspace_bytes=numeric_workspace_bytes,
@@ -1082,6 +904,57 @@ def _plan_sparse_block_diagonal(
         children=children,
         output_indices=tuple(output_indices),
         contribution_count=rows.size,
+    )
+
+
+def _plan_sparse_block(
+    operator: BlockLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> _SparseAssemblyRecipe:
+    """Offset nonzero child patterns into one rectangular named block grid."""
+    addresses, blocks = _sparse_block_children(operator)
+    children: list[_SparseAssemblyRecipe] = []
+    row_parts: list[np.ndarray] = []
+    column_parts: list[np.ndarray] = []
+    row_offsets = np.cumsum((0,) + tuple(space.size for space in operator.target.spaces))
+    column_offsets = np.cumsum(
+        (0,) + tuple(space.size for space in operator.source.spaces)
+    )
+    for block in blocks:
+        child = _plan_sparse_recipe(block, policy)
+        children.append(child)
+    contributions = sum(child.rows.size for child in children)
+    _check_contribution_budget(policy, contributions, arrays=4)
+    if contributions > policy.max_nnz:
+        raise LinearCapabilityError("Named block sparse pattern exceeds max_nnz.")
+    for (row, column), child in zip(addresses, children, strict=True):
+        row_parts.append(np.asarray(child.rows, dtype=np.int64) + row_offsets[row])
+        column_parts.append(
+            np.asarray(child.columns, dtype=np.int64) + column_offsets[column]
+        )
+    rows, columns = _concatenate_indices(row_parts), _concatenate_indices(column_parts)
+    result_rows, result_columns, mapping = _canonical_pattern(
+        rows,
+        columns,
+        (operator.target.size, operator.source.size),
+        policy,
+    )
+    outputs: list[np.ndarray] = []
+    offset = 0
+    for child in children:
+        outputs.append(mapping[offset : offset + child.rows.size])
+        offset += child.rows.size
+    return _make_sparse_recipe(
+        "block",
+        operator,
+        result_rows,
+        result_columns,
+        policy,
+        children=tuple(children),
+        output_indices=tuple(outputs),
+        payload=(addresses,),
+        contribution_count=contributions,
     )
 
 
@@ -1264,232 +1137,37 @@ def _evaluate_sparse_recipe(
     policy: SparseAssemblyPolicy,
     /,
 ) -> Array:
+    """Validate the binding before selecting storage, stencil, or algebra values."""
     _validate_recipe_operator(recipe, operator)
-    kind = recipe.kind
-    rows = recipe.rows
-    columns = recipe.columns
-
-    if kind == "sparse":
-        if not isinstance(operator, AbstractSparseLinearOperator):
-            raise ValueError("Sparse assembly refresh changed sparse leaf structure.")
-        storage = operator.sparse_storage()
-        if not storage.canonical or not storage.sorted_indices:
-            raise ValueError("Sparse assembly refresh produced noncanonical storage.")
-        storage_rows = np.repeat(
-            np.arange(storage.shape[0], dtype=np.int64),
-            np.diff(np.asarray(storage.indptr, dtype=np.int64)),
-        )
-        _validate_numeric_pattern(
-            recipe,
-            storage_rows,
-            np.asarray(storage.indices, dtype=np.int64),
-        )
-        values = jnp.asarray(storage.values)
-        if values.shape != rows.shape:
-            raise ValueError("Sparse assembly refresh changed sparse leaf capacity.")
-        return values
-    if kind == "identity":
-        return jnp.ones(
-            rows.shape,
-            dtype=_coordinate_dtype(operator.target),
-        )
-    if kind == "diagonal":
-        if not isinstance(operator, DiagonalLinearOperator):
-            raise ValueError("Sparse assembly refresh changed diagonal structure.")
-        return jnp.asarray(operator.diagonal).reshape((-1,))
-    if kind == "permutation":
-        if not isinstance(operator, PermutationLinearOperator):
-            raise ValueError("Sparse assembly refresh changed permutation structure.")
-        current_rows = np.arange(operator.source.size, dtype=np.int64)
-        current_columns = np.asarray(operator.permutation, dtype=np.int64)
-        _validate_numeric_pattern(recipe, current_rows, current_columns)
-        return jnp.ones(
-            rows.shape,
-            dtype=_coordinate_dtype(operator.target),
-        )
-    if kind == "triangular":
-        if not isinstance(operator, TriangularLinearOperator) or recipe.payload != (
-            operator.lower,
-            operator.unit_diagonal,
-        ):
-            raise ValueError("Sparse assembly refresh changed triangular structure.")
-        return operator.matrix[rows, columns]
-    if kind == "tridiagonal":
-        if not isinstance(operator, TridiagonalLinearOperator):
-            raise ValueError("Sparse assembly refresh changed tridiagonal structure.")
-        offsets = rows - columns
-        lower_indices = jnp.clip(columns, 0, max(operator.lower.size - 1, 0))
-        upper_indices = jnp.clip(rows, 0, max(operator.upper.size - 1, 0))
-        lower = (
-            jnp.zeros(rows.shape, dtype=operator.diagonal.dtype)
-            if operator.lower.size == 0
-            else operator.lower[lower_indices]
-        )
-        upper = (
-            jnp.zeros(rows.shape, dtype=operator.diagonal.dtype)
-            if operator.upper.size == 0
-            else operator.upper[upper_indices]
-        )
-        return jnp.where(
-            offsets == 0,
-            operator.diagonal[rows],
-            jnp.where(offsets == 1, lower, upper),
-        )
-    if kind == "banded":
-        if not isinstance(operator, BandedLinearOperator) or recipe.payload != (
-            operator.lower_bandwidth,
-            operator.upper_bandwidth,
-        ):
-            raise ValueError("Sparse assembly refresh changed banded structure.")
-        band_indices = operator.upper_bandwidth + rows - columns
-        return operator.bands[band_indices, columns]
-    if kind == "local-block":
-        if not isinstance(operator, LocalBlockDiagonalLinearOperator) or (
-            recipe.payload
-            != (
-                operator.num_blocks,
-                operator.input_block_size,
-                operator.output_block_size,
-            )
-        ):
-            raise ValueError("Sparse assembly refresh changed local-block structure.")
-        block_indices = rows // operator.output_block_size
-        local_rows = rows % operator.output_block_size
-        local_columns = columns % operator.input_block_size
-        return operator.blocks[block_indices, local_rows, local_columns]
-    if kind == "materialized":
-        materialization = policy.materialization
-        if materialization is None:
-            raise ValueError(
-                "Sparse assembly plan lost its explicit materialization policy."
-            )
-        matrix = materialize(operator, materialization)
-        return matrix[rows, columns]
-    if kind == "scale":
-        scaled = cast(ScaledLinearOperator, operator)
-        child_values = _evaluate_sparse_recipe(
-            recipe.children[0],
-            scaled.operator,
-            policy,
-        )
-        return scaled.scalar * child_values
-    if kind == "sum":
-        summed = cast(SumLinearOperator, operator)
-        child_operators = (summed.left, summed.right)
-        return _sum_recipe_contributions(
-            recipe,
-            child_operators,
-            policy,
-        )
-    if kind == "composition":
-        composed = cast(ComposedLinearOperator, operator)
-        left_values = _evaluate_sparse_recipe(
-            recipe.children[0],
-            composed.left,
-            policy,
-        )
-        right_values = _evaluate_sparse_recipe(
-            recipe.children[1],
-            composed.right,
-            policy,
-        )
-        contributions = (
-            left_values[recipe.input_indices[0]] * right_values[recipe.input_indices[1]]
-        )
-        return _scatter_recipe_values(
-            contributions,
-            recipe.output_indices[0],
-            rows.size,
-        )
-    if kind == "transpose":
-        transposed = cast(TransposeLinearOperator, operator)
-        child_values = _evaluate_sparse_recipe(
-            recipe.children[0],
-            transposed.operator,
-            policy,
-        )
-        return _scatter_recipe_values(
-            child_values,
-            recipe.output_indices[0],
-            rows.size,
-        )
-    if kind == "adjoint":
-        adjointed = cast(AdjointLinearOperator, operator)
-        child = recipe.children[0]
-        original = adjointed.operator
-        child_values = _evaluate_sparse_recipe(child, original, policy)
-        target_weights = _coordinate_pairing_weights(original.target)
-        source_weights = _coordinate_pairing_weights(original.source)
-        contributions = (
-            jnp.conj(child_values)
-            * target_weights[child.rows]
-            / source_weights[child.columns]
-        )
-        return _scatter_recipe_values(
-            contributions,
-            recipe.output_indices[0],
-            rows.size,
-        )
-    if kind == "block-diagonal":
-        blocked = cast(BlockDiagonalLinearOperator, operator)
-        return _sum_recipe_contributions(
-            recipe,
-            blocked.blocks,
-            policy,
-        )
-    if kind == "kronecker":
-        kronecker = cast(KroneckerLinearOperator, operator)
-        child_values = tuple(
-            _evaluate_sparse_recipe(child, factor, policy)
-            for child, factor in zip(
-                recipe.children,
-                kronecker.factors,
-                strict=True,
-            )
-        )
-        dtype = jnp.result_type(
-            *(value.dtype for value in child_values),
-            _coordinate_dtype(kronecker.target),
-        )
-        contributions = jnp.ones(
-            (recipe.contribution_count,),
-            dtype=dtype,
-        )
-        for values, indices in zip(
-            child_values,
-            recipe.input_indices,
-            strict=True,
-        ):
-            contributions = contributions * values[indices]
-        return _scatter_recipe_values(
-            contributions,
-            recipe.output_indices[0],
-            rows.size,
-        )
-    if kind == "kronecker-sum":
-        kronecker_sum = cast(KroneckerSumLinearOperator, operator)
-        child_values = tuple(
-            _evaluate_sparse_recipe(child, factor, policy)
-            for child, factor in zip(
-                recipe.children,
-                kronecker_sum.factors,
-                strict=True,
-            )
-        )
-        dtype = jnp.result_type(
-            *(value.dtype for value in child_values),
-            _coordinate_dtype(kronecker_sum.target),
-        )
-        result = jnp.zeros((rows.size,), dtype=dtype)
-        for values, input_indices, output_indices in zip(
-            child_values,
-            recipe.input_indices,
-            recipe.output_indices,
-            strict=True,
-        ):
-            result = result.at[output_indices].add(values[input_indices])
-        return result
-    raise TypeError(f"Unknown sparse assembly recipe kind {kind!r}.")
+    rows, columns = recipe.rows, recipe.columns
+    match recipe.kind:
+        case "sparse":
+            return _evaluate_sparse_storage(recipe, operator)
+        case "identity":
+            return jnp.ones(rows.shape, dtype=_coordinate_dtype(operator.target))
+        case "diagonal":
+            if not isinstance(operator, DiagonalLinearOperator):
+                raise ValueError("Sparse assembly refresh changed diagonal structure.")
+            return jnp.asarray(operator.diagonal).reshape((-1,))
+        case "permutation":
+            if not isinstance(operator, PermutationLinearOperator):
+                raise ValueError("Sparse assembly refresh changed permutation structure.")
+            current_rows = np.arange(operator.source.size, dtype=np.int64)
+            current_columns = np.asarray(operator.permutation, dtype=np.int64)
+            _validate_numeric_pattern(recipe, current_rows, current_columns)
+            return jnp.ones(rows.shape, dtype=_coordinate_dtype(operator.target))
+        case "triangular" | "tridiagonal" | "banded" | "local-block":
+            return _evaluate_sparse_stencil(recipe, operator)
+        case "materialized":
+            materialization = policy.materialization
+            if materialization is None:
+                raise ValueError(
+                    "Sparse assembly plan lost its explicit materialization policy."
+                )
+            matrix = materialize(operator, materialization)
+            return matrix[rows, columns]
+        case _:
+            return _evaluate_sparse_algebra(recipe, operator, policy)
 
 
 def _sum_recipe_contributions(
@@ -1508,14 +1186,14 @@ def _sum_recipe_contributions(
             strict=True,
         )
     )
-    dtype = jnp.result_type(*(value.dtype for value in child_values))
+    dtype = np.result_type(*(value.dtype for value in child_values))
     result = jnp.zeros((recipe.rows.size,), dtype=dtype)
     for values, output_indices in zip(
         child_values,
         recipe.output_indices,
         strict=True,
     ):
-        result = result.at[output_indices].add(values)
+        result = result.at[output_indices].add(values.astype(dtype))
     return result
 
 
@@ -1573,3 +1251,524 @@ __all__ = [
     "prepare_sparse_assembly",
     "refresh_sparse_assembly",
 ]
+
+
+def _plan_sparse_algebra(
+    operator: AbstractLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> _SparseAssemblyRecipe:
+    """Compose symbolic patterns, preserving child admission and reduction order."""
+    if isinstance(operator, ScaledLinearOperator):
+        child = _plan_sparse_recipe(operator.operator, policy)
+        return _make_sparse_recipe(
+            "scale",
+            operator,
+            np.asarray(child.rows),
+            np.asarray(child.columns),
+            policy,
+            children=(child,),
+            contribution_count=child.rows.size,
+        )
+    if isinstance(operator, SumLinearOperator):
+        children = (
+            _plan_sparse_recipe(operator.left, policy),
+            _plan_sparse_recipe(operator.right, policy),
+        )
+        rows = np.concatenate(
+            tuple(np.asarray(child.rows, dtype=np.int64) for child in children)
+        )
+        columns = np.concatenate(
+            tuple(np.asarray(child.columns, dtype=np.int64) for child in children)
+        )
+        result_rows, result_columns, mapping = _canonical_pattern(
+            rows,
+            columns,
+            (operator.target.size, operator.source.size),
+            policy,
+        )
+        split = children[0].rows.size
+        return _make_sparse_recipe(
+            "sum",
+            operator,
+            result_rows,
+            result_columns,
+            policy,
+            children=children,
+            output_indices=(mapping[:split], mapping[split:]),
+            contribution_count=rows.size,
+        )
+    if isinstance(operator, ComposedLinearOperator):
+        return _plan_sparse_composition(operator, policy)
+    if isinstance(operator, TransposeLinearOperator):
+        child = _plan_sparse_recipe(operator.operator, policy)
+        rows, columns, mapping = _canonical_pattern(
+            np.asarray(child.columns),
+            np.asarray(child.rows),
+            (operator.target.size, operator.source.size),
+            policy,
+        )
+        return _make_sparse_recipe(
+            "transpose",
+            operator,
+            rows,
+            columns,
+            policy,
+            children=(child,),
+            output_indices=(mapping,),
+            contribution_count=child.rows.size,
+        )
+    if isinstance(operator, AdjointLinearOperator):
+        if not (
+            _has_diagonal_pairing(operator.operator.source)
+            and _has_diagonal_pairing(operator.operator.target)
+        ):
+            return _materialized_sparse_recipe(operator, policy)
+        child = _plan_sparse_recipe(operator.operator, policy)
+        rows, columns, mapping = _canonical_pattern(
+            np.asarray(child.columns),
+            np.asarray(child.rows),
+            (operator.target.size, operator.source.size),
+            policy,
+        )
+        return _make_sparse_recipe(
+            "adjoint",
+            operator,
+            rows,
+            columns,
+            policy,
+            children=(child,),
+            output_indices=(mapping,),
+            contribution_count=child.rows.size,
+        )
+    return _plan_sparse_products(operator, policy)
+
+
+def _evaluate_sparse_algebra(
+    recipe: _SparseAssemblyRecipe,
+    operator: AbstractLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> Array:
+    """Apply linear transforms or delegate product-space reductions in child order."""
+    rows = recipe.rows
+    match recipe.kind:
+        case "scale":
+            scaled = cast(ScaledLinearOperator, operator)
+            child_values = _evaluate_sparse_recipe(
+                recipe.children[0], scaled.operator, policy
+            )
+            dtype = _coordinate_dtype(operator.target)
+            return scaled.scalar.astype(dtype) * child_values.astype(dtype)
+        case "sum":
+            summed = cast(SumLinearOperator, operator)
+            return _sum_recipe_contributions(recipe, (summed.left, summed.right), policy)
+        case "composition":
+            composed = cast(ComposedLinearOperator, operator)
+            left_values = _evaluate_sparse_recipe(
+                recipe.children[0], composed.left, policy
+            )
+            right_values = _evaluate_sparse_recipe(
+                recipe.children[1], composed.right, policy
+            )
+            dtype = np.result_type(left_values.dtype, right_values.dtype)
+            contributions = left_values[recipe.input_indices[0]].astype(
+                dtype
+            ) * right_values[recipe.input_indices[1]].astype(dtype)
+            return _scatter_recipe_values(
+                contributions, recipe.output_indices[0], rows.size
+            )
+        case "transpose":
+            transposed = cast(TransposeLinearOperator, operator)
+            child_values = _evaluate_sparse_recipe(
+                recipe.children[0], transposed.operator, policy
+            )
+            return _scatter_recipe_values(
+                child_values, recipe.output_indices[0], rows.size
+            )
+        case "adjoint":
+            adjointed = cast(AdjointLinearOperator, operator)
+            child, original = recipe.children[0], adjointed.operator
+            child_values = _evaluate_sparse_recipe(child, original, policy)
+            target_weights = _coordinate_pairing_weights(original.target)
+            source_weights = _coordinate_pairing_weights(original.source)
+            dtype = np.result_type(
+                child_values.dtype, target_weights.dtype, source_weights.dtype
+            )
+            contributions = (
+                jnp.conj(child_values.astype(dtype))
+                * target_weights[child.rows].astype(dtype)
+                / source_weights[child.columns].astype(dtype)
+            )
+            return _scatter_recipe_values(
+                contributions, recipe.output_indices[0], rows.size
+            )
+        case "block-diagonal" | "block" | "coordinate-view":
+            return _evaluate_sparse_blocks(recipe, operator, policy)
+        case "kronecker" | "kronecker-sum":
+            return _evaluate_sparse_tensor(recipe, operator, policy)
+        case _:
+            raise TypeError(f"Unknown sparse assembly recipe kind {recipe.kind!r}.")
+
+
+def _plan_sparse_storage(
+    operator: AbstractSparseLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> _SparseAssemblyRecipe:
+    """Admit canonical sparse storage and retain its numerical route scatter."""
+    from ..sparse._linear import (
+        _SparseStoragePlan,
+        SparseCoordinateOperator,
+        SparseLinearMap,
+    )
+
+    if isinstance(operator, (SparseCoordinateOperator, SparseLinearMap)):
+        storage_plan = (
+            operator._storage_plan
+            if isinstance(operator, SparseCoordinateOperator)
+            else None
+        )
+        if storage_plan is None:
+            storage_plan = _SparseStoragePlan(
+                operator.relation,
+                block_shape=operator.block_shape
+                if isinstance(operator, SparseCoordinateOperator)
+                else None,
+            )
+        storage = storage_plan.apply(operator.coefficients, relation=operator.relation)
+    else:
+        storage_plan = None
+        storage = operator.sparse_storage()
+    if not storage.canonical or not storage.sorted_indices:
+        raise LinearCapabilityError(
+            "Sparse assembly requires canonical, row-sorted sparse leaves."
+        )
+    rows = np.repeat(
+        np.arange(storage.shape[0], dtype=np.int64),
+        np.diff(np.asarray(storage.indptr, dtype=np.int64)),
+    )
+    columns = np.asarray(storage.indices, dtype=np.int64)
+    canonical_rows, canonical_columns, mapping = _canonical_pattern(
+        rows, columns, storage.shape, policy
+    )
+    if canonical_rows.size != rows.size or not np.array_equal(
+        mapping, np.arange(rows.size)
+    ):
+        raise LinearCapabilityError(
+            "Sparse leaf storage is not canonical despite its declared contract."
+        )
+    return _make_sparse_recipe(
+        "sparse",
+        operator,
+        canonical_rows,
+        canonical_columns,
+        policy,
+        contribution_count=rows.size
+        if storage_plan is None
+        else storage_plan.positions.size,
+        storage_plan=storage_plan,
+    )
+
+
+def _plan_sparse_stencil(
+    operator: TridiagonalLinearOperator
+    | BandedLinearOperator
+    | LocalBlockDiagonalLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> _SparseAssemblyRecipe:
+    """Expand fixed-width stencil patterns before any numerical evaluation."""
+    if isinstance(operator, TridiagonalLinearOperator):
+        size = operator.source.size
+        diagonal = np.arange(size, dtype=np.int64)
+        rows = np.concatenate((diagonal, np.arange(1, size), np.arange(size - 1)))
+        columns = np.concatenate((diagonal, np.arange(size - 1), np.arange(1, size)))
+        rows, columns, _ = _canonical_pattern(rows, columns, (size, size), policy)
+        return _make_sparse_recipe(
+            "tridiagonal",
+            operator,
+            rows,
+            columns,
+            policy,
+            contribution_count=rows.size,
+        )
+    if isinstance(operator, BandedLinearOperator):
+        row_parts = []
+        column_parts = []
+        size = operator.source.size
+        for offset in range(-operator.upper_bandwidth, operator.lower_bandwidth + 1):
+            column_start, column_stop = max(0, -offset), min(size, size - offset)
+            columns = np.arange(column_start, column_stop, dtype=np.int64)
+            row_parts.append(columns + offset)
+            column_parts.append(columns)
+        rows, columns = (
+            _concatenate_indices(row_parts),
+            _concatenate_indices(column_parts),
+        )
+        rows, columns, _ = _canonical_pattern(rows, columns, (size, size), policy)
+        return _make_sparse_recipe(
+            "banded",
+            operator,
+            rows,
+            columns,
+            policy,
+            payload=(operator.lower_bandwidth, operator.upper_bandwidth),
+            contribution_count=rows.size,
+        )
+    local_rows = np.repeat(
+        np.arange(operator.output_block_size, dtype=np.int64),
+        operator.input_block_size,
+    )
+    local_columns = np.tile(
+        np.arange(operator.input_block_size, dtype=np.int64),
+        operator.output_block_size,
+    )
+    rows = np.concatenate(
+        [
+            local_rows + block * operator.output_block_size
+            for block in range(operator.num_blocks)
+        ]
+    )
+    columns = np.concatenate(
+        [
+            local_columns + block * operator.input_block_size
+            for block in range(operator.num_blocks)
+        ]
+    )
+    return _make_sparse_recipe(
+        "local-block",
+        operator,
+        rows,
+        columns,
+        policy,
+        payload=(
+            operator.num_blocks,
+            operator.input_block_size,
+            operator.output_block_size,
+        ),
+        contribution_count=rows.size,
+    )
+
+
+def _evaluate_sparse_storage(
+    recipe: _SparseAssemblyRecipe,
+    operator: AbstractLinearOperator,
+    /,
+) -> Array:
+    """Refresh routed coefficients without changing the admitted canonical layout."""
+    if not isinstance(operator, AbstractSparseLinearOperator):
+        raise ValueError("Sparse assembly refresh changed sparse leaf structure.")
+    if recipe.storage_plan is not None:
+        from ..sparse._linear import SparseCoordinateOperator, SparseLinearMap
+
+        if not isinstance(operator, (SparseCoordinateOperator, SparseLinearMap)):
+            raise ValueError("Sparse assembly refresh changed routed leaf structure.")
+        block_shape = (
+            operator.block_shape
+            if isinstance(operator, SparseCoordinateOperator)
+            else None
+        )
+        if block_shape != recipe.storage_plan.block_shape:
+            raise ValueError("Sparse assembly refresh changed matrix fibers.")
+        return recipe.storage_plan.apply(
+            operator.coefficients, relation=operator.relation
+        ).values
+    storage = operator.sparse_storage()
+    if not storage.canonical or not storage.sorted_indices:
+        raise ValueError("Sparse assembly refresh produced noncanonical storage.")
+    storage_rows = np.repeat(
+        np.arange(storage.shape[0], dtype=np.int64),
+        np.diff(np.asarray(storage.indptr, dtype=np.int64)),
+    )
+    _validate_numeric_pattern(
+        recipe, storage_rows, np.asarray(storage.indices, dtype=np.int64)
+    )
+    values = jnp.asarray(storage.values)
+    if values.shape != recipe.rows.shape:
+        raise ValueError("Sparse assembly refresh changed sparse leaf capacity.")
+    return values
+
+
+def _evaluate_sparse_stencil(
+    recipe: _SparseAssemblyRecipe,
+    operator: AbstractLinearOperator,
+    /,
+) -> Array:
+    """Gather stored stencil values only after checking each shape-defining payload."""
+    rows, columns = recipe.rows, recipe.columns
+    match recipe.kind:
+        case "triangular":
+            if not isinstance(operator, TriangularLinearOperator) or recipe.payload != (
+                operator.lower,
+                operator.unit_diagonal,
+            ):
+                raise ValueError("Sparse assembly refresh changed triangular structure.")
+            return operator.matrix[rows, columns]
+        case "tridiagonal":
+            if not isinstance(operator, TridiagonalLinearOperator):
+                raise ValueError("Sparse assembly refresh changed tridiagonal structure.")
+            offsets = rows - columns
+            lower_indices = jnp.clip(columns, 0, max(operator.lower.size - 1, 0))
+            upper_indices = jnp.clip(rows, 0, max(operator.upper.size - 1, 0))
+            lower = (
+                jnp.zeros(rows.shape, dtype=operator.diagonal.dtype)
+                if operator.lower.size == 0
+                else operator.lower[lower_indices]
+            )
+            upper = (
+                jnp.zeros(rows.shape, dtype=operator.diagonal.dtype)
+                if operator.upper.size == 0
+                else operator.upper[upper_indices]
+            )
+            return jnp.where(
+                offsets == 0,
+                operator.diagonal[rows],
+                jnp.where(offsets == 1, lower, upper),
+            )
+        case "banded":
+            if not isinstance(operator, BandedLinearOperator) or recipe.payload != (
+                operator.lower_bandwidth,
+                operator.upper_bandwidth,
+            ):
+                raise ValueError("Sparse assembly refresh changed banded structure.")
+            band_indices = operator.upper_bandwidth + rows - columns
+            return operator.bands[band_indices, columns]
+        case "local-block":
+            if not isinstance(
+                operator, LocalBlockDiagonalLinearOperator
+            ) or recipe.payload != (
+                operator.num_blocks,
+                operator.input_block_size,
+                operator.output_block_size,
+            ):
+                raise ValueError("Sparse assembly refresh changed local-block structure.")
+            block_indices = rows // operator.output_block_size
+            local_rows, local_columns = (
+                rows % operator.output_block_size,
+                columns % operator.input_block_size,
+            )
+            return operator.blocks[block_indices, local_rows, local_columns]
+        case _:
+            raise TypeError(
+                f"Unknown stencil sparse assembly recipe kind {recipe.kind!r}."
+            )
+
+
+def _plan_sparse_products(
+    operator: AbstractLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> _SparseAssemblyRecipe:
+    """Prepare product-space children or the explicit materialization fallback."""
+    if isinstance(operator, BlockLinearOperator):
+        return _plan_sparse_block(operator, policy)
+    from ._complexes import _CoordinateFormOperator, _CoordinateOperator
+
+    if isinstance(operator, (_CoordinateFormOperator, _CoordinateOperator)):
+        child = _plan_sparse_recipe(operator.operator, policy)
+        return _make_sparse_recipe(
+            "coordinate-view",
+            operator,
+            np.asarray(child.rows),
+            np.asarray(child.columns),
+            policy,
+            children=(child,),
+            contribution_count=child.rows.size,
+        )
+    if isinstance(operator, BlockDiagonalLinearOperator):
+        return _plan_sparse_block_diagonal(operator, policy)
+    if isinstance(operator, KroneckerLinearOperator):
+        return _plan_sparse_kronecker(operator, policy)
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return _plan_sparse_kronecker_sum(operator, policy)
+    return _materialized_sparse_recipe(operator, policy)
+
+
+def _sparse_block_children(
+    operator: BlockLinearOperator,
+    /,
+) -> tuple[tuple[tuple[int, int], ...], tuple[AbstractLinearOperator, ...]]:
+    """Bind row-major nonzero addresses to their children exactly once."""
+    addresses: list[tuple[int, int]] = []
+    children: list[AbstractLinearOperator] = []
+    for row, blocks in enumerate(operator.blocks):
+        for column, block in enumerate(blocks):
+            if block is not None:
+                addresses.append((row, column))
+                children.append(block)
+    return tuple(addresses), tuple(children)
+
+
+def _evaluate_sparse_blocks(
+    recipe: _SparseAssemblyRecipe,
+    operator: AbstractLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> Array:
+    """Admit the stored block grid before reducing its ordered child values."""
+    match recipe.kind:
+        case "block-diagonal":
+            blocked = cast(BlockDiagonalLinearOperator, operator)
+            return _sum_recipe_contributions(recipe, blocked.blocks, policy)
+        case "block":
+            if not isinstance(operator, BlockLinearOperator):
+                raise ValueError("Sparse refresh changed the named block operator.")
+            addresses, blocks = _sparse_block_children(operator)
+            if addresses != recipe.payload[0]:
+                raise ValueError("Sparse refresh changed the named block grid.")
+            if not blocks:
+                return jnp.zeros(
+                    recipe.rows.shape, dtype=_coordinate_dtype(operator.target)
+                )
+            return _sum_recipe_contributions(recipe, blocks, policy)
+        case "coordinate-view":
+            from ._complexes import _CoordinateFormOperator, _CoordinateOperator
+
+            if not isinstance(operator, (_CoordinateFormOperator, _CoordinateOperator)):
+                raise ValueError("Sparse refresh changed coordinate-view structure.")
+            return _evaluate_sparse_recipe(recipe.children[0], operator.operator, policy)
+        case _:
+            raise TypeError(f"Unknown block sparse assembly recipe kind {recipe.kind!r}.")
+
+
+def _evaluate_sparse_tensor(
+    recipe: _SparseAssemblyRecipe,
+    operator: AbstractLinearOperator,
+    policy: SparseAssemblyPolicy,
+    /,
+) -> Array:
+    """Keep tensor products multiplicative and tensor sums in declared factor order."""
+    match recipe.kind:
+        case "kronecker":
+            factors = cast(KroneckerLinearOperator, operator).factors
+        case "kronecker-sum":
+            factors = cast(KroneckerSumLinearOperator, operator).factors
+        case _:
+            raise TypeError(
+                f"Unknown tensor sparse assembly recipe kind {recipe.kind!r}."
+            )
+    child_values = tuple(
+        _evaluate_sparse_recipe(child, factor, policy)
+        for child, factor in zip(recipe.children, factors, strict=True)
+    )
+    dtype = np.result_type(
+        *(value.dtype for value in child_values),
+        _coordinate_dtype(operator.target),
+    )
+    if recipe.kind == "kronecker":
+        contributions = jnp.ones((recipe.contribution_count,), dtype=dtype)
+        for values, indices in zip(child_values, recipe.input_indices, strict=True):
+            contributions = contributions * values[indices].astype(dtype)
+        return _scatter_recipe_values(
+            contributions, recipe.output_indices[0], recipe.rows.size
+        )
+    result = jnp.zeros((recipe.rows.size,), dtype=dtype)
+    for values, input_indices, output_indices in zip(
+        child_values,
+        recipe.input_indices,
+        recipe.output_indices,
+        strict=True,
+    ):
+        result = result.at[output_indices].add(values[input_indices].astype(dtype))
+    return result

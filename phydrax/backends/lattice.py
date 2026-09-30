@@ -275,6 +275,12 @@ class NativeJaxLatticeProvider:
         owned_mask: ArrayLike,
         /,
     ) -> Array:
+        """Return negative Wilson gradient in left algebra coordinates.
+
+        The provider accepts staples S with plaquette trace Re Tr(U S†).
+        For anti-Hermitian A and U(t)=exp(t A)U, the returned F obeys
+        dS_W/dt=Re Tr(A F), using the metric <A,F>=-Re Tr(A F).
+        """
         links_ = jnp.asarray(links)
         staples_ = jnp.asarray(staples)
         mask = jnp.asarray(owned_mask, dtype=jnp.bool_)
@@ -296,7 +302,7 @@ class NativeJaxLatticeProvider:
         trace = jnp.trace(antihermitian, axis1=-2, axis2=-1) / colors
         identity = jnp.eye(colors, dtype=links_.dtype)
         force = (
-            jnp.asarray(beta, dtype=links_.real.dtype)
+            -jnp.asarray(beta, dtype=links_.real.dtype)
             * (antihermitian - trace[..., None, None] * identity)
             / colors
         )

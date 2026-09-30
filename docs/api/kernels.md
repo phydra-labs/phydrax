@@ -237,14 +237,16 @@ ragged padding, exact-feature alternatives, and numerical guidance.
 
 ## Laplacian spectral kernels
 
-`SpectralFeatureKernel` combines a measure-orthonormal
+`SpectralFeatureKernel` combines a Gram-orthonormal
 `phydrax.discretization.SpectralDecomposition` with a nonnegative spectral
 multiplier. The underlying `ModalTransform` and `OperatorSpectrum` retain separate
-identities. Normalized evaluation divides by the declared probability-measure
-average marginal variance, not by each point's diagonal. Heat and Matérn
-multipliers keep geometry, normalization, and covariance law separate. A finite
-decomposition therefore gives exact weight-space GP inference for that declared
-truncated covariance.
+identities. Normalized evaluation divides by the covariance trace in the declared
+analysis metric, not by each coordinate's diagonal. For diagonal probability
+weights this is the average marginal variance; a full Gram operator is not
+reinterpreted as a pointwise probability measure. Heat and Matérn multipliers keep
+geometry, normalization, and covariance law separate. A finite decomposition
+therefore gives exact weight-space GP inference for that declared truncated
+covariance.
 
 The geometric spectral construction follows the functional-calculus perspective
 described in [*The GeometricKernels Package: Heat and Matérn Kernels for Geometric
@@ -309,13 +311,27 @@ than asserting it for tolerance-close inputs.
 
 ## Hodge and operator-valued covariances
 
-`CochainHodgeSpectralKernel` composes harmonic, exact, and coexact scalar
-covariances with independent nonnegative amplitudes. Projected tangent and
-differential-form kernels instead return covariance blocks in an ambient
+`HodgeSpectralKernel` consumes `phydrax.exterior.HodgeSectorSpectra` and composes harmonic, exact and coexact scalar
+covariances with independent nonnegative amplitudes.
+
+Inputs are explicit coefficient IDs in
+`[basis.index_offset, basis.index_offset + basis.num_points)`. For a cell
+realization the offset sums full realization DOF counts in preceding degrees;
+within the chosen degree, rows include the realization's DOFs, not only topology
+entities. For example, evaluate an FE degree-one basis with
+`basis.index_offset + jnp.arange(basis.num_points)`, not unshifted vertex/edge IDs.
+Non-cell spectra retain their native coefficient layout. The owning basis
+analysis metric controls normalization, including off-diagonal FE Gram entries.
+One-dimensional ID arrays and `(query_count, 1)` designs both produce feature
+arrays shaped `(query_count, mode_count)` with the synthesis coefficient dtype.
+Feature evaluation uses explicit equal-rank broadcasting and does not require
+implicit JAX rank or dtype promotion.
+
+Projected tangent and differential-form kernels instead return covariance blocks in an ambient
 coordinate representation. Projectors act at both endpoints, so the resulting
 blocks satisfy the declared tangent constraints and remain positive semidefinite.
 
-::: phydrax.kernels.CochainHodgeSpectralKernel
+::: phydrax.kernels.HodgeSpectralKernel
 
 ---
 
@@ -328,6 +344,13 @@ blocks satisfy the declared tangent constraints and remain positive semidefinite
 ---
 
 ::: phydrax.kernels.ProjectedDifferentialFormKernel
+
+`ProjectedDifferentialFormKernel(scalar_kernel, tangent_projector, form_type, /,
+*, projector_id, projector_derivative_order=None)` declares output using
+`FormType`; it does not infer scientific degree from an output shape. Ambient
+dimension and projector derivative order participate in its identity. The sphere
+factory derives intrinsic/ambient dimensions and preserves degree-zero's explicit
+component axis.
 
 ---
 

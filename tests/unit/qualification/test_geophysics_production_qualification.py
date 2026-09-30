@@ -420,25 +420,6 @@ def test_distributed_operator_topology_transfer_and_physics_preconditioners_are_
     assert not amr.differentiation_available
 
     edge_space, scalar_space = phx.linalg.ArraySpace((2,)), phx.linalg.ArraySpace((1,))
-    identity = phx.linalg.DenseLinearOperator(
-        np.eye(2), source=edge_space, target=edge_space
-    )
-    edge_inverse = phx.linalg.OperatorPreconditioner(identity, positive_definite=True)
-    scalar_inverse = phx.linalg.OperatorPreconditioner(
-        # ty: ignore[invalid-argument-type]
-        phx.linalg.DenseLinearOperator([[0.5]], source=scalar_space, target=scalar_space),
-        positive_definite=True,
-    )
-    gradient = phx.linalg.DenseLinearOperator(
-        # ty: ignore[invalid-argument-type]
-        [[1.0], [1.0]],
-        source=scalar_space,
-        target=edge_space,
-    )
-    auxiliary = phx.linalg.hcurl_auxiliary_space_preconditioner(
-        edge_inverse, gradient, scalar_inverse
-    )
-    np.testing.assert_allclose(auxiliary.apply([1.0, 3.0]), [3.0, 5.0])
 
     system = phx.linalg.DenseLinearOperator(
         # ty: ignore[invalid-argument-type]
@@ -456,6 +437,9 @@ def test_distributed_operator_topology_transfer_and_physics_preconditioners_are_
         [[1.0, 0.0]],
         source=edge_space,
         target=scalar_space,
+    )
+    scalar_inverse = phx.linalg.DiagonalPreconditioner(
+        jnp.asarray([2.0]), space=scalar_space, positive_definite=True
     )
     cpr = phx.linalg.porous_cpr_preconditioner(
         system, zero_inverse, restriction, scalar_inverse

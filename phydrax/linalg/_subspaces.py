@@ -33,7 +33,7 @@ def _basis_gram(
 ) -> tuple[Array, Array]:
     batch_shape = basis.shape[:-2]
     capacity = basis.shape[-1]
-    mask = jnp.arange(capacity) < dimension[..., None]
+    mask = jnp.arange(capacity, dtype=dimension.dtype) < dimension[..., None]
     active_basis = jnp.where(mask[..., None, :], basis, 0)
     batch_count = math.prod(batch_shape) if batch_shape else 1
     flattened = active_basis.reshape((batch_count, space.size, capacity))
@@ -48,7 +48,8 @@ def _basis_gram(
         )(columns)
 
     gram = jax.vmap(gram_one)(flattened).reshape(batch_shape + (capacity, capacity))
-    gram = gram + jnp.eye(capacity, dtype=gram.dtype) * (~mask)[..., None, :]
+    identity = jnp.broadcast_to(jnp.eye(capacity, dtype=gram.dtype), gram.shape)
+    gram = gram + identity * (~mask).astype(gram.dtype)[..., None, :]
     return gram, active_basis
 
 
@@ -107,11 +108,11 @@ class LinearSubspace(StrictModule):
             norms = jnp.sqrt(
                 jnp.maximum(jnp.real(jnp.diagonal(gram, axis1=-2, axis2=-1)), 0.0)
             )
-            mask = jnp.arange(capacity) < dimension_[..., None]
+            mask = jnp.arange(capacity, dtype=dimension_.dtype) < dimension_[..., None]
             scales = jnp.where(mask & (norms > 0.0), norms, 1.0)
             normalized_gram, _ = _basis_gram(
                 space,
-                active_basis / scales[..., None, :],
+                active_basis / scales.astype(active_basis.dtype)[..., None, :],
                 dimension_,
             )
             singular_values = jnp.linalg.svd(

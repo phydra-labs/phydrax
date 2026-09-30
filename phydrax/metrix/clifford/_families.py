@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from itertools import permutations
-from math import factorial
+from math import factorial, prod
 from numbers import Integral
 
 import equinox as eqx
@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...exterior._basis import exterior_indices, wedge_sign
 from ...linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -29,37 +30,25 @@ from ...linalg import (
 _LU_POLICY = LinearSolvePolicy(DenseLU(), failure=FailurePolicy("status"))
 
 
-def _bitmap_axes(bitmap: int, dimension: int, /) -> tuple[int, ...]:
-    return tuple(axis for axis in range(dimension) if bitmap & (1 << axis))
-
-
-def _permutation_sign(values: tuple[int, ...], /) -> int:
-    return (
-        -1
-        if sum(
-            values[i] > values[j]
-            for i in range(len(values))
-            for j in range(i + 1, len(values))
-        )
-        % 2
-        else 1
-    )
-
-
-def _chevalley_vector(metric: Array, axis: int, value: Array, /) -> Array:
-    dimension = metric.shape[-1]
-    count = 1 << dimension
+def _chevalley_vector(
+    metric: Array,
+    axis: int,
+    value: Array,
+    axes: tuple[tuple[int, ...], ...],
+    lookup: dict[tuple[int, ...], int],
+    /,
+) -> Array:
     output = jnp.zeros_like(value)
-    for bitmap in range(count):
-        coefficient = value[..., bitmap]
-        if not bitmap & (1 << axis):
-            lower = bitmap & ((1 << axis) - 1)
-            sign = -1 if lower.bit_count() % 2 else 1
-            output = output.at[..., bitmap | (1 << axis)].add(sign * coefficient)
-        axes = _bitmap_axes(bitmap, dimension)
-        for position, contracted_axis in enumerate(axes):
-            sign = -1 if position % 2 else 1
-            output = output.at[..., bitmap ^ (1 << contracted_axis)].add(
+    for source, source_axes in enumerate(axes):
+        coefficient = value[..., source]
+        if axis not in source_axes:
+            target = tuple(sorted((axis, *source_axes)))
+            sign = wedge_sign((axis,), source_axes)
+            output = output.at[..., lookup[target]].add(sign * coefficient)
+        for position, contracted_axis in enumerate(source_axes):
+            target = source_axes[:position] + source_axes[position + 1 :]
+            sign = wedge_sign((contracted_axis,), target)
+            output = output.at[..., lookup[target]].add(
                 sign * metric[..., axis, contracted_axis] * coefficient
             )
     return output
@@ -136,19 +125,39 @@ class PreparedCliffordMetricProduct(StrictModule):
 
     metric_field: CliffordMetricField
     blade_count: int = eqx.field(static=True)
-    permutation_table: tuple[tuple[tuple[int, ...], int], ...] = eqx.field(static=True)
+    axes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    lookup: dict[tuple[int, ...], int] = eqx.field(static=True)
+    permutation_table: tuple[tuple[tuple[tuple[int, ...], int], ...], ...] = eqx.field(
+        static=True
+    )
 
     def __init__(self, metric_field: CliffordMetricField, /) -> None:
         if not isinstance(metric_field, CliffordMetricField):
             raise TypeError("metric_field must be a CliffordMetricField.")
-        table = []
-        for bitmap in range(1 << metric_field.dimension):
-            axes = _bitmap_axes(bitmap, metric_field.dimension)
-            for order in permutations(axes):
-                table.append((tuple(order), _permutation_sign(tuple(order))))
+        dimension = metric_field.dimension
+        axes = tuple(
+            index
+            for grade in range(dimension + 1)
+            for index in exterior_indices(dimension, grade)
+        )
+        table = tuple(
+            tuple(
+                (
+                    order,
+                    prod(
+                        wedge_sign(order[:position], (axis,))
+                        for position, axis in enumerate(order)
+                    ),
+                )
+                for order in permutations(index)
+            )
+            for index in axes
+        )
         self.metric_field = metric_field
-        self.blade_count = 1 << metric_field.dimension
-        self.permutation_table = tuple(table)
+        self.blade_count = len(axes)
+        self.axes = axes
+        self.lookup = {index: position for position, index in enumerate(axes)}
+        self.permutation_table = table
 
     def __call__(
         self, coordinates: ArrayLike, left: ArrayLike, right: ArrayLike, /
@@ -166,18 +175,17 @@ class PreparedCliffordMetricProduct(StrictModule):
             jnp.broadcast_shapes(left_.shape, right_.shape),
             dtype=jnp.result_type(left_, right_, metric),
         )
-        for bitmap in range(self.blade_count):
-            axes = _bitmap_axes(bitmap, self.metric_field.dimension)
+        for source, orders in enumerate(self.permutation_table):
             quantized = jnp.zeros_like(result)
-            for order in permutations(axes):
+            for order, sign in orders:
                 term = jnp.broadcast_to(right_, result.shape)
                 for axis in reversed(order):
-                    term = _chevalley_vector(metric, axis, term)
-                quantized = quantized + _permutation_sign(tuple(order)) * term
-            quantized = quantized / factorial(len(axes))
+                    term = _chevalley_vector(metric, axis, term, self.axes, self.lookup)
+                quantized = quantized + sign * term
+            quantized = quantized / factorial(len(self.axes[source]))
             result = (
                 result
-                + jnp.broadcast_to(left_[..., bitmap, None], result.shape) * quantized
+                + jnp.broadcast_to(left_[..., source, None], result.shape) * quantized
             )
         return eqx.error_if(
             result,
@@ -284,7 +292,7 @@ class PinElement(StrictModule):
         metric, metric_valid = product.metric_field.evaluate(coordinate_values)
         if metric.shape != (dimension, dimension):
             raise ValueError("Pin membership requires one unbatched metric evaluation.")
-        grades = tuple(bitmap.bit_count() for bitmap in range(product.blade_count))
+        grades = tuple(len(axes) for axes in product.axes)
         forbidden_parity = jnp.asarray(
             tuple(grade % 2 != parity_ for grade in grades), dtype=jnp.bool_
         )
@@ -311,7 +319,7 @@ class PinElement(StrictModule):
         safe_scalar_norm = jnp.where(jnp.abs(scalar_norm) > tolerance, scalar_norm, 1.0)
         group_inverse = reversed_value / safe_scalar_norm
 
-        vector_indices = tuple(1 << axis for axis in range(dimension))
+        vector_indices = tuple(product.lookup[(axis,)] for axis in range(dimension))
         vector_basis = jnp.eye(product.blade_count, dtype=value_.dtype)[
             jnp.asarray(vector_indices)
         ]

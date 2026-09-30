@@ -2,37 +2,33 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Degree-aware ``DomainFunction`` views over metric cochain graphs."""
+"""Typed ``DomainFunction`` views over cochain graphs."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import final, Literal
 
 import jax.numpy as jnp
 from jax import Array
 
 from ..._strict import StrictModule
+from ...exterior._form_type import FormType
+from ...typing import parse
 from .._function import DomainFunction
 
 
-if TYPE_CHECKING:
-    from ...discretization import (
-        CochainCellOrientation,
-        CochainFieldSpec,
-        CochainSampling,
-        CochainSide,
-    )
+CochainRepresentation = Literal["cochain"]
+_FORM_TYPE_KEY = "_phydrax_form_type"
+_REPRESENTATION_KEY = "_phydrax_form_representation"
 
 
-_COCHAIN_FIELD_SPEC_KEY = "_phydrax_cochain_field_spec"
-
-
+@final
 class _CochainDegreeMask(StrictModule):
     degree: int
 
     def __init__(self, degree: int) -> None:
-        self.degree = int(degree)
+        self.degree = degree
 
     def __call__(self, cell: Mapping[str, object]) -> Array:
         if not isinstance(cell, Mapping) or "cell_dim" not in cell:
@@ -55,99 +51,63 @@ def _graph_label(field: DomainFunction, /) -> str:
     return labels[0]
 
 
-def _spec_tuple(spec: CochainFieldSpec, /) -> tuple[int, str, str, str]:
+def has_cochain_form_type(field: DomainFunction, /) -> bool:
+    """Return whether a field declares canonical cochain semantics."""
+    if not isinstance(field, DomainFunction):
+        raise TypeError("has_cochain_form_type expects a DomainFunction.")
     return (
-        spec.degree,
-        spec.complex_side,
-        spec.cell_orientation,
-        spec.sampling,
+        isinstance(field.metadata.get(_FORM_TYPE_KEY), FormType)
+        and field.metadata.get(_REPRESENTATION_KEY) == "cochain"
     )
 
 
-def with_cochain_field_spec(
-    field: DomainFunction,
-    spec: CochainFieldSpec,
-    /,
-) -> DomainFunction:
-    return field.with_metadata(**{_COCHAIN_FIELD_SPEC_KEY: _spec_tuple(spec)})
-
-
-def has_cochain_field_spec(field: DomainFunction, /) -> bool:
-    """Return whether a domain field declares cochain semantics."""
+def cochain_form_type(field: DomainFunction, /) -> FormType:
+    """Return the declared scientific type of a graph cochain field."""
     if not isinstance(field, DomainFunction):
-        raise TypeError("has_cochain_field_spec expects a DomainFunction.")
-    encoded = field.metadata.get(_COCHAIN_FIELD_SPEC_KEY)
-    return isinstance(encoded, tuple) and len(encoded) == 4
+        raise TypeError("cochain_form_type expects a DomainFunction.")
+    form_type = field.metadata.get(_FORM_TYPE_KEY)
+    if not isinstance(form_type, FormType) or not has_cochain_form_type(field):
+        raise ValueError("DomainFunction has no declared cochain form_type.")
+    return form_type
 
 
-def cochain_field_spec(field: DomainFunction, /) -> CochainFieldSpec:
-    """Return the declared cochain semantics of a domain field."""
-    from ...discretization import CochainFieldSpec
-
-    if not isinstance(field, DomainFunction):
-        raise TypeError("cochain_field_spec expects a DomainFunction.")
-    encoded = field.metadata.get(_COCHAIN_FIELD_SPEC_KEY)
-    if not isinstance(encoded, tuple) or len(encoded) != 4:
-        raise ValueError("DomainFunction has no declared cochain field semantics.")
-    degree, side, orientation, sampling = encoded
-    return CochainFieldSpec(
-        int(degree),
-        complex_side=side,
-        cell_orientation=orientation,
-        sampling=sampling,
+def cochain_representation(field: DomainFunction, /) -> CochainRepresentation:
+    """Return the admitted representation of a graph cochain field."""
+    cochain_form_type(field)
+    return parse(
+        field.metadata[_REPRESENTATION_KEY], CochainRepresentation, "representation"
     )
 
 
 def as_cochain_field(
     field: DomainFunction,
-    spec: CochainFieldSpec | int,
+    form_type: FormType,
     /,
     *,
-    complex_side: CochainSide = "primal",
-    cell_orientation: CochainCellOrientation | None = None,
-    sampling: CochainSampling | None = None,
+    representation: CochainRepresentation,
 ) -> DomainFunction:
-    """Declare and degree-mask a graph-backed discrete differential form.
+    """Declare and degree-mask a graph-backed differential form.
 
-    Passing an integer degree requires explicit orientation and sampling semantics.
-    Values outside the declared cell degree are identically zero, including when a
-    downstream graph operator evaluates the field over the full cochain complex.
+    Cochain coordinates are cell integrals (point values in degree zero).
+    Orientation and placement derive from the form type and realization, not
+    independent orientation or sampling flags. Off-degree values are zero.
     """
-    from ...discretization import CochainFieldSpec
-
     if not isinstance(field, DomainFunction):
         raise TypeError("as_cochain_field expects a DomainFunction.")
+    if not isinstance(form_type, FormType):
+        raise TypeError("form_type must be a FormType.")
+    resolved = parse(representation, CochainRepresentation, "representation")
     graph_label = _graph_label(field)
-    if isinstance(spec, CochainFieldSpec):
-        if (
-            cell_orientation is not None
-            or sampling is not None
-            or complex_side != "primal"
-        ):
-            raise ValueError(
-                "Do not pass cochain semantic keywords with a CochainFieldSpec."
-            )
-        resolved = spec
-    else:
-        if cell_orientation is None or sampling is None:
-            raise ValueError(
-                "Integer cochain degrees require cell_orientation and sampling."
-            )
-        resolved = CochainFieldSpec(
-            int(spec),
-            complex_side=complex_side,
-            cell_orientation=cell_orientation,
-            sampling=sampling,
-        )
-
-    mask = field.domain.Function(graph_label)(_CochainDegreeMask(resolved.degree))
-    masked = field * mask
-    return with_cochain_field_spec(masked, resolved)
+    mask = field.domain.Function(graph_label)(_CochainDegreeMask(form_type.degree))
+    return (field * mask).with_metadata(
+        **{_FORM_TYPE_KEY: form_type, _REPRESENTATION_KEY: resolved}
+    )
 
 
 __all__ = [
+    "CochainRepresentation",
     "as_cochain_field",
-    "cochain_field_spec",
-    "has_cochain_field_spec",
-    "with_cochain_field_spec",
+    "cochain_form_type",
+    "cochain_representation",
+    "has_cochain_form_type",
 ]

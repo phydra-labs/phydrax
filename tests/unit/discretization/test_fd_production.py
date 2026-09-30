@@ -3,6 +3,7 @@
 #
 
 
+from math import comb
 from typing import Any
 
 import equinox as eqx
@@ -306,7 +307,7 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients() -> None
     energy_gradient = jax.grad(material_energy)(permittivity)
     np.testing.assert_allclose(
         energy_gradient,
-        0.5 * bridge.cochain.hodge_stars[1] * electric**2,
+        0.5 * bridge.cochain.hodge_diagonal(1) * electric**2,
         rtol=2e-12,
         atol=2e-12,
     )
@@ -353,3 +354,78 @@ def test_elastic_energy_and_incompressible_projection_are_compatible() -> None:
 
     assert jnp.linalg.norm(projected.divergence_before) > 1e-3
     assert jnp.linalg.norm(projected.divergence_after) < 1e-9
+
+
+def test_structured_polynomial_differential_has_oriented_integrals() -> None:
+    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3, 4)))
+    x, y = bridge.grid.structured_axes
+    scalar = x.point_coordinates[:, None] * y.point_coordinates[None, :]
+    differential = bridge.exterior_derivative(0, bridge.pack(0, (scalar,)))
+    dx, dy = bridge.unpack(1, differential)
+    np.testing.assert_allclose(
+        dx, x.interval_widths[:, None] * y.point_coordinates[None, :], atol=1e-15
+    )
+    np.testing.assert_allclose(
+        dy, x.point_coordinates[:, None] * y.interval_widths[None, :], atol=1e-15
+    )
+    np.testing.assert_allclose(
+        bridge.directional_exterior_derivative(0, bridge.pack(0, (scalar,)), 0),
+        bridge.pack(1, (dx, jnp.zeros_like(dy))),
+        atol=1e-15,
+    )
+    np.testing.assert_allclose(bridge.exterior_derivative(1, differential), 0, atol=1e-15)
+
+
+@pytest.mark.parametrize("degree", [-1, 3])
+def test_structured_unpack_refuses_outside_degree(degree: int) -> None:
+    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((2, 2)))
+    with pytest.raises(ValueError, match="degree"):
+        bridge.unpack(degree, jnp.zeros((1,), dtype=jnp.float64))
+
+
+def test_structured_top_degree_hodge_recovers_constant_density() -> None:
+    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((2, 3)))
+    density_integrals = bridge.cochain.primal_measures[2] * 2.5
+    np.testing.assert_allclose(
+        bridge.hodge_star(2, density_integrals), jnp.full((6,), 2.5), atol=1e-14
+    )
+
+
+@pytest.mark.parametrize("dimension", [1, 2, 3, 4])
+def test_periodic_structured_complex_has_torus_betti_numbers(dimension: int) -> None:
+    grid = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformCellAxisSpec(2, periodic=True)
+            for _ in range(dimension)
+        ),
+        axis_names=tuple(f"axis{axis}" for axis in range(dimension)),
+    ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension], dtype=jnp.float64))
+    bridge = phx.discretization.StructuredCochainBridge(grid)
+    complex_ = bridge.hilbert_complex()
+    policy = phx.linalg.MaterializationPolicy(max_entries=10_000)
+    matrices = tuple(
+        np.asarray(phx.linalg.materialize(operator, policy))
+        for operator in complex_.differentials
+    )
+    ranks = (0,) + tuple(np.linalg.matrix_rank(matrix) for matrix in matrices) + (0,)
+    for degree, count in enumerate(bridge.cell_counts):
+        assert count - ranks[degree] - ranks[degree + 1] == comb(dimension, degree)
+
+
+def test_four_dimensional_flux_proxy_integrates_analytic_divergence() -> None:
+    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((2, 2, 2, 2)))
+    components = []
+    for axis in range(4):
+        orientation = tuple(direction for direction in range(4) if direction != axis)
+        block = bridge.orientations[3].index(orientation)
+        shape = bridge.orientation_shapes[3][block]
+        reshape = [1] * 4
+        reshape[axis] = shape[axis]
+        coordinate = bridge.grid.structured_axes[axis].point_coordinates.reshape(reshape)
+        components.append(jnp.broadcast_to(coordinate, shape))
+    flux = bridge.pack_normal_flux(tuple(components))
+    np.testing.assert_allclose(
+        bridge.exterior_derivative(3, flux),
+        4.0 * bridge.cochain.primal_measures[4],
+        atol=1e-14,
+    )

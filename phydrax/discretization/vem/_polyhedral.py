@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import FunctionLinearOperator, OperatorProperties
 from .._cell_complex import PolyhedralConnectivity
 from .._cell_mesh import CellMesh
@@ -33,11 +34,15 @@ class PolyhedralVEMEvidence3D(StrictModule, NonTrainableState):
 
 
 class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
-    """Matrix-free conforming degree-one H1 VEM on root polyhedral topology."""
+    """Degree-one scalar 0-form H1 VEM on root polyhedral topology.
+
+    This qualified 3-D scalar route is not a vector VEM or de Rham complex.
+    """
 
     mesh: CellMesh
     operator: FactorizedVirtualElementOperator
     evidence: PolyhedralVEMEvidence3D
+    value_spec: FormValueSpec = eqx.field(static=True)
     degree: int = eqx.field(static=True)
     dof_count: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -164,6 +169,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
     )
     if not isinstance(budget, VirtualElementResourceBudget):
         raise TypeError("resource_budget must be VirtualElementResourceBudget.")
+    value_spec = FormValueSpec(FormType(3, 0), proxy="scalar")
     connectivity = mesh.connectivity
     if connectivity.cell_count > budget.maximum_cells:
         raise ValueError("Polyhedral VEM cell capacity exceeded.")
@@ -263,6 +269,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
         mesh=mesh,
         operator=operator,
         evidence=evidence,
+        value_spec=value_spec,
         degree=1,
         dof_count=connectivity.vertex_count,
         prepared_id=canonical_fingerprint(
@@ -271,6 +278,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
                 "mesh": mesh.mesh_id,
                 "operator": operator.operator_id,
                 "evidence": evidence_id,
+                "value_spec": value_spec.value_spec_id,
             }
         ),
     )

@@ -25,7 +25,13 @@ from ...backends.lattice import (
     LatticeKernelProvider,
     NativeJaxLatticeProvider,
 )
+from ...discretization._cell_complex import cubical_cell_complex
 from ...discretization._lattice_distribution import LatticeDecompositionPlan
+from ...discretization._oriented_path import (
+    _prepare_cubical_boundary_paths,
+    CellBoundaryPathPlan,
+    ordered_path_transport,
+)
 from ...graph._gauge_transport import GaugeCovariantShiftPlan, GaugeStaplePlan
 from ...linalg._dense_pseudoinverse import (
     apply_pseudoinverse,
@@ -135,6 +141,12 @@ class DistributedGaugeTheoryPlan(StrictModule, NonTrainableState):
 
     decomposition: LatticeDecompositionPlan
     beta: Array
+    forward_edges: Array
+    plaquette_paths: CellBoundaryPathPlan | None
+    native_link_sites: Array
+    native_link_axes: Array
+    face_sites: Array
+    face_planes: Array
     maximum_gauge_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -144,6 +156,7 @@ class DistributedGaugeTheoryPlan(StrictModule, NonTrainableState):
         beta: ArrayLike,
         /,
         *,
+        forward_edges: ArrayLike | None = None,
         maximum_gauge_bytes: int = 4_294_967_296,
     ) -> None:
         if not isinstance(decomposition, LatticeDecompositionPlan):
@@ -154,8 +167,61 @@ class DistributedGaugeTheoryPlan(StrictModule, NonTrainableState):
         maximum = int(maximum_gauge_bytes)
         if maximum <= 0:
             raise ValueError("maximum_gauge_bytes must be positive.")
+        expected = (decomposition.site_count, decomposition.dimension)
+        edge_indices = (
+            np.arange(
+                decomposition.site_count * decomposition.dimension, dtype=np.int32
+            ).reshape(expected)
+            if forward_edges is None
+            else np.asarray(forward_edges, dtype=np.int32)
+        )
+        if edge_indices.shape != expected or not np.array_equal(
+            np.sort(edge_indices.reshape(-1)),
+            np.arange(decomposition.site_count * decomposition.dimension),
+        ):
+            raise ValueError("forward_edges must bijectively identify the lattice links.")
+        cells = cubical_cell_complex(
+            decomposition.global_shape, periodic=decomposition.periodic
+        )
+        native_link_sites = np.ravel_multi_index(
+            np.asarray(cells.cell_multi_indices[1]).T, decomposition.global_shape
+        )
+        native_link_axes = np.concatenate(
+            tuple(
+                np.full((int(np.prod(block_shape)),), axis, dtype=np.int32)
+                for axis, block_shape in enumerate(cells.orientation_shapes[1])
+            )
+        )
+        plaquette_paths = (
+            _prepare_cubical_boundary_paths(cells)
+            if decomposition.dimension >= 2
+            else None
+        )
+        face_sites = (
+            np.ravel_multi_index(
+                np.asarray(cells.cell_multi_indices[2]).T, decomposition.global_shape
+            )
+            if plaquette_paths is not None
+            else np.empty((0,), dtype=np.int32)
+        )
+        face_planes = (
+            np.concatenate(
+                tuple(
+                    np.full((int(np.prod(block_shape)),), plane, dtype=np.int32)
+                    for plane, block_shape in enumerate(cells.orientation_shapes[2])
+                )
+            )
+            if plaquette_paths is not None
+            else np.empty((0,), dtype=np.int32)
+        )
         self.decomposition = decomposition
         self.beta = jnp.asarray(beta_)
+        self.forward_edges = jnp.asarray(edge_indices)
+        self.plaquette_paths = plaquette_paths
+        self.native_link_sites = jnp.asarray(native_link_sites, dtype=jnp.int32)
+        self.native_link_axes = jnp.asarray(native_link_axes, dtype=jnp.int32)
+        self.face_sites = jnp.asarray(face_sites, dtype=jnp.int32)
+        self.face_planes = jnp.asarray(face_planes, dtype=jnp.int32)
         self.maximum_gauge_bytes = maximum
         self.plan_id = canonical_fingerprint(
             {
@@ -163,6 +229,7 @@ class DistributedGaugeTheoryPlan(StrictModule, NonTrainableState):
                 "decomposition": decomposition.plan_id,
                 "beta": float(beta_),
                 "maximum_gauge_bytes": maximum,
+                "forward_edges": array_tree_fingerprint(edge_indices),
             }
         )
 
@@ -239,7 +306,17 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
         )
 
     def _links(self, links: ArrayLike, /) -> Array:
-        values = _canonical_links(self.plan.decomposition, links)
+        supplied = jnp.asarray(links)
+        if supplied.ndim == 3:
+            if (
+                supplied.shape[0]
+                != self.plan.decomposition.site_count * self.plan.decomposition.dimension
+            ):
+                raise ValueError(
+                    "Flattened gauge links must match the lattice edge count."
+                )
+            supplied = supplied[self.plan.forward_edges]
+        values = _canonical_links(self.plan.decomposition, supplied)
         if values.nbytes > self.plan.maximum_gauge_bytes:
             raise ValueError("Gauge field exceeds maximum_gauge_bytes.")
         return values
@@ -257,33 +334,19 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
     def plaquettes(self, links: ArrayLike, /) -> tuple[Array, Array]:
         values = self._links(links)
         decomposition = self.plan.decomposition
-        axes = np.asarray(decomposition.ownership.face_axes)
-        plaquettes = []
-        valid = []
-        for left, right in axes:
-            mu, nu = int(left), int(right)
-            plus_mu = decomposition.neighbor_ids[:, mu, 1]
-            plus_nu = decomposition.neighbor_ids[:, nu, 1]
-            u_mu = values[:, mu]
-            u_nu_at_mu = values[plus_mu, nu]
-            u_mu_at_nu = values[plus_nu, mu]
-            u_nu = values[:, nu]
-            product_1 = _matrix_product(u_mu, u_nu_at_mu)
-            product_2 = _matrix_product(product_1, _adjoint(u_mu_at_nu))
-            plaquettes.append(_matrix_product(product_2, _adjoint(u_nu)))
-            valid.append(
-                decomposition.neighbor_valid[:, mu, 1]
-                & decomposition.neighbor_valid[:, nu, 1]
+        colors = values.shape[-1]
+        plane_count = decomposition.dimension * (decomposition.dimension - 1) // 2
+        shape = (decomposition.site_count, plane_count)
+        plaquettes = jnp.zeros(shape + (colors, colors), dtype=values.dtype)
+        valid = jnp.zeros(shape, dtype=jnp.bool_)
+        if self.plan.plaquette_paths is not None:
+            native_links = values[self.plan.native_link_sites, self.plan.native_link_axes]
+            holonomies = ordered_path_transport(self.plan.plaquette_paths, native_links)
+            plaquettes = plaquettes.at[self.plan.face_sites, self.plan.face_planes].set(
+                holonomies
             )
-        if not plaquettes:
-            color = values.shape[-1]
-            return (
-                jnp.zeros(
-                    (decomposition.site_count, 0, color, color), dtype=values.dtype
-                ),
-                jnp.zeros((decomposition.site_count, 0), dtype=jnp.bool_),
-            )
-        return jnp.stack(plaquettes, axis=1), jnp.stack(valid, axis=1)
+            valid = valid.at[self.plan.face_sites, self.plan.face_planes].set(True)
+        return plaquettes, valid
 
     def gauge_action(self, links: ArrayLike, /) -> DistributedGaugeActionResult:
         plaquettes, valid = self.plaquettes(links)
@@ -319,11 +382,11 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
         staples: ArrayLike,
         /,
     ) -> DistributedGaugeForceResult:
-        """Partition a force built from graph-owned, precomputed staple sums."""
+        """Partition the negative Wilson gradient from complementary graph staples."""
 
         values = self._links(links)
         self.capabilities.require("gauge.wilson_force", values.dtype)
-        staple_values = _canonical_links(self.plan.decomposition, staples)
+        staple_values = self._links(staples)
         if staple_values.shape != values.shape:
             raise ValueError(
                 "staples must match canonical links after graph GaugeStaplePlan evaluation."
@@ -334,7 +397,7 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
             local.append(
                 self.provider.gauge_force(
                     values,
-                    staple_values,
+                    _adjoint(staple_values),
                     self.plan.beta,
                     decomposition.ownership.link_mask(part),
                 )
@@ -407,7 +470,9 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
             tuple(
                 self.provider.gauge_force(
                     values,
-                    staple_values,
+                    # Graph staples are complementary C in Re Tr(U C).
+                    # The provider accepts head-to-tail S and forms U S†.
+                    jnp.swapaxes(jnp.conj(staple_values), -1, -2),
                     self.plan.beta,
                     jnp.asarray(edge_owner == part),
                 )

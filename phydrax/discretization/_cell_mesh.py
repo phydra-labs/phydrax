@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import NamedTuple
+from itertools import combinations
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +17,9 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import Dim, Int32
 from ._cell_complex import (
+    _canonical_entity_ids,
     _interval_complex,
     _polygonal_complex,
     _tetrahedral_complex,
@@ -27,6 +30,7 @@ from ._cell_complex import (
     polyhedral_cell_complex,
     polyhedral_connectivity as _build_polyhedral_connectivity,
     PolyhedralConnectivity,
+    simplicial_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
@@ -35,30 +39,95 @@ from ._hexahedral import (
     hexahedral_connectivity,
     HexahedralConnectivity,
 )
+from ._reference_cell import (
+    reference_cell_topology,
+    REFERENCE_TOPOLOGIES,
+    ReferenceCellTopology,
+)
 from ._support import DiscreteSupport
-from ._topology import _has_duplicate_rows, CellComplexTopology, EntitySet
+from ._topology import (
+    _has_duplicate_rows,
+    CellComplexTopology,
+    EntitySet,
+    EntitySubset,
+    OrientedIncidence,
+)
 
 
-_CELL_ARITIES = {
-    "interval": 2,
-    "triangle": 3,
-    "quadrilateral": 4,
-    "tetrahedron": 4,
-    "hexahedron": 8,
-    "prism": 6,
-    "pyramid": 5,
-}
-_CELL_DIMENSIONS = {
-    "interval": 1,
-    "triangle": 2,
-    "quadrilateral": 2,
-    "tetrahedron": 3,
-    "hexahedron": 3,
-    "prism": 3,
-    "pyramid": 3,
-    "polygon": 2,
-    "polyhedron": 3,
-}
+def _admit_cell_kind(kind: str, /) -> ReferenceCellTopology | None:
+    if (
+        kind not in REFERENCE_TOPOLOGIES
+        and kind not in ("polygon", "polyhedron")
+        and not kind.startswith(("simplex:", "tensor:"))
+    ):
+        raise ValueError(
+            "cell_kind must name a reference cell, simplex:N, tensor:N, polygon, or polyhedron."
+        )
+    return None if kind in ("polygon", "polyhedron") else reference_cell_topology(kind)
+
+
+def _admit_cell_rows(
+    kind: str, reference: ReferenceCellTopology | None, vertices: ArrayLike, /
+) -> tuple[np.ndarray, int]:
+    """Own reference-cell arity and nonempty rank-two connectivity admission."""
+    cells = np.asarray(vertices, dtype=np.int32)
+    if reference is None:
+        arity = cells.shape[1] if cells.ndim == 2 else -1
+        minimum_arity = 4 if kind == "polyhedron" else 3
+    else:
+        arity = len(reference.vertices)
+        minimum_arity = 2 if reference.dimension == 1 else 3
+    if (
+        cells.ndim != 2
+        or cells.shape[0] == 0
+        or cells.shape[1] != arity
+        or arity < minimum_arity
+        or (kind == "polygon" and arity < 5)
+    ):
+        raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
+    return cells, minimum_arity
+
+
+def _admit_active_cell_vertices(
+    kind: str, cells: np.ndarray, vertex_valid: ArrayLike | None, minimum_arity: int, /
+) -> np.ndarray:
+    """Validate fixed-capacity padding and active vertex-set uniqueness."""
+    valid = (
+        np.ones_like(cells, dtype=np.bool_)
+        if vertex_valid is None
+        else np.asarray(vertex_valid, dtype=np.bool_)
+    )
+    if valid.shape != cells.shape:
+        raise ValueError("vertex_valid must match cell vertex storage.")
+    if kind != "polyhedron" and not np.all(valid):
+        raise ValueError("Only polyhedron blocks may contain padded vertices.")
+    if np.any(np.sum(valid, axis=1) < minimum_arity):
+        raise ValueError(f"Each {kind} cell requires at least {minimum_arity} vertices.")
+    if np.any(cells[valid] < 0):
+        raise ValueError("Cell vertex indices must be non-negative.")
+    # Padding sorts first as -1, so equal sorted rows are equal active sets.
+    active_rows = np.sort(np.where(valid, cells, -1), axis=1)
+    if np.any((active_rows[:, 1:] == active_rows[:, :-1]) & (active_rows[:, 1:] >= 0)):
+        raise ValueError("Each cell must reference distinct active vertices.")
+    if _has_duplicate_rows(active_rows):
+        raise ValueError("Cell blocks cannot contain duplicate cells.")
+    return valid
+
+
+def _admit_cell_global_ids(
+    cell_count: int, global_ids: ArrayLike | None, /
+) -> np.ndarray:
+    """Admit one unique stable identity per cell without changing numeric representation."""
+    ids = (
+        np.arange(cell_count, dtype=np.int64)
+        if global_ids is None
+        else np.asarray(global_ids, dtype=np.int64)
+    )
+    if ids.shape != (cell_count,):
+        raise ValueError("Cell global_ids must have shape (cell_count,).")
+    if np.any(ids < 0) or np.unique(ids).size != ids.size:
+        raise ValueError("Cell global_ids must be unique non-negative integers.")
+    return ids
 
 
 class CellBlock(StrictModule, NonTrainableState):
@@ -85,58 +154,10 @@ class CellBlock(StrictModule, NonTrainableState):
         kind = str(cell_kind)
         if not block_name:
             raise ValueError("Cell block name must be non-empty.")
-        if kind not in (*_CELL_ARITIES, "polygon", "polyhedron"):
-            raise ValueError(
-                "cell_kind must be interval, triangle, quadrilateral, polygon, "
-                "tetrahedron, hexahedron, prism, pyramid, or polyhedron."
-            )
-        cells = np.asarray(vertices, dtype=np.int32)
-        arity = (
-            cells.shape[1]
-            if kind in ("polygon", "polyhedron") and cells.ndim == 2
-            else _CELL_ARITIES.get(kind, -1)
-        )
-        minimum_arity = 4 if kind == "polyhedron" else 2 if kind == "interval" else 3
-        if (
-            cells.ndim != 2
-            or cells.shape[0] == 0
-            or cells.shape[1] != arity
-            or arity < minimum_arity
-            or (kind == "polygon" and arity < 5)
-        ):
-            raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
-        valid = (
-            np.ones_like(cells, dtype=np.bool_)
-            if vertex_valid is None
-            else np.asarray(vertex_valid, dtype=np.bool_)
-        )
-        if valid.shape != cells.shape:
-            raise ValueError("vertex_valid must match cell vertex storage.")
-        if kind != "polyhedron" and not np.all(valid):
-            raise ValueError("Only polyhedron blocks may contain padded vertices.")
-        if np.any(np.sum(valid, axis=1) < minimum_arity):
-            raise ValueError(
-                f"Each {kind} cell requires at least {minimum_arity} vertices."
-            )
-        if np.any(cells[valid] < 0):
-            raise ValueError("Cell vertex indices must be non-negative.")
-        # Padding sorts first as -1, so equal sorted rows are equal active sets.
-        active_rows = np.sort(np.where(valid, cells, -1), axis=1)
-        if np.any(
-            (active_rows[:, 1:] == active_rows[:, :-1]) & (active_rows[:, 1:] >= 0)
-        ):
-            raise ValueError("Each cell must reference distinct active vertices.")
-        if _has_duplicate_rows(active_rows):
-            raise ValueError("Cell blocks cannot contain duplicate cells.")
-        ids = (
-            np.arange(cells.shape[0], dtype=np.int64)
-            if global_ids is None
-            else np.asarray(global_ids, dtype=np.int64)
-        )
-        if ids.shape != (cells.shape[0],):
-            raise ValueError("Cell global_ids must have shape (cell_count,).")
-        if np.any(ids < 0) or np.unique(ids).size != ids.size:
-            raise ValueError("Cell global_ids must be unique non-negative integers.")
+        reference = _admit_cell_kind(kind)
+        cells, minimum_arity = _admit_cell_rows(kind, reference, vertices)
+        valid = _admit_active_cell_vertices(kind, cells, vertex_valid, minimum_arity)
+        ids = _admit_cell_global_ids(cells.shape[0], global_ids)
         self.name = block_name
         self.cell_kind = kind
         self.vertices = jnp.asarray(cells)
@@ -162,12 +183,16 @@ class CellBlock(StrictModule, NonTrainableState):
         return (
             self.vertices.shape[1]
             if self.cell_kind in ("polygon", "polyhedron")
-            else _CELL_ARITIES[self.cell_kind]
+            else len(reference_cell_topology(self.cell_kind).vertices)
         )
 
     @property
     def topological_dimension(self) -> int:
-        return _CELL_DIMENSIONS[self.cell_kind]
+        if self.cell_kind == "polygon":
+            return 2
+        if self.cell_kind == "polyhedron":
+            return 3
+        return reference_cell_topology(self.cell_kind).dimension
 
 
 class PolyhedralBlock(StrictModule, NonTrainableState):
@@ -242,12 +267,124 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
         return 3
 
 
+class SimplexCellDim(Dim):
+    """Top-dimensional cells in one simplicial mesh."""
+
+
+class SimplexVertexDim(Dim):
+    """Reference vertices per simplex."""
+
+
+@final
+class SimplicialConnectivity(StrictModule, NonTrainableState):
+    """Explicit n-D simplex incidence routes in mesh-cell order."""
+
+    __strict_contract__ = True
+    dimension: int = eqx.field(static=True)
+    vertex_count: int = eqx.field(static=True)
+    cells: Int32[SimplexCellDim, SimplexVertexDim]
+    entities: tuple[Array, ...]
+    cell_entities: tuple[Array, ...]
+    cell_entity_signs: tuple[Array, ...]
+    boundary_masks: tuple[Array, ...]
+    connectivity_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        topology: CellComplexTopology,
+        cells: ArrayLike,
+        /,
+        *,
+        entities: Sequence[ArrayLike],
+        cell_entities: Sequence[ArrayLike],
+        cell_entity_signs: Sequence[ArrayLike],
+        boundary_masks: Sequence[ArrayLike],
+    ) -> None:
+        if not isinstance(topology, CellComplexTopology):
+            raise TypeError("Simplicial connectivity requires CellComplexTopology.")
+        dimension = topology.dimension
+        cell_rows = np.asarray(cells, dtype=np.int32)
+        vertex_rows = tuple(np.asarray(value, dtype=np.int32) for value in entities)
+        routes = tuple(np.asarray(value, dtype=np.int32) for value in cell_entities)
+        signs = tuple(np.asarray(value, dtype=np.float64) for value in cell_entity_signs)
+        masks = tuple(np.asarray(value, dtype=np.bool_) for value in boundary_masks)
+        if cell_rows.shape != (topology.entity_sets[-1].count, dimension + 1):
+            raise ValueError(
+                "Simplex cells must have one reference-vertex row per top cell."
+            )
+        if any(
+            len(values) != dimension + 1 for values in (vertex_rows, routes, signs, masks)
+        ):
+            raise ValueError("Simplex connectivity must contain every entity degree.")
+        for degree, entity_set in enumerate(topology.entity_sets):
+            expected = len(tuple(combinations(range(dimension + 1), degree + 1)))
+            if vertex_rows[degree].shape != (entity_set.count, degree + 1):
+                raise ValueError("Simplex entity vertices have incompatible shape.")
+            if routes[degree].shape != (cell_rows.shape[0], expected):
+                raise ValueError("Simplex cell-to-entity routes have incompatible shape.")
+            if signs[degree].shape != routes[degree].shape or np.any(
+                np.abs(signs[degree]) != 1.0
+            ):
+                raise ValueError(
+                    "Simplex route signs must be unit orientation coefficients."
+                )
+            if masks[degree].shape != (entity_set.count,):
+                raise ValueError("Simplex boundary masks must match entity counts.")
+            if np.any(routes[degree] < 0) or np.any(routes[degree] >= entity_set.count):
+                raise ValueError("Simplex routes index undeclared entities.")
+        self.dimension = dimension
+        self.vertex_count = topology.entity_sets[0].count
+        self.cells = jnp.asarray(cell_rows, dtype=jnp.int32)
+        self.entities = tuple(
+            jnp.asarray(value, dtype=jnp.int32) for value in vertex_rows
+        )
+        self.cell_entities = tuple(
+            jnp.asarray(value, dtype=jnp.int32) for value in routes
+        )
+        self.cell_entity_signs = tuple(
+            jnp.asarray(value, dtype=jnp.float64) for value in signs
+        )
+        self.boundary_masks = tuple(
+            jnp.asarray(value, dtype=jnp.bool_) for value in masks
+        )
+        self.connectivity_id = canonical_fingerprint(
+            {
+                "kind": "simplicial-connectivity",
+                "topology": topology.topology_id,
+                "cells": array_tree_fingerprint(cell_rows),
+            }
+        )
+
+    @property
+    def cell_count(self) -> int:
+        return self.cells.shape[0]
+
+    @property
+    def boundary_vertices(self) -> Array:
+        return self.boundary_masks[0]
+
+    @property
+    def boundary_edges(self) -> Array:
+        return self.boundary_masks[1]
+
+    @property
+    def boundary_faces(self) -> Array:
+        if self.dimension < 2:
+            raise ValueError("This simplex complex has no degree-two faces.")
+        return self.boundary_masks[2]
+
+    @property
+    def boundary_facets(self) -> Array:
+        return self.boundary_masks[self.dimension - 1]
+
+
 _CellMeshConnectivity = (
     IntervalConnectivity
     | PolygonalConnectivity
     | TetrahedralConnectivity
     | HexahedralConnectivity
     | PolyhedralConnectivity
+    | SimplicialConnectivity
 )
 
 
@@ -512,6 +649,184 @@ def _resolved_mesh_identities(
     return global_ids, entity_ids, cell_global_ids
 
 
+def _simplex_orientation(vertices: np.ndarray, /) -> np.ndarray:
+    """Orientation of each ordered simplex relative to its ascending vertex row."""
+    inversions = np.zeros(vertices.shape[0], dtype=np.int64)
+    for first, second in combinations(range(vertices.shape[1]), 2):
+        inversions += vertices[:, first] > vertices[:, second]
+    return np.where(inversions % 2, -1.0, 1.0).astype(np.float64)
+
+
+def _simplex_mesh_levels(
+    cells: np.ndarray, dimension: int, vertex_count: int, /
+) -> tuple[np.ndarray, ...]:
+    top = np.sort(cells, axis=1)
+    if _has_duplicate_rows(top):
+        raise ValueError("Simplex mesh blocks cannot contain duplicate cells.")
+    levels: list[np.ndarray] = [np.arange(vertex_count, dtype=np.int32)[:, None]]
+    for degree in range(1, dimension):
+        faces = {
+            tuple(sorted(int(cell[index]) for index in indices))
+            for cell in cells
+            for indices in combinations(range(dimension + 1), degree + 1)
+        }
+        levels.append(np.asarray(sorted(faces), dtype=np.int32))
+    levels.append(top)
+    return tuple(levels)
+
+
+def _simplex_mesh_boundary(
+    levels: tuple[np.ndarray, ...], topology: CellComplexTopology, /
+) -> tuple[np.ndarray, ...]:
+    dimension = topology.dimension
+    relation = topology.incidences[-1].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    source = np.asarray(relation.source_indices)[valid]
+    counts = np.bincount(source, minlength=levels[-2].shape[0])
+    if np.any(counts > 2):
+        raise ValueError("Simplex mesh facets may have at most two incident cells.")
+    facets = levels[-2][counts == 1]
+    masks: list[np.ndarray] = []
+    for degree in range(dimension):
+        boundary = {
+            tuple(int(vertex) for vertex in face)
+            for facet in facets
+            for face in combinations(facet, degree + 1)
+        }
+        masks.append(
+            np.asarray(
+                [
+                    tuple(int(vertex) for vertex in row) in boundary
+                    for row in levels[degree]
+                ],
+                dtype=np.bool_,
+            )
+        )
+    masks.append(np.zeros(levels[-1].shape[0], dtype=np.bool_))
+    return tuple(masks)
+
+
+def _simplex_cell_routes(
+    cells: np.ndarray, levels: tuple[np.ndarray, ...], /
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    dimension = len(levels) - 1
+    routes: list[np.ndarray] = []
+    signs: list[np.ndarray] = []
+    for degree, entities in enumerate(levels):
+        local = tuple(combinations(range(dimension + 1), degree + 1))
+        lookup = {
+            tuple(int(vertex) for vertex in row): index
+            for index, row in enumerate(entities)
+        }
+        selected = cells[:, np.asarray(local, dtype=np.int32)]
+        ordered = np.sort(selected, axis=-1)
+        route = np.asarray(
+            [
+                lookup[tuple(int(vertex) for vertex in row)]
+                for row in ordered.reshape((-1, degree + 1))
+            ],
+            dtype=np.int32,
+        ).reshape((cells.shape[0], len(local)))
+        coefficient = _simplex_orientation(selected.reshape((-1, degree + 1))).reshape(
+            route.shape
+        )
+        if degree == dimension:
+            coefficient = np.ones_like(coefficient, dtype=np.float64)
+        routes.append(route)
+        signs.append(coefficient)
+    return tuple(routes), tuple(signs)
+
+
+def _simplex_mesh_topology(
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    vertex_count: int,
+    vertex_ids: np.ndarray,
+    entity_ids: dict[int, np.ndarray],
+    cell_ids: np.ndarray,
+    /,
+) -> tuple[SimplicialConnectivity, CellComplexTopology]:
+    dimension = blocks[0].topological_dimension
+    if any(
+        block.cell_kind not in ("interval", "triangle", "tetrahedron")
+        and not block.cell_kind.startswith("simplex:")
+        for block in blocks
+    ):
+        raise ValueError("General simplicial meshes require simplex blocks.")
+    cells = np.concatenate(
+        tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks)
+    )
+    levels = _simplex_mesh_levels(cells, dimension, vertex_count)
+    canonical = simplicial_cell_complex(levels)
+    masks = _simplex_mesh_boundary(levels, canonical)
+    sets: list[EntitySet] = []
+    for degree, (rows, source) in enumerate(
+        zip(levels, canonical.entity_sets, strict=True)
+    ):
+        ids = (
+            vertex_ids
+            if degree == 0
+            else cell_ids
+            if degree == dimension
+            else entity_ids.get(degree, _canonical_entity_ids(vertex_ids[rows]))
+        )
+        if ids.shape != (source.count,):
+            raise ValueError("Simplex entity global IDs must match entity counts.")
+        sets.append(
+            EntitySet(
+                source.name,
+                degree,
+                ids,
+                subsets=(EntitySubset("boundary", masks[degree]),),
+            )
+        )
+    orientation = _simplex_orientation(cells)
+    incidences: list[OrientedIncidence] = []
+    for degree, incidence in enumerate(canonical.incidences, start=1):
+        coefficients = np.asarray(incidence.signs)
+        if degree == dimension:
+            coefficients = (
+                coefficients * orientation[np.asarray(incidence.relation.target_indices)]
+            )
+        incidences.append(
+            OrientedIncidence(
+                degree, sets[degree - 1], sets[degree], incidence.relation, coefficients
+            )
+        )
+    topology = CellComplexTopology(sets, incidences)
+    routes, signs = _simplex_cell_routes(cells, levels)
+    return SimplicialConnectivity(
+        topology,
+        cells,
+        entities=levels,
+        cell_entities=routes,
+        cell_entity_signs=signs,
+        boundary_masks=masks,
+    ), topology
+
+
+def _tensor_mesh_route_blocks(
+    blocks: tuple[CellBlock | PolyhedralBlock, ...], /
+) -> tuple[CellBlock | PolyhedralBlock, ...]:
+    """Bind dimension-qualified cubes to the native 1-D/2-D/3-D vertex routes."""
+    names = {1: "interval", 2: "quadrilateral", 3: "hexahedron"}
+    result: list[CellBlock | PolyhedralBlock] = []
+    for block in blocks:
+        if not block.cell_kind.startswith("tensor:"):
+            result.append(block)
+            continue
+        dimension = block.topological_dimension
+        if dimension not in names:
+            raise ValueError(
+                "Unstructured tensor CellMesh supports dimensions one through three."
+            )
+        result.append(
+            CellBlock(
+                block.name, names[dimension], block.vertices, global_ids=block.global_ids
+            )
+        )
+    return tuple(result)
+
+
 def _prepare_cell_mesh_topology(
     point_shape: tuple[int, ...],
     blocks: Sequence[CellBlock | PolyhedralBlock],
@@ -536,13 +851,20 @@ def _prepare_cell_mesh_topology(
         raise ValueError(
             "polyhedral_connectivity is valid only for three-dimensional meshes."
         )
-    if topological_dimension == 1:
+    route_blocks = _tensor_mesh_route_blocks(normalized_blocks)
+    if any(block.cell_kind.startswith("simplex:") for block in normalized_blocks):
+        if polyhedral_connectivity is not None:
+            raise ValueError("Simplicial meshes cannot use polyhedral connectivity.")
+        connectivity, topology = _simplex_mesh_topology(
+            normalized_blocks, coordinate_count, global_ids, entity_ids, cell_global_ids
+        )
+    elif topological_dimension == 1:
         connectivity, topology = _interval_mesh_topology(
-            normalized_blocks, coordinate_count, global_ids, cell_global_ids
+            route_blocks, coordinate_count, global_ids, cell_global_ids
         )
     elif topological_dimension == 2:
         connectivity, topology = _polygonal_mesh_topology(
-            normalized_blocks,
+            route_blocks,
             coordinate_count,
             global_ids,
             entity_ids.get(1),
@@ -550,7 +872,7 @@ def _prepare_cell_mesh_topology(
         )
     else:
         connectivity, topology = _volume_mesh_topology(
-            normalized_blocks,
+            route_blocks,
             coordinate_count,
             global_ids,
             entity_ids,
@@ -634,6 +956,7 @@ class CellMesh(StrictModule, NonTrainableState):
         | TetrahedralConnectivity
         | HexahedralConnectivity
         | PolyhedralConnectivity
+        | SimplicialConnectivity
     )
     topology: CellComplexTopology
     support: DiscreteSupport
@@ -718,6 +1041,38 @@ class CellMesh(StrictModule, NonTrainableState):
             }
         )
         self.numeric_version = str(numeric_version)
+
+    @classmethod
+    def from_simplices(
+        cls,
+        coordinates: ArrayLike,
+        simplices: ArrayLike,
+        /,
+        *,
+        dimension: int,
+        block_name: str = "simplices",
+        vertex_global_ids: ArrayLike | None = None,
+        cell_global_ids: ArrayLike | None = None,
+        numeric_version: str = "0",
+    ) -> CellMesh:
+        """Build simplicial mesh geometry with an explicitly declared intrinsic dimension."""
+        if not isinstance(dimension, int) or isinstance(dimension, bool):
+            raise TypeError("Simplex dimension must be an integer.")
+        if dimension < 1:
+            raise ValueError("Simplex dimension must be positive.")
+        return cls(
+            coordinates,
+            (
+                CellBlock(
+                    block_name,
+                    f"simplex:{dimension}",
+                    simplices,
+                    global_ids=cell_global_ids,
+                ),
+            ),
+            vertex_global_ids=vertex_global_ids,
+            numeric_version=numeric_version,
+        )
 
     @classmethod
     def from_triangles(
@@ -1071,6 +1426,13 @@ class CellMesh(StrictModule, NonTrainableState):
                 return entities
         raise KeyError(f"Cell mesh has no entity set of dimension {target}.")
 
+    @property
+    def boundary_masks(self) -> tuple[Array, ...]:
+        """Boundary subcomplex membership in each explicitly declared entity degree."""
+        return tuple(
+            entities.subset("boundary").mask for entities in self.topology.entity_sets
+        )
+
     def with_coordinates(
         self,
         coordinates: ArrayLike,
@@ -1100,4 +1462,4 @@ class CellMesh(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["CellBlock", "CellMesh", "PolyhedralBlock"]
+__all__ = ["CellBlock", "CellMesh", "PolyhedralBlock", "SimplicialConnectivity"]

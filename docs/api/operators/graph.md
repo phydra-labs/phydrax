@@ -250,9 +250,6 @@ cells.
 
 ::: phydrax.graph.SimplicialComplexGraph
 
----
-
-::: phydrax.graph.SimplicialHodgeLaplacian
 
 ### Metric cochain complexes and DEC
 
@@ -260,17 +257,14 @@ cells.
 `phydrax.discretization.CellComplexTopology` and `CochainDiscretization`. It packs
 sparse signed incidences, primal and dual measures, diagonal Hodge stars, boundary
 masks, cell coordinates, and an optional precomputed harmonic subspace into
-`GraphIR`. Constructors validate chain-complex identities and positive metric data
-before the object can reach compiled execution.
+`GraphIR`. This is a lowering of an admitted cochain realization, not a second
+complex implementation. It accepts diagonal Hodges; sparse Gram realizations
+execute through the exterior/linalg protocol instead.
 
-The functional DEC operators and their `GraphIR -> GraphIR` wrappers implement
-the exterior derivative, metric codifferential, split/full Hodge Laplacian, and
-metric harmonic projection. `triangle_mesh_to_cochain_complex` always builds
-the complete oriented topology; boundary behavior belongs to the consuming
-operator. `CochainBoundaryPolicy("absolute" | "relative")` selects that
-operator's active subcomplex. `reorient_cochain_complex` changes the oriented
-cell basis without changing the represented physical complex; use
-`reorient_cochain` to transform signed coefficient arrays consistently.
+Functional DEC operators and `GraphIR -> GraphIR` wrappers implement d, δ and
+split/full Δ. `boundary="absolute"` or `boundary="relative"` selects the
+active subcomplex. Canonical topology and reorientation live in discretization;
+use `reorient_cochain(values, signs, cell_axis=...)` with an explicit cell axis.
 
 `graph_to_cochain_complex` is the canonical graph-to-DEC bridge. Its explicit
 `GraphEdgeSemantics` distinguishes reciprocal directed storage from an
@@ -282,23 +276,19 @@ complex with the requested node probability measure.
 
 ---
 
-::: phydrax.discretization.CochainBoundaryPolicy
+::: phydrax.exterior.ComplexBoundary
 
 ---
 
-::: phydrax.graph.triangle_mesh_to_cochain_complex
+::: phydrax.linalg.harmonic_subspace
 
 ---
 
-::: phydrax.graph.compute_harmonic_subspace
+::: phydrax.discretization.reorient_cochain
 
 ---
 
-::: phydrax.graph.reorient_cochain
-
----
-
-::: phydrax.graph.reorient_cochain_complex
+::: phydrax.discretization.reorient_cell_complex
 
 ---
 
@@ -322,37 +312,26 @@ complex with the requested node probability measure.
 
 ### Continuous differential forms to cochains
 
-`ContinuousCochainBridge` requires one oriented parameterization and quadrature rule
-for every represented cell degree. Cell coordinates alone are not treated as enough
-information to integrate a form. `validate_stokes_bridge` checks the primary commuting
-law: integrating the smooth exterior derivative equals applying the discrete exterior
-derivative to the integrated cochain.
+`DeRhamBridge` requires explicit oriented cell parameterizations and quadrature.
+Coordinates alone are not sufficient integration data.
+`validate_de_rham_commutation` compares integration of dα with d of its cochain.
 
-::: phydrax.graph.OrientedCellParameterization
+::: phydrax.exterior.CellParameterization
 
----
+::: phydrax.exterior.DeRhamBridge
 
-::: phydrax.graph.ContinuousCochainBridge
+::: phydrax.exterior.integrate_form
 
----
-
-::: phydrax.graph.integrate_form_to_cochain
-
----
-
-::: phydrax.graph.validate_stokes_bridge
-
----
+::: phydrax.exterior.validate_de_rham_commutation
 
 ### Typed cochain fields and domain-level DEC
 
-`CochainFieldSpec` is the shared semantic contract used by graph domains,
-cochain neural operators, and residual programs. The domain-level DEC functions
-accept a declared cochain `DomainFunction`, preserve or change its degree as
-mathematically required, and return another `DomainFunction`. They execute the
-same sparse kernels as the array-level functions above.
+`FormType` is the shared scientific contract for graph domains, neural operators
+and residual programs; representation is declared separately. Domain-level DEC
+operators adapt labeled `DomainFunction` carriers to the canonical calculus,
+preserving degree, twist and realization identity.
 
-::: phydrax.discretization.CochainFieldSpec
+::: phydrax.exterior.FormType
 
 ---
 
@@ -396,28 +375,16 @@ masks exclude padding; optional segment weights compose graph-time quadrature.
 
 ## Spectral graph and cochain operators
 
-`cochain_laplacian_eigenbasis` assembles the symmetric metric form of a complete,
-lower, or upper Hodge Laplacian and returns a
-`phydrax.discretization.SpectralDecomposition`. Dense solves certify exact spectra or
-truncated tails from the full eigenspectrum. Sparse solves retain one Ritz lookahead
-to reject an observed cut through a degenerate eigenspace, but mark
-`report.tail_certified = False`: the lookahead is not a certified lower bound on
-the omitted spectrum. Product-spectrum construction therefore accepts truncated
-factors only when their tails were certified by a dense solve. Absolute and relative
-boundary policies select different active subcomplexes.
-`cochain_hodge_sector_spectra` separates the harmonic, exact, and coexact sectors
-for compositional cochain covariances.
+`phydrax.exterior.hodge_laplacian_eigenbasis` and `hodge_sector_spectra` operate
+on realizations through their Hilbert complexes rather than graph-owned dense
+algebra. Absolute/relative selection excludes inactive coordinates from spectra
+and harmonic counts. Eigen and residual evidence comes from the linalg owner.
 
+::: phydrax.exterior.HodgeSectorSpectra
 
-::: phydrax.graph.CochainHodgeSectorSpectra
+::: phydrax.exterior.hodge_laplacian_eigenbasis
 
----
-
-::: phydrax.graph.cochain_laplacian_eigenbasis
-
----
-
-::: phydrax.graph.cochain_hodge_sector_spectra
+::: phydrax.exterior.hodge_sector_spectra
 
 Sparse polynomial and Chebyshev filters provide the complementary scalable path
 that applies a spectral graph operator without an eigendecomposition.
@@ -452,7 +419,7 @@ boundary routes change neither node outputs nor gradients. This contract covers
 `MeshGraphNet`, `GraphAttentionOperator`, `GraphKernelIntegral` and
 `GraphNeuralOperator` (select the reduction with `reduction=`),
 `EquivariantGraphConvolution`, `RelationalGraphConvolution`,
-`HypergraphConvolution`, `SimplicialHodgeLaplacian`, the DEC operators, cluster
+`HypergraphConvolution`, the DEC operators, cluster
 pooling, and the edge-index layers `GCNConv`, `SAGEConv`, `GINConv`, and
 `MessagePassing` (`aggr="add"` is the route `"sum"`; empty targets reduce to
 zero).
@@ -652,7 +619,7 @@ for graph neural operator and multi-resolution graph pipelines.
 
 ::: phydrax.graph.gauge_transform_links
 
-::: phydrax.graph.path_holonomy
+::: phydrax.discretization.ordered_path_transport
 
 ::: phydrax.graph.closed_path_trace
 

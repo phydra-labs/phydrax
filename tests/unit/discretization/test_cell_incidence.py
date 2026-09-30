@@ -25,7 +25,7 @@ def _assert_boundary_of_boundary_vanishes(topology: Any) -> None:
         assert not np.any((lower @ upper).toarray())
 
 
-def test_oriented_incidence_is_canonical_and_rejects_repeated_entries() -> None:
+def test_oriented_incidence_is_canonical_and_preserves_repeated_faces() -> None:
     for scale in [1, 2**40]:
         vertices = EntitySet("vertices", 0, np.asarray([7, 3, 5]) * scale)
         edges = EntitySet("edges", 1, np.asarray([4, 1]) * scale)
@@ -44,11 +44,19 @@ def test_oriented_incidence_is_canonical_and_rejects_repeated_entries() -> None:
             )
 
         assert incidence(order).incidence_id == incidence(np.arange(4)).incidence_id
-        # ty: ignore[invalid-argument-type]
-        repeated = EdgeRelation([0, 1, 1, 0], [0, 0, 1, 0], source_size=3, target_size=2)
-        with pytest.raises(ValueError, match="incidence pairs must be unique"):
-            # ty: ignore[invalid-argument-type]
-            OrientedIncidence(1, vertices, edges, repeated, [-1.0, 1.0, -1.0, 1.0])
+        repeated = EdgeRelation(
+            np.asarray([0, 1, 1, 0]),
+            np.asarray([0, 0, 1, 0]),
+            source_size=3,
+            target_size=2,
+        )
+        occurrence_incidence = OrientedIncidence(
+            1, vertices, edges, repeated, np.asarray([-1.0, 1.0, -1.0, 1.0])
+        )
+        np.testing.assert_array_equal(
+            occurrence_incidence.scipy_boundary().toarray(),
+            np.asarray([[0.0, 0.0], [1.0, -1.0], [0.0, 0.0]]),
+        )
         with pytest.raises(ValueError, match="Active entity IDs must be unique"):
             EntitySet("vertices", 0, np.asarray([7, 3, 7]) * scale)
 

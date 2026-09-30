@@ -18,10 +18,9 @@ from .._dtype_names import RealPrecisionDType
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
 from ..discretization import AxisEntityKind
+from ..discretization._reduced_differences import backward_difference, forward_difference
 from ..discretization.pic import PICSpeciesPlan, ReducedPICTransferPlan
 from ._maxwell_reduced import (
-    _backward,
-    _forward,
     CompatibleMaxwell1DPlan,
     CompatibleMaxwell1DState,
     CompatibleMaxwell2DPlan,
@@ -236,7 +235,7 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
             @ y_vectors.T
         )
         components = tuple(
-            -_forward(potential, axis, spacing, periodic)
+            -forward_difference(potential, axis, spacing, periodic)
             for axis, (spacing, periodic) in enumerate(
                 zip(self.transfer.spacing, self.transfer.periodic, strict=True)
             )
@@ -263,7 +262,7 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         """Discrete ``ε ∇·E`` in the charge layout of the field update."""
         plan = self.field
         if isinstance(plan, CompatibleMaxwell1DPlan):
-            return plan.permittivity * _backward(
+            return plan.permittivity * backward_difference(
                 field.electric[0], 0, plan.spacing, plan.periodic[0]
             )
         if isinstance(plan, CompatibleMaxwell2DPlan) and isinstance(
@@ -404,7 +403,7 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         # advance reports the start charge moved by the current alone.
         charge = field.charge - step_size * sum(
             (
-                _backward(value, axis, spacing, periodic)
+                backward_difference(value, axis, spacing, periodic)
                 for axis, (value, spacing, periodic) in enumerate(
                     zip(
                         current[: self.spatial_dimension],

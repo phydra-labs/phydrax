@@ -9,8 +9,16 @@ import jax.random as jr
 import numpy as np
 
 import phydrax.ein as ein
-from phydrax.discretization import CochainFieldSpec, SphericalHarmonicPlan
-from phydrax.graph import compute_harmonic_subspace, triangle_mesh_to_cochain_complex
+from phydrax.discretization import (
+    CochainDiscretization,
+    polygonal_cell_complex,
+    simplicial_dual_hodges,
+    SphericalHarmonicPlan,
+)
+from phydrax.discretization._cell_complex import simplicial_cell_geometry
+from phydrax.exterior import ComplexBoundary, FormType, validate_harmonic_cohomology
+from phydrax.graph import CochainComplexIR
+from phydrax.linalg import harmonic_subspace, HarmonicSubspacePolicy
 from phydrax.nn.operator import (
     function_samples_from_cochain,
     FunctionSamples,
@@ -22,6 +30,7 @@ from phydrax.nn.operator import (
     OperatorTargetBatch,
     OperatorTask,
 )
+from phydrax.typing import parse
 
 
 SquareSymmetryGroup = Literal["p4", "p4m"]
@@ -4415,7 +4424,7 @@ def _square_triangle_complex(points: int, /, *, warp: float = 0.0) -> Any:
                     (lower_left, upper_right, upper_left),
                 )
             )
-    return triangle_mesh_to_cochain_complex(
+    return _triangle_cochain_lowering(
         vertices,
         np.asarray(faces, dtype=np.int32),
     )
@@ -4459,17 +4468,49 @@ def _annulus_triangle_complex(radial_layers: int, angular_points: int, /) -> Any
                     ),
                 )
             )
-    return triangle_mesh_to_cochain_complex(
+    return _triangle_cochain_lowering(
         vertices,
         np.asarray(faces, dtype=np.int32),
     )
 
 
-def _cochain_semantics(degree: int) -> CochainFieldSpec:
-    return CochainFieldSpec(
-        degree,
-        cell_orientation="invariant" if int(degree) == 0 else "signed",
-        sampling="point_value" if int(degree) == 0 else "cell_integral",
+def _triangle_cochain_lowering(
+    vertices: np.ndarray, faces: np.ndarray, /
+) -> CochainComplexIR:
+    topology = polygonal_cell_complex(faces, None, vertices.shape[0])
+    cells, _ = simplicial_cell_geometry(topology)
+    coordinates = tuple(jnp.asarray(np.mean(vertices[cell], axis=1)) for cell in cells)
+    edges = vertices[cells[1][:, 1]] - vertices[cells[1][:, 0]]
+    face_vectors = vertices[cells[2][:, 1:]] - vertices[cells[2][:, :1]]
+    gram = face_vectors @ np.swapaxes(face_vectors, -1, -2)
+    primal = (
+        jnp.ones((vertices.shape[0],), dtype=jnp.float64),
+        jnp.asarray(np.linalg.norm(edges, axis=-1)),
+        jnp.asarray(np.sqrt(np.linalg.det(gram)) / 2.0),
+    )
+    hodges = simplicial_dual_hodges(topology, vertices, dual="barycentric")
+    boundary_edges = (
+        np.asarray(abs(topology.incidences[1].scipy_boundary()).sum(axis=1)).reshape(-1)
+        == 1
+    )
+    boundary_vertices = np.zeros((vertices.shape[0],), dtype=np.bool_)
+    boundary_vertices[cells[1][boundary_edges].reshape(-1)] = True
+    return CochainComplexIR(
+        CochainDiscretization(
+            topology,
+            hodges,
+            coordinates=coordinates,
+            boundary_masks=(
+                boundary_vertices,
+                boundary_edges,
+                np.zeros((faces.shape[0],), dtype=np.bool_),
+            ),
+            primal_measures=primal,
+            dual_measures=tuple(
+                hodge.weights * measure
+                for hodge, measure in zip(hodges, primal, strict=True)
+            ),
+        )
     )
 
 
@@ -4479,7 +4520,7 @@ def _cochain_query(name: str) -> OperatorQuerySpec:
         geometry_kind="cell_complex",
         coordinate_components=("x", "y"),
         topology_site="cell",
-        quadrature="physical_required",
+        quadrature="native_pairing_required",
         fixed_geometry=False,
     )
 
@@ -4503,7 +4544,7 @@ def cochain_mixed_darcy_scenario(
     test_points: int = 7,
     num_cases: int = 12,
     reaction: float = 0.2,
-    boundary_policy: Literal["absolute", "relative"] = "absolute",
+    boundary: ComplexBoundary = "absolute",
     mesh_warp: float = 0.0,
     seed: int = 0,
 ) -> OperatorBenchmarkScenario:
@@ -4514,27 +4555,26 @@ def cochain_mixed_darcy_scenario(
         raise ValueError("num_cases must be positive.")
     if float(reaction) <= 0.0:
         raise ValueError("reaction must be positive.")
-    if boundary_policy not in ("absolute", "relative"):
-        raise ValueError("Unknown cochain boundary policy.")
+    boundary = parse(boundary, ComplexBoundary, "boundary")
 
     fields = (
         OperatorFieldSpec(
             "forcing",
             role="source",
             source_name="forcing",
-            cochain=_cochain_semantics(0),
+            form_type=FormType(2, 0),
         ),
         OperatorFieldSpec(
             "pressure",
             role="target",
             query_name="vertices",
-            cochain=_cochain_semantics(0),
+            form_type=FormType(2, 0),
         ),
         OperatorFieldSpec(
             "flux",
             role="target",
             query_name="edges",
-            cochain=_cochain_semantics(1),
+            form_type=FormType(2, 1),
         ),
     )
     task = OperatorTask(
@@ -4547,7 +4587,7 @@ def cochain_mixed_darcy_scenario(
             requires_resolution_transfer=True,
         ),
         metadata={
-            "boundary_policy": boundary_policy,
+            "boundary": boundary,
             "manufactured": True,
         },
     )
@@ -4564,7 +4604,7 @@ def cochain_mixed_darcy_scenario(
 
     def build(points: int) -> Any:
         complex_ir = _square_triangle_complex(points, warp=mesh_warp)
-        vertices = np.asarray(complex_ir.coordinates[0], dtype="float64")
+        vertices = np.asarray(complex_ir.discretization.coordinates[0], dtype="float64")
         x = vertices[:, 0]
         y = vertices[:, 1]
         basis = np.stack(
@@ -4574,18 +4614,23 @@ def cochain_mixed_darcy_scenario(
             )
         )
         pressure = coefficients @ basis
-        incidence = complex_ir.incidences[0].scipy_matrix().toarray()
-        hodge_zero = np.asarray(complex_ir.hodge_stars[0], dtype="float64")
-        hodge_one = np.asarray(complex_ir.hodge_stars[1], dtype="float64")
-        laplacian = ((incidence * hodge_one[None, :]) @ incidence.T) / hodge_zero[:, None]
-        forcing = pressure @ laplacian.T + float(reaction) * pressure
-        flux = -(pressure @ incidence)
+        realization = complex_ir.discretization
+        pressure_array = jnp.asarray(pressure)
+        forcing = (
+            jax.vmap(
+                lambda value: realization.hodge_laplacian(0, value, boundary=boundary)
+            )(pressure_array)
+            + float(reaction) * pressure_array
+        )
+        flux = -jax.vmap(
+            lambda value: realization.exterior_derivative(0, value, boundary=boundary)
+        )(pressure_array)
         inputs = {
             "forcing": function_samples_from_cochain(
                 complex_ir,
                 0,
                 values=jnp.asarray(forcing),
-                boundary_policy=boundary_policy,
+                boundary=boundary,
             )
         }
         queries = {
@@ -4593,13 +4638,13 @@ def cochain_mixed_darcy_scenario(
                 complex_ir,
                 0,
                 values=None,
-                boundary_policy=boundary_policy,
+                boundary=boundary,
             ),
             "edges": function_samples_from_cochain(
                 complex_ir,
                 1,
                 values=None,
-                boundary_policy=boundary_policy,
+                boundary=boundary,
             ),
         }
         batch = OperatorBatch(
@@ -4672,7 +4717,7 @@ def cochain_mixed_darcy_scenario(
             "resolution_transfer",
         ),
         metadata=(
-            ("boundary_policy", boundary_policy),
+            ("boundary", boundary),
             ("mesh_warp", str(float(mesh_warp))),
             ("sensor_shift_policy", "disabled"),
             ("population_seed", str(int(seed))),
@@ -4682,26 +4727,36 @@ def cochain_mixed_darcy_scenario(
 
 
 def _annulus_harmonic_template(complex_ir: Any, /) -> np.ndarray:
-    subspace = complex_ir.harmonic_subspace
-    if subspace is None or subspace.ranks[1] < 1:
+    subspace = complex_ir.harmonic[1]
+    if subspace is None or subspace.dimension < 1:
         raise ValueError("Annulus benchmark requires a nontrivial degree-one nullspace.")
-    incidence = complex_ir.incidences[0].scipy_matrix().toarray()
-    coordinates = np.asarray(complex_ir.coordinates[0], dtype="float64")
+    incidence = (
+        complex_ir.discretization.topology.incidences[0].scipy_boundary().toarray()
+    )
+    coordinates = np.asarray(complex_ir.discretization.coordinates[0], dtype="float64")
     angles = np.arctan2(coordinates[:, 1], coordinates[:, 0])
+    radial = np.log(np.linalg.norm(coordinates, axis=1))
     angular = np.empty((incidence.shape[1],), dtype="float64")
     for edge in range(incidence.shape[1]):
         column = incidence[:, edge]
         tail = int(np.flatnonzero(column < 0.0)[0])
         head = int(np.flatnonzero(column > 0.0)[0])
-        difference = angles[head] - angles[tail]
-        angular[edge] = (difference + np.pi) % (2.0 * np.pi) - np.pi
-    rank = int(subspace.ranks[1])
-    basis = np.asarray(subspace.bases[1], dtype="float64")[:, :rank]
-    metric = np.asarray(complex_ir.hodge_stars[1], dtype="float64")
-    projected = basis @ (basis.T @ (metric * angular))
-    norm = np.sqrt(np.sum(metric * projected * projected))
+        if complex_ir.boundary == "relative":
+            angular[edge] = radial[head] - radial[tail]
+        else:
+            difference = angles[head] - angles[tail]
+            angular[edge] = (difference + np.pi) % (2.0 * np.pi) - np.pi
+    realization = complex_ir.discretization
+    active = realization.active_indices(1, boundary=complex_ir.boundary)
+    space = realization.hilbert_complex(boundary=complex_ir.boundary).space(1)
+    if not bool(np.asarray(subspace.valid)):
+        raise ValueError("Annulus benchmark requires admitted native harmonic evidence.")
+    restricted = subspace.project(space, jnp.asarray(angular)[active])
+    projected = np.zeros_like(angular)
+    projected[np.asarray(active)] = np.asarray(restricted)
+    norm = float(jnp.sqrt(jnp.real(space.inner(restricted, restricted))))
     if norm <= 1e-12:
-        raise ValueError("Annulus angular cochain has no harmonic projection.")
+        raise ValueError("Annulus representative cochain has no harmonic projection.")
     return projected / norm
 
 
@@ -4712,26 +4767,26 @@ def cochain_annulus_harmonic_scenario(
     test_radial_layers: int = 3,
     test_angular_points: int = 14,
     num_cases: int = 12,
-    boundary_policy: Literal["absolute", "relative"] = "absolute",
+    boundary: ComplexBoundary = "absolute",
     seed: int = 0,
 ) -> OperatorBenchmarkScenario:
     """Project mixed annular one-forms onto a metric harmonic subspace."""
     if int(num_cases) <= 0:
         raise ValueError("num_cases must be positive.")
-    if boundary_policy not in ("absolute", "relative"):
-        raise ValueError("Unknown cochain boundary policy.")
+    boundary = parse(boundary, ComplexBoundary, "boundary")
+    reference_policy = HarmonicSubspacePolicy(dense_dimension=512, tolerance=1e-9)
     fields = (
         OperatorFieldSpec(
             "one_form",
             role="source",
             source_name="one_form",
-            cochain=_cochain_semantics(1),
+            form_type=FormType(2, 1),
         ),
         OperatorFieldSpec(
             "harmonic",
             role="target",
             query_name="edges",
-            cochain=_cochain_semantics(1),
+            form_type=FormType(2, 1),
         ),
     )
     task = OperatorTask(
@@ -4744,8 +4799,10 @@ def cochain_annulus_harmonic_scenario(
             requires_resolution_transfer=True,
         ),
         metadata={
-            "boundary_policy": boundary_policy,
+            "boundary": boundary,
             "betti_one": 1,
+            "harmonic_reference_dimension": reference_policy.dense_dimension,
+            "harmonic_tolerance": reference_policy.tolerance,
         },
     )
     rng = np.random.default_rng(int(seed))
@@ -4755,15 +4812,36 @@ def cochain_annulus_harmonic_scenario(
 
     def build(radial_layers: int, angular_points: int) -> Any:
         bare = _annulus_triangle_complex(radial_layers, angular_points)
-        harmonic = compute_harmonic_subspace(
-            bare,
-            boundary_policy=boundary_policy,
-            max_modes=4,
+        realization = bare.discretization
+        hilbert = realization.hilbert_complex(boundary=boundary)
+        if any(space.size > reference_policy.dense_dimension for space in hilbert.spaces):
+            raise ValueError(
+                "Annulus reference benchmarks require at most 512 active coordinates per degree."
+            )
+        expected_betti = (1, 1, 0) if boundary == "absolute" else (0, 1, 1)
+        harmonic = tuple(
+            validate_harmonic_cohomology(
+                realization,
+                degree,
+                boundary=boundary,
+                harmonic=harmonic_subspace(
+                    hilbert,
+                    degree,
+                    expected_dimension=expected_betti[degree],
+                    policy=reference_policy,
+                ),
+                tolerance=reference_policy.tolerance,
+            )[0]
+            for degree in range(realization.dimension + 1)
         )
-        complex_ir = bare.with_harmonic_subspace(harmonic)
+        complex_ir = CochainComplexIR(realization, boundary=boundary, harmonic=harmonic)
         template = _annulus_harmonic_template(complex_ir)
-        vertex_coordinates = np.asarray(complex_ir.coordinates[0], dtype="float64")
-        face_coordinates = np.asarray(complex_ir.coordinates[2], dtype="float64")
+        vertex_coordinates = np.asarray(
+            complex_ir.discretization.coordinates[0], dtype="float64"
+        )
+        face_coordinates = np.asarray(
+            complex_ir.discretization.coordinates[2], dtype="float64"
+        )
         x_vertex = vertex_coordinates[:, 0]
         y_vertex = vertex_coordinates[:, 1]
         x_face = face_coordinates[:, 0]
@@ -4786,19 +4864,25 @@ def cochain_annulus_harmonic_scenario(
         )
         potential = potential_coefficients @ vertex_basis
         top_form = face_coefficients @ face_basis
-        incidence_zero = complex_ir.incidences[0].scipy_matrix().toarray()
-        incidence_one = complex_ir.incidences[1].scipy_matrix().toarray()
-        hodge_one = np.asarray(complex_ir.hodge_stars[1], dtype="float64")
-        hodge_two = np.asarray(complex_ir.hodge_stars[2], dtype="float64")
-        exact = potential @ incidence_zero
-        coexact = ((top_form * hodge_two[None, :]) @ incidence_one.T) / (
-            hodge_one[None, :]
+        exact = np.asarray(
+            jax.vmap(
+                lambda value: realization.exterior_derivative(0, value, boundary=boundary)
+            )(jnp.asarray(potential))
+        )
+        coexact = np.asarray(
+            jax.vmap(
+                lambda value: realization.codifferential(2, value, boundary=boundary)
+            )(jnp.asarray(top_form))
         )
 
+        space = realization.hilbert_complex(boundary=boundary).space(1)
+        active = realization.active_indices(1, boundary=boundary)
+
         def normalized(values: Any) -> Any:
-            norms = np.sqrt(
-                np.sum(hodge_one[None, :] * values * values, axis=1, keepdims=True)
+            squared_norms = jax.vmap(lambda value: jnp.real(space.inner(value, value)))(
+                jnp.asarray(values)[:, active]
             )
+            norms = np.asarray(jnp.sqrt(squared_norms))[:, None]
             return values / np.maximum(norms, 1e-12)
 
         target = harmonic_amplitudes * template[None, :]
@@ -4809,7 +4893,7 @@ def cochain_annulus_harmonic_scenario(
                     complex_ir,
                     1,
                     values=jnp.asarray(one_form),
-                    boundary_policy=boundary_policy,
+                    boundary=boundary,
                 )
             },
             queries={
@@ -4817,7 +4901,7 @@ def cochain_annulus_harmonic_scenario(
                     complex_ir,
                     1,
                     values=None,
-                    boundary_policy=boundary_policy,
+                    boundary=boundary,
                 )
             },
             case_axes=("case",),
@@ -4828,7 +4912,7 @@ def cochain_annulus_harmonic_scenario(
             {"harmonic": "edges"},
             batch,
         )
-        return batch, targets, int(harmonic.ranks[1])
+        return batch, targets, harmonic[1].dimension
 
     train_batch, train_target, train_rank = build(
         int(train_radial_layers),
@@ -4882,7 +4966,7 @@ def cochain_annulus_harmonic_scenario(
             "resolution_transfer",
         ),
         metadata=(
-            ("boundary_policy", boundary_policy),
+            ("boundary", boundary),
             ("train_harmonic_rank", str(train_rank)),
             ("transfer_harmonic_rank", str(transfer_rank)),
             ("target_intrinsic_rank", str(train_rank)),

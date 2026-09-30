@@ -59,6 +59,13 @@ a parallel form representation.
 
 ::: phydrax.metrix.BigradedForm
 
+Bigraded coefficients retain an explicit component axis of size
+`choose(n,p) * choose(n,q)`, including singleton `(0,0)` and top bidegrees.
+Scalar coefficients are not implicitly promoted; return a one-component array
+for a scalar bigraded field. Basis tables share the canonical exterior owner;
+this does not add a separate bigraded twist API.
+
+
 ::: phydrax.metrix.partial
 
 ::: phydrax.metrix.partial_bar

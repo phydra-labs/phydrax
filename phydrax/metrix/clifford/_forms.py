@@ -13,8 +13,8 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._basis import axes_bitmap
 from .._chart import CoordinateChart
-from .._exterior_basis import axes_bitmap
 from .._forms import DifferentialForm
 from .._metric import (
     AbstractSemiRiemannianMetric,
@@ -154,6 +154,11 @@ class CliffordMetricBridge(StrictModule, NonTrainableState):
             raise TypeError("Expected a DifferentialForm.")
         if not form.chart.compatible_with(self.chart):
             raise ValueError("Differential form uses an incompatible coordinate chart.")
+        if form.form_type.twist != "untwisted" or form.form_type.fiber_shape:
+            raise ValueError(
+                "Clifford embedding requires an untwisted scalar-valued form; "
+                "convert twisted forms explicitly with to_untwisted."
+            )
         positions = []
         scales = []
         for axes in form.indices:

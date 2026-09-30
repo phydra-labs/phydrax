@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 import phydrax.ein as ein
+from phydrax.optim._adam import adam
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
@@ -319,7 +320,7 @@ def fit_sparse_variational_gaussian_process(
     if optimizer is None:
         transformation = optax.chain(
             optax.clip_by_global_norm(configuration.gradient_clip),
-            optax.adam(configuration.learning_rate),
+            adam(configuration.learning_rate),
         )
         rule_id = (
             "svgp-clipped-adam:"

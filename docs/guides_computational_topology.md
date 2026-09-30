@@ -127,11 +127,11 @@ changes are not differentiable topology operations.
 ## Hodge realization and solver nullspaces
 
 Exact rational Betti dimensions give structural expected nullity. They do not alone
-certify a floating Hodge kernel. `phydrax.graph.validate_hodge_homology` additionally
-checks the same compact active complex, boundary policy, harmonic rank, metric
-orthonormality, kernel residuals, and the next observed eigenvalue.
+certify a floating Hodge kernel. `phydrax.exterior.validate_harmonic_cohomology`
+additionally checks the same compact active complex, boundary, harmonic rank,
+metric orthonormality, kernel residuals and next-mode evidence.
 
-`cochain_harmonic_kernel_certificate` builds a compact `phydrax.linalg.LinearSubspace`
+`phydrax.exterior.harmonic_kernel_certificate` builds a compact `phydrax.linalg.LinearSubspace`
 and `KernelCertificate` only after those numerical checks. It does not select a
 compatibility projection or gauge; that remains a solver/physics decision.
 

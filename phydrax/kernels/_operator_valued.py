@@ -4,11 +4,10 @@
 
 from __future__ import annotations
 
-import itertools
-import math
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from functools import partial
+from typing import final
 
 import equinox as eqx
 import jax
@@ -19,6 +18,8 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..exterior._form_type import FormType
+from ..linalg import compound_matrix
 from ._base import (
     _as_input,
     _as_inputs,
@@ -574,31 +575,13 @@ def sphere_tangent_kernel(
     )
 
 
-def _exterior_power_matrix(
-    matrix: Array,
-    multi_indices: tuple[tuple[int, ...], ...],
-    /,
-) -> Array:
-    rows = []
-    for row_index in multi_indices:
-        columns = []
-        row = jnp.asarray(row_index, dtype=jnp.int32)
-        for column_index in multi_indices:
-            column = jnp.asarray(column_index, dtype=jnp.int32)
-            minor = matrix[row[:, None], column[None, :]]
-            columns.append(jnp.linalg.det(minor))
-        rows.append(jnp.stack(columns))
-    return jnp.stack(rows)
-
-
+@final
 class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
     """Exterior-power covariance for intrinsic differential forms."""
 
     scalar_kernel: AbstractPositiveDefiniteKernel
     tangent_projector: Callable[[Array], Array]
-    ambient_dimension: int = eqx.field(static=True)
-    degree: int = eqx.field(static=True)
-    multi_indices: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    form_type: FormType = eqx.field(static=True)
     projector_id: str = eqx.field(static=True)
     projector_derivative_order: int | None = eqx.field(static=True)
 
@@ -606,8 +589,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
         self,
         scalar_kernel: AbstractPositiveDefiniteKernel,
         tangent_projector: Callable[[Array], Array],
-        ambient_dimension: int,
-        degree: int,
+        form_type: FormType,
         /,
         *,
         projector_id: str,
@@ -617,21 +599,17 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
             raise TypeError("scalar_kernel must be positive definite.")
         if not callable(tangent_projector):
             raise TypeError("tangent_projector must be callable.")
-        ambient = int(ambient_dimension)
-        resolved_degree = int(degree)
-        if ambient <= 0 or resolved_degree <= 0 or resolved_degree > ambient:
-            raise ValueError("Form degree must lie in [1, ambient_dimension].")
+        if not isinstance(form_type, FormType):
+            raise TypeError("form_type must be a FormType.")
+        if form_type.fiber_shape:
+            raise ValueError("Projected form kernels require a scalar coefficient fiber.")
         if not isinstance(projector_id, str) or not projector_id:
             raise ValueError("projector_id must be a nonempty string.")
         if projector_derivative_order is not None and int(projector_derivative_order) < 0:
             raise ValueError("projector_derivative_order must be nonnegative or None.")
         self.scalar_kernel = scalar_kernel
         self.tangent_projector = tangent_projector
-        self.ambient_dimension = ambient
-        self.degree = resolved_degree
-        self.multi_indices = tuple(
-            itertools.combinations(range(ambient), resolved_degree)
-        )
+        self.form_type = form_type
         self.projector_id = projector_id
         self.projector_derivative_order = (
             None
@@ -643,9 +621,9 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
         tangent = _projector(
             self.tangent_projector,
             point,
-            self.ambient_dimension,
+            self.form_type.ambient_dimension,
         )
-        return _exterior_power_matrix(tangent, self.multi_indices)
+        return compound_matrix(tangent, self.form_type.degree)
 
     def _projectors(self, points: Array, /) -> Array:
         return jax.vmap(self._form_projector)(points)
@@ -676,7 +654,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
 
     @property
     def output_dimension(self) -> int:
-        return math.comb(self.ambient_dimension, self.degree)
+        return self.form_type.component_count
 
     @property
     def input_ndim(self) -> int:
@@ -694,7 +672,11 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
 
     @property
     def kernel_id(self) -> str:
-        return f"ProjectedDifferentialFormKernel[{self.scalar_kernel.kernel_id};degree={self.degree};{self.projector_id}]"
+        return (
+            f"ProjectedDifferentialFormKernel[{self.scalar_kernel.kernel_id};"
+            f"{self.form_type.form_type_id};{self.projector_id};"
+            f"projector_derivative_order={self.projector_derivative_order}]"
+        )
 
 
 def sphere_differential_form_kernel(
@@ -707,17 +689,17 @@ def sphere_differential_form_kernel(
         raise TypeError(
             "sphere_differential_form_kernel requires a SphereSpectralKernel."
         )
-    ambient = scalar_kernel.spectrum.dimension + 1
-    if int(degree) > scalar_kernel.spectrum.dimension:
-        raise ValueError("Sphere form degree cannot exceed the intrinsic dimension.")
     return ProjectedDifferentialFormKernel(
         scalar_kernel,
         partial(
             sphere_tangent_projector,
             membership_tolerance=scalar_kernel.membership_tolerance,
         ),
-        ambient,
-        degree,
+        FormType(
+            scalar_kernel.spectrum.dimension,
+            degree,
+            ambient_dimension=scalar_kernel.spectrum.dimension + 1,
+        ),
         projector_id=f"sphere-S{scalar_kernel.spectrum.dimension}",
     )
 

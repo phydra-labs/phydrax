@@ -5,14 +5,88 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax as phx
-from benchmarks._runtime import capture_environment, measure_host, measure_repeated
+from benchmarks._runtime import (
+    capture_environment,
+    compiler_evidence,
+    logical_array_bytes,
+    measure_host,
+    measure_lower_and_compile,
+    measure_repeated,
+)
 from tools.block_amr_advanced_qualification import _configuration
+
+
+def _transfer_campaign(
+    coarse: phx.discretization.VariablePatchEntityComplex,
+    fine: phx.discretization.VariablePatchEntityComplex,
+    ratio: int,
+    *,
+    smoke: bool,
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for capacity in (256, 512) if smoke else (256, 512, 1024):
+        family, prepare_seconds = measure_host(
+            lambda: phx.discretization.CompatibleEntityTransferFamily(
+                coarse,
+                fine,
+                ratio,
+                (capacity,) * (coarse.complex.dimension + 1),
+            )
+        )
+        maps = family.complex_map.maps
+
+        def apply(values: tuple[Array, ...]) -> tuple[Array, ...]:
+            return tuple(
+                operator.mv(value) for operator, value in zip(maps, values, strict=True)
+            )
+
+        values = tuple(
+            jnp.ones((operator.source.size,), dtype=jnp.float64) for operator in maps
+        )
+        executable, timing = measure_lower_and_compile(
+            lambda: jax.jit(apply).lower(values),
+            lambda lowered: lowered.compile(),
+        )
+        image, warmed = measure_repeated(
+            lambda: executable(values),
+            warmup=1,
+            repeats=2 if smoke else 10,
+        )
+        evidence = compiler_evidence(
+            executable.cost_analysis(),
+            executable.memory_analysis(),
+            source="jax-compiled-executable",
+            unavailable_reason="The selected JAX backend did not report compiler analysis.",
+        )
+        records.append(
+            {
+                "route_capacity": capacity,
+                "active_counts": [operator.source.size for operator in maps],
+                "target_counts": [operator.target.size for operator in maps],
+                "prepare_seconds": prepare_seconds,
+                "lowering_seconds": timing.lowering_seconds,
+                "compilation_seconds": timing.compilation_seconds,
+                "warmed_apply": warmed.to_dict(),
+                "compiler": asdict(evidence),
+                "retained_array_bytes": logical_array_bytes(family),
+                "map_array_bytes": logical_array_bytes(family.complex_map),
+                "maximum_commuting_defect": float(
+                    jnp.max(family.evidence.commuting_defects, initial=0.0)
+                ),
+                "valid": bool(family.evidence.valid)
+                and bool(jnp.all(jnp.isfinite(image[0]))),
+            }
+        )
+    return records
 
 
 def benchmark(*, smoke: bool) -> dict[str, object]:
@@ -50,8 +124,16 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         for complex_ in entities
         for entity in complex_.complex.entity_sets
     )
+    transfer_campaign = _transfer_campaign(
+        entities[0],
+        entities[1],
+        compiled.topology.plan.levels[0].refinement_ratio,
+        smoke=smoke,
+    )
     return {
-        "status": "pass" if bool(geometry.valid) else "fail",
+        "status": "pass"
+        if bool(geometry.valid) and all(record["valid"] for record in transfer_campaign)
+        else "fail",
         "configuration": {
             "smoke": smoke,
             "levels": len(compiled.topology.levels),
@@ -77,6 +159,7 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
                 max(jnp.max(value) for level in geometry.gcl_defects for value in level)
             ),
         },
+        "transfer_capacity_campaign": transfer_campaign,
         "environment": capture_environment().to_dict(),
     }
 

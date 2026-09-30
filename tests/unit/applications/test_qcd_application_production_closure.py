@@ -55,13 +55,9 @@ from phydrax.applications.lattice_field._qcd_recipes import (
     StaggeredHisqStyleRHMCRecipe,
     WilsonCloverNf2Recipe,
 )
-from phydrax.discretization._cell_complex import polygonal_cell_complex
 from phydrax.discretization._lattice_boundary import LatticeBoundaryPhasePlan
 from phydrax.discretization._lattice_distribution import LatticeDecompositionPlan
-from phydrax.discretization._oriented_path import prepare_cell_boundary_paths
 from phydrax.discretization._topology import TensorTopology
-from phydrax.graph._matrix_gauge import MatrixGaugeLinkSpace
-from phydrax.metrix._complex_matrix_manifold import SpecialUnitaryGroup
 
 
 def _su3_square_geometry(*, decomposition: Any = None, shape: Any = (2, 2)) -> Any:
@@ -70,57 +66,7 @@ def _su3_square_geometry(*, decomposition: Any = None, shape: Any = (2, 2)) -> A
         jnp.ones((2,), dtype=jnp.complex128),
         maximum_displacement=3,
     )
-    if shape == (2, 2):
-        faces = np.asarray([[0, 1, 3, 2]], dtype=np.int32)
-    else:
-        faces = np.asarray(
-            [
-                [
-                    np.ravel_multi_index((x, t), shape),
-                    np.ravel_multi_index((x, (t + 1) % shape[1]), shape),
-                    np.ravel_multi_index(((x + 1) % shape[0], (t + 1) % shape[1]), shape),
-                    np.ravel_multi_index(((x + 1) % shape[0], t), shape),
-                ]
-                for x, t in np.ndindex(shape)
-            ],
-            dtype=np.int32,
-        )
-    topology = polygonal_cell_complex(None, jnp.asarray(faces), int(np.prod(shape)))
-    link_space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(3))
-    plaquettes = prepare_cell_boundary_paths(topology)
-    site_count = int(np.prod(shape))
-    coordinates = np.stack(
-        np.unravel_index(np.arange(site_count), boundary.topology.axis_sizes),
-        axis=-1,
-    )
-    tails = np.asarray(link_space.tail_vertices)
-    heads = np.asarray(link_space.head_vertices)
-    forward_sites = np.empty((site_count, 2), dtype=np.int32)
-    forward_edges = np.empty((site_count, 2), dtype=np.int32)
-    forward_orientations = np.empty((site_count, 2), dtype=np.int32)
-    for site in range(site_count):
-        for axis, size in enumerate(shape):
-            neighbor_coordinate = coordinates[site].copy()
-            neighbor_coordinate[axis] = (neighbor_coordinate[axis] + 1) % size
-            neighbor = int(np.ravel_multi_index(neighbor_coordinate, shape))
-            forward_sites[site, axis] = neighbor
-            direct = np.flatnonzero((tails == site) & (heads == neighbor))
-            reverse = np.flatnonzero((tails == neighbor) & (heads == site))
-            if direct.size:
-                forward_edges[site, axis] = int(direct[0])
-                forward_orientations[site, axis] = 1
-            else:
-                forward_edges[site, axis] = int(reverse[0])
-                forward_orientations[site, axis] = -1
-    return build_su3_gauge_geometry(
-        link_space,
-        plaquettes,
-        boundary,
-        forward_sites,
-        forward_edges,
-        forward_orientations,
-        decomposition=decomposition,
-    )
+    return build_su3_gauge_geometry(boundary, decomposition=decomposition)
 
 
 def test_qcd_application_production_closure_scenario_1() -> None:

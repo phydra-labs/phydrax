@@ -8,7 +8,7 @@ from phydrax.discretization.bem._rwg import RWGSurfaceCurrentSpace3D
 from phydrax.discretization.bem._surface_complex import (
     OrientedTriangleSurfaceComplex3D,
 )
-from phydrax.linalg import ArraySpace
+from phydrax.linalg import ArraySpace, MaterializationPolicy, materialize
 from phydrax.operators.integral.layer_potential._maxwell3d import (
     MaxwellEFIEPolicy3D,
     prepare_maxwell_efie_3d,
@@ -124,15 +124,13 @@ def test_maxwell_boundary3d_scenario_1() -> None:
     assert space.layout.entity_set_id == surface.topology.entities(1).entity_set_id
     assert space.layout.global_dof_count == surface.edge_count == 12
     assert space.size != surface.face_count
-    assert space.trace_pairing.conformity.startswith("H(div_Gamma)")
-    assert any("BC/RBC" in goal for goal in space.trace_pairing.non_goals)
     normal_components = jnp.sum(
         space.centroid_basis * surface.face_normals[:, None, :], axis=2
     )
     assert jnp.allclose(normal_components, 0.0, atol=tolerance)
     assert jnp.allclose(space.tangential_conformity_defect(), 0.0, atol=tolerance)
 
-    with pytest.raises(TypeError, match="scalar spaces are not accepted"):
+    with pytest.raises(TypeError):
         prepare_maxwell_efie_3d(
             # ty: ignore[invalid-argument-type]
             ArraySpace((surface.face_count,), dtype=jnp.complex128),
@@ -141,31 +139,35 @@ def test_maxwell_boundary3d_scenario_1() -> None:
         )
     prepared = _prepared()
     operator = prepared.operator
+    matrix = materialize(operator, MaterializationPolicy(max_entries=144, max_bytes=2304))
     x = (
         jnp.linspace(0.1, 0.8, operator.source.size)
         + 1j * jnp.linspace(-0.4, 0.3, operator.source.size)
-    ).astype(operator.matrix.dtype)
+    ).astype(matrix.dtype)
     y = (
         jnp.linspace(-0.7, 0.2, operator.target.size)
         + 1j * jnp.linspace(0.6, -0.1, operator.target.size)
-    ).astype(operator.matrix.dtype)
+    ).astype(matrix.dtype)
 
-    assert jnp.allclose(operator.transpose_mv(y), operator.matrix.T @ y)
-    assert jnp.allclose(operator.adjoint_mv(y), operator.matrix.conj().T @ y)
+    assert jnp.allclose(operator.transpose_mv(y), matrix.T @ y)
+    assert jnp.allclose(operator.adjoint_mv(y), matrix.conj().T @ y)
     assert jnp.allclose(y @ operator.mv(x), x @ operator.transpose_mv(y))
     assert jnp.allclose(jnp.vdot(y, operator.mv(x)), jnp.vdot(operator.adjoint_mv(y), x))
     assert not jnp.allclose(operator.transpose_mv(y), operator.adjoint_mv(y))
 
     divergence = prepared.current_space.divergence_operator
+    divergence_matrix = materialize(
+        divergence, MaterializationPolicy(max_entries=96, max_bytes=1536)
+    )
     face_probe = (
         jnp.linspace(-0.3, 0.5, divergence.target.size)
         + 1j * jnp.linspace(0.2, -0.4, divergence.target.size)
-    ).astype(divergence.matrix.dtype)
+    ).astype(divergence_matrix.dtype)
     assert jnp.allclose(
-        divergence.transpose_mv(face_probe), divergence.matrix.T @ face_probe
+        divergence.transpose_mv(face_probe), divergence_matrix.T @ face_probe
     )
     assert jnp.allclose(
-        divergence.adjoint_mv(face_probe), divergence.matrix.conj().T @ face_probe
+        divergence.adjoint_mv(face_probe), divergence_matrix.conj().T @ face_probe
     )
 
 

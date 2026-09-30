@@ -1,13 +1,14 @@
 # Differential forms
 
-`DifferentialForm` stores only strictly increasing coordinate multi-indices. A degree
-`k` form in dimension `n` therefore has `n choose k` coefficients rather than a dense
-rank-`k` antisymmetric tensor. Batch axes remain leading axes.
+`DifferentialForm` carries a canonical `phydrax.exterior.FormType`. Increasing
+coordinate multi-indices use lexicographic order. Coefficients have shape
+`(*batch, choose(n, k), *fiber_shape)`; the component axis remains present for
+zero-forms and top forms.
 
-The exterior derivative, wedge product, pullback, and interior product are
-metric-independent. The Hodge star, codifferential, and Hodge--de Rham Laplacian
-require an explicit metric and orientation. Signed metrics use signature-aware Hodge
-semantics; no positive-definite norm is inferred.
+The exterior derivative, wedge product, pullback and interior product are
+metric-independent. Hodge star, codifferential and Hodge Laplacian require a
+metric, not an orientation argument. Star flips untwisted/twisted parity.
+Signed metrics retain signature-aware signs; no positive-definite norm is inferred.
 
 For dimension `n`, form degree `k`, and metric index `q` (the number of negative
 directions), the conventions are
@@ -20,8 +21,9 @@ directions), the conventions are
 
 Thus `hodge_laplacian` on a zero-form is the negative Laplace--Beltrami operator
 in positive-definite signature and the negative d'Alembertian in Lorentzian
-signature. Orientation is explicit; using the same orientation in both Hodge
-stars makes the codifferential orientation-independent.
+signature. `to_untwisted(form, orientation)` and `to_twisted(form, orientation)`
+perform explicit orientation-dependent conversions; δ itself is orientation-free.
+The codifferential of a zero-form raises `ValueError`.
 
 ```python
 import jax.numpy as jnp
@@ -41,14 +43,12 @@ assert jnp.allclose(d_alpha(jnp.array([0.2, 0.3])), jnp.array([2.0]))
 `DomainDifferentialForm` carries the same form semantics through labeled
 `DomainFunction` programs. Its Hodge star, codifferential, and Hodge Laplacian accept
 the same positive-definite or signed metric objects while preserving dependencies,
-batch axes, and trainable callable state. Continuous forms connect to metric cochains
-only through an explicit `ContinuousCochainBridge` containing oriented cell
-parameterizations and quadrature.
-Refinement does not silently change the declared quadrature. Projection
-convergence is therefore a property of the supplied cell maps and rule, while
-`validate_stokes_bridge` measures the actual smooth/discrete exterior-derivative
-commutator. The reference uniform-segment coverage verifies second-order global
-midpoint projection and third-order cellwise Stokes residual decay.
+batch axes and trainable callable state. Both smooth carriers use the exterior
+algebra kernel rather than independent sign tables. Continuous forms connect to
+cochains through `phydrax.exterior.DeRhamBridge`, with explicit oriented cell maps
+and quadrature. `integrate_form` returns a `DiscreteForm`, and
+`validate_de_rham_commutation` measures the actual smooth/discrete commutator.
+Refinement never silently changes quadrature.
 
 
 ## Maxwell residual composition
@@ -99,8 +99,12 @@ The returned degree-three and degree-one forms expose ordinary
 
 ::: phydrax.operators.domain_hodge_laplacian
 
-::: phydrax.graph.ContinuousCochainBridge
+::: phydrax.metrix.to_untwisted
 
-::: phydrax.graph.integrate_form_to_cochain
+::: phydrax.metrix.to_twisted
 
-::: phydrax.graph.validate_stokes_bridge
+::: phydrax.exterior.DeRhamBridge
+
+::: phydrax.exterior.integrate_form
+
+::: phydrax.exterior.validate_de_rham_commutation

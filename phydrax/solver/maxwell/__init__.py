@@ -68,7 +68,6 @@ from .._maxwell_batch import (
     solve_compatible_maxwell_case_batch,
 )
 from .._maxwell_boundaries import (
-    BlochCochainCalculus,
     MaxwellBoundaryKind,
     MaxwellBoundaryPlan,
     MaxwellInterfaceJump,
@@ -203,12 +202,9 @@ from .._maxwell_sources import (
     PreparedMaxwellSource,
 )
 from .._maxwell_unstructured import (
-    CochainHaloExchange,
-    CochainPartition,
+    FiniteElementMaxwellConstitutivePlan,
+    PreparedFiniteElementMaxwellConstitutive,
     PreparedUnstructuredMaxwell,
-    tetrahedral_maxwell_hodge,
-    TetrahedralMaxwellHodge,
-    TetrahedralMaxwellQuality,
     UnstructuredMaxwellPlan,
 )
 from .._prescribed_charge_maxwell import (
@@ -233,12 +229,9 @@ __all__ = [
     "AbstractPreparedMaxwellObserver",
     "ActiveGainMaxwellConstitutivePlan",
     "AntennaEmissionDirection",
-    "BlochCochainCalculus",
     "CheckpointMode",
     "CherenkovRegimeEvidence",
     "CherenkovRegimePlan",
-    "CochainHaloExchange",
-    "CochainPartition",
     "CompatibleMaxwellCaseBatchResult",
     "CompatibleMaxwellDiagnostics",
     "CompatibleMaxwellDispersionAudit",
@@ -254,6 +247,7 @@ __all__ = [
     "DirectionalDerivativeReport",
     "DispersiveMaxwellState",
     "FieldProbePlan",
+    "FiniteElementMaxwellConstitutivePlan",
     "FixedFrequencyGuidedModePlan",
     "FixedFrequencyGuidedModeResult",
     "FourierExponentSign",
@@ -342,6 +336,7 @@ __all__ = [
     "PreparedDFTObserver",
     "PreparedDiagonalMaxwellConstitutive",
     "PreparedFieldProbe",
+    "PreparedFiniteElementMaxwellConstitutive",
     "PreparedFixedFrequencyGuidedModes",
     "PreparedFrequencyMovingCharge",
     "PreparedKerrPockelsMaxwellConstitutive",
@@ -373,8 +368,6 @@ __all__ = [
     "SampledPlaneCurrentAntennaPlan",
     "SourceFormulation",
     "SynchronizedEnergyObserverPlan",
-    "TetrahedralMaxwellHodge",
-    "TetrahedralMaxwellQuality",
     "UnstructuredMaxwellPlan",
     "assemble_scalar_maxwell_material",
     "audit_directional_derivative",
@@ -407,5 +400,4 @@ __all__ = [
     "spectral",
     "spectral_poynting_energy",
     "subpixel_maxwell_constitutive",
-    "tetrahedral_maxwell_hodge",
 ]

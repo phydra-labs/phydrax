@@ -168,7 +168,7 @@ class _CochainPoissonAction(StrictModule, NonTrainableState):
 
     def __call__(self, potential: Array, /) -> Array:
         cochain = self.bridge.cochain
-        weights = cochain.hodge_stars[0].astype(potential.dtype)
+        weights = cochain.hodge_diagonal(0).astype(potential.dtype)
         if self.boundary.gauge_required:
             mean = jnp.sum(weights * potential) / jnp.sum(weights)
             value = potential - mean
@@ -257,7 +257,7 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
         if epsilon.shape not in ((), (1,), (n1,)):
             raise ValueError(f"permittivity must be scalar or have shape ({n1},).")
         epsilon = jnp.broadcast_to(epsilon, (n1,)).astype(
-            bridge.cochain.hodge_stars[1].dtype
+            bridge.cochain.hodge_diagonal(1).dtype
         )
         epsilon = eqx.error_if(
             epsilon,
@@ -340,10 +340,10 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
         initial_potential: ArrayLike | None = None,
     ) -> CochainElectrostaticResult:
         cochain = self.bridge.cochain
-        rho = jnp.asarray(charge, dtype=cochain.hodge_stars[0].dtype)
+        rho = jnp.asarray(charge, dtype=cochain.hodge_diagonal(0).dtype)
         if rho.shape != (cochain.cell_counts[0],):
             raise ValueError("charge must be a degree-zero cochain.")
-        weights = cochain.hodge_stars[0].astype(rho.dtype)
+        weights = cochain.hodge_diagonal(0).astype(rho.dtype)
         source = rho + self.boundary.neumann_source.astype(rho.dtype)
         total_source = jnp.sum(weights * source)
         source_scale = jnp.maximum(jnp.sum(weights * jnp.abs(source)), 1.0)

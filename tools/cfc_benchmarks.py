@@ -16,7 +16,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 from jax import Array
 from jaxtyping import Key
 
@@ -33,6 +32,7 @@ from phydrax._trainable import (
     partition_parameters,
     require_parameter_roles,
 )
+from phydrax.optim import adam
 
 
 Architecture = Literal["cfc", "gru-dt", "lstm-dt", "selective"]
@@ -268,7 +268,7 @@ def _train_candidate(
             train.batch.valid,
         )
 
-    optimizer = optax.adam(float(learning_rate))
+    optimizer = adam(float(learning_rate))
     optimizer_state = optimizer.init(parameters)
 
     @eqx.filter_jit

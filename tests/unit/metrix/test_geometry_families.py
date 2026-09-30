@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.exterior import FormTwist
 
 
 def test_lorentzian_metric_causality_wave_operator_and_curvature() -> None:
@@ -141,7 +142,7 @@ def test_signed_codifferential_and_hodge_square_obey_index_signs() -> None:
         degree=1,
     )
     scalar = phx.metrix.DifferentialForm(
-        lambda q: -(q[0] ** 2) + jnp.sum(q[1:] ** 2),
+        lambda q: jnp.asarray([-(q[0] ** 2) + jnp.sum(q[1:] ** 2)]),
         chart=chart,
         degree=0,
     )
@@ -240,7 +241,7 @@ def test_differential_forms_obey_nilpotency_hodge_and_pullback_laws() -> None:
     assert jnp.allclose(exterior(point), jnp.array([2.0]))
     assert jnp.allclose(jax.jit(exterior)(point), jnp.array([2.0]))
     scalar = phx.metrix.DifferentialForm(
-        lambda q: q[0] ** 2 + q[1] ** 2,
+        lambda q: jnp.asarray([q[0] ** 2 + q[1] ** 2]),
         chart=chart,
         degree=0,
     )
@@ -483,3 +484,49 @@ def test_heisenberg_horizontal_cometric_is_step_two_bracket_generating() -> None
         phx.metrix.horizontal_hamiltonian(jnp.array([1.0, 2.0, 0.0]), cometric, point),
         2.5,
     )
+
+
+@pytest.mark.parametrize(
+    ("degree", "twist", "source_coefficient"),
+    [
+        (0, "untwisted", 3.0),
+        (0, "twisted", -3.0),
+        (2, "untwisted", -3.0),
+        (2, "twisted", 3.0),
+    ],
+)
+def test_patchwise_form_reflection_obeys_twisted_transition(
+    degree: int, twist: FormTwist, source_coefficient: float
+) -> None:
+    source = phx.metrix.CoordinateChart("reflection-source", ("x", "y"))
+    target = phx.metrix.CoordinateChart("reflection-target", ("u", "v"))
+    transition = phx.metrix.ChartTransition(
+        source, target, lambda q: jnp.asarray([-q[0], q[1]])
+    )
+    atlas = phx.metrix.CoordinateAtlas((source, target), (transition,))
+    supports = tuple(
+        phx.metrix.ChartSupport(
+            chart,
+            lambda q: jnp.ones(q.shape[:-1], dtype=jnp.bool_),
+            support_id=chart.name,
+        )
+        for chart in (source, target)
+    )
+    cover = phx.metrix.AtlasCover(atlas, supports, (), cover_id="reflection-cover")
+    forms = (
+        phx.metrix.DifferentialForm(
+            lambda q: jnp.asarray([source_coefficient], dtype=q.dtype),
+            chart=source,
+            degree=degree,
+            twist=twist,
+        ),
+        phx.metrix.DifferentialForm(
+            lambda q: jnp.asarray([3.0], dtype=q.dtype),
+            chart=target,
+            degree=degree,
+            twist=twist,
+        ),
+    )
+    patchwise = phx.metrix.PatchwiseDifferentialForm(cover, forms)
+    points = jnp.asarray([[0.2, 0.3], [-0.4, 0.7]])
+    assert patchwise.transition_residual(0, 1, points) == 0.0

@@ -489,11 +489,17 @@ def compile_workset_program(
                 + _coefficient_fields(action, discretization)
             )
         )
-        bindings = tuple(discretization.local_field_binding(name) for name in fields)
         use_common = not action.rules and (
             not isinstance(discretization, FiniteElementDiscretization)
             or (
-                all(binding.conformity == "H1" for binding in bindings)
+                all(
+                    element.continuity == "conforming"
+                    and element.value_spec.form_type.degree == 0
+                    for field in fields
+                    for element in discretization.elements[
+                        discretization._field_index(field)
+                    ]
+                )
                 and all(
                     len(
                         {
@@ -510,6 +516,7 @@ def compile_workset_program(
         )
         if not use_common:
             continue
+        bindings = tuple(discretization.local_field_binding(name) for name in fields)
         operators = _operators(action)
         derivative_order = (
             1

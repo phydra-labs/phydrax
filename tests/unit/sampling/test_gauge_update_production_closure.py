@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax.sampling._gauge_updates as gauge_updates
@@ -149,3 +150,71 @@ def test_gauge_update_production_closure_scenario_2() -> None:
     assert jnp.array_equal(first.status, jnp.asarray([0, 4], dtype=jnp.int32))
     assert first.state.attempted_swaps == 1
     assert second.state.attempted_swaps == 2
+
+
+def test_native_staple_dependencies_preserve_colored_microcanonical_action() -> None:
+    faces = ((0, 1, 2), (0, 2, 3))
+    topology = polygonal_cell_complex(jnp.asarray(faces), None, 4)
+    boundaries = prepare_cell_boundary_paths(topology)
+    space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))
+    staples = GaugeStaplePlan(space, boundaries)
+    tails = np.asarray(space.tail_vertices)
+    heads = np.asarray(space.head_vertices)
+    lookup = {
+        tuple(sorted((int(tail), int(head)))): edge
+        for edge, (tail, head) in enumerate(zip(tails, heads, strict=True))
+    }
+    conflicts = np.zeros((space.num_edges, space.num_edges), dtype=np.bool_)
+    for face in faces:
+        face_edges = tuple(
+            lookup[tuple(sorted(pair))]
+            for pair in zip(face, face[1:] + face[:1], strict=True)
+        )
+        for edge in face_edges:
+            for other in face_edges:
+                conflicts[edge, other] = edge != other
+    omitted = conflicts.copy()
+    first = lookup[(0, 1)]
+    shared = lookup[(0, 2)]
+    omitted[first, shared] = omitted[shared, first] = False
+    with pytest.raises(ValueError, match="omits a dependency"):
+        prepare_gauge_update(
+            GaugeUpdatePlan("su2", coupling=1.0),
+            staples,
+            np.arange(space.num_edges, dtype=np.int32),
+            omitted,
+        )
+    colors = np.arange(space.num_edges, dtype=np.int32)
+    # These edges lie in different triangles and may update simultaneously.
+    colors[lookup[(2, 3)]] = colors[first]
+    colors = np.searchsorted(np.unique(colors), colors)
+    prepared = prepare_gauge_update(
+        GaugeUpdatePlan("su2", coupling=1.0, update="overrelaxation"),
+        staples,
+        colors,
+        conflicts,
+    )
+    coordinates = 0.2 * jnp.sin(
+        jnp.arange(space.num_edges * 3, dtype=jnp.float64).reshape((space.num_edges, 3))
+    )
+    links = jax.vmap(lambda value: space.group.exp(space.group.hat(value)))(coordinates)
+
+    def wilson_action(values: jax.Array) -> jax.Array:
+        traces: list[jax.Array] = []
+        for face in faces:
+            product = jnp.eye(2, dtype=values.dtype)
+            for tail, head in zip(face, face[1:] + face[:1], strict=True):
+                edge = lookup[tuple(sorted((tail, head)))]
+                factor = values[edge]
+                if int(tails[edge]) != tail:
+                    factor = jnp.conj(factor.T)
+                product = product @ factor
+            traces.append(jnp.real(jnp.trace(product)) / 2)
+        return jnp.sum(1 - jnp.stack(traces))
+
+    initial = initialize_gauge_update_state(prepared, links)
+    result = gauge_update_sweeps(prepared, initial, key=jax.random.key(132))
+    np.testing.assert_allclose(
+        wilson_action(result.state.links), wilson_action(links), atol=3e-5
+    )
+    assert jnp.max(jnp.abs(result.state.links - links)) > 1e-4

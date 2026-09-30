@@ -16,7 +16,8 @@ from phydrax.discretization import (
     TensorTopology,
 )
 from phydrax.discretization._lattice_boundary import LatticeBoundaryPhasePlan
-from phydrax.graph import gauge_transform_links, MatrixGaugeLinkSpace, path_holonomy
+from phydrax.discretization._oriented_path import ordered_path_transport
+from phydrax.graph import gauge_transform_links, MatrixGaugeLinkSpace
 from phydrax.graph._gauge_transport import GaugeCovariantShiftPlan, GaugeStaplePlan
 from phydrax.metrix import SpecialUnitaryGroup
 from phydrax.metrix._gauge_representation import FundamentalGaugeRepresentation
@@ -95,7 +96,7 @@ def test_staple_is_the_ordered_complement_of_each_triangle_link() -> None:
     )
     links = jax.vmap(lambda value: space.group.exp(space.group.hat(value)))(coordinates)
     plan = GaugeStaplePlan(space, boundaries)
-    loop = path_holonomy(space, links, boundaries.paths)[0]
+    loop = ordered_path_transport(boundaries.paths, links)[0]
 
     assert plan.staples(links).shape == links.shape
     for edge in range(space.num_edges):

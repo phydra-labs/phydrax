@@ -893,6 +893,26 @@ Clifford fields keep their packed channel axis. `OperatorQuerySpec.value_port()`
 describes one query coordinate point by its coordinate components and, when
 declared, their dimensions.
 
+`OperatorQuerySpec.quadrature` is an explicit measure requirement, not a request
+to reinterpret one representation as another:
+
+| Policy | Admission requirement |
+|---|---|
+| `"unused"` | No quadrature is consumed by the declared contract. |
+| `"optional"` | Explicit scalar quadrature may be supplied but is not required. |
+| `"physical_required"` | Actual physical scalar quadrature weights must be present. |
+| `"native_pairing_required"` | Sampled cells must carry an admitted native `CochainDiscretization` pairing through typed `GraphIR.cochain_bindings`. |
+
+The native policy accepts diagonal and full sparse positive-definite Gram
+pairings. A graph carrying only cell dimensions or a positive diagnostic
+diagonal is insufficient. `physical_required` is still a scalar-quadrature
+requirement: it is not silently satisfied by an unrelated native pairing.
+Eager admission checks concrete native validity. During JIT tracing, a validity
+predicate is deferred, not certified true merely because it is traced. Current
+native SPD evidence is forced by device guards on graph action returns, cochain
+residual outputs, and neural predictions, including self-only route models.
+
+
 ::: phydrax.nn.operator.OperatorFieldSpec
     options:
         members:
@@ -1929,29 +1949,48 @@ for any of the geometry architectures above.
 
 ### Metric cochain operators
 
-`CochainNeuralOperator` acts on typed discrete differential forms over one
-`CochainComplexIR`. Each `OperatorFieldSpec` declares its cochain degree,
-primal/dual side, orientation law, and sampling semantics through
-`phydrax.discretization.CochainFieldSpec`. `function_samples_from_cochain` then binds values,
-physical Hodge-star measures, boundary masks, coordinates, and the shared
-cell-complex topology into canonical `FunctionSamples`.
+`CochainNeuralOperator` acts on typed discrete differential forms over a native
+`CochainDiscretization`, lowered through `CochainComplexIR`. Each
+`OperatorFieldSpec` declares canonical `FormType` metadata and a separate
+representation. `function_samples_from_cochain` binds values, boundary masks,
+coordinates and topology into `FunctionSamples`. Diagonal Hodges also supply
+exact scalar quadrature weights. A coupled `SparseHodge` stays with the native
+pairing; the producer does not approximate it with per-sample quadrature.
+The architecture and cochain task queries use `"native_pairing_required"`.
+Persistence uses `{"form_type": ..., "representation": ...}`; old field/task
+payloads are refused, not read through a compatibility schema.
 
-`TopologicalCochainBlock` communicates only through declared metric DEC routes:
-self, exterior derivative, codifferential, lower/upper Hodge-Laplacian, and an
-optional exact harmonic projection. Trainable maps act on channels at cells;
-incidence, Hodge stars, boundary policy, and harmonic bases remain immutable
-runtime data. Signed cochains transform under cell reorientation, while
-zero-form point values are orientation-invariant. All source and target fields
-must therefore share one complex relation; this is not an arbitrary point-cloud
-operator.
+`TopologicalCochainBlock` communicates only through native differential,
+codifferential, lower/upper Hodge-Laplacian, and optional harmonic routes, together
+with its self route. Its required `dimension=` admits degree bounds through
+`FormType`. Incoming exterior-derivative and lower-Laplacian routes are absent
+at degree zero; incoming codifferential and upper-Laplacian routes are absent
+at the top degree. Middle degrees admit both Laplacian parts. Unknown route,
+part, and boundary selectors are refused rather than replaced by zeros.
 
-The default route set excludes the dense harmonic projection. Enable
-`TopologicalRouteConfig(harmonic=True)` only after attaching a
-`compute_harmonic_subspace(...)` result to the complex. Absolute and relative
-boundary policies select different closed subcomplexes and must match between
-sample construction and model execution.
+Trainable maps act only on channels at cells. Native sparse incidence, full
+Gram/Riesz maps, boundary policy, and harmonic evidence remain prepared runtime
+data in typed graph bindings. Batching, broadcasting, and padding preserve the
+native realization identity and numerical revision; no graph-side metric or
+Laplacian is reconstructed at each neural step. Signed cochains transform under
+cell reorientation, while zero-form point values are orientation-invariant.
+All source and target fields must share one complex relation.
 
-::: phydrax.discretization.CochainFieldSpec
+`CochainResidualLoss(reduction="metric_sum")` evaluates the native quadratic
+form $r^\ast M r$. `"metric_mean"` normalizes that same energy by
+$\operatorname{tr}(M)$ over active coordinates; `"graph_mean"` remains a
+coordinate arithmetic mean. Trace normalization is not a scalar-quadrature
+approximation of the coupled pairing. Native failed metric solves and invalid
+harmonic evidence remain failures; no exception-to-zero fallback is used.
+
+The default route set excludes harmonic projection. Enable
+`TopologicalRouteConfig(harmonic=True)` only after attaching an admitted native
+`phydrax.linalg.harmonic_subspace(...)` result to the lowering. Absolute and
+relative boundaries select different active subcomplexes; relative inverse
+Riesz actions solve the restricted Gram, not a masked full inverse. Use the
+same boundary for sample construction, execution and physics residuals.
+
+::: phydrax.exterior.FormType
 
 ---
 
@@ -2469,7 +2508,7 @@ The benchmark harness enforces the same source/query protocol across families.
 | `LatticeEquivariantCNO` | Periodic coincident tensor grid with a declared finite signed-permutation group | No | Exact finite-group tensor equivariance on equal lattice extents; centered odd kernels, typed channels, and no continuous-group or arbitrary-grid claim |
 | `DeepONet`, `MIONet`, `PODDeepONet` | Fixed/variable sensors or point clouds | Yes; POD uses its fixed output basis | Function-to-point and multiple-input maps; finite branch–trunk rank, while POD cannot leave its fitted span |
 | `GraphNeuralOperator` | Graph or point geometry | Yes | GraphIR message passing and source-to-query transfer; graph construction and receptive field are part of the model |
-| `CochainNeuralOperator` | Typed primal/dual cochains on one metric cell complex | Resolution transfer on a compatible complex relation | Mixed-degree differential forms with exact sparse DEC routes and optional harmonic projection; requires oriented incidence, valid Hodge stars, and declared field semantics |
+| `CochainNeuralOperator` | Typed cochains on one native metric cell complex | Resolution transfer on a compatible complex relation | Degree-valid native Hilbert-complex routes and optional harmonic projection; requires oriented incidence, an admitted full Gram/Riesz pairing, and declared field semantics |
 | `LocalDifferentialOperator`, `LocalIntegralOperator`, `LocalGlobalOperator` | Coordinates on grids or point clouds | Yes | Local closures and kernels with dimensional radii; finite neighborhoods and sampling quality limit them |
 | `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention` | Weighted point sets or tensor axes | Cross-attention can use separate queries | Layer primitives rather than complete roadmap models; quadratic, slice, axial, or field-factorization bottlenecks remain |
 | `LaplaceTemporalOperator` | Monotone nonperiodic time samples | Yes in time | Stable causal transients within a pole–residue model class |

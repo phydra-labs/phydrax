@@ -61,6 +61,7 @@ from ._laplace3d import (
     LaplaceLayerPotential3D,
 )
 from ._maxwell3d import __all__ as _maxwell_all
+from ._maxwell_bc3d import __all__ as _maxwell_bc_all
 from ._modified_helmholtz2d import __all__ as _modified_helmholtz2d_all
 from ._modified_helmholtz3d import __all__ as _modified_helmholtz_all
 from ._periodic_core3d import __all__ as _periodic_core_all
@@ -131,6 +132,7 @@ _FACADE_EXPORT_MODULES = (
     "._free_surface_hydrodynamics3d",
     "._hierarchical3d",
     "._maxwell3d",
+    "._maxwell_bc3d",
     "._modified_helmholtz2d",
     "._modified_helmholtz3d",
     "._periodic_core3d",
@@ -252,6 +254,7 @@ __all__ += [
         *_free_surface_green_all,
         *_free_surface_hydrodynamics_all,
         *_maxwell_all,
+        *_maxwell_bc_all,
         *_modified_helmholtz2d_all,
         *_modified_helmholtz_all,
         *_periodic_core_all,

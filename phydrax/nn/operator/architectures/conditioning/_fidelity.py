@@ -18,6 +18,7 @@ from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn.operator.capabilities import (
     ConfiguredOperatorContract,
     OperatorCapabilitySpec,
+    OperatorQuadraturePolicy,
     OperatorTrainingRequirement,
 )
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
@@ -93,6 +94,16 @@ def _intersect_capabilities(
             "Fidelity child operators have incompatible source-count bounds."
         )
     quadrature_order = {"unused": 0, "optional": 1, "physical_required": 2}
+    measures = (baseline.quadrature, correction.quadrature)
+    quadrature: OperatorQuadraturePolicy
+    if "native_pairing_required" in measures:
+        if "physical_required" in measures:
+            raise ValueError(
+                "Fidelity child operators require incompatible native-pairing and scalar-quadrature measures."
+            )
+        quadrature = "native_pairing_required"
+    else:
+        quadrature = max(measures, key=quadrature_order.__getitem__)
     mask_order = {"supported": 0, "all_valid_only": 1, "unsupported": 2}
     minimum_axis_candidates = tuple(
         value
@@ -103,11 +114,6 @@ def _intersect_capabilities(
         value
         for value in (baseline.axis_size_divisor, correction.axis_size_divisor)
         if value is not None
-    )
-    cochain_sides = _ordered_intersection(
-        baseline.cochain_sides,
-        correction.cochain_sides,
-        name="cochain side",
     )
     return OperatorCapabilitySpec(
         source_geometries=_ordered_intersection(
@@ -133,17 +139,13 @@ def _intersect_capabilities(
             baseline.requires_fixed_query or correction.requires_fixed_query
         ),
         axis_requirement=axis_requirement,
-        quadrature=max(
-            (baseline.quadrature, correction.quadrature),
-            key=quadrature_order.__getitem__,
-        ),
+        quadrature=quadrature,
         masks=max(
             (baseline.masks, correction.masks),
             key=mask_order.__getitem__,
         ),
         topology=topology,
         cochains=cochains,
-        cochain_sides=cochain_sides,
         input_representations=_ordered_intersection(
             baseline.input_representations,
             correction.input_representations,

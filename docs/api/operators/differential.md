@@ -555,7 +555,7 @@ nonfinite outputs rather than a clamped constitutive response.
 These operators require the minimal geometric structure that determines them.
 `intrinsic_dalembertian` accepts only a Lorentzian metric. `horizontal_grad` and
 `sub_laplacian` accept a horizontal cometric. Differential-form operations carry
-explicit chart, degree, and orientation semantics.
+explicit chart, degree, twist and physical-proxy semantics; orientation is only an explicit conversion, not a Hodge argument.
 
 ::: phydrax.operators.intrinsic_dalembertian
 
@@ -606,6 +606,18 @@ retaining the same trainable parameter tree.
 
 ::: phydrax.operators.DomainDifferentialForm
 
+Coefficients have an explicit component axis, including degree0 and top degree:
+`(*batch, choose(ambient_dimension, degree), *fiber_shape)`.
+`DomainDifferentialForm(..., chart=..., degree=..., twist="untwisted",
+fiber_shape=(), var=None)` declares canonical `FormType`. Wedge accepts
+`product="scalar"` or `"matrix"`. Exterior derivative, codifferential and
+Laplacian preserve derivative `mode`/`backend`; Hodge star takes the metric
+without orientation. Degree-zero codifferential raises.
+
+`domain_pullback_form` takes an explicit mapping `DomainFunction`, source chart,
+optional source variable and coorientation, retaining AD/jet derivative routes.
+
+
 ---
 
 ::: phydrax.operators.domain_differential_form
@@ -637,3 +649,9 @@ retaining the same trainable parameter tree.
 ---
 
 ::: phydrax.operators.domain_hodge_laplacian
+
+::: phydrax.operators.domain_to_twisted
+
+::: phydrax.operators.domain_to_untwisted
+
+::: phydrax.operators.domain_pullback_form

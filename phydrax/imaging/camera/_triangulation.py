@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
+    compound_matrix,
     SmallLinearSolvePlan,
     SmallLinearSolveResult,
     solve_small_linear,
@@ -52,23 +53,11 @@ def _rank_three(matrix: Array, tolerance: float) -> Array:
     scale = jnp.max(jnp.abs(matrix), axis=(-2, -1))
     threshold = tolerance * jnp.maximum(scale, jnp.finfo(matrix.dtype).tiny)
     rank_one = jnp.any(jnp.abs(matrix) > threshold[..., None, None], axis=(-2, -1))
-    minors = []
-    for row_a, row_b in ((0, 1), (0, 2), (1, 2)):
-        for column_a, column_b in ((0, 1), (0, 2), (1, 2)):
-            minors.append(
-                matrix[..., row_a, column_a] * matrix[..., row_b, column_b]
-                - matrix[..., row_a, column_b] * matrix[..., row_b, column_a]
-            )
-    minors_ = jnp.stack(minors, axis=-1)
-    rank_two = jnp.any(jnp.abs(minors_) > (threshold * scale)[..., None], axis=-1)
-    determinant = (
-        matrix[..., 0, 0]
-        * (matrix[..., 1, 1] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 1])
-        - matrix[..., 0, 1]
-        * (matrix[..., 1, 0] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 0])
-        + matrix[..., 0, 2]
-        * (matrix[..., 1, 0] * matrix[..., 2, 1] - matrix[..., 1, 1] * matrix[..., 2, 0])
+    minors = compound_matrix(matrix, 2)
+    rank_two = jnp.any(
+        jnp.abs(minors) > (threshold * scale)[..., None, None], axis=(-2, -1)
     )
+    determinant = compound_matrix(matrix, 3)[..., 0, 0]
     rank_three = jnp.abs(determinant) > tolerance * jnp.maximum(
         scale**3,
         jnp.finfo(matrix.dtype).tiny,

@@ -706,7 +706,7 @@ def _cost_estimate(
         )
         metric_matvecs = (
             (
-                subspace * (policy.max_steps + 1)
+                2 * subspace * (policy.max_steps + 1)
                 + constraint_capacity
                 + block
                 + supplied_columns

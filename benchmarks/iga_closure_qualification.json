@@ -1,7 +1,7 @@
 {
   "cases": {
     "compatible_complex": {
-      "complex_id": "b65e8b0d8ae0f9a8d19aba518a8eb8e0fe74153d073abf19258abc1ad1624deb",
+      "complex_id": "4669d18c403acb6f10ae1c9419aae4be55952d1bcacd87a8a641cf18e78ce4f5",
       "d_squared_defect": 0.0,
       "passed": true
     },
@@ -11,14 +11,23 @@
       "diagnostics": [],
       "passed": true
     },
-    "linear_pod_rom": {
-      "artifact_id": "09dd9d6e67b1223e367558dc2694916d3731bfa346c5698aa4fadfe8c36b8c67",
+    "mapped_annulus": {
+      "betti_one": 1,
+      "harmonic_defect": 1.0477099364043508e-14,
       "passed": true,
-      "relative_state_error": 2.220446049250313e-16
+      "realization_id": "9f88d81ffd095d327971901298e2b6a967c62f0b960c948baee37a7b9f50a245",
+      "trace_commuting_defect": 0.0
+    },
+    "prepared_metric_refresh": {
+      "geometry_gradient_defect": 2.220446049250313e-16,
+      "passed": true,
+      "realization_id": "875a6c9e317ab93cd97f4bfe82e4261fde550838078ad184d86a12d4c04e2a04",
+      "refreshed_energy": 1.6999999999999997,
+      "scan_energy_defect": 2.220446049250313e-16
     },
     "thb_basis": {
       "basis_count": 3,
-      "certificate_id": "33a22b42abc8e3ca6a9a95912c551f3d9e98de1be013be3fff9aa136f57b1887",
+      "certificate_id": "49c104dd2368b761f90649014c0a8a958bbbbd8bc2587fa3bb3f30331e3ceec9",
       "hierarchy_id": "658e9079ad185de050f7454947e023cfd11b46ecc9ee65ee6ae18be3cde74e2c",
       "partition_defect": 0.0,
       "passed": true,

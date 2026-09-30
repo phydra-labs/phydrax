@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 from dataclasses import fields, is_dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -32,13 +32,23 @@ from ..discretization import (
     DiscretizationRole,
     StructuredCochainBridge,
 )
+from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
+from ..discretization._cochain_hodge import DiagonalHodge
+from ..exterior._complex import AbstractDeRhamComplex
+from ..exterior._form_type import FormType
 from ..linalg import (
+    AbstractLinearOperator,
+    AbstractVectorSpace,
+    apply_real_map_componentwise,
+    ArraySpace,
+    codifferential,
     DifferentiationPolicy,
     FailurePolicy,
     GeneralizedLSMR,
     LinearSolvePolicy,
     MinimumNormProblem,
     prepare,
+    PreparedLinearSolve,
     RankPolicy,
     solve as solve_linear,
     SolveResourcePolicy,
@@ -69,6 +79,7 @@ from ._maxwell_sources import (
 MaxwellPolarization: TypeAlias = Literal["full_3d", "tez", "tmz"]
 
 
+@final
 class MaxwellCochainLayout(StrictModule, NonTrainableState):
     """Static assignment of Maxwell field roles to one retained de Rham segment."""
 
@@ -82,27 +93,33 @@ class MaxwellCochainLayout(StrictModule, NonTrainableState):
     charge_count: int = eqx.field(static=True)
     electric_orientation_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     magnetic_orientation_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    electric_form_type: FormType = eqx.field(static=True)
+    magnetic_form_type: FormType = eqx.field(static=True)
+    displacement_form_type: FormType = eqx.field(static=True)
+    magnetic_field_form_type: FormType = eqx.field(static=True)
+    current_form_type: FormType = eqx.field(static=True)
+    charge_form_type: FormType | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        bridge: StructuredCochainBridge | CochainDiscretization,
+        bridge: AbstractDeRhamComplex,
         polarization: MaxwellPolarization = "full_3d",
         /,
     ) -> None:
         polarization = parse(polarization, MaxwellPolarization, "polarization")
-        if isinstance(bridge, StructuredCochainBridge):
-            cochain = bridge.cochain
-            dimension = bridge.dimension
-            shapes = bridge.orientation_shapes
-            source_id = bridge.bridge_id
-        elif isinstance(bridge, CochainDiscretization):
-            cochain = bridge
-            dimension = cochain.max_degree
-            shapes = tuple(((count,),) for count in cochain.cell_counts)
-            source_id = cochain.prepared_id
-        else:
-            raise TypeError("Maxwell layout requires a cochain or structured bridge.")
+        if not isinstance(bridge, AbstractDeRhamComplex):
+            raise TypeError("Maxwell layout requires an AbstractDeRhamComplex.")
+        if bridge.primal_twist != "untwisted":
+            raise ValueError("Maxwell E and B require an untwisted primal realization.")
+        dimension = bridge.dimension
+        counts = bridge.cell_counts
+        shapes = (
+            bridge.orientation_shapes
+            if isinstance(bridge, StructuredCochainBridge)
+            else tuple(((count,),) for count in counts)
+        )
+        source_id = bridge.realization_id
         if polarization == "full_3d":
             if dimension != 3:
                 raise ValueError("full_3d Maxwell requires a three-dimensional complex.")
@@ -124,13 +141,21 @@ class MaxwellCochainLayout(StrictModule, NonTrainableState):
         self.electric_degree = electric_degree
         self.magnetic_degree = magnetic_degree
         self.charge_degree = charge_degree
-        self.electric_count = cochain.cell_counts[electric_degree]
-        self.magnetic_count = cochain.cell_counts[magnetic_degree]
-        self.charge_count = (
-            0 if charge_degree is None else cochain.cell_counts[charge_degree]
-        )
+        self.electric_count = counts[electric_degree]
+        self.magnetic_count = counts[magnetic_degree]
+        self.charge_count = 0 if charge_degree is None else counts[charge_degree]
         self.electric_orientation_shapes = shapes[electric_degree]
         self.magnetic_orientation_shapes = shapes[magnetic_degree]
+        self.electric_form_type = FormType(dimension, electric_degree)
+        self.magnetic_form_type = FormType(dimension, magnetic_degree)
+        self.displacement_form_type = self.electric_form_type.hodge_dual()
+        self.magnetic_field_form_type = self.magnetic_form_type.hodge_dual()
+        self.current_form_type = self.displacement_form_type
+        self.charge_form_type = (
+            None
+            if charge_degree is None
+            else FormType(dimension, charge_degree).hodge_dual()
+        )
         self.layout_id = canonical_fingerprint(
             {
                 "kind": "maxwell-cochain-layout",
@@ -548,8 +573,8 @@ class AbstractPreparedMaxwellConstitutive(StrictModule):
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         raise NotImplementedError
@@ -573,8 +598,8 @@ class AbstractPreparedMaxwellConstitutive(StrictModule):
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         raise NotImplementedError
@@ -587,8 +612,8 @@ class AbstractPreparedMaxwellConstitutive(StrictModule):
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         """Rate of the complete stored energy, fields plus auxiliary material."""
@@ -625,14 +650,20 @@ class AbstractMaxwellConstitutivePlan(StrictModule):
     @abc.abstractmethod
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> AbstractPreparedMaxwellConstitutive:
         raise NotImplementedError
 
 
-def _apply_hodge_metric(metric: Array, values: Array, /) -> Array:
+def _apply_hodge_metric(metric: Array | AbstractVectorSpace, values: Array, /) -> Array:
+    if isinstance(metric, AbstractVectorSpace):
+        if isinstance(metric, ArraySpace) and not jnp.issubdtype(
+            metric.dtype, jnp.complexfloating
+        ):
+            return apply_real_map_componentwise(metric.riesz, values)
+        return metric.riesz(values)
     return metric * values if metric.ndim == 1 else metric @ values
 
 
@@ -652,6 +683,32 @@ def _positive_material(name: str, value: ArrayLike, count: int, /) -> Array:
     )
 
 
+def _admit_diagonal_material(
+    realization: AbstractDeRhamComplex, degree: int, weights: Array, /
+) -> Array:
+    """A diagonal constitutive map is metric-Hermitian iff it commutes with M."""
+    if isinstance(realization, CochainDiscretization) and isinstance(
+        realization.hodges[degree], DiagonalHodge
+    ):
+        return weights
+    space = realization.hilbert_complex(boundary="absolute").space(degree)
+
+    def check(index: Array, residual: Array) -> Array:
+        basis = jnp.zeros_like(weights).at[index].set(1.0)
+        column = space.riesz(basis)
+        scale = jnp.maximum(1.0, jnp.max(jnp.abs(column * weights)))
+        defect = jnp.max(jnp.abs(column * (weights - weights[index]))) / scale
+        return jnp.maximum(residual, defect)
+
+    residual = jax.lax.fori_loop(0, weights.size, check, jnp.asarray(0.0))
+    return eqx.error_if(
+        weights,
+        residual > 64.0 * jnp.finfo(weights.dtype).eps,
+        "Diagonal Maxwell material does not commute with the Hodge metric; use a weighted Gram constitutive law.",
+    )
+
+
+@final
 class DiagonalMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
     """Positive degree-aligned instantaneous permittivity/permeability."""
 
@@ -692,13 +749,14 @@ class DiagonalMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedDiagonalMaxwellConstitutive:
         return PreparedDiagonalMaxwellConstitutive(self, cochain, layout)
 
 
+@final
 class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
     """Exact diagonal D↔E and B↔H material maps."""
 
@@ -711,7 +769,7 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
     def __init__(
         self,
         plan: DiagonalMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
@@ -727,6 +785,10 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
             plan.permeability,
             layout.magnetic_count,
         )
+        if plan.permittivity.size > 1:
+            epsilon = _admit_diagonal_material(cochain, layout.electric_degree, epsilon)
+        if plan.permeability.size > 1:
+            mu = _admit_diagonal_material(cochain, layout.magnetic_degree, mu)
         self.permittivity = epsilon
         self.permeability = mu
         self.layout_id = layout.layout_id
@@ -741,7 +803,7 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
             {
                 "kind": "prepared-diagonal-maxwell-constitutive",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -782,8 +844,8 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         del electric, magnetic, electric_star, magnetic_star
@@ -808,8 +870,8 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -826,8 +888,8 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -856,10 +918,53 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         )
 
 
+def _maxwell_realization_record(
+    realization: AbstractCellDeRhamComplex, /
+) -> DiscretizationRecord:
+    if isinstance(realization, CochainDiscretization):
+        return DiscretizationRecord(
+            realization.key,
+            type(realization).__name__,
+            realization.prepared_id,
+            numeric_version=realization.numeric_version,
+            precision_evidence_id=realization.precision_evidence_id,
+            resource_evidence_id=realization.resource_evidence_id,
+        )
+    return DiscretizationRecord(
+        DiscretizationKey("cell_de_rham", DiscretizationRole.RESIDUAL),
+        type(realization).__name__,
+        realization.realization_id,
+    )
+
+
+def _cell_maxwell_cfl(
+    realization: AbstractCellDeRhamComplex,
+    layout: MaxwellCochainLayout,
+    wave_speed: Array,
+    /,
+) -> Array:
+    """Bound the wave spectral radius without retaining a dense curl matrix."""
+    complex_ = realization.hilbert_complex(boundary="absolute")
+    derivative = complex_.differential(layout.electric_degree)
+    adjoint = codifferential(complex_, layout.magnetic_degree)
+    count = layout.electric_count
+
+    def accumulate(index: Array, row_sums: Array) -> Array:
+        basis = jnp.zeros((count,), dtype=jnp.float64).at[index].set(1.0)
+        return row_sums + jnp.abs(adjoint.mv(derivative.mv(basis)))
+
+    row_sums = jax.lax.fori_loop(
+        0, count, accumulate, jnp.zeros((count,), dtype=jnp.float64)
+    )
+    bound = jnp.max(row_sums, initial=0.0)
+    return jnp.where(bound > 0.0, 2.0 / (wave_speed * jnp.sqrt(bound)), jnp.inf)
+
+
+@final
 class CompatibleMaxwellPlan(StrictModule):
     """Compatible Maxwell plan over one role-aware retained de Rham segment."""
 
-    bridge: StructuredCochainBridge
+    bridge: AbstractCellDeRhamComplex
     layout: MaxwellCochainLayout
     constitutive: AbstractMaxwellConstitutivePlan
     boundaries: tuple[MaxwellBoundaryPlan, ...]
@@ -874,7 +979,7 @@ class CompatibleMaxwellPlan(StrictModule):
 
     def __init__(
         self,
-        bridge: StructuredCochainBridge,
+        bridge: AbstractCellDeRhamComplex,
         /,
         *,
         polarization: MaxwellPolarization = "full_3d",
@@ -889,8 +994,8 @@ class CompatibleMaxwellPlan(StrictModule):
         courant_factor: float = 0.95,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("Compatible Maxwell requires a StructuredCochainBridge.")
+        if not isinstance(bridge, AbstractCellDeRhamComplex):
+            raise TypeError("Compatible Maxwell requires an AbstractCellDeRhamComplex.")
         layout = MaxwellCochainLayout(bridge, polarization)
         material = (
             DiagonalMaxwellConstitutivePlan() if constitutive is None else constitutive
@@ -917,7 +1022,7 @@ class CompatibleMaxwellPlan(StrictModule):
                 raise TypeError("harmonic_constraint must be HarmonicConstraint or None.")
             if harmonic_constraint.frame.degree != layout.magnetic_degree:
                 raise ValueError("Maxwell harmonic constraint degree does not match B.")
-            expected_source = CellSubcomplex.full(bridge.cochain.topology).subcomplex_id
+            expected_source = CellSubcomplex.full(bridge.topology).subcomplex_id
             if harmonic_constraint.frame.exact_basis.source_id != expected_source:
                 raise ValueError(
                     "Maxwell harmonic constraint belongs to another topology."
@@ -930,7 +1035,7 @@ class CompatibleMaxwellPlan(StrictModule):
         identifier = plan_id or canonical_fingerprint(
             {
                 "kind": "compatible-maxwell-plan",
-                "bridge": bridge.bridge_id,
+                "realization": bridge.realization_id,
                 "layout": layout.layout_id,
                 "constitutive": material.plan_id,
                 "boundaries": [value.plan_id for value in boundary_plans],
@@ -960,19 +1065,26 @@ class CompatibleMaxwellPlan(StrictModule):
         return PreparedCompatibleMaxwell(self)
 
 
+@final
 class PreparedCompatibleMaxwell(StrictModule):
-    """Prepared heterogeneous compatible Maxwell evolution."""
+    """Prepared heterogeneous compatible Maxwell evolution.
+
+    Real metric cochain spaces admit real or native-complex Maxwell fields.
+    Incidence acts componentwise on complex fields at the runtime boundary;
+    metric pairings and real material coefficients remain unchanged.
+    """
 
     plan: CompatibleMaxwellPlan
     layout: MaxwellCochainLayout
+    cochain: AbstractCellDeRhamComplex
     constitutive: AbstractPreparedMaxwellConstitutive
     boundaries: tuple[PreparedMaxwellBoundary, ...]
     observers: tuple[AbstractPreparedMaxwellObserver, ...]
     sources: tuple[PreparedMaxwellSourceContract, ...]
     capabilities: MaxwellCapabilities
     pml: PreparedMaxwellCPML | None
-    magnetic_incidence: Any
-    magnetic_constraint_solver: Any
+    magnetic_incidence: AbstractLinearOperator | None
+    magnetic_constraint_solver: PreparedLinearSolve | None
     magnetic_projection_elided: bool = eqx.field(static=True)
     harmonic_constraint: HarmonicConstraint | None
     cfl_limit: Array
@@ -984,7 +1096,12 @@ class PreparedCompatibleMaxwell(StrictModule):
     def __init__(self, plan: CompatibleMaxwellPlan, /) -> None:
         if not isinstance(plan, CompatibleMaxwellPlan):
             raise TypeError("plan must be a CompatibleMaxwellPlan.")
-        layout, cochain = plan.layout, plan.bridge.cochain
+        layout = plan.layout
+        cochain = (
+            plan.bridge.cochain
+            if isinstance(plan.bridge, StructuredCochainBridge)
+            else plan.bridge
+        )
         scalar_bytes = jnp.dtype(jnp.complex128).itemsize
         primary_bytes = scalar_bytes * (
             layout.electric_count + layout.magnetic_count + layout.charge_count
@@ -997,46 +1114,54 @@ class PreparedCompatibleMaxwell(StrictModule):
                 "Logical Maxwell state exceeds the declared resource budget."
             )
         constitutive = plan.constitutive.prepare(cochain, layout)
+        if constitutive.capabilities.structured_only and not isinstance(
+            plan.bridge, StructuredCochainBridge
+        ):
+            raise ValueError(
+                "This Maxwell constitutive law requires a StructuredCochainBridge."
+            )
         boundaries = tuple(
             value.prepare(plan.bridge, layout) for value in plan.boundaries
         )
         observers = tuple(value.prepare(layout) for value in plan.observers)
         sources = tuple(value.prepare(plan.bridge, layout) for value in plan.sources)
-        pml = (
-            None
-            if plan.pml is None
-            else plan.pml.prepare(plan.bridge, layout, constitutive.wave_speed_bound())
-        )
-        spacings = tuple(
-            jnp.min(axis.interval_widths) for axis in plan.bridge.grid.structured_axes
-        )
-        inverse_spacing_norm = jnp.sqrt(jnp.sum(1.0 / jnp.asarray(spacings) ** 2))
-        cfl_limit = 1.0 / (constitutive.wave_speed_bound() * inverse_spacing_norm)
+        if plan.pml is not None:
+            if not isinstance(plan.bridge, StructuredCochainBridge):
+                raise ValueError("CPML requires a StructuredCochainBridge.")
+            pml = plan.pml.prepare(plan.bridge, layout, constitutive.wave_speed_bound())
+        else:
+            pml = None
+        if isinstance(plan.bridge, StructuredCochainBridge):
+            spacings = tuple(
+                jnp.min(axis.interval_widths) for axis in plan.bridge.grid.structured_axes
+            )
+            inverse_spacing_norm = jnp.sqrt(jnp.sum(1.0 / jnp.asarray(spacings) ** 2))
+            cfl_limit = 1.0 / (constitutive.wave_speed_bound() * inverse_spacing_norm)
+            domain_labels = plan.bridge.grid.axis_names
+        else:
+            cfl_limit = _cell_maxwell_cfl(
+                plan.bridge, layout, constitutive.wave_speed_bound()
+            )
+            domain_labels = ()
         stable_dt = plan.courant_factor * cfl_limit
         system_key = DiscretizationKey(
             "compatible_maxwell",
             DiscretizationRole.RESIDUAL,
-            domain_labels=plan.bridge.grid.axis_names,
+            domain_labels=domain_labels,
         )
+        realization_record = _maxwell_realization_record(cochain)
         bundle = DiscretizationBundle(
             (
-                DiscretizationRecord(
-                    cochain.key,
-                    type(cochain).__name__,
-                    cochain.prepared_id,
-                    numeric_version=cochain.numeric_version,
-                    precision_evidence_id=cochain.precision_evidence_id,
-                    resource_evidence_id=cochain.resource_evidence_id,
-                ),
+                realization_record,
                 DiscretizationRecord(
                     system_key,
                     "compatible-maxwell-system",
                     plan.plan_id,
-                    dependency_key_ids=(cochain.key.key_id,),
+                    dependency_key_ids=(realization_record.key.key_id,),
                 ),
             )
         )
-        top_form = layout.magnetic_degree == cochain.max_degree
+        top_form = layout.magnetic_degree == cochain.dimension
         # Every non-curl magnetic forcing (source magnetic currents, CPML
         # stretching, magnetic conduction) is tracked as declared magnetic charge,
         # so only boundaries that overwrite B can break d(B) = magnetic charge.
@@ -1051,7 +1176,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         magnetic_incidence = (
             None
             if top_form
-            else cochain.topology.incidences[layout.magnetic_degree].exterior_derivative()
+            else plan.bridge.hilbert_complex().differential(layout.magnetic_degree)
         )
         # An elided projection never solves, so no minimum-norm solver is prepared.
         magnetic_constraint_solver = (
@@ -1110,6 +1235,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                 "Prepared Maxwell execution exceeds the total resource budget."
             )
         self.plan, self.layout, self.constitutive = plan, layout, constitutive
+        self.cochain = cochain
         self.boundaries, self.observers, self.sources = boundaries, observers, sources
         self.capabilities = MaxwellCapabilities(
             lossless=constitutive.capabilities.lossless
@@ -1125,7 +1251,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                 and not sources
             ),
             observers=bool(observers),
-            structured_only=True,
+            structured_only=pml is not None or constitutive.capabilities.structured_only,
             pml=pml is not None,
             frequency_domain=constitutive.capabilities.frequency_domain,
             distributed=False,
@@ -1146,7 +1272,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                 "kind": "prepared-compatible-maxwell",
                 "plan": plan.plan_id,
                 "layout": layout.layout_id,
-                "cochain": cochain.prepared_id,
+                "realization": cochain.realization_id,
                 "constitutive": constitutive.prepared_id,
                 "sources": [value.prepared_id for value in sources],
             }
@@ -1251,9 +1377,9 @@ class PreparedCompatibleMaxwell(StrictModule):
             ~finite,
             "Maxwell primary cochains must be finite.",
         )
-        if self.layout.magnetic_degree < self.plan.bridge.cochain.max_degree:
+        if self.magnetic_incidence is not None:
             if self.plan.magnetic_constraint.mode == "elide":
-                residual = self.magnetic_incidence.mv(flux) - magnetic_charge_
+                residual = self._magnetic_divergence(flux) - magnetic_charge_
                 tolerance = max(
                     self.plan.magnetic_constraint.absolute_tolerance,
                     self.plan.magnetic_constraint.relative_tolerance
@@ -1266,7 +1392,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                     )
             elif self.magnetic_projection_elided:
                 # Automatic elision checks the initial state instead of projecting.
-                residual = self.magnetic_incidence.mv(flux) - magnetic_charge_
+                residual = self._magnetic_divergence(flux) - magnetic_charge_
                 tolerance = jnp.maximum(
                     self.plan.magnetic_constraint.absolute_tolerance,
                     self.plan.magnetic_constraint.relative_tolerance
@@ -1384,6 +1510,14 @@ class PreparedCompatibleMaxwell(StrictModule):
             electric, magnetic = boundary.constrain_fields(electric, magnetic)
         return magnetic
 
+    def magnetic_flux(self, state: CompatibleMaxwellState, /) -> Array:
+        """Return the constrained physical B cochain, without a material inverse."""
+        state_ = self._state(state)
+        _, flux = self._constrain_primary(
+            state_.primary.electric_displacement, state_.primary.magnetic_flux
+        )
+        return flux
+
     def _source_forcing(
         self,
         time: Array,
@@ -1426,8 +1560,8 @@ class PreparedCompatibleMaxwell(StrictModule):
         return self.pml.diagnostics(
             self.electric_field(state),
             self.magnetic_field(state),
-            self.plan.bridge.cochain.hodge_metric(self.layout.electric_degree),
-            self.plan.bridge.cochain.hodge_metric(self.layout.magnetic_degree),
+            self._structured_bridge().cochain.hodge_diagonal(self.layout.electric_degree),
+            self._structured_bridge().cochain.hodge_diagonal(self.layout.magnetic_degree),
         ).absorbed_power
 
     def material_dissipation(self, state: CompatibleMaxwellState, /) -> Array:
@@ -1436,32 +1570,54 @@ class PreparedCompatibleMaxwell(StrictModule):
             self.electric_field(state_),
             self.magnetic_field(state_),
             state_.auxiliary.material,
-            self.plan.bridge.cochain.hodge_metric(self.layout.electric_degree),
-            self.plan.bridge.cochain.hodge_metric(self.layout.magnetic_degree),
+            self.cochain.hilbert_complex(boundary="absolute").space(
+                self.layout.electric_degree
+            ),
+            self.cochain.hilbert_complex(boundary="absolute").space(
+                self.layout.magnetic_degree
+            ),
         )
 
+    def _structured_bridge(self, /) -> StructuredCochainBridge:
+        bridge = self.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise ValueError(
+                "Directional CPML execution requires a StructuredCochainBridge."
+            )
+        return bridge
+
     def _electric_curl_components(self, magnetic: Array, /) -> Array:
+        if self.pml is None:
+            return self.plan.bridge.codifferential(
+                self.layout.magnetic_degree, magnetic, boundary="absolute"
+            )[None, :]
+        bridge = self._structured_bridge()
         return jnp.stack(
             tuple(
-                self.plan.bridge.directional_codifferential(
+                bridge.directional_codifferential(
                     self.layout.magnetic_degree,
                     magnetic,
                     axis,
                 )
-                for axis in range(self.plan.bridge.dimension)
+                for axis in range(bridge.dimension)
             ),
             axis=0,
         )
 
     def _magnetic_curl_components(self, electric: Array, /) -> Array:
+        if self.pml is None:
+            return -self.plan.bridge.exterior_derivative(
+                self.layout.electric_degree, electric, boundary="absolute"
+            )[None, :]
+        bridge = self._structured_bridge()
         return jnp.stack(
             tuple(
-                -self.plan.bridge.directional_exterior_derivative(
+                -bridge.directional_exterior_derivative(
                     self.layout.electric_degree,
                     electric,
                     axis,
                 )
-                for axis in range(self.plan.bridge.dimension)
+                for axis in range(bridge.dimension)
             ),
             axis=0,
         )
@@ -1511,8 +1667,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             jnp.zeros((0,), dtype=displacement_rate.dtype)
             if self.layout.charge_degree is None
             else -self.plan.bridge.codifferential(
-                self.layout.electric_degree,
-                displacement_rate,
+                self.layout.electric_degree, displacement_rate, boundary="absolute"
             )
         )
         return MaxwellPrimaryState(
@@ -1544,8 +1699,14 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
 
     def _magnetic_divergence(self, magnetic: Array, /) -> Array:
+        """Apply the incidence with the field's declared scalar extension."""
         if self.magnetic_incidence is None:
             return jnp.zeros((0,), dtype=magnetic.dtype)
+        source = self.magnetic_incidence.source
+        if isinstance(source, ArraySpace) and not jnp.issubdtype(
+            source.dtype, jnp.complexfloating
+        ):
+            return apply_real_map_componentwise(self.magnetic_incidence.mv, magnetic)
         return self.magnetic_incidence.mv(magnetic)
 
     def _project_magnetic_constraint(
@@ -1568,7 +1729,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                 jnp.asarray(False),
                 True,
             )
-        residual = self.magnetic_incidence.mv(magnetic_flux) - magnetic_charge
+        residual = self._magnetic_divergence(magnetic_flux) - magnetic_charge
         residual_norm = jnp.linalg.norm(residual)
         scale = jnp.linalg.norm(magnetic_flux)
         relative = residual_norm / jnp.maximum(scale, jnp.finfo(scale.dtype).tiny)
@@ -1613,7 +1774,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             else:
                 projected = self.harmonic_constraint.apply(projected)
         final_residual = jnp.linalg.norm(
-            self.magnetic_incidence.mv(projected) - magnetic_charge
+            self._magnetic_divergence(projected) - magnetic_charge
         )
         tolerance = jnp.maximum(
             self.plan.magnetic_constraint.absolute_tolerance,
@@ -1779,8 +1940,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             else state.primary.charge
             - dt
             * self.plan.bridge.codifferential(
-                self.layout.electric_degree,
-                electric_forcing,
+                self.layout.electric_degree, electric_forcing, boundary="absolute"
             )
         )
         material_new = self.constitutive.advance_state(
@@ -1834,8 +1994,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
         if self.layout.charge_degree is not None:
             charge_new = -self.plan.bridge.codifferential(
-                self.layout.electric_degree,
-                displacement_new,
+                self.layout.electric_degree, displacement_new, boundary="absolute"
             ) - self.electric_constraint(state)
         magnetic_charge_new = (
             magnetic_charge_half
@@ -1898,8 +2057,12 @@ class PreparedCompatibleMaxwell(StrictModule):
             state_.primary.electric_displacement,
             state_.primary.magnetic_flux,
             state_.auxiliary.material,
-            self.plan.bridge.cochain.hodge_metric(self.layout.electric_degree),
-            self.plan.bridge.cochain.hodge_metric(self.layout.magnetic_degree),
+            self.cochain.hilbert_complex(boundary="absolute").space(
+                self.layout.electric_degree
+            ),
+            self.cochain.hilbert_complex(boundary="absolute").space(
+                self.layout.magnetic_degree
+            ),
         )
 
     def leapfrog_energy(
@@ -1915,16 +2078,14 @@ class PreparedCompatibleMaxwell(StrictModule):
         material = state_.auxiliary.material
         degree = self.layout.magnetic_degree
         curl = self.plan.bridge.exterior_derivative(
-            self.layout.electric_degree, self.electric_field(state_)
+            self.layout.electric_degree, self.electric_field(state_), boundary="absolute"
         )
         _, response = jax.jvp(
             lambda flux: self.constitutive.magnetic_field(flux, material),
             (state_.primary.magnetic_flux,),
             (curl,),
         )
-        correction = jnp.real(
-            jnp.vdot(curl, self.plan.bridge.cochain.apply_hodge(degree, response))
-        )
+        correction = jnp.real(jnp.vdot(curl, self.cochain.hodge_star(degree, response)))
         step = jnp.asarray(step_size)
         return self.energy(state_) - 0.125 * step**2 * correction
 
@@ -1945,15 +2106,15 @@ class PreparedCompatibleMaxwell(StrictModule):
             jnp.zeros((layout.magnetic_count,), dtype=primary.magnetic_flux.dtype),
         )
         rates = self._rates_with_forcing(state_, zero)
-        cochain = self.plan.bridge.cochain
+        cochain = self.cochain
         rate = self.constitutive.energy_rate(
             primary.electric_displacement,
             primary.magnetic_flux,
             rates.electric_displacement,
             rates.magnetic_flux,
             state_.auxiliary.material,
-            cochain.hodge_metric(layout.electric_degree),
-            cochain.hodge_metric(layout.magnetic_degree),
+            cochain.hilbert_complex(boundary="absolute").space(layout.electric_degree),
+            cochain.hilbert_complex(boundary="absolute").space(layout.magnetic_degree),
         )
         return -rate
 
@@ -1966,6 +2127,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             -self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 state_.primary.electric_displacement,
+                boundary="absolute",
             )
             - state_.primary.charge
         )
@@ -1987,7 +2149,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         if self.magnetic_incidence is None:
             return jnp.asarray(0.0, dtype=state_.primary.magnetic_flux.real.dtype)
         return (
-            self.magnetic_incidence.mv(state_.primary.magnetic_flux)
+            self._magnetic_divergence(state_.primary.magnetic_flux)
             - state_.auxiliary.magnetic_charge
             - state_.auxiliary.absorber_magnetic_charge
         )
@@ -2030,16 +2192,14 @@ class PreparedCompatibleMaxwell(StrictModule):
         return jnp.real(
             jnp.vdot(
                 electric,
-                self.plan.bridge.cochain.apply_hodge(
-                    self.layout.electric_degree,
-                    forcing.electric_current,
+                self.cochain.hodge_star(
+                    self.layout.electric_degree, forcing.electric_current
                 ),
             )
             + jnp.vdot(
                 magnetic,
-                self.plan.bridge.cochain.apply_hodge(
-                    self.layout.magnetic_degree,
-                    forcing.magnetic_current,
+                self.cochain.hodge_star(
+                    self.layout.magnetic_degree, forcing.magnetic_current
                 ),
             )
         )
@@ -2060,8 +2220,12 @@ class PreparedCompatibleMaxwell(StrictModule):
             rates.electric_displacement,
             rates.magnetic_flux,
             state_.auxiliary.material,
-            self.plan.bridge.cochain.hodge_metric(self.layout.electric_degree),
-            self.plan.bridge.cochain.hodge_metric(self.layout.magnetic_degree),
+            self.cochain.hilbert_complex(boundary="absolute").space(
+                self.layout.electric_degree
+            ),
+            self.cochain.hilbert_complex(boundary="absolute").space(
+                self.layout.magnetic_degree
+            ),
         )
         return (
             energy_rate
@@ -2087,6 +2251,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             -self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 rates.electric_displacement,
+                boundary="absolute",
             )
             - rates.charge
         )
@@ -2291,7 +2456,7 @@ def _fixed_step(
     )
     dtype_name = np.dtype(dtype).name
     payload = {
-        "bridge": runtime.plan.bridge.bridge_id,
+        "bridge": runtime.plan.bridge.realization_id,
         "layout": runtime.layout.layout_id,
         "material": type(runtime.constitutive).__name__,
         "boundaries": tuple(type(value).__name__ for value in runtime.boundaries),

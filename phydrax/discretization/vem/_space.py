@@ -49,6 +49,7 @@ from .._spaces import (
     BlockDofLayout,
     DiscreteFieldSpace,
     EntityDofLayout,
+    FieldConformity,
     FieldRepresentation,
 )
 from .._support import DiscreteSupport
@@ -154,6 +155,8 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
             raise TypeError("Virtual elements require polygonal connectivity.")
         if not isinstance(field, VirtualElementFieldSpec):
             raise TypeError("field must be VirtualElementFieldSpec.")
+        if field.element.form_type.dimension != mesh.topological_dimension:
+            raise ValueError("Virtual-element form dimension must match the mesh.")
         precision = (
             VirtualElementPrecisionPolicy()
             if precision_policy is None
@@ -307,6 +310,12 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             "ConformingHcurl": "circulation_moment",
             "DiscontinuousL2": "polynomial_moment",
         }
+        conformities: dict[str, FieldConformity] = {
+            "ConformingH1": "H1",
+            "ConformingHdiv": "Hdiv",
+            "ConformingHcurl": "Hcurl",
+            "DiscontinuousL2": "L2",
+        }
         trace_space_id = (
             None
             if element.trace_kind == "none"
@@ -326,7 +335,8 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                 layout,
                 vector_space,
                 representation=representations[element.family],
-                conformity=element.conformity,
+                conformity=conformities[element.family],
+                form_type=element.form_type,
                 projection_id=canonical_fingerprint(
                     {
                         "kind": "virtual-element-field-projection",

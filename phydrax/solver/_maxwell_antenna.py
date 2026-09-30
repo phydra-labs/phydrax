@@ -61,7 +61,11 @@ from .._lorentz import boost_event, boost_wavevector
 from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CochainDiscretization, StructuredCochainBridge
+from ..discretization import (
+    AbstractCellDeRhamComplex,
+    CochainDiscretization,
+    StructuredCochainBridge,
+)
 from ..typing import (
     as_array,
     Bool,
@@ -351,8 +355,10 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
         return 1.0 / math.sqrt(1.0 - self.beta * self.beta)
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: Any, /
+        self, bridge: AbstractCellDeRhamComplex, layout: MaxwellCochainLayout, /
     ) -> PreparedSampledPlaneCurrentAntenna:
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError("Sampled-plane antennas require a structured cochain bridge.")
         if not isinstance(layout, MaxwellCochainLayout):
             raise TypeError("Antenna preparation requires a MaxwellCochainLayout.")
         if bridge.bridge_id != self.bridge.bridge_id:
@@ -776,7 +782,10 @@ class PreparedSampledPlaneCurrentAntenna(StrictModule, NonTrainableState):
     def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
         """Refuse runtimes whose antenna support is not the declared medium or
         intersects the CPML region."""
-        if prepared.plan.bridge.bridge_id != self.bridge_id:
+        bridge = prepared.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError("Sampled-plane antennas require a structured cochain bridge.")
+        if bridge.bridge_id != self.bridge_id:
             raise ValueError("The antenna was prepared on a different cochain bridge.")
         electric, magnetic = self.electric_support, self.magnetic_support
         if prepared.pml is not None:
@@ -1028,12 +1037,12 @@ class PreparedMaxwellAntennaWorkObserver(AbstractPreparedMaxwellObserver):
             (
                 jnp.real(
                     jnp.vdot(
-                        electric, self.cochain.apply_hodge(1, forcing.electric_current)
+                        electric, self.cochain.hodge_star(1, forcing.electric_current)
                     )
                 ),
                 jnp.real(
                     jnp.vdot(
-                        magnetic, self.cochain.apply_hodge(2, forcing.magnetic_current)
+                        magnetic, self.cochain.hodge_star(2, forcing.magnetic_current)
                     )
                 ),
             )

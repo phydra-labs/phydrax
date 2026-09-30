@@ -398,7 +398,11 @@ def compiler_evidence(
         temporary_bytes=temporary_bytes,
         generated_code_bytes=generated_code_bytes,
         source=source,
-        unavailable_reason=unavailable_reason,
+        unavailable_reason=(
+            unavailable_reason
+            if flops is None or bytes_accessed is None or memory_analysis is None
+            else None
+        ),
     )
 
 

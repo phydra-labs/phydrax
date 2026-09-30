@@ -429,7 +429,7 @@ def _prepare_vector_virtual_element_projections(
     preliminary_coefficients = eqx.error_if(
         preliminary_coefficients,
         jnp.any(preliminary_failed | ~geometry.evidence.valid),
-        f"Virtual-element {element.conformity} functional projector failed.",
+        f"Virtual-element {element.family} functional projector failed.",
     )
 
     scalar_mass = ein.contract(
@@ -468,7 +468,7 @@ def _prepare_vector_virtual_element_projections(
     l2_coefficients = eqx.error_if(
         l2_coefficients,
         jnp.any(l2_failed | ~geometry.evidence.valid),
-        f"Virtual-element {element.conformity} enhanced L2 projector failed.",
+        f"Virtual-element {element.family} enhanced L2 projector failed.",
     )
     l2_dof = ein.contract("cia,caj->cij", dof_matrix, l2_coefficients)
 

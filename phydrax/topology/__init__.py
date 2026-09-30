@@ -44,6 +44,7 @@ from ._components import (
 )
 from ._cone import compute_mapping_cone_homology, mapping_cone, MappingConeResult
 from ._cubical import compute_structured_cubical_persistence, CubicalPersistenceResult
+from ._diagonals import alexander_whitney_diagonal, serre_diagonal
 from ._diagram import PackedPersistenceDiagram, PersistenceDiagram
 from ._diagram_distance import (
     diagram_bottleneck_distance,
@@ -143,6 +144,8 @@ from ._temporal import (
 
 
 __all__ = [
+    "alexander_whitney_diagonal",
+    "serre_diagonal",
     "CellDiagonalApproximation",
     "CellularSheaf",
     "FilteredBicomplex",

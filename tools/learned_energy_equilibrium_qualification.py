@@ -30,6 +30,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_synchronized,
 )
+from phydrax.optim import adam
 
 
 MODEL_SEED = 17_031
@@ -290,7 +291,7 @@ def _train(
         activation=jax.nn.tanh,
         key=jr.key(MODEL_SEED),
     )
-    optimizer = optax.adam(LEARNING_RATE)
+    optimizer = adam(LEARNING_RATE)
     optimizer_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
     def loss(
@@ -397,7 +398,7 @@ def _train(
     return best_model, {
         "model_seed": MODEL_SEED,
         "training_seed": TRAINING_SEED,
-        "optimizer": "optax.adam",
+        "optimizer": "phydrax.optim.adam",
         "learning_rate": LEARNING_RATE,
         "batch_size": batch_size,
         "maximum_updates": MAXIMUM_UPDATES,

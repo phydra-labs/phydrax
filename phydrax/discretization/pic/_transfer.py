@@ -14,27 +14,27 @@ interpolation of the edge/face components).
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._chains import PreparedChainQuery
 from ...typing import parse
+from .._cubical_whitney import CubicalSplineWhitneyKernel, PICShapeOrder
 from .._structured_cochain import StructuredCochainBridge
 from .._tensor_support import TensorEntityLayout
 from ..particle import ParticlePrecisionPolicy, PreparedChargedParticles
 from ..splatting import (
-    AbstractStructuredSplatAssignment,
-    MultilinearSplatAssignment,
     ParticleGridSplatBudget,
     ParticleGridSplatPlan,
     PreparedParticleGridSplat,
     SplatExecutionPolicy,
-    TensorBSplineSplatAssignment,
 )
 from ._types import (
     PICChargeDepositResult,
@@ -43,42 +43,12 @@ from ._types import (
 )
 
 
-PICShapeOrder: TypeAlias = Literal[1, 2, 3]
-
-
-def _spline_whitney_assignment(
-    shape_order: PICShapeOrder, layout: TensorEntityLayout, /
-) -> AbstractStructuredSplatAssignment:
-    """Assignment of one entity layout for one spline-Whitney shape order.
-
-    Order ``p`` uses degree ``p`` along the axes where the entity sits at points
-    and degree ``p − 1`` along the axes it spans, so the gather is the exact
-    Galerkin transpose of the charge-conserving current: at order one this is
-    the lowest-order Whitney form, piecewise constant along an edge (and across
-    a face), and the gathered field does exactly the work ``⟨E, ⋆J⟩`` the
-    deposited current does on the grid. Order-one layouts without a point axis
-    (1-D edges) keep multilinear midpoint interpolation, the electrostatic
-    momentum-conserving gather.
-    """
-    order = parse(shape_order, PICShapeOrder, "shape_order")
-    if order == 1 and len(set(layout.axis_entities)) == 1:
-        return MultilinearSplatAssignment()
-    match order:
-        case 1 | 2 | 3:
-            return TensorBSplineSplatAssignment(
-                tuple(
-                    order if kind == "point" else order - 1
-                    for kind in layout.axis_entities
-                )
-            )
-        case _:
-            raise ValueError("shape_order is invalid.")
-
-
+@final
 class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
     """Bind charged particles to exact structured cochain entity locations."""
 
     bridge: StructuredCochainBridge
+    kernel: CubicalSplineWhitneyKernel
     shape_order: PICShapeOrder = eqx.field(static=True)
     execution: SplatExecutionPolicy
     precision: ParticlePrecisionPolicy
@@ -102,6 +72,7 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
         precision_ = ParticlePrecisionPolicy() if precision is None else precision
         budget_ = ParticleGridSplatBudget() if budget is None else budget
         self.bridge = bridge
+        self.kernel = CubicalSplineWhitneyKernel(bridge, order)
         self.shape_order = order
         self.execution = execution_
         self.precision = precision_
@@ -123,14 +94,13 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
         return PreparedPICParticleCochainTransfer(self, species)
 
 
+@final
 class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
     """Prepared endpoint charge deposition and physical E/B gathering."""
 
     plan: PICParticleCochainTransferPlan
     species: PreparedChargedParticles
     charge: PreparedParticleGridSplat
-    electric: tuple[PreparedParticleGridSplat, ...]
-    magnetic: tuple[PreparedParticleGridSplat, ...]
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -149,7 +119,7 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
             return ParticleGridSplatPlan(
                 grid,
                 location=location,
-                assignment=_spline_whitney_assignment(plan.shape_order, layout),
+                assignment=plan.kernel.assignment(layout),
                 boundary="reject",
                 execution=plan.execution,
                 precision=plan.precision,
@@ -157,42 +127,26 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
             ).prepare(species.particles)
 
         charge = prepared_for(grid.vertices())
-        dimension = len(grid.shape)
-        electric = tuple(
-            prepared_for(
-                grid.entity_layout(
-                    tuple(
-                        "interval" if component == axis else "point"
-                        for axis in range(dimension)
-                    )
-                )
-            )
-            for component in range(dimension)
-        )
-        magnetic = (
-            tuple(prepared_for(grid.faces(axis)) for axis in grid.axis_names)
-            if dimension == 3
-            else ()
-        )
         self.plan = plan
         self.species = species
         self.charge = charge
-        self.electric = electric
-        self.magnetic = magnetic
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-pic-particle-cochain-transfer",
                 "plan": plan.plan_id,
                 "species": species.prepared_id,
                 "charge": charge.prepared_id,
-                "electric": [value.prepared_id for value in electric],
-                "magnetic": [value.prepared_id for value in magnetic],
+                "kernel": plan.kernel.kernel_id,
             }
         )
 
     @property
     def bridge(self) -> StructuredCochainBridge:
         return self.plan.bridge
+
+    @property
+    def kernel(self) -> CubicalSplineWhitneyKernel:
+        return self.plan.kernel
 
     def build(
         self,
@@ -201,14 +155,24 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
         *,
         active_mask: ArrayLike | None = None,
     ) -> PICTransferState:
+        charge = self.charge.build(position, active_mask=active_mask)
+        geometry = self.plan.precision.geometry(jnp.asarray(position))
+        if self.plan.execution.geometry_ad == "frozen":
+            geometry = jax.lax.stop_gradient(geometry)
+        active = charge.source_active_mask
+
+        def prepared_query(degree: int) -> PreparedChainQuery:
+            query = self.kernel.evaluate(geometry, degree)
+            return eqx.tree_at(
+                lambda value: (value.valid, value.successful),
+                query,
+                (query.valid & active[:, None], query.successful | ~active),
+            )
+
         return PICTransferState(
-            self.charge.build(position, active_mask=active_mask),
-            tuple(
-                value.build(position, active_mask=active_mask) for value in self.electric
-            ),
-            tuple(
-                value.build(position, active_mask=active_mask) for value in self.magnetic
-            ),
+            charge,
+            prepared_query(1),
+            prepared_query(2) if self.bridge.dimension == 3 else None,
             self.prepared_id,
         )
 
@@ -242,19 +206,8 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
         self, state: PICTransferState, electric_cochain: ArrayLike, /
     ) -> PICFieldGatherResult:
         self._validate_state(state)
-        integrated = self.bridge.unpack(1, electric_cochain)
-        measures = self.bridge.unpack(1, self.bridge.cochain.primal_measures[1])
-        physical = tuple(
-            value / measure for value, measure in zip(integrated, measures, strict=True)
-        )
-        gathered = tuple(
-            transfer.gather(route, component)
-            for transfer, route, component in zip(
-                self.electric, state.electric, physical, strict=True
-            )
-        )
-        support = jnp.all(jnp.stack(tuple(value.support for value in gathered)), axis=0)
-        values = jnp.stack(tuple(value.values for value in gathered), axis=-1)
+        values = state.electric.gather(jnp.asarray(electric_cochain))
+        support = state.electric.successful
         if self.bridge.dimension < 3:
             values = jnp.pad(values, ((0, 0), (0, 3 - self.bridge.dimension)))
         finite = jnp.all(jnp.isfinite(values))
@@ -267,15 +220,13 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
         self._validate_state(state)
         if self.bridge.dimension != 3:
             raise ValueError("Magnetic PIC gather currently requires three dimensions.")
-        physical = self.bridge.unpack_face_flux(magnetic_cochain)
-        gathered = tuple(
-            transfer.gather(route, component)
-            for transfer, route, component in zip(
-                self.magnetic, state.magnetic, physical, strict=True
-            )
+        if state.magnetic is None:
+            raise ValueError("Magnetic routes require a three-dimensional bridge.")
+        components = state.magnetic.gather(jnp.asarray(magnetic_cochain))
+        values = jnp.stack(
+            (components[:, 2], -components[:, 1], components[:, 0]), axis=-1
         )
-        support = jnp.all(jnp.stack(tuple(value.support for value in gathered)), axis=0)
-        values = jnp.stack(tuple(value.values for value in gathered), axis=-1)
+        support = state.magnetic.successful
         finite = jnp.all(jnp.isfinite(values))
         successful = support.all() & finite
         return PICFieldGatherResult(values, support, finite, successful, self.prepared_id)
@@ -283,6 +234,5 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
 
 __all__ = [
     "PICParticleCochainTransferPlan",
-    "PICShapeOrder",
     "PreparedPICParticleCochainTransfer",
 ]

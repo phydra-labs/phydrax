@@ -4,6 +4,7 @@
 
 """Charged particle-in-cell discretization and transfer primitives."""
 
+from .._cubical_whitney import PICShapeOrder
 from . import collisions, ionization
 from ._azimuthal import (
     AzimuthalTransferPlan,
@@ -119,7 +120,6 @@ from ._track_recorder import (
 )
 from ._transfer import (
     PICParticleCochainTransferPlan,
-    PICShapeOrder,
     PreparedPICParticleCochainTransfer,
 )
 from ._types import (

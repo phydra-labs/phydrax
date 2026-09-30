@@ -11,9 +11,10 @@ from ._batch import (
 )
 from ._cochain import (
     as_cochain_field,
-    cochain_field_spec,
-    has_cochain_field_spec,
-    with_cochain_field_spec,
+    cochain_form_type,
+    cochain_representation,
+    CochainRepresentation,
+    has_cochain_form_type,
 )
 from ._components import (
     BoundaryEdges,
@@ -64,9 +65,10 @@ __all__ = [
     "graph_component_indices_for_graph",
     "graph_component_kind",
     "as_cochain_field",
-    "cochain_field_spec",
-    "has_cochain_field_spec",
-    "with_cochain_field_spec",
+    "CochainRepresentation",
+    "cochain_form_type",
+    "cochain_representation",
+    "has_cochain_form_type",
     "CochainCellRegion",
     "CochainCells",
     "BoundaryEdges",

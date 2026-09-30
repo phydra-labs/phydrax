@@ -16,8 +16,11 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ..discretization import CochainDiscretization, StructuredCochainBridge
+from ..discretization import StructuredCochainBridge
+from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
+from ..exterior._complex import AbstractDeRhamComplex
 from ..linalg import (
+    AbstractVectorSpace,
     ArraySpace,
     DenseLinearOperator,
     DifferentiationPolicy,
@@ -51,7 +54,13 @@ from ._maxwell_sources import MaxwellSourceForcing
 FrequencyMaxwellSolveMethod: TypeAlias = Literal["krylov", "direct"]
 
 
-def _paired_matrix(metric: Array, matrix: Array, /) -> Array:
+def _paired_matrix(metric: Array | AbstractVectorSpace, matrix: Array, /) -> Array:
+    if isinstance(metric, AbstractVectorSpace):
+
+        def pair(column: Array) -> Array:
+            return _apply_hodge_metric(metric, column)
+
+        return jax.vmap(pair, in_axes=1, out_axes=1)(matrix)
     return metric[:, None] * matrix if metric.ndim == 1 else metric @ matrix
 
 
@@ -232,7 +241,7 @@ class FrequencyMaxwellOperator(StrictModule):
     the absolute cochain complex applies.
     """
 
-    cochain: CochainDiscretization
+    cochain: AbstractDeRhamComplex
     constitutive: AbstractPreparedMaxwellConstitutive
     response: AbstractMaxwellFrequencyResponse
     stretching: _FrequencyStretching | None
@@ -245,7 +254,7 @@ class FrequencyMaxwellOperator(StrictModule):
 
     def __init__(
         self,
-        discretization: StructuredCochainBridge | CochainDiscretization,
+        discretization: AbstractCellDeRhamComplex,
         layout: MaxwellCochainLayout,
         constitutive: AbstractPreparedMaxwellConstitutive,
         angular_frequency: ArrayLike,
@@ -261,12 +270,10 @@ class FrequencyMaxwellOperator(StrictModule):
         )
         if bridge is not None:
             cochain = bridge.cochain
-        elif isinstance(discretization, CochainDiscretization):
+        elif isinstance(discretization, AbstractCellDeRhamComplex):
             cochain = discretization
         else:
-            raise TypeError(
-                "Frequency Maxwell requires a StructuredCochainBridge or CochainDiscretization."
-            )
+            raise TypeError("Frequency Maxwell requires an AbstractCellDeRhamComplex.")
         if not isinstance(layout, MaxwellCochainLayout):
             raise TypeError("Frequency Maxwell requires a MaxwellCochainLayout.")
         if not isinstance(constitutive, AbstractPreparedMaxwellConstitutive):
@@ -295,12 +302,8 @@ class FrequencyMaxwellOperator(StrictModule):
         boundary_plans = tuple(boundaries)
         if not all(isinstance(plan, MaxwellBoundaryPlan) for plan in boundary_plans):
             raise TypeError("boundaries must contain MaxwellBoundaryPlan values.")
-        if boundary_plans and bridge is None:
-            raise ValueError("Maxwell boundaries require a StructuredCochainBridge.")
-        prepared_boundaries = (
-            ()
-            if bridge is None
-            else tuple(plan.prepare(bridge, layout) for plan in boundary_plans)
+        prepared_boundaries = tuple(
+            plan.prepare(discretization, layout) for plan in boundary_plans
         )
         conductor = jnp.zeros((layout.electric_count,), dtype=jnp.bool_)
         magnetic_wall = jnp.zeros((layout.magnetic_count,), dtype=jnp.bool_)
@@ -339,7 +342,7 @@ class FrequencyMaxwellOperator(StrictModule):
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "frequency-maxwell-operator",
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
                 "constitutive": constitutive.prepared_id,
                 "angular_frequency": float(np.asarray(frequency)),
@@ -356,12 +359,16 @@ class FrequencyMaxwellOperator(StrictModule):
 
     def _stretched_curl(self, electric: Array, /) -> Array:
         if self.stretching is None:
-            return self.cochain.exterior_derivative(self.layout.electric_degree, electric)
+            return self.cochain.exterior_derivative(
+                self.layout.electric_degree, electric, boundary="absolute"
+            )
         return self.stretching.magnetic_curl(self.layout.electric_degree, electric)
 
     def _stretched_curl_adjoint(self, magnetic: Array, /) -> Array:
         if self.stretching is None:
-            return self.cochain.codifferential(self.layout.magnetic_degree, magnetic)
+            return self.cochain.codifferential(
+                self.layout.magnetic_degree, magnetic, boundary="absolute"
+            )
         return self.stretching.electric_curl(self.layout.magnetic_degree, magnetic)
 
     def _magnetic(self, flux: Array, /) -> Array:
@@ -395,7 +402,9 @@ class FrequencyMaxwellOperator(StrictModule):
             raise ValueError("Frequency Maxwell defect vectors have the wrong shape.")
         applied = self.mv(electric_)
         residual = applied - source_
-        metric = self.cochain.hodge_metric(self.layout.electric_degree)
+        metric = self.cochain.hilbert_complex(boundary="absolute").space(
+            self.layout.electric_degree
+        )
         absolute = _hodge_norm(metric, residual)
         denominator = _hodge_norm(metric, applied) + _hodge_norm(metric, source_)
         relative = absolute / jnp.maximum(denominator, jnp.finfo(absolute.dtype).tiny)
@@ -446,8 +455,12 @@ class FrequencyMaxwellOperator(StrictModule):
         if electric_.shape != (self.size,) or source_.shape != (self.size,):
             raise ValueError("Frequency Maxwell ledger vectors have the wrong shape.")
         omega = self.angular_frequency
-        electric_star = self.cochain.hodge_metric(self.layout.electric_degree)
-        magnetic_star = self.cochain.hodge_metric(self.layout.magnetic_degree)
+        electric_star = self.cochain.hilbert_complex(boundary="absolute").space(
+            self.layout.electric_degree
+        )
+        magnetic_star = self.cochain.hilbert_complex(boundary="absolute").space(
+            self.layout.magnetic_degree
+        )
         free = jnp.where(self.conductor, 0, electric_)
         current = jnp.where(self.conductor, 0, source_ / (1j * omega))
         flux = self._stretched_curl(electric_) / (1j * omega)
@@ -697,7 +710,9 @@ class FrequencyMaxwellOperator(StrictModule):
         mass = jax.vmap(self.response.electric_displacement, in_axes=1, out_axes=1)(
             identity
         )
-        hodge = self.cochain.hodge_metric(self.layout.electric_degree)
+        hodge = self.cochain.hilbert_complex(boundary="absolute").space(
+            self.layout.electric_degree
+        )
         paired_stiffness = _paired_matrix(hodge, stiffness)
         paired_mass = _paired_matrix(hodge, mass)
         problem = eigen_linalg.GeneralizedEigenproblem(
@@ -769,8 +784,8 @@ class MaxwellHarmonicSource(StrictModule):
         self.convention = convention
 
 
-def _hodge_norm(metric: Array, value: Array, /) -> Array:
-    paired = metric * value if metric.ndim == 1 else metric @ value
+def _hodge_norm(metric: Array | AbstractVectorSpace, value: Array, /) -> Array:
+    paired = _apply_hodge_metric(metric, value)
     return jnp.sqrt(jnp.maximum(jnp.real(jnp.vdot(value, paired)), 0.0))
 
 
@@ -860,11 +875,15 @@ def compatible_maxwell_harmonic_defect(
         target_boundary,
     )
     electric_norm = _hodge_norm(
-        runtime.plan.bridge.cochain.hodge_metric(runtime.layout.electric_degree),
+        runtime.cochain.hilbert_complex(boundary="absolute").space(
+            runtime.layout.electric_degree
+        ),
         d_defect,
     )
     magnetic_norm = _hodge_norm(
-        runtime.plan.bridge.cochain.hodge_metric(runtime.layout.magnetic_degree),
+        runtime.cochain.hilbert_complex(boundary="absolute").space(
+            runtime.layout.magnetic_degree
+        ),
         b_defect,
     )
     charge_norm = jnp.linalg.norm(q_defect)
@@ -876,21 +895,29 @@ def compatible_maxwell_harmonic_defect(
     )
     state_scale = (
         _hodge_norm(
-            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.electric_degree),
+            runtime.cochain.hilbert_complex(boundary="absolute").space(
+                runtime.layout.electric_degree
+            ),
             stepped.primary.electric_displacement,
         )
         + _hodge_norm(
-            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.magnetic_degree),
+            runtime.cochain.hilbert_complex(boundary="absolute").space(
+                runtime.layout.magnetic_degree
+            ),
             stepped.primary.magnetic_flux,
         )
         + jnp.linalg.norm(stepped.primary.charge)
         + _tree_norm(stepped.auxiliary)
         + _hodge_norm(
-            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.electric_degree),
+            runtime.cochain.hilbert_complex(boundary="absolute").space(
+                runtime.layout.electric_degree
+            ),
             state.primary.electric_displacement,
         )
         + _hodge_norm(
-            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.magnetic_degree),
+            runtime.cochain.hilbert_complex(boundary="absolute").space(
+                runtime.layout.magnetic_degree
+            ),
             state.primary.magnetic_flux,
         )
     )

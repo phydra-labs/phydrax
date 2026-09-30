@@ -18,6 +18,8 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -565,7 +567,7 @@ def fit_learned_piv(
     transformation = (
         optax.chain(
             optax.clip_by_global_norm(config.maximum_gradient_norm),
-            optax.adam(config.learning_rate),
+            adam(config.learning_rate),
         )
         if optimizer is None
         else optimizer

@@ -15,7 +15,12 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._lattice_boundary import LatticeBoundaryPhasePlan
-from ..discretization._oriented_path import CellBoundaryPathPlan
+from ..discretization._oriented_path import (
+    _ordered_path_transport,
+    _prepare_lattice_plane_paths,
+    CellBoundaryPathPlan,
+    OrientedEdgePathPlan,
+)
 from ..metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 from ..metrix._gauge_representation import AbstractGaugeRepresentation
 from ._matrix_gauge import MatrixGaugeLinkSpace
@@ -34,6 +39,7 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
     """Prepared nearest-neighbor parallel transport on a C-order tensor lattice."""
 
     link_space: MatrixGaugeLinkSpace
+    plane_paths: tuple[tuple[OrientedEdgePathPlan, ...], ...]
     representation: AbstractGaugeRepresentation
     boundary_phases: LatticeBoundaryPhasePlan
     forward_sites: Array
@@ -144,6 +150,9 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
             ),
             axis=1,
         )
+        plane_paths = _prepare_lattice_plane_paths(
+            link_space.topology, sites, edges, orientations
+        )
         self.link_space = link_space
         self.representation = representation
         self.boundary_phases = boundary_phases
@@ -155,6 +164,7 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
         self.backward_orientations = jnp.asarray(backward_orientations, dtype=jnp.int32)
         self.forward_phase_factors = jnp.asarray(forward_factors)
         self.backward_phase_factors = jnp.asarray(backward_factors)
+        self.plane_paths = plane_paths
         self.site_count = site_count
         self.dimension = dimension
         self.link_space_id = link_space.link_space_id
@@ -236,9 +246,8 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
 
     link_space: MatrixGaugeLinkSpace
     boundaries: CellBoundaryPathPlan
-    complement_edges: Array
-    complement_orientations: Array
-    complement_valid: Array
+    complement_paths: OrientedEdgePathPlan
+    route_indices: Array
     selected_orientations: Array
     route_valid: Array
     route_capacity: int = eqx.field(static=True)
@@ -302,11 +311,21 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
                 complement_valid[edge, slot, :length] = True
                 selected_orientations[edge, slot] = selected_sign
                 route_valid[edge, slot] = True
+        flat_valid = route_valid.reshape(-1)
+        complement_paths = OrientedEdgePathPlan(
+            link_space.topology,
+            complement_edges.reshape((-1, complement_length))[flat_valid],
+            complement_orientations.reshape((-1, complement_length))[flat_valid],
+            valid=complement_valid.reshape((-1, complement_length))[flat_valid],
+        )
+        route_indices = np.zeros(route_valid.shape, dtype=np.int32)
+        route_indices[route_valid] = np.arange(
+            np.count_nonzero(route_valid), dtype=np.int32
+        )
         self.link_space = link_space
         self.boundaries = boundaries
-        self.complement_edges = jnp.asarray(complement_edges)
-        self.complement_orientations = jnp.asarray(complement_orientations)
-        self.complement_valid = jnp.asarray(complement_valid)
+        self.complement_paths = complement_paths
+        self.route_indices = jnp.asarray(route_indices)
         self.selected_orientations = jnp.asarray(selected_orientations)
         self.route_valid = jnp.asarray(route_valid)
         self.route_capacity = capacity
@@ -315,11 +334,8 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
                 "kind": "fixed-capacity-gauge-staple-plan",
                 "link_space": link_space.link_space_id,
                 "boundaries": boundaries.boundary_plan_id,
-                "complement_edges": array_tree_fingerprint(complement_edges),
-                "complement_orientations": array_tree_fingerprint(
-                    complement_orientations
-                ),
-                "complement_valid": array_tree_fingerprint(complement_valid),
+                "complement_paths": complement_paths.path_plan_id,
+                "route_indices": array_tree_fingerprint(route_indices),
                 "selected_orientations": array_tree_fingerprint(selected_orientations),
                 "route_capacity": capacity,
                 "resource_limit": resource_limit,
@@ -330,30 +346,13 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
         """Sum all oriented complementary products incident on one selected link."""
         values = _links(self.link_space, links)
         edge_ = jnp.asarray(edge, dtype=jnp.int32)
-        identity = jnp.broadcast_to(
-            self.link_space.group.identity(dtype=values.dtype),
-            (self.route_capacity,) + self.link_space.point_shape,
-        )
-        route_edges = self.complement_edges[edge_]
-        route_orientations = self.complement_orientations[edge_]
-        route_active = self.complement_valid[edge_]
-
-        def step(product: Array, position: Array) -> tuple[Array, None]:
-            factors = values[route_edges[:, position]]
-            inverses = self.link_space.group.inverse(factors)
-            oriented = jnp.where(
-                (route_orientations[:, position] > 0)[..., None, None],
-                factors,
-                inverses,
-            )
-            candidate = self.link_space.group.compose(product, oriented)
-            active = route_active[:, position][..., None, None]
-            return jnp.where(active, candidate, product), None
-
-        products, _ = jax.lax.scan(
-            step,
-            identity,
-            jnp.arange(self.complement_edges.shape[-1]),
+        paths = self.complement_paths
+        route_indices = self.route_indices[edge_]
+        products = _ordered_path_transport(
+            paths.edge_indices[route_indices],
+            paths.orientations[route_indices],
+            paths.valid[route_indices],
+            values,
         )
         selected_positive = self.selected_orientations[edge_] > 0
         contributions = jnp.where(

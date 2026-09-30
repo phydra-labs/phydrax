@@ -17,6 +17,7 @@ from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
 from phydrax.ein import contract
+from phydrax.optim._adam import adam
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -407,7 +408,7 @@ def fit_free_energy_model(
     if validation.centers.shape[1] != data.centers.shape[1]:
         raise ValueError("Training and validation CV dimensions differ.")
     if optimizer is None:
-        optimizer_ = optax.adam(policy_.learning_rate)
+        optimizer_ = adam(policy_.learning_rate)
         rule_id = canonical_fingerprint(
             {
                 "kind": "free-energy-training-adam",

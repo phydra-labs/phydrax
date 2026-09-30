@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from itertools import combinations
+import abc
+from collections.abc import Callable, Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import final, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -21,11 +22,60 @@ from ..._interpolation._bspline_grid import BSplineGrid
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...diagnostics import Diagnostic
-from ...typing import parse
+from ...ein import contract
+from ...exterior import FormTwist
+from ...exterior._basis import exterior_indices
+from ...exterior._complex import ComplexBoundary
+from ...linalg import (
+    AbstractLinearOperator,
+    AbstractVectorSpace,
+    ArraySpace,
+    ComplexMap,
+    DenseLinearOperator,
+    FailurePolicy,
+    FunctionLinearOperator,
+    HilbertComplex,
+    KroneckerLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    MaterializationPolicy,
+    materialize,
+    OperatorPairing,
+    OperatorProperties,
+    PCG,
+    prepare,
+    solve,
+    TolerancePolicy,
+)
+from ...linalg._complexes import (
+    codifferential as complex_codifferential,
+    hodge_laplacian as complex_hodge_laplacian,
+    HodgeLaplacianPart,
+)
+from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import Dim, Float64, parse, Scope
+from .._cell_de_rham import AbstractCellDeRhamComplex
+from .._topology import CellComplexTopology, EntitySet, OrientedIncidence
+from ._compatible_basis import (
+    _PreparedSplineFunctional,
+    apply_functionals,
+    basis,
+    component_functionals,
+    pullback_values,
+    tensor_basis,
+    tensor_quadrature,
+)
 
 
 BoundarySide: TypeAlias = Literal["lower", "upper"]
-PiolaKind: TypeAlias = Literal["h1", "hcurl", "hdiv", "l2"]
+
+
+class SplineQuadraturePointDim(Dim):
+    """Prepared tensor quadrature query extent."""
+
+
+class SplineParameterDim(Dim):
+    """Intrinsic chart coordinate extent."""
 
 
 def _array_identity(value: ArrayLike, /) -> dict[str, object]:
@@ -43,21 +93,6 @@ def _reduced_grid(grid: BSplineGrid, /) -> BSplineGrid:
     if grid.degree < 1:
         raise ValueError("Spline de Rham axes require degree at least one.")
     return BSplineGrid(grid.knots[1:-1], grid.degree - 1)
-
-
-def _axis_difference(shape: tuple[int, ...], axis: int, /) -> np.ndarray:
-    target_shape = tuple(
-        size - 1 if index == axis else size for index, size in enumerate(shape)
-    )
-    matrix = np.zeros((prod(target_shape), prod(shape)), dtype=np.float64)
-    for target_index in np.ndindex(target_shape):
-        lower = list(target_index)
-        upper = list(target_index)
-        upper[axis] += 1
-        row = np.ravel_multi_index(target_index, target_shape)
-        matrix[row, np.ravel_multi_index(tuple(lower), shape)] = -1.0
-        matrix[row, np.ravel_multi_index(tuple(upper), shape)] = 1.0
-    return matrix
 
 
 def _face_restriction(
@@ -101,8 +136,11 @@ def _range_basis(matrix: np.ndarray, tolerance: float, /) -> np.ndarray:
     return left[:, :rank].copy()
 
 
+@final
 class SplineFormComponent(StrictModule, NonTrainableState):
     """One polynomial tensor component of a spline differential-form space."""
+
+    periodic: tuple[bool, ...] = eqx.field(static=True)
 
     form_degree: int = eqx.field(static=True)
     component_axes: tuple[int, ...] = eqx.field(static=True)
@@ -118,6 +156,8 @@ class SplineFormComponent(StrictModule, NonTrainableState):
         component_axes: Sequence[int],
         grids: Sequence[BSplineGrid],
         /,
+        *,
+        periodic: tuple[bool, ...] | None = None,
     ) -> None:
         degree = int(form_degree)
         axes = tuple(component_axes)
@@ -131,7 +171,14 @@ class SplineFormComponent(StrictModule, NonTrainableState):
             raise ValueError("Form component axis lies outside the parameter dimension.")
         if any(not isinstance(grid, BSplineGrid) for grid in grids_):
             raise TypeError("Form component grids must be BSplineGrid values.")
-        shape = tuple(grid.coefficient_count for grid in grids_)
+        periodic_ = (False,) * dimension if periodic is None else periodic
+        if len(periodic_) != dimension:
+            raise ValueError("Periodic flags must match the spline dimension.")
+        shape = tuple(
+            grid.coefficient_count - (periodic_[axis] and axis not in axes)
+            for axis, grid in enumerate(grids_)
+        )
+        self.periodic = periodic_
         self.form_degree = degree
         self.component_axes = axes
         self.grids = grids_
@@ -146,10 +193,12 @@ class SplineFormComponent(StrictModule, NonTrainableState):
                 "degrees": [grid.degree for grid in grids_],
                 "knots": [_array_identity(grid.knots) for grid in grids_],
                 "coefficient_kind": "polynomial",
+                "periodic": periodic_,
             }
         )
 
 
+@final
 class SplineDifferentialSpace(StrictModule, NonTrainableState):
     """All degree-reduced polynomial tensor components of one k-form space."""
 
@@ -170,7 +219,7 @@ class SplineDifferentialSpace(StrictModule, NonTrainableState):
         degree = int(form_degree)
         dimension_ = int(dimension)
         components_ = tuple(components)
-        expected_axes = tuple(combinations(range(dimension_), degree))
+        expected_axes = exterior_indices(dimension_, degree)
         if tuple(component.component_axes for component in components_) != expected_axes:
             raise ValueError(
                 "Spline form components do not have canonical axis ordering."
@@ -209,245 +258,1227 @@ class SplineDifferentialSpace(StrictModule, NonTrainableState):
         raise ValueError(f"No component with axes {axes!r} belongs to this space.")
 
 
-class SignedSplineTrace(StrictModule, NonTrainableState):
-    """Oriented tangential pullback from one spline k-form space to a face."""
+def _sparse_operator(
+    matrix: np.ndarray,
+    source: AbstractVectorSpace,
+    target: AbstractVectorSpace,
+    identifier: str,
+    /,
+) -> SparseCoordinateOperator:
+    rows, columns = np.nonzero(matrix)
+    relation = EdgeRelation(
+        columns, rows, source_size=source.size, target_size=target.size
+    )
+    return SparseCoordinateOperator(
+        relation,
+        matrix[rows, columns],
+        source=source,
+        target=target,
+        operator_id=identifier,
+    )
 
-    form_degree: int = eqx.field(static=True)
-    normal_axis: int = eqx.field(static=True)
-    side: BoundarySide = eqx.field(static=True)
-    orientation: int = eqx.field(static=True)
-    source_dof_count: int = eqx.field(static=True)
-    target_component_axes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    matrix: Array
-    trace_id: str = eqx.field(static=True)
+
+def _operator_matrix(operator: AbstractLinearOperator, /) -> Array:
+    return materialize(operator, MaterializationPolicy())
+
+
+def _paired_space(
+    operator: AbstractLinearOperator, identifier: str, policy: LinearSolvePolicy | None, /
+) -> ArraySpace:
+    if operator.source.size == 0:
+        return ArraySpace((0,), dtype=jnp.float64, space_id=identifier)
+    policy_ = (
+        LinearSolvePolicy(
+            PCG(),
+            tolerance=TolerancePolicy(
+                relative=1e-12, absolute=0.0, max_steps=max(1, 8 * operator.source.size)
+            ),
+            failure=FailurePolicy("error"),
+        )
+        if policy is None
+        else policy
+    )
+    prepared = prepare(LinearSystem(operator, problem_id=f"{identifier}:system"), policy_)
+    pairing = OperatorPairing(
+        operator, prepared_inverse=prepared, pairing_id=f"{identifier}:pairing"
+    )
+    return ArraySpace(
+        (operator.source.size,), dtype=jnp.float64, pairing=pairing, space_id=identifier
+    )
+
+
+def _gram_properties() -> OperatorProperties:
+    return OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={"self_adjoint": "construction", "positive_definite": "construction"},
+    )
+
+
+def _make_hilbert(
+    matrices: tuple[np.ndarray, ...],
+    grams: tuple[AbstractLinearOperator, ...],
+    identifier: str,
+    policy: LinearSolvePolicy | None,
+    /,
+) -> HilbertComplex:
+    spaces = tuple(
+        _paired_space(gram, f"{identifier}:degree:{k}", policy)
+        for k, gram in enumerate(grams)
+    )
+    differentials = tuple(
+        _sparse_operator(matrix, spaces[k], spaces[k + 1], f"{identifier}:d:{k}")
+        for k, matrix in enumerate(matrices)
+    )
+    return HilbertComplex(spaces, differentials, complex_id=identifier)
+
+
+def _topology(
+    counts: tuple[int, ...], matrices: tuple[np.ndarray, ...], identifier: str, /
+) -> CellComplexTopology:
+    entities = tuple(
+        EntitySet(
+            f"spline-degree-{k}",
+            k,
+            np.arange(count, dtype=np.int64),
+            entity_set_id=f"{identifier}:entities:{k}",
+        )
+        for k, count in enumerate(counts)
+    )
+    incidences = []
+    for k, matrix in enumerate(matrices):
+        rows, columns = np.nonzero(matrix)
+        relation = EdgeRelation(
+            columns, rows, source_size=counts[k], target_size=counts[k + 1]
+        )
+        incidences.append(
+            OrientedIncidence(
+                k + 1, entities[k], entities[k + 1], relation, matrix[rows, columns]
+            )
+        )
+    return CellComplexTopology(
+        entities, tuple(incidences), topology_id=f"{identifier}:topology"
+    )
+
+
+class _SplineComplex(AbstractCellDeRhamComplex):
+    """Shared native paired realization, not a second exterior-calculus protocol."""
+
+    __strict_abstract__ = True
+
+    dimension: int = eqx.field(static=True)
+    primal_twist: FormTwist = eqx.field(static=True)
+    realization_id: str = eqx.field(static=True)
+    complex_id: str = eqx.field(static=True)
+    dof_counts: tuple[int, ...] = eqx.field(static=True)
+    d_squared_defects: Array
+    topology: CellComplexTopology
+    boundary_masks: tuple[Array, ...]
+    absolute_complex: HilbertComplex
+    relative_complex: HilbertComplex
+    active_coordinates: tuple[Array, ...]
+    coordinate_restrictions: tuple[SparseCoordinateOperator, ...]
+    boundary_traces: tuple[ComplexMap, ...]
+    boundary_faces: tuple[tuple[int, BoundarySide], ...] = eqx.field(static=True)
+
+    @abc.abstractmethod
+    def __init__(self) -> None:
+        """Concrete realizations admit their bases or assembly before binding."""
+        raise NotImplementedError
+
+    def hilbert_complex(
+        self, /, *, boundary: ComplexBoundary = "absolute"
+    ) -> HilbertComplex:
+        match parse(boundary, ComplexBoundary, "boundary"):
+            case "absolute":
+                return self.absolute_complex
+            case "relative":
+                return self.relative_complex
+
+    def hodge_star(self, degree: int, values: ArrayLike, /) -> Array:
+        return jnp.asarray(self.absolute_complex.space(degree).riesz(jnp.asarray(values)))
+
+    def inverse_hodge_star(self, degree: int, values: ArrayLike, /) -> Array:
+        return jnp.asarray(
+            self.absolute_complex.space(degree).inverse_riesz(jnp.asarray(values))
+        )
+
+    def exterior_derivative(
+        self, degree: int, values: ArrayLike, /, *, boundary: ComplexBoundary = "absolute"
+    ) -> Array:
+        operator = self.hilbert_complex(boundary=boundary).differential(degree)
+        return self._conditioned_action(degree, degree + 1, values, operator, boundary)
+
+    def codifferential(
+        self, degree: int, values: ArrayLike, /, *, boundary: ComplexBoundary = "absolute"
+    ) -> Array:
+        operator = complex_codifferential(self.hilbert_complex(boundary=boundary), degree)
+        return self._conditioned_action(degree, degree - 1, values, operator, boundary)
+
+    def hodge_laplacian(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary: ComplexBoundary = "absolute",
+        part: HodgeLaplacianPart = "complete",
+    ) -> Array:
+        operator = complex_hodge_laplacian(
+            self.hilbert_complex(boundary=boundary), degree, part=part
+        )
+        return self._conditioned_action(degree, degree, values, operator, boundary)
+
+    def _conditioned_action(
+        self,
+        degree: int,
+        output_degree: int,
+        values: ArrayLike,
+        operator: AbstractLinearOperator,
+        boundary: ComplexBoundary,
+        /,
+    ) -> Array:
+        array = jnp.asarray(values)
+        self.absolute_complex.space(degree).validate(array)
+        if parse(boundary, ComplexBoundary, "boundary") == "absolute":
+            return operator.mv(array)
+        source = self.coordinate_restrictions[degree]
+        target = self.coordinate_restrictions[output_degree]
+        return target.transpose_mv(operator.mv(source.mv(array)))
+
+    def dof_count(self, degree: int, /) -> int:
+        return self.absolute_complex.space(degree).size
+
+    def active_indices(
+        self, degree: int, /, *, boundary: ComplexBoundary = "absolute"
+    ) -> Array:
+        match parse(boundary, ComplexBoundary, "boundary"):
+            case "absolute":
+                return jnp.arange(self.dof_count(degree), dtype=jnp.int32)
+            case "relative":
+                return self.active_coordinates[degree]
+
+    def trace(self, normal_axis: int, side: BoundarySide, /) -> ComplexMap:
+        face = (normal_axis, parse(side, BoundarySide, "side"))
+        for face_, trace in zip(self.boundary_faces, self.boundary_traces, strict=True):
+            if face_ == face:
+                return trace
+        raise ValueError("The requested spline boundary face is unavailable.")
+
+    def trace_complex_map(
+        self, /, *, boundary_mask: ArrayLike | None = None
+    ) -> ComplexMap:
+        selected = (
+            np.ones((len(self.boundary_traces),), dtype=np.bool_)
+            if boundary_mask is None
+            else np.asarray(boundary_mask, dtype=np.bool_)
+        )
+        if selected.shape != (len(self.boundary_traces),) or not np.any(selected):
+            raise ValueError(
+                "Spline trace selection must select at least one declared boundary face."
+            )
+        traces = tuple(
+            trace
+            for active, trace in zip(selected, self.boundary_traces, strict=True)
+            if active
+        )
+        identifier = (
+            f"{self.realization_id}:boundary:{canonical_fingerprint(selected.tolist())}"
+        )
+        grams, differentials = [], []
+        for degree in range(self.dimension):
+            sizes = tuple(trace.target.space(degree).size for trace in traces)
+            offsets = tuple(sum(sizes[:i]) for i in range(len(sizes)))
+            coordinates = ArraySpace(
+                (sum(sizes),),
+                dtype=jnp.float64,
+                space_id=f"{identifier}:{degree}:coordinates",
+            )
+            spaces = tuple(trace.target.space(degree) for trace in traces)
+
+            def action(
+                value: Array,
+                *,
+                sizes: tuple[int, ...] = sizes,
+                offsets: tuple[int, ...] = offsets,
+                spaces: tuple[AbstractVectorSpace, ...] = spaces,
+            ) -> Array:
+                return jnp.concatenate(
+                    tuple(
+                        space.flatten(
+                            space.riesz(space.unflatten(value[offset : offset + size]))
+                        )
+                        for space, offset, size in zip(
+                            spaces, offsets, sizes, strict=True
+                        )
+                    )
+                )
+
+            grams.append(
+                FunctionLinearOperator(
+                    action,
+                    source=coordinates,
+                    target=coordinates,
+                    transpose_action=action,
+                    properties=_gram_properties(),
+                    operator_id=f"{identifier}:{degree}:gram",
+                )
+            )
+            if degree < self.dimension - 1:
+                rows = sum(trace.target.space(degree + 1).size for trace in traces)
+                matrix = np.zeros((rows, sum(sizes)), dtype=np.float64)
+                row_offset = 0
+                for trace, column_offset, size in zip(
+                    traces, offsets, sizes, strict=True
+                ):
+                    block = np.asarray(
+                        _operator_matrix(trace.target.differential(degree))
+                    )
+                    matrix[
+                        row_offset : row_offset + block.shape[0],
+                        column_offset : column_offset + size,
+                    ] = block
+                    row_offset += block.shape[0]
+                differentials.append(matrix)
+        target = _make_hilbert(tuple(differentials), tuple(grams), identifier, None)
+        maps = tuple(
+            _sparse_operator(
+                np.concatenate(
+                    tuple(
+                        np.asarray(_operator_matrix(trace.maps[degree]))
+                        for trace in traces
+                    ),
+                    axis=0,
+                ),
+                self.absolute_complex.space(degree),
+                target.space(degree),
+                f"{identifier}:trace:{degree}",
+            )
+            for degree in range(self.dimension)
+        )
+        return ComplexMap(
+            self.absolute_complex, target, maps, map_id=f"{identifier}:trace"
+        )
+
+    def _bind(
+        self,
+        counts: tuple[int, ...],
+        matrices: tuple[np.ndarray, ...],
+        grams: tuple[AbstractLinearOperator, ...],
+        masks: tuple[np.ndarray, ...],
+        identifier: str,
+        twist: FormTwist,
+        policy: LinearSolvePolicy | None,
+        /,
+    ) -> None:
+        topology = _topology(counts, matrices, identifier)
+        closure_defects = tuple(
+            float(
+                np.max(
+                    np.abs((left.scipy_boundary() @ right.scipy_boundary()).data),
+                    initial=0.0,
+                )
+            )
+            for left, right in zip(
+                topology.incidences[:-1], topology.incidences[1:], strict=True
+            )
+        )
+        absolute = _make_hilbert(matrices, grams, identifier, policy)
+        indices = tuple(np.flatnonzero(~mask).astype(np.int32) for mask in masks)
+        for k, matrix in enumerate(matrices):
+            if np.any(matrix[np.ix_(np.flatnonzero(masks[k + 1]), indices[k])]):
+                raise ValueError(
+                    "Spline boundary masks do not define a relative subcomplex."
+                )
+        relative_grams: list[AbstractLinearOperator] = []
+        for k, (gram, active) in enumerate(zip(grams, indices, strict=True)):
+            coords = ArraySpace(
+                (active.size,),
+                dtype=jnp.float64,
+                space_id=f"{identifier}:relative:{k}:coordinates",
+            )
+            relation = EdgeRelation(
+                active,
+                np.arange(active.size, dtype=np.int32),
+                source_size=counts[k],
+                target_size=active.size,
+            )
+            restriction = SparseCoordinateOperator(
+                relation,
+                jnp.ones((active.size,), dtype=jnp.float64),
+                source=gram.source,
+                target=coords,
+                operator_id=f"{identifier}:relative:{k}:restriction",
+            )
+
+            def action(
+                value: Array,
+                *,
+                restriction: SparseCoordinateOperator = restriction,
+                gram: AbstractLinearOperator = gram,
+            ) -> Array:
+                return restriction.mv(gram.mv(restriction.transpose_mv(value)))
+
+            relative_grams.append(
+                FunctionLinearOperator(
+                    action,
+                    source=coords,
+                    target=coords,
+                    transpose_action=action,
+                    properties=_gram_properties(),
+                    operator_id=f"{identifier}:relative:{k}:gram",
+                )
+            )
+        relative_matrices = tuple(
+            matrix[np.ix_(indices[k + 1], indices[k])]
+            for k, matrix in enumerate(matrices)
+        )
+        self.dimension = len(counts) - 1
+        self.primal_twist = twist
+        self.realization_id = identifier
+        self.complex_id = identifier
+        self.dof_counts = counts
+        self.d_squared_defects = jnp.asarray(closure_defects, dtype=jnp.float64)
+        self.topology = topology
+        self.boundary_masks = tuple(jnp.asarray(mask) for mask in masks)
+        self.absolute_complex = absolute
+        self.relative_complex = _make_hilbert(
+            relative_matrices, tuple(relative_grams), f"{identifier}:relative", policy
+        )
+        self.active_coordinates = tuple(jnp.asarray(active) for active in indices)
+        restrictions = []
+        for k, active in enumerate(indices):
+            relation = EdgeRelation(
+                active,
+                np.arange(active.size, dtype=np.int32),
+                source_size=counts[k],
+                target_size=active.size,
+            )
+            restrictions.append(
+                SparseCoordinateOperator(
+                    relation,
+                    jnp.ones((active.size,), dtype=jnp.float64),
+                    source=absolute.space(k),
+                    target=self.relative_complex.space(k),
+                    operator_id=f"{identifier}:active-restriction:{k}",
+                )
+            )
+        self.coordinate_restrictions = tuple(restrictions)
+
+
+def _differentials(
+    spaces: tuple[SplineDifferentialSpace, ...], periodic: tuple[bool, ...], /
+) -> tuple[np.ndarray, ...]:
+    matrices = []
+    for degree, source in enumerate(spaces[:-1]):
+        target = spaces[degree + 1]
+        matrix = np.zeros((target.dof_count, source.dof_count), dtype=np.float64)
+        for offset, component in zip(
+            source.component_offsets, source.components, strict=True
+        ):
+            for axis in range(source.dimension):
+                if axis in component.component_axes:
+                    continue
+                axes = tuple(sorted((*component.component_axes, axis)))
+                block_shape = target.components[
+                    exterior_indices(source.dimension, degree + 1).index(axes)
+                ].coefficient_shape
+                block = np.zeros(
+                    (prod(block_shape), component.coefficient_count), dtype=np.float64
+                )
+                sign = (-1) ** sum(
+                    existing < axis for existing in component.component_axes
+                )
+                for target_index in np.ndindex(block_shape):
+                    lower = list(target_index)
+                    upper = list(target_index)
+                    upper[axis] = (
+                        (upper[axis] + 1) % component.coefficient_shape[axis]
+                        if periodic[axis]
+                        else upper[axis] + 1
+                    )
+                    row = np.ravel_multi_index(target_index, block_shape)
+                    block[
+                        row,
+                        np.ravel_multi_index(tuple(lower), component.coefficient_shape),
+                    ] -= sign
+                    block[
+                        row,
+                        np.ravel_multi_index(tuple(upper), component.coefficient_shape),
+                    ] += sign
+                matrix[
+                    target.component_slice(axes),
+                    offset : offset + component.coefficient_count,
+                ] = block
+        matrices.append(matrix)
+    return tuple(matrices)
+
+
+def _separable_grams(
+    spaces: tuple[SplineDifferentialSpace, ...],
+    periodic: tuple[bool, ...],
+    identifier: str,
+    /,
+) -> tuple[
+    tuple[AbstractLinearOperator, ...], tuple[tuple[KroneckerLinearOperator, ...], ...]
+]:
+    grams: list[AbstractLinearOperator] = []
+    all_blocks: list[tuple[KroneckerLinearOperator, ...]] = []
+    for k, space in enumerate(spaces):
+        blocks = []
+        for c, component in enumerate(space.components):
+            factors = []
+            for axis, grid in enumerate(component.grids):
+                points, weights = grid.quadrature(2 * grid.degree + 2)
+                values = basis(
+                    grid,
+                    points,
+                    differential=axis in component.component_axes,
+                    periodic=periodic[axis] and axis not in component.component_axes,
+                )
+                matrix = values.T @ (weights[:, None] * values)
+                coordinates = ArraySpace(
+                    (matrix.shape[0],),
+                    dtype=jnp.float64,
+                    space_id=f"{identifier}:{k}:{c}:{axis}:coordinates",
+                )
+                factors.append(
+                    DenseLinearOperator(
+                        matrix,
+                        source=coordinates,
+                        target=coordinates,
+                        properties=_gram_properties(),
+                        operator_id=f"{identifier}:{k}:{c}:{axis}:gram",
+                    )
+                )
+            blocks.append(
+                KroneckerLinearOperator(
+                    tuple(factors), operator_id=f"{identifier}:{k}:{c}:kronecker"
+                )
+            )
+        blocks_ = tuple(blocks)
+        coordinates = ArraySpace(
+            (space.dof_count,),
+            dtype=jnp.float64,
+            space_id=f"{identifier}:{k}:coordinates",
+        )
+
+        def action(
+            value: Array,
+            *,
+            blocks: tuple[KroneckerLinearOperator, ...] = blocks_,
+            space: SplineDifferentialSpace = space,
+        ) -> Array:
+            return jnp.concatenate(
+                tuple(
+                    block.mv(
+                        value[offset : offset + component.coefficient_count].reshape(
+                            component.coefficient_shape
+                        )
+                    ).reshape((-1,))
+                    for block, offset, component in zip(
+                        blocks, space.component_offsets, space.components, strict=True
+                    )
+                )
+            )
+
+        grams.append(
+            FunctionLinearOperator(
+                action,
+                source=coordinates,
+                target=coordinates,
+                transpose_action=action,
+                properties=_gram_properties(),
+                operator_id=f"{identifier}:{k}:gram",
+            )
+        )
+        all_blocks.append(blocks_)
+    return tuple(grams), tuple(all_blocks)
+
+
+@final
+class _SplineQuadrature(StrictModule, NonTrainableState):
+    """Fixed quadrature routes and basis values reused by geometry refresh."""
+
+    __strict_contract__ = True
+
+    spaces: tuple[SplineDifferentialSpace, ...]
+    points: Float64[SplineQuadraturePointDim, SplineParameterDim]
+    weights: Float64[SplineQuadraturePointDim]
+    reference_bases: tuple[Array, ...]
 
     def __init__(
         self,
-        form_degree: int,
-        normal_axis: int,
-        side: BoundarySide,
-        source_dof_count: int,
-        target_component_axes: Sequence[Sequence[int]],
-        matrix: ArrayLike,
+        spaces: tuple[SplineDifferentialSpace, ...],
+        base: tuple[BSplineGrid, ...],
+        periodic: tuple[bool, ...],
+        degree: int,
         /,
     ) -> None:
-        degree = int(form_degree)
-        axis = int(normal_axis)
-        count = int(source_dof_count)
-        target_axes = tuple(tuple(axes) for axes in target_component_axes)
-        matrix_ = jnp.asarray(matrix)
-        side_ = parse(side, BoundarySide, "side")
-        if matrix_.ndim != 2 or matrix_.shape[1] != count:
-            raise ValueError("Spline trace matrix has an invalid source dimension.")
-        orientation = ((-1) ** axis) * (1 if side_ == "upper" else -1)
-        self.form_degree = degree
-        self.normal_axis = axis
-        self.side = side_
-        self.orientation = orientation
-        self.source_dof_count = count
-        self.target_component_axes = target_axes
-        self.matrix = matrix_
-        self.trace_id = canonical_fingerprint(
-            {
-                "kind": "signed-spline-trace",
-                "form_degree": degree,
-                "normal_axis": axis,
-                "side": side_,
-                "source_dof_count": count,
-                "target_component_axes": [list(value) for value in target_axes],
-                "matrix": _array_identity(matrix_),
-            }
-        )
-
-    def apply(self, coefficients: ArrayLike, /) -> Array:
-        values = jnp.asarray(coefficients)
-        if values.shape[-1] != self.source_dof_count:
-            raise ValueError("Trace coefficients have the wrong trailing dimension.")
-        return values @ jnp.swapaxes(self.matrix, -1, -2)
-
-
-class AbstractSplineDeRhamComplex(StrictModule, NonTrainableState):
-    """Common algebra carried by tensor and assembled multipatch complexes."""
-
-    dimension: int = eqx.field(static=True)
-    dof_counts: tuple[int, ...] = eqx.field(static=True)
-    exterior_derivatives: tuple[Array, ...]
-    boundary_traces: tuple[SignedSplineTrace, ...]
-    complex_id: str = eqx.field(static=True)
-
-    def exterior_derivative(self, form_degree: int, /) -> Array:
-        degree = int(form_degree)
-        if degree < 0 or degree >= self.dimension:
-            raise ValueError("Exterior derivative degree lies outside the complex.")
-        return self.exterior_derivatives[degree]
-
-    def dof_count(self, form_degree: int, /) -> int:
-        degree = int(form_degree)
-        if degree < 0 or degree > self.dimension:
-            raise ValueError("Form degree lies outside the complex.")
-        return self.dof_counts[degree]
-
-    def trace(
-        self, form_degree: int, normal_axis: int, side: BoundarySide, /
-    ) -> SignedSplineTrace:
-        degree = int(form_degree)
-        axis = int(normal_axis)
-        side_ = str(side)
-        for trace in self.boundary_traces:
-            if (
-                trace.form_degree == degree
-                and trace.normal_axis == axis
-                and trace.side == side_
-            ):
-                return trace
-        raise ValueError("The requested boundary trace is not available.")
-
-    @property
-    def d_squared_defects(self) -> Array:
-        defects = [
-            _max_abs(right @ left)
-            for left, right in zip(
-                self.exterior_derivatives[:-1],
-                self.exterior_derivatives[1:],
-                strict=True,
+        points, weights = tensor_quadrature(base, degree)
+        references = []
+        for space in spaces:
+            reference = jnp.zeros(
+                (points.shape[0], len(space.components), space.dof_count),
+                dtype=jnp.float64,
             )
-        ]
-        return jnp.stack(defects) if defects else jnp.zeros((0,))
+            for c, (offset, component) in enumerate(
+                zip(space.component_offsets, space.components, strict=True)
+            ):
+                values = tensor_basis(
+                    component.grids, points, component.component_axes, periodic
+                )
+                reference = reference.at[
+                    :, c, offset : offset + component.coefficient_count
+                ].set(values)
+            references.append(reference)
+        scope = Scope()
+        self.spaces = spaces
+        self.points = parse(
+            points,
+            Float64[SplineQuadraturePointDim, SplineParameterDim],
+            "points",
+            scope=scope,
+        )
+        self.weights = parse(
+            weights, Float64[SplineQuadraturePointDim], "weights", scope=scope
+        )
+        self.reference_bases = tuple(references)
 
 
-class SplineDeRhamComplex(AbstractSplineDeRhamComplex):
-    """Exact 2D/3D tensor spline de Rham sequence with polynomial components."""
+def _mapped_grams(
+    quadrature: _SplineQuadrature, geometry: Callable[[Array], Array], identifier: str, /
+) -> tuple[AbstractLinearOperator, ...]:
+    from ...linalg import compound_matrix, DenseLU, RHSLayout
+
+    points, weights = quadrature.points, quadrature.weights
+    jacobians = jax.vmap(jax.jacfwd(geometry))(points)
+    metrics = jnp.swapaxes(jacobians, -1, -2) @ jacobians
+    determinant = compound_matrix(metrics, len(quadrature.spaces) - 1)[:, 0, 0]
+    determinant = eqx.error_if(
+        determinant,
+        jnp.any(~jnp.isfinite(metrics)) | jnp.any(determinant <= 0.0),
+        "Spline geometry must have finite full-rank tangent Jacobians at quadrature points.",
+    )
+    volume = jnp.sqrt(determinant)
+    grams = []
+    for k, (space, reference) in enumerate(
+        zip(quadrature.spaces, quadrature.reference_bases, strict=True)
+    ):
+        compound = compound_matrix(metrics, k)
+
+        def metric_solve(matrix: Array, rhs: Array) -> Array:
+            operator = DenseLinearOperator(matrix, operator_id=f"{identifier}:{k}:metric")
+            return solve(
+                LinearSystem(operator, problem_id=f"{identifier}:{k}:metric-system"),
+                rhs,
+                policy=LinearSolvePolicy(DenseLU(), failure=FailurePolicy("error")),
+                rhs_layout=RHSLayout((space.dof_count,)),
+            ).value
+
+        weighted = jax.vmap(metric_solve)(compound, reference)
+        matrix = contract("qci,qcj,q->ij", reference, weighted, weights * volume)
+        coordinates = ArraySpace(
+            (space.dof_count,),
+            dtype=jnp.float64,
+            space_id=f"{identifier}:{k}:coordinates",
+        )
+        grams.append(
+            DenseLinearOperator(
+                matrix,
+                source=coordinates,
+                target=coordinates,
+                properties=_gram_properties(),
+                operator_id=f"{identifier}:{k}:gram",
+            )
+        )
+    return tuple(grams)
+
+
+def _refresh_hilbert(
+    template: HilbertComplex,
+    grams: tuple[AbstractLinearOperator, ...],
+    policy: LinearSolvePolicy | None,
+    /,
+) -> HilbertComplex:
+    spaces = tuple(
+        _paired_space(gram, template.space(k).space_id, policy)
+        for k, gram in enumerate(grams)
+    )
+    differentials = tuple(
+        eqx.tree_at(
+            lambda operator: (operator.source, operator.target),
+            operator,
+            (spaces[k], spaces[k + 1]),
+        )
+        for k, operator in enumerate(template.differentials)
+    )
+    return HilbertComplex(spaces, differentials, complex_id=template.complex_id)
+
+
+@final
+class SplineDeRhamComplex(_SplineComplex):
+    """Tensor spline differential forms with exact sparse d and physical L2 pairing."""
 
     base_grids: tuple[BSplineGrid, ...]
     spaces: tuple[SplineDifferentialSpace, ...]
+    periodic: tuple[bool, ...] = eqx.field(static=True)
+    geometry: Callable[[Array], Array] | None
+    geometry_id: str = eqx.field(static=True)
+    quadrature_degree: int = eqx.field(static=True)
+    gram_blocks: tuple[tuple[KroneckerLinearOperator, ...], ...]
+    functional_queries: tuple[Array, ...]
+    functional_routes: tuple[Array, ...]
+    functional_solvers: tuple[_PreparedSplineFunctional, ...]
+    quadrature: _SplineQuadrature | None
+    face_quadratures: tuple[_SplineQuadrature | None, ...]
+    hodge_policy: LinearSolvePolicy | None
 
-    def __init__(self, grids: Sequence[BSplineGrid], /) -> None:
+    def __init__(
+        self,
+        grids: Sequence[BSplineGrid],
+        /,
+        *,
+        periodic: Sequence[bool] | None = None,
+        geometry: Callable[[Array], Array] | None = None,
+        geometry_id: str | None = None,
+        twist: FormTwist = "untwisted",
+        quadrature_degree: int | None = None,
+        hodge_policy: LinearSolvePolicy | None = None,
+    ) -> None:
         grids_ = tuple(grids)
         dimension = len(grids_)
-        if dimension not in (2, 3):
-            raise ValueError("Spline de Rham complexes require dimension two or three.")
+        if dimension < 1 or dimension > 3:
+            raise ValueError("Spline complexes require one to three axes.")
         if any(not isinstance(grid, BSplineGrid) for grid in grids_):
-            raise TypeError("Spline de Rham axes must be BSplineGrid values.")
+            raise TypeError("Spline axes must be BSplineGrid values.")
         if any(grid.degree < 1 for grid in grids_):
             raise ValueError("Spline de Rham axes require degree at least one.")
-        reduced = tuple(_reduced_grid(grid) for grid in grids_)
-        spaces: list[SplineDifferentialSpace] = []
-        for form_degree in range(dimension + 1):
-            components = []
-            for component_axes in combinations(range(dimension), form_degree):
-                component_grids = tuple(
-                    reduced[axis] if axis in component_axes else grids_[axis]
-                    for axis in range(dimension)
-                )
-                components.append(
-                    SplineFormComponent(form_degree, component_axes, component_grids)
-                )
-            spaces.append(
-                SplineDifferentialSpace(form_degree, dimension, tuple(components))
+        periodic_ = (False,) * dimension if periodic is None else tuple(periodic)
+        if len(periodic_) != dimension or any(
+            not isinstance(flag, bool) for flag in periodic_
+        ):
+            raise ValueError("Periodic flags must match the spline dimension.")
+        if geometry is not None and (geometry_id is None or not geometry_id.strip()):
+            raise ValueError("Mapped spline geometry requires an explicit geometry_id.")
+        if geometry is not None:
+            if not callable(geometry):
+                raise TypeError("Spline geometry must be callable.")
+            shape = jax.eval_shape(
+                geometry, jax.ShapeDtypeStruct((dimension,), jnp.float64)
             )
-
-        derivatives: list[Array] = []
-        for form_degree in range(dimension):
-            source = spaces[form_degree]
-            target = spaces[form_degree + 1]
-            derivative = np.zeros((target.dof_count, source.dof_count))
-            for source_offset, component in zip(
-                source.component_offsets, source.components, strict=True
-            ):
-                for axis in range(dimension):
-                    if axis in component.component_axes:
-                        continue
-                    target_axes = tuple(sorted(component.component_axes + (axis,)))
-                    target_slice = target.component_slice(target_axes)
-                    sign = (-1) ** sum(
-                        existing_axis < axis for existing_axis in component.component_axes
-                    )
-                    block = sign * _axis_difference(component.coefficient_shape, axis)
-                    source_slice = slice(
-                        source_offset,
-                        source_offset + component.coefficient_count,
-                    )
-                    derivative[target_slice, source_slice] = block
-            derivatives.append(jnp.asarray(derivative))
-
-        traces: list[SignedSplineTrace] = []
-        for form_degree, space in enumerate(spaces):
-            for axis in range(dimension):
-                for side in ("lower", "upper"):
-                    orientation = ((-1) ** axis) * (1 if side == "upper" else -1)
-                    tangential = tuple(
-                        component
-                        for component in space.components
-                        if axis not in component.component_axes
-                    )
-                    row_count = sum(
-                        prod(
-                            component.coefficient_shape[:axis]
-                            + component.coefficient_shape[axis + 1 :]
-                        )
-                        for component in tangential
-                    )
-                    matrix = np.zeros((row_count, space.dof_count))
-                    row_offset = 0
-                    for component in tangential:
-                        source_slice = space.component_slice(component.component_axes)
-                        block = _face_restriction(
-                            component.coefficient_shape,
-                            axis,
-                            side,
-                            orientation,
-                        )
-                        matrix[row_offset : row_offset + block.shape[0], source_slice] = (
-                            block
-                        )
-                        row_offset += block.shape[0]
-                    target_axes = tuple(
+            if len(shape.shape) != 1 or shape.shape[0] < dimension:
+                raise ValueError(
+                    "Spline geometry must return ambient coordinates of dimension at least the parameter dimension."
+                )
+        twist_ = parse(twist, FormTwist, "twist")
+        reduced = tuple(_reduced_grid(grid) for grid in grids_)
+        spaces = tuple(
+            SplineDifferentialSpace(
+                k,
+                dimension,
+                tuple(
+                    SplineFormComponent(
+                        k,
+                        axes,
                         tuple(
-                            component_axis
-                            for component_axis in component.component_axes
-                            if component_axis != axis
-                        )
-                        for component in tangential
+                            reduced[axis] if axis in axes else grids_[axis]
+                            for axis in range(dimension)
+                        ),
+                        periodic=periodic_,
                     )
-                    traces.append(
-                        SignedSplineTrace(
-                            form_degree,
-                            axis,
-                            side,
-                            space.dof_count,
-                            target_axes,
-                            matrix,
-                        )
-                    )
-
-        identity = canonical_fingerprint(
+                    for axes in exterior_indices(dimension, k)
+                ),
+            )
+            for k in range(dimension + 1)
+        )
+        matrices = _differentials(spaces, periodic_)
+        order = (
+            2 * max(grid.degree for grid in grids_) + 4
+            if quadrature_degree is None
+            else quadrature_degree
+        )
+        if (
+            isinstance(order, bool)
+            or not isinstance(order, int)
+            or order < 2 * max(grid.degree for grid in grids_)
+        ):
+            raise ValueError(
+                "Spline quadrature degree must be an integer resolving every squared component basis."
+            )
+        identifier = canonical_fingerprint(
             {
-                "kind": "spline-de-rham-complex",
-                "dimension": dimension,
-                "base_degrees": [grid.degree for grid in grids_],
-                "base_knots": [_array_identity(grid.knots) for grid in grids_],
+                "kind": "spline-de-rham",
                 "spaces": [space.space_id for space in spaces],
-                "derivatives": [_array_identity(value) for value in derivatives],
-                "traces": [trace.trace_id for trace in traces],
+                "periodic": periodic_,
+                "geometry": geometry_id,
+                "twist": twist_,
+                "quadrature": order,
             }
         )
-        self.dimension = dimension
-        self.dof_counts = tuple(space.dof_count for space in spaces)
-        self.exterior_derivatives = tuple(derivatives)
-        self.boundary_traces = tuple(traces)
-        self.complex_id = identity
+        if geometry is None:
+            grams, blocks = _separable_grams(spaces, periodic_, identifier)
+            quadrature = None
+        else:
+            quadrature = _SplineQuadrature(spaces, grids_, periodic_, order)
+            grams, blocks = _mapped_grams(quadrature, geometry, identifier), ()
+        masks = []
+        for space in spaces:
+            mask = np.zeros((space.dof_count,), dtype=np.bool_)
+            for offset, component in zip(
+                space.component_offsets, space.components, strict=True
+            ):
+                indices = np.indices(component.coefficient_shape)
+                local = np.zeros(component.coefficient_shape, dtype=np.bool_)
+                for axis in range(dimension):
+                    if axis not in component.component_axes and not periodic_[axis]:
+                        local |= (indices[axis] == 0) | (
+                            indices[axis] == component.coefficient_shape[axis] - 1
+                        )
+                mask[offset : offset + component.coefficient_count] = local.reshape((-1,))
+            masks.append(mask)
+        self._bind(
+            tuple(space.dof_count for space in spaces),
+            matrices,
+            grams,
+            tuple(masks),
+            identifier,
+            twist_,
+            hodge_policy,
+        )
         self.base_grids = grids_
-        self.spaces = tuple(spaces)
+        self.spaces = spaces
+        self.periodic = periodic_
+        self.geometry = geometry
+        self.geometry_id = "identity" if geometry_id is None else geometry_id
+        self.quadrature_degree = order
+        self.gram_blocks = blocks
+        queries, routes, solvers = [], [], []
+        for space in spaces:
+            for component in space.components:
+                points, route, _ = component_functionals(
+                    grids_,
+                    component.component_axes,
+                    periodic_,
+                    max(grid.degree for grid in grids_) + 2,
+                )
+                queries.append(points)
+                routes.append(route)
+                solvers.append(
+                    _PreparedSplineFunctional(
+                        grids_,
+                        component.grids,
+                        component.component_axes,
+                        periodic_,
+                        f"{component.component_id}:functionals",
+                        max(grid.degree for grid in grids_) + 2,
+                    )
+                )
+        self.functional_queries, self.functional_routes, self.functional_solvers = (
+            tuple(queries),
+            tuple(routes),
+            tuple(solvers),
+        )
+        self.quadrature, self.hodge_policy = quadrature, hodge_policy
+        faces = tuple(
+            (axis, parse(side, BoundarySide, "side"))
+            for axis in range(dimension)
+            if not periodic_[axis]
+            for side in ("lower", "upper")
+        )
+        self.boundary_faces = faces
+        prepared_faces = tuple(
+            self._prepare_trace(axis, side, hodge_policy)
+            for axis, side in self.boundary_faces
+        )
+        self.boundary_traces = tuple(value[0] for value in prepared_faces)
+        self.face_quadratures = tuple(value[1] for value in prepared_faces)
 
-    def space(self, form_degree: int, /) -> SplineDifferentialSpace:
-        degree = int(form_degree)
-        if degree < 0 or degree > self.dimension:
-            raise ValueError("Form degree lies outside the spline complex.")
-        return self.spaces[degree]
+    def _prepare_trace(
+        self, axis: int, side: BoundarySide, policy: LinearSolvePolicy | None, /
+    ) -> tuple[ComplexMap, _SplineQuadrature | None]:
+        orientation = ((-1) ** axis) * (1 if side == "upper" else -1)
+        if self.dimension == 1:
+            identifier = f"{self.realization_id}:point:{side}"
+            space = ArraySpace(
+                (1,), dtype=jnp.float64, space_id=f"{identifier}:coordinates"
+            )
+            target = HilbertComplex((space,), (), complex_id=identifier)
+            matrix = np.zeros((1, self.dof_count(0)), dtype=np.float64)
+            matrix[0, 0 if side == "lower" else -1] = (
+                orientation if self.primal_twist == "twisted" else 1.0
+            )
+            operator = _sparse_operator(
+                matrix, self.absolute_complex.space(0), space, f"{identifier}:restriction"
+            )
+            return ComplexMap(
+                self.absolute_complex, target, (operator,), map_id=f"{identifier}:trace"
+            ), None
+        tangential_axes = tuple(value for value in range(self.dimension) if value != axis)
+        face_grids = self.base_grids[:axis] + self.base_grids[axis + 1 :]
+        reflection_sum = face_grids[0].knots[0] + face_grids[0].knots[-1]
+        if orientation < 0:
+            reflected = BSplineGrid(
+                reflection_sum - face_grids[0].knots[::-1], face_grids[0].degree
+            )
+            face_grids = (reflected, *face_grids[1:])
+        boundary_value = self.base_grids[axis].active_interval[
+            0 if side == "lower" else 1
+        ]
+        geometry = self.geometry
+
+        def face_geometry(point: Array) -> Array:
+            parameter = (
+                jnp.zeros((self.dimension,), dtype=point.dtype)
+                .at[jnp.asarray(tangential_axes)]
+                .set(point)
+            )
+            parameter = parameter.at[axis].set(boundary_value)
+            if orientation < 0:
+                parameter = parameter.at[tangential_axes[0]].set(
+                    reflection_sum - point[0]
+                )
+            return parameter if geometry is None else geometry(parameter)
+
+        target = SplineDeRhamComplex(
+            face_grids,
+            periodic=self.periodic[:axis] + self.periodic[axis + 1 :],
+            geometry=face_geometry,
+            geometry_id=f"{self.geometry_id}:face:{axis}:{side}",
+            twist=self.primal_twist,
+            hodge_policy=policy,
+        )
+        maps = []
+        for k, target_space in enumerate(target.spaces):
+            source_space = self.spaces[k]
+            matrix = np.zeros(
+                (target_space.dof_count, source_space.dof_count), dtype=np.float64
+            )
+            for component in source_space.components:
+                if axis in component.component_axes:
+                    continue
+                target_axes = tuple(
+                    value - (value > axis) for value in component.component_axes
+                )
+                block = _face_restriction(component.coefficient_shape, axis, side, 1)
+                shape = (
+                    component.coefficient_shape[:axis]
+                    + component.coefficient_shape[axis + 1 :]
+                )
+                if orientation < 0:
+                    permutation = np.arange(shape[0] - 1, -1, -1, dtype=np.int32)
+                    if self.periodic[tangential_axes[0]] and 0 not in target_axes:
+                        permutation = np.concatenate(
+                            (
+                                np.asarray([0], dtype=np.int32),
+                                np.arange(shape[0] - 1, 0, -1, dtype=np.int32),
+                            )
+                        )
+                    block = np.take(
+                        block.reshape((*shape, component.coefficient_count)),
+                        permutation,
+                        axis=0,
+                    ).reshape(block.shape)
+                    if 0 in target_axes:
+                        block = -block
+                if self.primal_twist == "twisted":
+                    block = orientation * block
+                matrix[
+                    target_space.component_slice(target_axes),
+                    source_space.component_slice(component.component_axes),
+                ] = block
+            maps.append(
+                _sparse_operator(
+                    matrix,
+                    self.absolute_complex.space(k),
+                    target.absolute_complex.space(k),
+                    f"{self.realization_id}:trace:{axis}:{side}:{k}",
+                )
+            )
+        if target.quadrature is None:
+            raise RuntimeError("Prepared spline face must carry a mapped quadrature.")
+        return ComplexMap(
+            self.absolute_complex,
+            target.absolute_complex,
+            tuple(maps),
+            map_id=f"{self.realization_id}:trace:{axis}:{side}",
+        ), target.quadrature
+
+    def interpolant(self, degree: int, form: Callable[[Array], Array], /) -> Array:
+        self.absolute_complex.space(degree)
+        space = self.spaces[degree]
+        component_start = sum(len(other.components) for other in self.spaces[:degree])
+        coefficients = []
+        for c, component in enumerate(space.components):
+            index = component_start + c
+            values = pullback_values(
+                form,
+                self.functional_queries[index],
+                component.component_axes,
+                self.geometry,
+                self.primal_twist,
+            )
+            rhs = apply_functionals(
+                values, self.functional_routes[index], component.coefficient_count
+            )
+            coefficients.append(self.functional_solvers[index].solve(rhs))
+        return jnp.concatenate(tuple(coefficients))
+
+    def refresh_geometry(
+        self, geometry: Callable[[Array], Array], /
+    ) -> SplineDeRhamComplex:
+        """Refresh numeric metric leaves on fixed bases, routes, and binding ids."""
+        quadrature = self.quadrature
+        if quadrature is None:
+            raise ValueError(
+                "Geometry refresh requires a mapped realization admitted at preparation."
+            )
+        grams = _mapped_grams(quadrature, geometry, self.realization_id)
+        absolute = _refresh_hilbert(self.absolute_complex, grams, self.hodge_policy)
+        relative_grams = []
+        for k, (gram, restriction) in enumerate(
+            zip(grams, self.coordinate_restrictions, strict=True)
+        ):
+            old_space = self.relative_complex.space(k)
+            if not isinstance(old_space, ArraySpace):
+                raise TypeError("Spline relative coordinates must be array spaces.")
+            coordinates = ArraySpace(
+                (old_space.size,),
+                dtype=jnp.float64,
+                space_id=f"{self.realization_id}:relative:{k}:coordinates",
+            )
+
+            def action(
+                value: Array,
+                *,
+                gram: AbstractLinearOperator = gram,
+                restriction: SparseCoordinateOperator = restriction,
+            ) -> Array:
+                return restriction.mv(gram.mv(restriction.transpose_mv(value)))
+
+            relative_grams.append(
+                FunctionLinearOperator(
+                    action,
+                    source=coordinates,
+                    target=coordinates,
+                    transpose_action=action,
+                    properties=_gram_properties(),
+                    operator_id=f"{self.realization_id}:relative:{k}:gram",
+                )
+            )
+        relative = _refresh_hilbert(
+            self.relative_complex, tuple(relative_grams), self.hodge_policy
+        )
+        restrictions = tuple(
+            eqx.tree_at(
+                lambda operator: (operator.source, operator.target),
+                operator,
+                (absolute.space(k), relative.space(k)),
+            )
+            for k, operator in enumerate(self.coordinate_restrictions)
+        )
+        traces = []
+        for (axis, side), trace, face_quadrature in zip(
+            self.boundary_faces, self.boundary_traces, self.face_quadratures, strict=True
+        ):
+            if face_quadrature is None:
+                maps = tuple(
+                    eqx.tree_at(
+                        lambda operator: operator.source, operator, absolute.space(k)
+                    )
+                    for k, operator in enumerate(trace.maps)
+                )
+                traces.append(
+                    ComplexMap(absolute, trace.target, maps, map_id=trace.map_id)
+                )
+                continue
+            tangential_axes = tuple(
+                value for value in range(self.dimension) if value != axis
+            )
+            orientation = ((-1) ** axis) * (1 if side == "upper" else -1)
+            first_grid = self.base_grids[tangential_axes[0]]
+            reflection_sum = first_grid.knots[0] + first_grid.knots[-1]
+            boundary_value = self.base_grids[axis].active_interval[
+                0 if side == "lower" else 1
+            ]
+
+            def face_geometry(
+                point: Array,
+                *,
+                axes: tuple[int, ...] = tangential_axes,
+                axis: int = axis,
+                orientation: int = orientation,
+                reflection_sum: Array = reflection_sum,
+                boundary_value: Array = boundary_value,
+            ) -> Array:
+                parameter = (
+                    jnp.zeros((self.dimension,), dtype=point.dtype)
+                    .at[jnp.asarray(axes)]
+                    .set(point)
+                    .at[axis]
+                    .set(boundary_value)
+                )
+                if orientation < 0:
+                    parameter = parameter.at[axes[0]].set(reflection_sum - point[0])
+                return geometry(parameter)
+
+            face_grams = _mapped_grams(
+                face_quadrature, face_geometry, trace.target.complex_id
+            )
+            face_target = _refresh_hilbert(trace.target, face_grams, self.hodge_policy)
+            maps = tuple(
+                eqx.tree_at(
+                    lambda operator: (operator.source, operator.target),
+                    operator,
+                    (absolute.space(k), face_target.space(k)),
+                )
+                for k, operator in enumerate(trace.maps)
+            )
+            traces.append(ComplexMap(absolute, face_target, maps, map_id=trace.map_id))
+        return eqx.tree_at(
+            lambda complex_: (
+                complex_.geometry,
+                complex_.absolute_complex,
+                complex_.relative_complex,
+                complex_.coordinate_restrictions,
+                complex_.boundary_traces,
+            ),
+            self,
+            (geometry, absolute, relative, restrictions, tuple(traces)),
+            is_leaf=lambda value: value is None,
+        )
+
+    def reconstruction(
+        self, degree: int, coefficients: ArrayLike, points: ArrayLike, /
+    ) -> Array:
+        self.absolute_complex.space(degree)
+        space = self.spaces[degree]
+        values = jnp.asarray(coefficients)
+        points_ = jnp.asarray(points)
+        if (
+            values.shape != (space.dof_count,)
+            or points_.ndim != 2
+            or points_.shape[1] != self.dimension
+        ):
+            raise ValueError(
+                "Spline reconstruction coefficient/query dimensions disagree."
+            )
+        reference = jnp.stack(
+            tuple(
+                tensor_basis(
+                    component.grids, points_, component.component_axes, self.periodic
+                )
+                @ values[offset : offset + component.coefficient_count]
+                for offset, component in zip(
+                    space.component_offsets, space.components, strict=True
+                )
+            ),
+            axis=-1,
+        )
+        if self.geometry is None:
+            return reference
+        from ...exterior import FormType, FormValueSpec, map_reference_values
+
+        geometry = self.geometry
+
+        def physical_values(value: Array, point: Array) -> Array:
+            return map_reference_values(value, spec, jax.jacfwd(geometry)(point))
+
+        spec = FormValueSpec(
+            FormType(self.dimension, degree, twist=self.primal_twist), proxy="components"
+        )
+        return jax.vmap(physical_values)(reference, points_)
+
+    def transfer(
+        self, target: SplineDeRhamComplex, /, *, tolerance: float = 1e-10
+    ) -> ComplexMap:
+        if not np.isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("Transfer tolerance must be finite and positive.")
+        if (
+            target.dimension != self.dimension
+            or target.periodic != self.periodic
+            or target.geometry_id != self.geometry_id
+            or target.primal_twist != self.primal_twist
+        ):
+            raise ValueError(
+                "Spline transfer requires the same chart, periodicity, and twist."
+            )
+        maps = []
+        quadrature_order = (
+            max(
+                max(grid.degree for grid in self.base_grids),
+                max(grid.degree for grid in target.base_grids),
+            )
+            + 2
+        )
+        partitions = tuple(grid.breakpoints for grid in self.base_grids)
+        for degree in range(self.dimension + 1):
+            source_space, target_space = self.spaces[degree], target.spaces[degree]
+            matrix = jnp.zeros(
+                (target_space.dof_count, source_space.dof_count), dtype=jnp.float64
+            )
+            solver_start = sum(len(space.components) for space in target.spaces[:degree])
+            for c, (source_component, target_component) in enumerate(
+                zip(source_space.components, target_space.components, strict=True)
+            ):
+                points, route, _ = component_functionals(
+                    target.base_grids,
+                    target_component.component_axes,
+                    target.periodic,
+                    quadrature_order,
+                    partitions=partitions,
+                )
+                values = tensor_basis(
+                    source_component.grids,
+                    points,
+                    source_component.component_axes,
+                    self.periodic,
+                )
+
+                def functional(column: Array) -> Array:
+                    return apply_functionals(
+                        column, route, target_component.coefficient_count
+                    )
+
+                rhs = jax.vmap(functional, in_axes=1, out_axes=1)(values)
+                block = jax.vmap(
+                    target.functional_solvers[solver_start + c].solve,
+                    in_axes=1,
+                    out_axes=1,
+                )(rhs)
+                matrix = matrix.at[
+                    target_space.component_slice(target_component.component_axes),
+                    source_space.component_slice(source_component.component_axes),
+                ].set(block)
+            maps.append(
+                DenseLinearOperator(
+                    matrix,
+                    source=self.absolute_complex.space(degree),
+                    target=target.absolute_complex.space(degree),
+                    operator_id=f"{self.realization_id}:transfer:{target.realization_id}:{degree}",
+                )
+            )
+        transfer = ComplexMap(
+            self.absolute_complex,
+            target.absolute_complex,
+            tuple(maps),
+            map_id=f"{self.realization_id}:transfer:{target.realization_id}",
+        )
+        for degree in range(self.dimension):
+            defect = (
+                maps[degree + 1].matrix
+                @ _operator_matrix(self.absolute_complex.differential(degree))
+                - _operator_matrix(target.absolute_complex.differential(degree))
+                @ maps[degree].matrix
+            )
+            if np.max(np.abs(np.asarray(defect)), initial=0.0) > tolerance:
+                raise ValueError("Spline spaces do not admit this commuting transfer.")
+        return transfer
 
 
-class AssembledSplineDeRhamComplex(AbstractSplineDeRhamComplex):
-    """A matching multipatch quotient of local spline de Rham complexes."""
+@final
+class AssembledSplineDeRhamComplex(_SplineComplex):
+    """Admitted multipatch coefficient complex with metric-only Gram Hodges."""
 
     source_complex_ids: tuple[str, ...] = eqx.field(static=True)
     assembly_id: str = eqx.field(static=True)
@@ -461,237 +1492,83 @@ class AssembledSplineDeRhamComplex(AbstractSplineDeRhamComplex):
         assembly_id: str,
         /,
         *,
-        boundary_traces: Sequence[SignedSplineTrace] = (),
+        gram_operators: Sequence[AbstractLinearOperator],
+        boundary_masks: Sequence[ArrayLike] | None = None,
+        boundary_traces: Sequence[ComplexMap] = (),
+        boundary_faces: Sequence[tuple[int, BoundarySide]] = (),
+        twist: FormTwist = "untwisted",
+        hodge_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        dimension_ = int(dimension)
         counts = tuple(dof_counts)
-        derivatives = tuple(jnp.asarray(value) for value in exterior_derivatives)
-        source_ids = tuple(str(value) for value in source_complex_ids)
-        assembly_id_ = str(assembly_id).strip()
-        traces = tuple(boundary_traces)
-        if dimension_ not in (2, 3) or len(counts) != dimension_ + 1:
-            raise ValueError("Assembled de Rham dimensions are invalid.")
-        if len(derivatives) != dimension_:
-            raise ValueError("Assembled de Rham derivative count is invalid.")
-        for degree, derivative in enumerate(derivatives):
-            if derivative.shape != (counts[degree + 1], counts[degree]):
-                raise ValueError("Assembled exterior derivative shape is invalid.")
-        if not source_ids or any(not value for value in source_ids):
-            raise ValueError("Assembled de Rham source IDs must be non-empty.")
-        if not assembly_id_:
-            raise ValueError("Assembled de Rham assembly_id must be non-empty.")
-        if any(not isinstance(trace, SignedSplineTrace) for trace in traces):
-            raise TypeError("Assembled boundary traces must be SignedSplineTrace values.")
-        self.dimension = dimension_
-        self.dof_counts = counts
-        self.exterior_derivatives = derivatives
-        self.boundary_traces = traces
+        matrices = tuple(
+            np.asarray(value, dtype=np.float64) for value in exterior_derivatives
+        )
+        grams = tuple(gram_operators)
+        source_ids = tuple(source_complex_ids)
+        faces = tuple(
+            (axis, parse(side, BoundarySide, "side")) for axis, side in boundary_faces
+        )
+        twist_ = parse(twist, FormTwist, "twist")
+        if len(set(faces)) != len(faces) or any(
+            axis < 0 or axis >= dimension for axis, _ in faces
+        ):
+            raise ValueError("Assembled spline boundary face declarations are invalid.")
+        if (
+            dimension < 1
+            or dimension > 3
+            or len(counts) != dimension + 1
+            or len(matrices) != dimension
+            or len(grams) != len(counts)
+        ):
+            raise ValueError("Assembled spline complex degree counts disagree.")
+        if not assembly_id or not source_ids or any(not value for value in source_ids):
+            raise ValueError(
+                "Assembled spline complex requires explicit source and assembly identities."
+            )
+        for k, matrix in enumerate(matrices):
+            if matrix.shape != (counts[k + 1], counts[k]) or np.any(~np.isfinite(matrix)):
+                raise ValueError(
+                    "Assembled spline differential dimensions or values are invalid."
+                )
+        masks = (
+            tuple(np.zeros((count,), dtype=np.bool_) for count in counts)
+            if boundary_masks is None
+            else tuple(np.asarray(value, dtype=np.bool_) for value in boundary_masks)
+        )
+        if len(masks) != len(counts) or any(
+            mask.shape != (count,) for mask, count in zip(masks, counts, strict=True)
+        ):
+            raise ValueError(
+                "Assembled spline boundary masks disagree with coefficients."
+            )
+        if len(boundary_traces) != len(boundary_faces):
+            raise ValueError(
+                "Assembled spline boundary maps and face declarations disagree."
+            )
+        if any(
+            gram.source.size != count or gram.target.size != count
+            for gram, count in zip(grams, counts, strict=True)
+        ):
+            raise ValueError(
+                "Assembled spline Gram dimensions disagree with coefficients."
+            )
+        identifier = canonical_fingerprint(
+            {
+                "kind": "assembled-spline",
+                "assembly": assembly_id,
+                "sources": source_ids,
+                "d": [_array_identity(matrix) for matrix in matrices],
+                "grams": [gram.operator_id for gram in grams],
+                "boundary_masks": [_array_identity(mask) for mask in masks],
+                "faces": faces,
+                "twist": twist_,
+            }
+        )
+        self._bind(counts, matrices, grams, masks, identifier, twist_, hodge_policy)
         self.source_complex_ids = source_ids
-        self.assembly_id = assembly_id_
-        self.complex_id = canonical_fingerprint(
-            {
-                "kind": "assembled-spline-de-rham-complex",
-                "dimension": dimension_,
-                "dof_counts": list(counts),
-                "derivatives": [_array_identity(value) for value in derivatives],
-                "source_complex_ids": list(source_ids),
-                "assembly_id": assembly_id_,
-                "traces": [trace.trace_id for trace in traces],
-            }
-        )
-
-
-class SplinePiolaMap(StrictModule, NonTrainableState):
-    """Dimension-correct scalar, covariant, contravariant, or density pullback."""
-
-    dimension: int = eqx.field(static=True)
-    kind: PiolaKind = eqx.field(static=True)
-
-    def __init__(self, dimension: int, kind: PiolaKind, /) -> None:
-        dimension_ = int(dimension)
-        if dimension_ not in (2, 3):
-            raise ValueError("Spline Piola maps require dimension two or three.")
-        kind_ = parse(kind, PiolaKind, "kind")
-        self.dimension = dimension_
-        self.kind = kind_
-
-    def push_forward(self, jacobian: ArrayLike, values: ArrayLike, /) -> Array:
-        matrix = jnp.asarray(jacobian)
-        values_ = jnp.asarray(values)
-        if matrix.shape[-2:] != (self.dimension, self.dimension):
-            raise ValueError("Piola Jacobian has the wrong trailing dimensions.")
-        if self.kind in ("hcurl", "hdiv") and values_.shape[-1] != self.dimension:
-            raise ValueError("Vector Piola values have the wrong trailing dimension.")
-        if self.kind == "h1":
-            return values_
-        determinant = jnp.linalg.det(matrix)
-        if self.kind == "hcurl":
-            return jnp.linalg.solve(jnp.swapaxes(matrix, -1, -2), values_[..., None])[
-                ..., 0
-            ]
-        if self.kind == "hdiv":
-            return (matrix @ values_[..., None])[..., 0] / determinant[..., None]
-        if values_.shape == determinant.shape:
-            return values_ / determinant
-        if values_.shape[-1:] == (1,) and values_.shape[:-1] == determinant.shape:
-            return values_ / determinant[..., None]
-        raise ValueError("L2 Piola values must be scalar densities.")
-
-    def pull_back(self, jacobian: ArrayLike, values: ArrayLike, /) -> Array:
-        matrix = jnp.asarray(jacobian)
-        values_ = jnp.asarray(values)
-        if matrix.shape[-2:] != (self.dimension, self.dimension):
-            raise ValueError("Piola Jacobian has the wrong trailing dimensions.")
-        if self.kind in ("hcurl", "hdiv") and values_.shape[-1] != self.dimension:
-            raise ValueError("Vector Piola values have the wrong trailing dimension.")
-        if self.kind == "h1":
-            return values_
-        determinant = jnp.linalg.det(matrix)
-        if self.kind == "hcurl":
-            return (jnp.swapaxes(matrix, -1, -2) @ values_[..., None])[..., 0]
-        if self.kind == "hdiv":
-            return (
-                determinant[..., None]
-                * jnp.linalg.solve(matrix, values_[..., None])[..., 0]
-            )
-        if values_.shape == determinant.shape:
-            return determinant * values_
-        if values_.shape[-1:] == (1,) and values_.shape[:-1] == determinant.shape:
-            return determinant[..., None] * values_
-        raise ValueError("L2 Piola values must be scalar densities.")
-
-
-class CommutingProjectorContract(StrictModule, NonTrainableState):
-    """Projection/retraction data between a source cochain complex and spline target."""
-
-    target: AbstractSplineDeRhamComplex
-    source_dof_counts: tuple[int, ...] = eqx.field(static=True)
-    source_derivatives: tuple[Array, ...]
-    projectors: tuple[Array, ...]
-    inclusions: tuple[Array, ...]
-    projection_commuting_defects: Array
-    inclusion_commuting_defects: Array
-    retraction_defects: Array
-    source_projection_defects: Array
-    source_id: str = eqx.field(static=True)
-    contract_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        target: AbstractSplineDeRhamComplex,
-        source_dof_counts: Sequence[int],
-        source_derivatives: Sequence[ArrayLike],
-        projectors: Sequence[ArrayLike],
-        inclusions: Sequence[ArrayLike],
-        /,
-        *,
-        source_id: str,
-    ) -> None:
-        if not isinstance(target, AbstractSplineDeRhamComplex):
-            raise TypeError(
-                "Commuting projector target must be a spline de Rham complex."
-            )
-        source_counts = tuple(source_dof_counts)
-        source_d = tuple(jnp.asarray(value) for value in source_derivatives)
-        projectors_ = tuple(jnp.asarray(value) for value in projectors)
-        inclusions_ = tuple(jnp.asarray(value) for value in inclusions)
-        source_id_ = str(source_id).strip()
-        dimension = target.dimension
-        if len(source_counts) != dimension + 1 or any(
-            value < 1 for value in source_counts
-        ):
-            raise ValueError("Projector source dimensions are invalid.")
-        if len(source_d) != dimension:
-            raise ValueError("Projector source derivative count is invalid.")
-        if len(projectors_) != dimension + 1 or len(inclusions_) != dimension + 1:
-            raise ValueError("Projector/retraction count is invalid.")
-        for degree, derivative in enumerate(source_d):
-            if derivative.shape != (source_counts[degree + 1], source_counts[degree]):
-                raise ValueError("Projector source derivative shape is invalid.")
-        for degree, (projector, inclusion) in enumerate(
-            zip(projectors_, inclusions_, strict=True)
-        ):
-            expected_projector = (target.dof_count(degree), source_counts[degree])
-            expected_inclusion = (source_counts[degree], target.dof_count(degree))
-            if (
-                projector.shape != expected_projector
-                or inclusion.shape != expected_inclusion
-            ):
-                raise ValueError("Projector or inclusion shape is invalid.")
-        if not source_id_:
-            raise ValueError("Commuting projector source_id must be non-empty.")
-
-        projection_defects = []
-        inclusion_defects = []
-        for degree in range(dimension):
-            projection_defects.append(
-                _max_abs(
-                    target.exterior_derivative(degree) @ projectors_[degree]
-                    - projectors_[degree + 1] @ source_d[degree]
-                )
-            )
-            inclusion_defects.append(
-                _max_abs(
-                    source_d[degree] @ inclusions_[degree]
-                    - inclusions_[degree + 1] @ target.exterior_derivative(degree)
-                )
-            )
-        retraction_defects = []
-        source_projection_defects = []
-        for degree in range(dimension + 1):
-            target_identity = jnp.eye(target.dof_count(degree))
-            retraction_defects.append(
-                _max_abs(projectors_[degree] @ inclusions_[degree] - target_identity)
-            )
-            source_projection = inclusions_[degree] @ projectors_[degree]
-            source_projection_defects.append(
-                _max_abs(source_projection @ source_projection - source_projection)
-            )
-        self.target = target
-        self.source_dof_counts = source_counts
-        self.source_derivatives = source_d
-        self.projectors = projectors_
-        self.inclusions = inclusions_
-        self.projection_commuting_defects = jnp.stack(projection_defects)
-        self.inclusion_commuting_defects = jnp.stack(inclusion_defects)
-        self.retraction_defects = jnp.stack(retraction_defects)
-        self.source_projection_defects = jnp.stack(source_projection_defects)
-        self.source_id = source_id_
-        self.contract_id = canonical_fingerprint(
-            {
-                "kind": "commuting-projector-contract",
-                "target": target.complex_id,
-                "source_id": source_id_,
-                "source_dof_counts": list(source_counts),
-                "source_derivatives": [_array_identity(value) for value in source_d],
-                "projectors": [_array_identity(value) for value in projectors_],
-                "inclusions": [_array_identity(value) for value in inclusions_],
-            }
-        )
-
-    @classmethod
-    def identity(
-        cls, target: AbstractSplineDeRhamComplex, /
-    ) -> CommutingProjectorContract:
-        counts = target.dof_counts
-        identities = tuple(jnp.eye(count) for count in counts)
-        return cls(
-            target,
-            counts,
-            target.exterior_derivatives,
-            identities,
-            identities,
-            source_id=target.complex_id,
-        )
-
-    def project(self, form_degree: int, values: ArrayLike, /) -> Array:
-        degree = int(form_degree)
-        if degree < 0 or degree > self.target.dimension:
-            raise ValueError("Projection degree lies outside the complex.")
-        values_ = jnp.asarray(values)
-        if values_.shape[-1] != self.source_dof_counts[degree]:
-            raise ValueError("Projected cochains have the wrong trailing dimension.")
-        return values_ @ jnp.swapaxes(self.projectors[degree], -1, -2)
+        self.assembly_id = assembly_id
+        self.boundary_traces = tuple(boundary_traces)
+        self.boundary_faces = faces
 
 
 class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
@@ -712,13 +1589,13 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        complex_: AbstractSplineDeRhamComplex,
+        complex_: _SplineComplex,
         boundary_faces: Sequence[tuple[int, BoundarySide]],
         /,
         *,
         tolerance: float = 1e-12,
     ) -> None:
-        if not isinstance(complex_, AbstractSplineDeRhamComplex):
+        if not isinstance(complex_, _SplineComplex):
             raise TypeError("Relative evidence requires a spline de Rham complex.")
         faces = tuple((int(axis), side) for axis, side in boundary_faces)
         tolerance_ = float(tolerance)
@@ -735,8 +1612,9 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
         restrictions: list[np.ndarray] = []
         for degree in range(complex_.dimension + 1):
             matrices = [
-                np.asarray(complex_.trace(degree, axis, side).matrix)
+                np.asarray(_operator_matrix(complex_.trace(axis, side).maps[degree]))
                 for axis, side in validated_faces
+                if degree < complex_.dimension
             ]
             trace_matrix = (
                 np.concatenate(matrices, axis=0)
@@ -747,10 +1625,10 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
 
         restricted_derivatives: list[np.ndarray] = []
         closure_defects: list[float] = []
-        for degree, derivative in enumerate(complex_.exterior_derivatives):
+        for degree, derivative in enumerate(complex_.absolute_complex.differentials):
             source_basis = restrictions[degree]
             target_basis = restrictions[degree + 1]
-            derivative_host = np.asarray(derivative)
+            derivative_host = np.asarray(_operator_matrix(derivative))
             restricted = target_basis.T @ derivative_host @ source_basis
             closure = (
                 (np.eye(complex_.dof_count(degree + 1)) - target_basis @ target_basis.T)
@@ -827,16 +1705,12 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
     @classmethod
     def full_boundary(
         cls,
-        complex_: AbstractSplineDeRhamComplex,
+        complex_: _SplineComplex,
         /,
         *,
         tolerance: float = 1e-12,
     ) -> RelativeCohomologyEvidence:
-        faces = tuple(
-            (axis, side)
-            for axis in range(complex_.dimension)
-            for side in ("lower", "upper")
-        )
+        faces = complex_.boundary_faces
         return cls(complex_, faces, tolerance=tolerance)
 
 
@@ -893,7 +1767,7 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
     """Computed D², projector, relative-kernel, compactness, and Friedrichs evidence."""
 
     complex_id: str = eqx.field(static=True)
-    projector_contract_id: str = eqx.field(static=True)
+    projector_map_id: str = eqx.field(static=True)
     relative_evidence_id: str = eqx.field(static=True)
     numeric_revision: NumericRevision
     d_squared_defects: Array
@@ -917,7 +1791,7 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
         self,
         *,
         complex_id: str,
-        projector_contract_id: str,
+        projector_map_id: str,
         relative_evidence_id: str,
         numeric_revision: NumericRevision,
         d_squared_defects: ArrayLike,
@@ -941,7 +1815,7 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
         if any(not isinstance(value, Diagnostic) for value in diagnostics_):
             raise TypeError("Compatible evidence diagnostics have invalid types.")
         self.complex_id = str(complex_id)
-        self.projector_contract_id = str(projector_contract_id)
+        self.projector_map_id = str(projector_map_id)
         self.relative_evidence_id = str(relative_evidence_id)
         self.numeric_revision = numeric_revision
         self.d_squared_defects = jnp.asarray(d_squared_defects)
@@ -967,7 +1841,7 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
             {
                 "kind": "compatible-qualification-evidence",
                 "complex": self.complex_id,
-                "projector": self.projector_contract_id,
+                "projector": self.projector_map_id,
                 "relative": self.relative_evidence_id,
                 "numeric_revision": numeric_revision.revision_id,
                 "d_squared": _array_identity(self.d_squared_defects),
@@ -1005,9 +1879,7 @@ def _gate_diagnostic(
     )
 
 
-def _complex_numeric_revision(
-    complex_: AbstractSplineDeRhamComplex, /
-) -> NumericRevision:
+def _complex_numeric_revision(complex_: _SplineComplex, /) -> NumericRevision:
     """Return the canonical revision of a complex's derivative and trace matrices."""
     return NumericRevision(
         SemanticProvenance(
@@ -1015,46 +1887,67 @@ def _complex_numeric_revision(
                 "kind": "spline-de-rham-complex",
                 "dimension": complex_.dimension,
                 "dof_counts": complex_.dof_counts,
-                "traces": tuple(
-                    (
-                        trace.form_degree,
-                        trace.normal_axis,
-                        trace.side,
-                        trace.target_component_axes,
-                    )
-                    for trace in complex_.boundary_traces
-                ),
+                "traces": tuple(trace.map_id for trace in complex_.boundary_traces),
             }
         ),
         {
-            "exterior_derivatives": complex_.exterior_derivatives,
-            "boundary_traces": tuple(trace.matrix for trace in complex_.boundary_traces),
+            "differentials": tuple(
+                _operator_matrix(operator)
+                for operator in complex_.absolute_complex.differentials
+            ),
+            "boundary_traces": tuple(
+                tuple(_operator_matrix(operator) for operator in trace.maps)
+                for trace in complex_.boundary_traces
+            ),
+            "metric_grams": tuple(
+                jax.vmap(complex_.hodge_star, in_axes=(None, 1), out_axes=1)(
+                    degree, jnp.eye(count, dtype=jnp.float64)
+                )
+                for degree, count in enumerate(complex_.dof_counts)
+            ),
         },
     )
 
 
 def qualify_compatible_complex(
-    complex_: AbstractSplineDeRhamComplex,
-    projector: CommutingProjectorContract,
+    complex_: _SplineComplex,
+    projector: ComplexMap,
     relative: RelativeCohomologyEvidence,
     policy: CompatibleQualificationPolicy,
     /,
+    *,
+    inclusion: ComplexMap,
 ) -> CompatibleQualificationEvidence:
     """Produce fail-closed qualification evidence without publishing a profile.
 
     The evidence binds the canonical `NumericRevision` of the complex's exterior
     derivative and boundary-trace matrices.
     """
-    if not isinstance(complex_, AbstractSplineDeRhamComplex):
+    if not isinstance(complex_, _SplineComplex):
         raise TypeError("Compatible qualification requires a spline de Rham complex.")
-    if not isinstance(projector, CommutingProjectorContract):
-        raise TypeError("Compatible qualification requires a projector contract.")
+    if not isinstance(projector, ComplexMap) or not isinstance(inclusion, ComplexMap):
+        raise TypeError(
+            "Compatible qualification requires projection and inclusion ComplexMaps."
+        )
     if not isinstance(relative, RelativeCohomologyEvidence):
         raise TypeError("Compatible qualification requires relative cohomology evidence.")
     if not isinstance(policy, CompatibleQualificationPolicy):
         raise TypeError("Compatible qualification requires a policy.")
     if projector.target.complex_id != complex_.complex_id:
         raise ValueError("Projector evidence belongs to another complex.")
+    if (
+        projector.degree_offset != 0
+        or inclusion.degree_offset != 0
+        or projector.source.top_degree != complex_.dimension
+    ):
+        raise ValueError(
+            "Spline qualification requires degree-preserving maps of equal-length complexes."
+        )
+    if (
+        inclusion.source.complex_id != projector.target.complex_id
+        or inclusion.target.complex_id != projector.source.complex_id
+    ):
+        raise ValueError("Projection and inclusion must have reversed endpoints.")
     if relative.complex_id != complex_.complex_id:
         raise ValueError("Relative evidence belongs to another complex.")
     if len(policy.expected_relative_betti) != complex_.dimension + 1:
@@ -1062,21 +1955,49 @@ def qualify_compatible_complex(
 
     tolerance = policy.algebra_tolerance
     d_squared = np.asarray(complex_.d_squared_defects, dtype=np.float64)
-    projector_defect = np.asarray(
-        projector.projection_commuting_defects, dtype=np.float64
+    projections = tuple(_operator_matrix(operator) for operator in projector.maps)
+    inclusions = tuple(_operator_matrix(operator) for operator in inclusion.maps)
+    projection_defects, inclusion_defects, retraction_defects, source_defects = (
+        [],
+        [],
+        [],
+        [],
     )
-    inclusion_defect = np.asarray(projector.inclusion_commuting_defects, dtype=np.float64)
-    retraction_defect = np.asarray(projector.retraction_defects, dtype=np.float64)
-    source_projection_defect = np.asarray(
-        projector.source_projection_defects, dtype=np.float64
-    )
+    for degree in range(complex_.dimension):
+        source_d = _operator_matrix(projector.source.differential(degree))
+        target_d = _operator_matrix(complex_.absolute_complex.differential(degree))
+        projection_defects.append(
+            _max_abs(target_d @ projections[degree] - projections[degree + 1] @ source_d)
+        )
+        inclusion_defects.append(
+            _max_abs(source_d @ inclusions[degree] - inclusions[degree + 1] @ target_d)
+        )
+    for degree, (projection, embedding) in enumerate(
+        zip(projections, inclusions, strict=True)
+    ):
+        retraction_defects.append(
+            _max_abs(
+                projection @ embedding
+                - jnp.eye(complex_.dof_count(degree), dtype=jnp.float64)
+            )
+        )
+        source_projection = embedding @ projection
+        source_defects.append(
+            _max_abs(source_projection @ source_projection - source_projection)
+        )
+    projector_defect = np.asarray(projection_defects, dtype=np.float64)
+    inclusion_defect = np.asarray(inclusion_defects, dtype=np.float64)
+    retraction_defect = np.asarray(retraction_defects, dtype=np.float64)
+    source_projection_defect = np.asarray(source_defects, dtype=np.float64)
     relative_closure = np.asarray(relative.closure_defects, dtype=np.float64)
 
     minimum_singular_values: list[float] = []
     friedrichs_constants: list[float] = []
     complement_dimensions: list[int] = []
-    for derivative in complex_.exterior_derivatives:
-        singular_values = np.linalg.svd(np.asarray(derivative), compute_uv=False)
+    for derivative in complex_.absolute_complex.differentials:
+        singular_values = np.linalg.svd(
+            np.asarray(_operator_matrix(derivative)), compute_uv=False
+        )
         positive = singular_values[singular_values > tolerance]
         complement_dimensions.append(positive.size)
         if positive.size:
@@ -1087,7 +2008,7 @@ def qualify_compatible_complex(
             minimum_singular_values.append(float("inf"))
             friedrichs_constants.append(0.0)
     projector_norms = [
-        float(np.linalg.norm(np.asarray(value), ord=2)) for value in projector.projectors
+        float(np.linalg.norm(np.asarray(value), ord=2)) for value in projections
     ]
     compactness_bounds = [
         projector_norms[degree] * friedrichs_constants[degree]
@@ -1174,7 +2095,7 @@ def qualify_compatible_complex(
     )
     return CompatibleQualificationEvidence(
         complex_id=complex_.complex_id,
-        projector_contract_id=projector.contract_id,
+        projector_map_id=projector.map_id,
         relative_evidence_id=relative.evidence_id,
         numeric_revision=_complex_numeric_revision(complex_),
         d_squared_defects=d_squared,
@@ -1195,18 +2116,13 @@ def qualify_compatible_complex(
 
 
 __all__ = [
-    "AbstractSplineDeRhamComplex",
     "AssembledSplineDeRhamComplex",
     "BoundarySide",
-    "CommutingProjectorContract",
     "CompatibleQualificationEvidence",
     "CompatibleQualificationPolicy",
-    "PiolaKind",
     "RelativeCohomologyEvidence",
-    "SignedSplineTrace",
     "SplineDeRhamComplex",
     "SplineDifferentialSpace",
     "SplineFormComponent",
-    "SplinePiolaMap",
     "qualify_compatible_complex",
 ]

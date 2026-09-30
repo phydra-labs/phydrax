@@ -16,7 +16,7 @@ import phydrax.ein as ein
 
 from .._spaces import _coordinate_pairing_matrix
 from ..krylov._decompositions import _block_inner, _orthonormalize_block, InnerProduct
-from ._problems import GeneralizedEigenproblem
+from ._problems import EigenproblemLike, GeneralizedEigenproblem
 from ._results import _NativeEigenResult
 
 
@@ -204,7 +204,10 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         if isinstance(problem, GeneralizedEigenproblem)
         else selected_vectors
     )
-    residual = operator_vectors - metric_vectors * selected_values[..., None, :]
+    residual = (
+        operator_vectors
+        - metric_vectors * selected_values.astype(metric_vectors.dtype)[..., None, :]
+    )
     pairing = _coordinate_pairing_matrix(problem.operator.source)
     residual_norms = _batched_column_norms(pairing, residual)
     operator_norms = _batched_column_norms(pairing, operator_vectors)
@@ -363,7 +366,9 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
     required = count + int(policy.differentiation == "eigenvalues")
     real_dtype = prepared.initial_basis.real.dtype
     rank_tolerance = jnp.sqrt(jnp.finfo(real_dtype).eps)
-    initial_mask = jnp.arange(width) < jnp.asarray(prepared.initial_rank, dtype=jnp.int32)
+    initial_mask = jnp.arange(width, dtype=jnp.int32) < jnp.asarray(
+        prepared.initial_rank, dtype=jnp.int32
+    )
     initial = jnp.where(initial_mask[None, :], prepared.initial_basis, 0)
     metric_initial, metric_count = _metric_columns(problem, initial, initial_mask)
     initial, metric_initial = _project_constraints(
@@ -532,7 +537,7 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
                 rank_tolerance,
             )
             (
-                trial_values,
+                _,
                 trial,
                 operator_trial,
                 metric_trial,
@@ -546,10 +551,24 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
                 policy.which,
             )
             candidate = trial[:, :width]
-            operator_candidate = operator_trial[:, :width]
-            metric_candidate = metric_trial[:, :width]
             candidate_mask = trial_mask[:width]
-            candidate_values = trial_values[:width]
+            refresh_mask = candidate_mask & ~locked_i
+            operator_candidate, operator_refresh = _operator_columns(
+                problem.operator, candidate, refresh_mask
+            )
+            metric_candidate, metric_refresh = _metric_columns(
+                problem, candidate, refresh_mask
+            )
+            operator_used = operator_used + operator_refresh
+            metric_used = metric_used + metric_refresh
+            candidate_inner = _coordinate_inner(space)
+            numerator = jnp.real(
+                jax.vmap(candidate_inner, in_axes=(1, 1))(candidate, operator_candidate)
+            )
+            denominator = jnp.real(
+                jax.vmap(candidate_inner, in_axes=(1, 1))(candidate, metric_candidate)
+            )
+            candidate_values = numerator / jnp.where(denominator > 0, denominator, 1)
             locked_columns = locked_i[None, :]
             next_x = jnp.where(locked_columns, x_i, candidate)
             next_ax = jnp.where(locked_columns, ax_i, operator_candidate)
@@ -557,13 +576,15 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
             next_values = jnp.where(locked_i, theta_i, candidate_values)
             next_mask = jnp.where(locked_i, mode_mask_i, candidate_mask)
             next_direction = jnp.where(active[None, :], next_x - x_i, jnp.zeros_like(x_i))
-            next_adirection = jnp.where(
-                active[None, :], next_ax - ax_i, jnp.zeros_like(ax_i)
-            )
-            next_bdirection = jnp.where(
-                active[None, :], next_bx - bx_i, jnp.zeros_like(bx_i)
-            )
             next_direction_mask = active & next_mask
+            next_adirection, direction_operator_used = _operator_columns(
+                problem.operator, next_direction, next_direction_mask
+            )
+            next_bdirection, direction_metric_used = _metric_columns(
+                problem, next_direction, next_direction_mask
+            )
+            operator_used = operator_used + direction_operator_used
+            metric_used = metric_used + direction_metric_used
             (
                 next_residual,
                 next_residual_norm,
@@ -668,7 +689,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
     initial_rank = jnp.minimum(
         jnp.asarray(prepared.initial_rank, dtype=jnp.int32), kept_seed_width
     )
-    seed_mask = jnp.arange(retained) < initial_rank
+    seed_mask = jnp.arange(retained, dtype=initial_rank.dtype) < initial_rank
     metric_seed, metric_count = _metric_columns(problem, seed, seed_mask)
     seed, metric_seed = _project_constraints(
         space,
@@ -813,9 +834,11 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                     metric_matvecs_j,
                     preconditioner_applies_j,
                 ) = expansion
-                nominal_source = index - retained
+                nominal_source = (index - retained).astype(jnp.int32)
                 unlocked_retained = retained_mask_i & ~locked_i
-                unlocked_ordinal = jnp.cumsum(unlocked_retained.astype(jnp.int32)) - 1
+                unlocked_ordinal = (
+                    jnp.cumsum(unlocked_retained.astype(jnp.int32), dtype=jnp.int32) - 1
+                )
                 residual_source_mask = unlocked_retained & (
                     unlocked_ordinal == nominal_source
                 )
@@ -877,6 +900,10 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                     orthogonalize,
                     (candidate, metric_candidate),
                 )
+                metric_candidate, refreshed_count = _projected_metric_image(
+                    problem, candidate, raw_mask
+                )
+                metric_used = metric_used + refreshed_count
                 norm = _paired_norm(space, candidate, metric_candidate)
                 threshold = rank_tolerance * jnp.where(
                     initial_norm > 0.0, initial_norm, 1.0
@@ -888,8 +915,14 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                 )
                 independent = active & finite & (norm > threshold)
                 safe_norm = jnp.where(independent, norm, 1.0)
-                candidate = jnp.where(independent, candidate / safe_norm, 0)
-                metric_candidate = jnp.where(independent, metric_candidate / safe_norm, 0)
+                candidate = jnp.where(
+                    independent, candidate / safe_norm.astype(candidate.dtype), 0
+                )
+                metric_candidate = jnp.where(
+                    independent,
+                    metric_candidate / safe_norm.astype(metric_candidate.dtype),
+                    0,
+                )
                 operator_candidate, operator_used = _operator_columns(
                     problem.operator,
                     candidate[:, None],
@@ -1128,7 +1161,7 @@ def _orthonormalize_seed(
     metric_block = jnp.where(mask[None, :], metric_block, 0)
     if not generalized:
         basis, _, rank = _orthonormalize_block(block, _coordinate_inner(space), tolerance)
-        active = jnp.arange(block.shape[1]) < rank
+        active = jnp.arange(block.shape[1], dtype=rank.dtype) < rank
         basis = jnp.where(active[None, :], basis, 0)
         return basis, basis, active
     basis, _, metric_basis, active = _orthonormalize_images(
@@ -1162,17 +1195,17 @@ def _orthonormalize_images(
     safe_column_norms = jnp.where(normalizable, column_norms, 1)
     block = jnp.where(
         normalizable[None, :],
-        block / safe_column_norms[None, :],
+        block / safe_column_norms.astype(block.dtype)[None, :],
         0,
     )
     operator_block = jnp.where(
         normalizable[None, :],
-        operator_block / safe_column_norms[None, :],
+        operator_block / safe_column_norms.astype(operator_block.dtype)[None, :],
         0,
     )
     metric_block = jnp.where(
         normalizable[None, :],
-        metric_block / safe_column_norms[None, :],
+        metric_block / safe_column_norms.astype(metric_block.dtype)[None, :],
         0,
     )
     gram = _block_inner(block, metric_block, _coordinate_inner(space))
@@ -1184,10 +1217,14 @@ def _orthonormalize_images(
     singular_values = jnp.sqrt(eigenvalues)
     largest = singular_values[0]
     valid_scale = jnp.isfinite(largest) & (largest > 0.0)
-    threshold = tolerance * jnp.where(valid_scale, largest, 1.0)
+    threshold = (
+        tolerance
+        * jnp.sqrt(jnp.asarray(block.shape[1], dtype=tolerance.dtype))
+        * jnp.where(valid_scale, largest, 1.0)
+    )
     active = valid_scale & jnp.isfinite(singular_values) & (singular_values > threshold)
     safe = jnp.where(active, singular_values, 1.0)
-    transform = eigenvectors / safe[None, :]
+    transform = eigenvectors / safe.astype(eigenvectors.dtype)[None, :]
     transform = jnp.where(active[None, :], transform, 0)
     return (
         block @ transform,
@@ -1214,26 +1251,30 @@ def _rayleigh_ritz(
     pair_mask = mask[:, None] & mask[None, :]
     projected = jnp.where(pair_mask, projected, 0)
     gram = jnp.where(pair_mask, gram, 0)
-    scale = jnp.max(jnp.abs(projected)) + jnp.asarray(1, projected.real.dtype)
-    padding = scale * (basis.shape[1] + 2)
-    padded_projected = projected + jnp.diag(
-        jnp.where(mask, jnp.asarray(0, projected.real.dtype), padding)
+    gram_values, gram_vectors = jnp.linalg.eigh(gram)
+    gram_scale = jnp.maximum(jnp.max(jnp.abs(gram_values)), 1)
+    gram_floor = jnp.finfo(gram.real.dtype).eps * basis.shape[1] * gram_scale
+    supported = jnp.isfinite(gram_values) & (gram_values > gram_floor)
+    safe_gram_values = jnp.where(supported, jnp.real(gram_values), 1)
+    whitening = (
+        gram_vectors / jnp.sqrt(safe_gram_values).astype(gram_vectors.dtype)[None, :]
     )
-    padded_gram = gram + jnp.diag(jnp.where(mask, jnp.asarray(0, gram.real.dtype), 1))
-    gram_values, gram_vectors = jnp.linalg.eigh(padded_gram)
-    gram_floor = jnp.finfo(padded_gram.real.dtype).eps * jnp.maximum(
-        jnp.max(jnp.abs(gram_values)), 1
+    whitening = jnp.where(supported[None, :], whitening, 0)
+    valid_gram = (
+        jnp.all(jnp.isfinite(gram_values))
+        & jnp.all(jnp.isfinite(gram_vectors))
+        & jnp.all(gram_values >= -gram_floor)
     )
-    safe_gram_values = jnp.where(
-        jnp.isfinite(gram_values),
-        jnp.maximum(jnp.real(gram_values), gram_floor),
-        jnp.asarray(jnp.nan, gram_values.real.dtype),
+    whitening = jnp.where(
+        valid_gram, whitening, jnp.asarray(jnp.nan, dtype=whitening.dtype)
     )
-    whitening = (gram_vectors / jnp.sqrt(safe_gram_values)[None, :]) @ jnp.conj(
-        gram_vectors.T
-    )
-    whitened = jnp.conj(whitening.T) @ padded_projected @ whitening
+    whitened = jnp.conj(whitening.T) @ projected @ whitening
     whitened = 0.5 * (whitened + jnp.conj(whitened.T))
+    scale = jnp.max(jnp.abs(whitened)) + jnp.asarray(1, whitened.real.dtype)
+    padding = scale * (basis.shape[1] + 2)
+    whitened = whitened + jnp.diag(
+        jnp.where(supported, jnp.asarray(0, whitened.real.dtype), padding)
+    )
     values, vectors = jnp.linalg.eigh(whitened)
     coefficients = whitening @ vectors
     active_energy = jnp.sum(
@@ -1291,7 +1332,10 @@ def _residual_evidence(
     )
     projected_operator = projected_images[:, :width]
     projected_metric = projected_images[:, width:]
-    residual = projected_operator - projected_metric * values[None, :]
+    residual = (
+        projected_operator
+        - projected_metric * values.astype(projected_metric.dtype)[None, :]
+    )
     residual = jnp.where(mask[None, :], residual, 0)
     residual_norms = _column_norms(space, residual)
     operator_norms = _column_norms(space, projected_operator)
@@ -1479,3 +1523,16 @@ def _final_result(
 
 
 __all__ = ["_solve_lobpcg", "_solve_restarted_lanczos"]
+
+
+def _projected_metric_image(
+    problem: EigenproblemLike,
+    candidate: Array,
+    mask: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Restore B-image consistency after floating-point subspace projection."""
+    if isinstance(problem, GeneralizedEigenproblem):
+        images, count = _metric_columns(problem, candidate[:, None], mask)
+        return images[:, 0], count
+    return candidate, jnp.asarray(0, dtype=jnp.int32)

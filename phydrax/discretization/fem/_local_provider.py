@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -18,7 +18,14 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
+    inverse_small_linear,
+    SmallLinearSolvePlan,
+)
 from .._integration_domain import IntegrationDomain
 from .._local_variational import (
     LocalFieldBinding,
@@ -45,6 +52,7 @@ def _tabulation_hessians(element: FiniteElementSpec, points: Array, /) -> Array:
     return jax.vmap(jax.jacfwd(point_gradient))(points)
 
 
+@final
 class FiniteElementReferenceActions(LocalReferenceActions):
     """Dense FE reference actions; runtime is intentionally ignored."""
 
@@ -57,6 +65,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
     basis_values: Array
     basis_gradients: Array
     basis_hessians: Array
+    coefficient_transform: Array
 
     def __init__(
         self,
@@ -65,6 +74,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         /,
         *,
         basis_hessians: ArrayLike | None = None,
+        coefficient_transform: ArrayLike | None = None,
         maximum_derivative_order: int,
         kernel_modes: Sequence[str],
         action_id: str | None = None,
@@ -84,6 +94,17 @@ class FiniteElementReferenceActions(LocalReferenceActions):
             raise ValueError("FE reference Hessians have incompatible axes.")
         width = values.shape[-1]
         point_count = values.shape[-2]
+        transform = (
+            jnp.empty((0,), dtype=values.dtype)
+            if coefficient_transform is None
+            else jnp.asarray(coefficient_transform, dtype=values.dtype)
+        )
+        if transform.size and (
+            transform.ndim != 3 or transform.shape[-2:] != (width, width)
+        ):
+            raise ValueError(
+                "FE coefficient transforms must have shape (cells,width,width)."
+            )
         derivative_order = int(maximum_derivative_order)
         modes = tuple(dict.fromkeys(str(value) for value in kernel_modes))
         if derivative_order < 0 or derivative_order > 2:
@@ -106,6 +127,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
                     "hessians": (
                         None if not hessians.size else array_tree_fingerprint(hessians)
                     ),
+                    "coefficient_transform": array_tree_fingerprint(transform),
                     "maximum_derivative_order": derivative_order,
                     "kernel_modes": modes,
                 }
@@ -124,6 +146,17 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         self.basis_values = values
         self.basis_gradients = gradients
         self.basis_hessians = hessians
+        self.coefficient_transform = transform
+
+    def _reference_coefficients(self, coefficients: Array, /) -> Array:
+        if not self.coefficient_transform.size:
+            return coefficients
+        return ein.contract("cij,cj...->ci...", self.coefficient_transform, coefficients)
+
+    def _gathered_coefficients(self, coefficients: Array, /) -> Array:
+        if not self.coefficient_transform.size:
+            return coefficients
+        return ein.contract("cij,ci...->cj...", self.coefficient_transform, coefficients)
 
     def realize_reference_actions(
         self, runtime: object, /
@@ -133,7 +166,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
 
     def interpolate(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         del runtime
-        coefficients = jnp.asarray(local_coefficients)
+        coefficients = self._reference_coefficients(jnp.asarray(local_coefficients))
         if self.basis_values.ndim == 2:
             return ein.contract("qi,ci...->cq...", self.basis_values, coefficients)
         return ein.contract("cqi,ci...->cq...", self.basis_values, coefficients)
@@ -142,14 +175,16 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         del runtime
         values_ = jnp.asarray(values)
         if self.basis_values.ndim == 2:
-            return ein.contract("qi,cq...->ci...", self.basis_values, values_)
-        return ein.contract("cqi,cq...->ci...", self.basis_values, values_)
+            local = ein.contract("qi,cq...->ci...", self.basis_values, values_)
+        else:
+            local = ein.contract("cqi,cq...->ci...", self.basis_values, values_)
+        return self._gathered_coefficients(local)
 
     def reference_gradient(
         self, runtime: object, local_coefficients: ArrayLike, /
     ) -> Array:
         del runtime
-        coefficients = jnp.asarray(local_coefficients)
+        coefficients = self._reference_coefficients(jnp.asarray(local_coefficients))
         if self.basis_gradients.ndim == 3:
             return ein.contract("qir,ci...->cq...r", self.basis_gradients, coefficients)
         return ein.contract("cqir,ci...->cq...r", self.basis_gradients, coefficients)
@@ -160,8 +195,10 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         del runtime
         gradients_ = jnp.asarray(gradients)
         if self.basis_gradients.ndim == 3:
-            return ein.contract("qir,cq...r->ci...", self.basis_gradients, gradients_)
-        return ein.contract("cqir,cq...r->ci...", self.basis_gradients, gradients_)
+            local = ein.contract("qir,cq...r->ci...", self.basis_gradients, gradients_)
+        else:
+            local = ein.contract("cqir,cq...r->ci...", self.basis_gradients, gradients_)
+        return self._gathered_coefficients(local)
 
     def reference_hessian(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -169,7 +206,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         del runtime
         if not self.basis_hessians.size:
             raise ValueError("FE reference Hessian actions were not prepared.")
-        coefficients = jnp.asarray(local_coefficients)
+        coefficients = self._reference_coefficients(jnp.asarray(local_coefficients))
         if self.basis_hessians.ndim == 4:
             return ein.contract("qirs,ci...->cq...rs", self.basis_hessians, coefficients)
         return ein.contract("cqirs,ci...->cq...rs", self.basis_hessians, coefficients)
@@ -182,8 +219,10 @@ class FiniteElementReferenceActions(LocalReferenceActions):
             raise ValueError("FE reference Hessian transpose actions were not prepared.")
         values = jnp.asarray(hessians)
         if self.basis_hessians.ndim == 4:
-            return ein.contract("qirs,cq...rs->ci...", self.basis_hessians, values)
-        return ein.contract("cqirs,cq...rs->ci...", self.basis_hessians, values)
+            local = ein.contract("qirs,cq...rs->ci...", self.basis_hessians, values)
+        else:
+            local = ein.contract("cqirs,cq...rs->ci...", self.basis_hessians, values)
+        return self._gathered_coefficients(local)
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         return self.interpolate(runtime, local_coefficients)
@@ -192,6 +231,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         return self.interpolate_transpose(runtime, values)
 
 
+@final
 class FiniteElementGeometryActions(LocalGeometryActions):
     """Fixed FE coordinate routes with runtime coordinates supplied at realization."""
 
@@ -275,24 +315,35 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
         metric = ein.contract("cqdi,cqdj->cqij", jacobian, jacobian)
-        inverse_result = inverse_small_linear(
-            SmallLinearSolvePlan(metric.shape[-1]),
-            metric,
-        )
-        gram_determinant = jnp.where(
-            inverse_result.successful,
-            inverse_result.determinant,
-            0.0,
-        )
-        measure = jnp.sqrt(gram_determinant)
+        dimension = metric.shape[-1]
+        if dimension <= 4:
+            result = inverse_small_linear(SmallLinearSolvePlan(dimension), metric)
+            inverse_metric = result.value
+            successful = result.successful
+            measure = jnp.sqrt(jnp.where(successful, result.determinant, 0.0))
+        else:
+            space = ArraySpace(
+                (dimension,),
+                dtype=metric.dtype,
+                space_id=f"{self.action_id}:reference-tangent",
+            )
+            operator = DenseLinearOperator(
+                metric,
+                source=space,
+                target=space,
+                operator_id=f"{self.action_id}:metric",
+            )
+            prepared = factorize(operator, FactorizationPolicy("lu"))
+            result = prepared.materialize_inverse()
+            inverse_metric = result.value
+            successful = result.successful & (prepared.determinant_sign() > 0.0)
+            measure = jnp.exp(0.5 * prepared.log_abs_determinant())
         measure = eqx.error_if(
             measure,
-            jnp.any(
-                ~inverse_result.successful | ~jnp.isfinite(measure) | (measure <= 0.0)
-            ),
+            jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
             "Finite-element metric measure must be positive and finite.",
         )
-        inverse = ein.contract("cqij,cqdj->cqid", inverse_result.value, jacobian)
+        inverse = ein.contract("cqij,cqdj->cqid", inverse_metric, jacobian)
         inverse_hessian = None
         if self.coordinate_hessians.size:
             mapping_hessian = ein.contract(
@@ -314,6 +365,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         )
 
 
+@final
 class FiniteElementLocalProvider(StrictModule):
     """Adapter from stable FE storage to the prepared-local contract."""
 
@@ -451,8 +503,11 @@ class FiniteElementLocalProvider(StrictModule):
         ):
             raise ValueError("Finite-element cell domain belongs to another support.")
         names = tuple(str(name) for name in field_names)
-        bindings = tuple(discretization.local_field_binding(name) for name in names)
-        if any(binding.conformity != "H1" for binding in bindings):
+        if any(
+            element.continuity != "conforming" or element.value_spec.form_type.degree != 0
+            for name in names
+            for element in discretization.elements[discretization._field_index(name)]
+        ):
             raise ValueError("Generic prepared-local FE execution currently requires H1.")
         mode = "dense" if str(kernel_mode) == "auto" else str(kernel_mode)
         if mode not in ("dense", "partial", "sum_factorized", "collocated"):
@@ -506,12 +561,23 @@ class FiniteElementLocalProvider(StrictModule):
                         basis,
                         gradients,
                         basis_hessians=hessians,
+                        coefficient_transform=(
+                            discretization.dof_maps[field_index].cell_transforms[
+                                block_index
+                            ][selected]
+                            if element.form_basis is not None
+                            else None
+                        ),
                         maximum_derivative_order=maximum_derivative_order,
                         kernel_modes=(mode,),
                         action_id=canonical_fingerprint(
                             {
                                 "kind": "finite-element-local-reference-actions",
                                 "element": element.element_id,
+                                "dof_map": discretization.dof_maps[
+                                    field_index
+                                ].dof_map_id,
+                                "selected_cells": selected.tolist(),
                                 "points": array_tree_fingerprint(points),
                                 "maximum_derivative_order": maximum_derivative_order,
                                 "kernel_mode": mode,

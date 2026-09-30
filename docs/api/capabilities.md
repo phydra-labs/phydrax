@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `88d17133c9a848aff3895dc38f84b3ecdac7ab8f67b9e01258028c25252008cd`
+Catalog ID: `51acb2f64641eca5c4e3f0693ee2a4df0fc24051e65ab9dcb5ae3a4fa238a5c7`
 
 ## Dispositions
 
@@ -12,7 +12,7 @@ Catalog ID: `88d17133c9a848aff3895dc38f84b3ecdac7ab8f67b9e01258028c25252008cd`
 | --- | ---: |
 | released | 0 |
 | candidate | 269 |
-| research | 170 |
+| research | 171 |
 | internal | 5 |
 | retired | 0 |
 
@@ -346,6 +346,7 @@ Catalog ID: `88d17133c9a848aff3895dc38f84b3ecdac7ab8f67b9e01258028c25252008cd`
 | `platform.correlation` | `phydrax.correlation` | research | analytic-control | 0 |
 | `platform.electrochemistry` | `phydrax.electrochemistry` | research | local-constitutive | 0 |
 | `platform.electrohydrodynamics` | `phydrax.electrohydrodynamics` | research | local-constitutive | 0 |
+| `platform.exterior-calculus` | `phydrax.exterior` | research | analytic-control | 0 |
 | `platform.finance` | `phydrax.finance` | research | research | 0 |
 | `platform.frequency` | `phydrax.frequency` | research | analytic-control | 0 |
 | `platform.interfacial-transport` | `phydrax.interfacial_transport` | research | local-constitutive | 0 |

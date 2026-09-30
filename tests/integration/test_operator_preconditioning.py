@@ -3,11 +3,12 @@
 #
 
 
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -47,7 +48,10 @@ def _field_space(name: Any, support_id: Any, vector_space: Any) -> Any:
     )
 
 
-def test_transferred_operator_correction_solves_and_certifies_original_system() -> None:
+@pytest.mark.parametrize("differentiation", ("none", "algorithmic"))
+def test_transferred_operator_correction_solves_and_certifies_original_system(
+    differentiation: Literal["none", "algorithmic"],
+) -> None:
     task = phx.nn.operator.OperatorTask(
         "transferred-linear-correction",
         fields=(
@@ -156,7 +160,7 @@ def test_transferred_operator_correction_solves_and_certifies_original_system() 
     policy = phx.linalg.LinearSolvePolicy(
         phx.linalg.FGMRES(restart=4),
         preconditioning=phx.linalg.PreconditioningPolicy(builder, side="right"),
-        differentiation=phx.linalg.DifferentiationPolicy("none"),
+        differentiation=phx.linalg.DifferentiationPolicy(differentiation),
     )
 
     result = phx.linalg.solve(
@@ -167,5 +171,10 @@ def test_transferred_operator_correction_solves_and_certifies_original_system() 
     original_residual = right_hand_side - operator.mv(result.value)
 
     assert bool(result.successful)
-    assert jnp.linalg.norm(original_residual) < 2e-5
+    assert result.value.dtype == right_hand_side.dtype == jnp.float32
+    assert int(result.diagnostics.iterations) <= solver_vector.size
+    assert jnp.linalg.norm(original_residual) <= (
+        policy.tolerance.absolute
+        + policy.tolerance.relative * jnp.linalg.norm(right_hand_side)
+    )
     assert jnp.allclose(result.value, right_hand_side / diagonal, atol=2e-5)

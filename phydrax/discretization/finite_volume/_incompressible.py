@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +15,13 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, BlockSpace, DiagonalPairing
+from ...linalg import (
+    ArraySpace,
+    BlockSpace,
+    DiagonalPairing,
+    FunctionLinearOperator,
+    HilbertComplex,
+)
 from ._structured import FiniteVolumeDiscretization
 
 
@@ -62,6 +70,7 @@ class MACOperatorPlan(StrictModule, NonTrainableState):
         return PreparedMACOperators(self)
 
 
+@final
 class PreparedMACOperators(StrictModule, NonTrainableState):
     """Compatible cell-pressure and normal-face-velocity tensor operators."""
 
@@ -253,6 +262,52 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
                 )
             output.append(jnp.moveaxis(gradient, 0, axis))
         return tuple(output)
+
+    def hilbert_complex_slice(self, /) -> HilbertComplex:
+        """Face-to-cell complex with the homogeneous no-normal-flow boundary.
+
+        Boundary faces remain in the retained layout but are inactive in the
+        differential. This is the domain on which the existing Neumann gradient
+        is minus the Hilbert adjoint of divergence.
+        """
+
+        def divergence(velocity: FaceVelocity) -> Array:
+            values = []
+            for axis, component in enumerate(velocity):
+                if not self.discretization.grid.structured_axes[axis].periodic:
+                    lower: list[slice | int] = [slice(None)] * component.ndim
+                    upper: list[slice | int] = [slice(None)] * component.ndim
+                    lower[axis] = 0
+                    upper[axis] = component.shape[axis] - 1
+                    component = component.at[tuple(lower)].set(0).at[tuple(upper)].set(0)
+                values.append(component)
+            return self.divergence(tuple(values))
+
+        def transpose(pressure: Array) -> FaceVelocity:
+            coordinate = pressure / self.discretization.cell_volumes
+            return tuple(
+                -measure * component
+                for measure, component in zip(
+                    self.face_dual_measures, self.gradient(coordinate), strict=True
+                )
+            )
+
+        differential = FunctionLinearOperator(
+            divergence,
+            source=self.velocity_space,
+            target=self.pressure_space,
+            transpose_action=transpose,
+            operator_id=canonical_fingerprint(
+                {"kind": "mac-complex-divergence", "operators": self.prepared_id}
+            ),
+        )
+        return HilbertComplex(
+            (self.velocity_space, self.pressure_space),
+            (differential,),
+            complex_id=canonical_fingerprint(
+                {"kind": "mac-hilbert-complex-slice", "operators": self.prepared_id}
+            ),
+        )
 
     def interpolate_inverse_momentum(
         self, inverse_momentum_diagonal: ArrayLike, /

@@ -269,22 +269,13 @@ def test_elasticity_coupling_rejects_unpaired_conormal_map(elasticity_bem: Any) 
         )
 
 
-def test_vector_support_report_explicitly_rejects_maxwell_interface() -> None:
+def test_vector_support_report_classifies_maxwell_routes() -> None:
     report = vector_fem_bem_support_report()
-
-    assert "static isotropic elasticity 3D" in report.implemented[0]
-    assert any(
-        "'rhs-only' admits" in entry and "interior_load and boundary_load" in entry
-        for entry in report.implemented
-    )
-    assert any(
-        "Kelvin kernel and Lame parameters" in reason
-        and "'mathematical' and 'algorithmic' are refused" in reason
-        for reason in report.rejected
-    )
-    assert any("Maxwell FEM-BEM is unavailable" in reason for reason in report.rejected)
-    assert any("H(curl)-to-RWG" in reason for reason in report.rejected)
-    assert report.continuum_certified is False
+    assert report.matching_maxwell_supported
+    assert report.nonmatching_maxwell_supported
+    assert report.caller_built_periodic_maxwell_supported
+    assert not report.automatic_periodic_maxwell_supported
+    assert not report.continuum_certified
 
 
 def _rhs_only_policy(

@@ -17,6 +17,8 @@ from ...discretization import CellComplexTopology, OrientedEdgePathPlan
 from ...operators.quantum import BasisStateSubspace, HilbertRegisterLayout
 from ...solver import LocalHamiltonian, LocalHamiltonianTerm
 from ...topology import CellSubcomplex, compute_homology, HomologyResult, PrimeField
+from ...topology._reduction import field_rank
+from ...topology._resources import TopologyResourcePolicy
 
 
 _PAULI_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
@@ -24,36 +26,9 @@ _PAULI_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
 
 
 def _binary_support(topology: CellComplexTopology, degree: int, /) -> np.ndarray:
-    incidence = topology.incidences[degree]
-    relation = incidence.relation
-    valid = np.asarray(relation.valid, dtype=np.bool_)
-    lower = np.asarray(relation.source_indices, dtype=np.int64)[valid]
-    upper = np.asarray(relation.target_indices, dtype=np.int64)[valid]
-    support = np.zeros(
-        (topology.entities(degree + 1).count, topology.entities(degree).count),
-        dtype=np.bool_,
-    )
-    support[upper, lower] = True
-    return support
-
-
-def _gf2_rank(matrix: np.ndarray, /) -> int:
-    value = np.asarray(matrix, dtype=np.uint8).copy()
-    rows, columns = value.shape
-    rank = 0
-    for column in range(columns):
-        pivots = np.flatnonzero(value[rank:, column])
-        if pivots.size == 0:
-            continue
-        pivot = rank + int(pivots[0])
-        value[[rank, pivot]] = value[[pivot, rank]]
-        for row in range(rows):
-            if row != rank and value[row, column]:
-                value[row] ^= value[rank]
-        rank += 1
-        if rank == rows:
-            break
-    return rank
+    # Repeated incidences cancel over GF(2), including one-vertex loop ends.
+    boundary = topology.incidences[degree].scipy_boundary()
+    return (np.asarray(boundary.toarray()).T % 2).astype(np.bool_)
 
 
 class Z2GaugeModel(StrictModule, NonTrainableState):
@@ -193,7 +168,11 @@ def prepare_z2_gauss_sector(
     selected = indices[matching]
     if selected.size == 0:
         raise ValueError("External charges define an inconsistent Z2 Gauss sector.")
-    rank = _gf2_rank(constraints)
+    columns = [
+        {int(row): 1 for row in np.flatnonzero(constraints[:, column])}
+        for column in range(model.num_edges)
+    ]
+    rank, _ = field_rank(columns, PrimeField(2), TopologyResourcePolicy())
     expected = 1 << (model.num_edges - rank)
     if selected.size != expected:
         raise ValueError("Enumerated Z2 sector dimension disagrees with GF(2) rank.")

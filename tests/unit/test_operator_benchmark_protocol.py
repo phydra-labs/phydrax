@@ -10,6 +10,7 @@ import polars as pl
 import pytest
 
 import tools.operator_benchmarks.protocol as benchmark_protocol
+from phydrax.exterior import FormType
 from phydrax.nn.operator import OperatorTargetBatch
 from tools.operator_benchmarks import (
     audit_external_candidate,
@@ -1078,9 +1079,12 @@ def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
     assert tuple(harmonic_target.fields) == ("harmonic",)
     assert mixed.task is not None
     assert harmonic.task is not None
-    assert _present(mixed.task.fields[1].cochain).degree == 0
-    assert _present(mixed.task.fields[2].cochain).degree == 1
-    assert _present(harmonic.task.fields[0].cochain).cell_orientation == "signed"
+    assert mixed.task.fields[1].form_type == FormType(2, 0)
+    assert mixed.task.fields[2].form_type == FormType(2, 1)
+    assert harmonic.task.fields[0].form_type == FormType(2, 1)
+    assert mixed.task.fields[1].representation == "cochain"
+    assert mixed.task.fields[2].representation == "cochain"
+    assert harmonic.task.fields[0].representation == "cochain"
     forcing_topology = _present(mixed.train_batch.input("forcing").topology)
     edge_topology = _present(mixed.train_batch.query("edges").topology)
     assert forcing_topology.graph_fingerprint == edge_topology.graph_fingerprint

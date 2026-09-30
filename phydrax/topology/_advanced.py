@@ -14,10 +14,11 @@ from jax import Array
 from jax.typing import ArrayLike
 from scipy.spatial import Delaunay
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellComplexTopology, EntitySet, OrientedIncidence
-from ..sparse import EdgeRelation
+from ..discretization import CellComplexTopology
+from ..discretization._cell_complex import simplicial_cell_complex
 from ._coefficients import PrimeField
 from ._resources import TopologyResourcePolicy
 
@@ -60,50 +61,26 @@ def _closed_simplices(
     )
 
 
-def _simplex_topology(
-    simplices: tuple[np.ndarray, ...], identifier: str, /
+def _point_cloud_topology(
+    simplices: tuple[np.ndarray, ...],
+    cloud: np.ndarray,
+    radius: float,
+    policy: PointCloudComplexPolicy,
+    family: str,
+    /,
 ) -> CellComplexTopology:
-    entities = tuple(
-        EntitySet(
-            f"{identifier}:cells:{degree}",
-            degree,
-            np.arange(level.shape[0], dtype=np.int64),
-        )
-        for degree, level in enumerate(simplices)
-    )
-    incidences = []
-    for degree in range(1, len(simplices)):
-        lower_lookup = {
-            tuple(simplex): index for index, simplex in enumerate(simplices[degree - 1])
+    identifier = canonical_fingerprint(
+        {
+            "kind": "point-cloud-complex",
+            "family": family,
+            "points": cloud.astype(np.float64, copy=False),
+            "simplices": simplices,
+            "radius": radius,
+            "maximum_dimension": policy.maximum_dimension,
+            "predicate_tolerance": policy.predicate_tolerance,
         }
-        source = []
-        target = []
-        signs = []
-        for upper_index, simplex in enumerate(simplices[degree]):
-            for removed in range(degree + 1):
-                face = tuple(np.delete(simplex, removed).tolist())
-                if face not in lower_lookup:
-                    raise ValueError("Point-cloud simplex family is not face closed.")
-                source.append(lower_lookup[face])
-                target.append(upper_index)
-                signs.append(-1.0 if removed % 2 else 1.0)
-        relation = EdgeRelation(
-            np.asarray(source, dtype=np.int32),
-            np.asarray(target, dtype=np.int32),
-            source_size=entities[degree - 1].count,
-            target_size=entities[degree].count,
-        )
-        incidences.append(
-            OrientedIncidence(
-                degree,
-                entities[degree - 1],
-                entities[degree],
-                relation,
-                np.asarray(signs),
-                incidence_id=f"{identifier}:incidence:{degree}",
-            )
-        )
-    return CellComplexTopology(entities, tuple(incidences), topology_id=identifier)
+    )
+    return simplicial_cell_complex(simplices, topology_id=identifier)
 
 
 class PointCloudComplexPolicy(StrictModule, NonTrainableState):
@@ -204,7 +181,7 @@ def vietoris_rips_complex(
     simplices = _closed_simplices(maximal, policy_.maximum_dimension)
     if sum(level.shape[0] for level in simplices) > policy_.maximum_simplices:
         raise ValueError("Vietoris-Rips complex exceeds maximum_simplices.")
-    topology = _simplex_topology(simplices, "point-cloud:vietoris-rips")
+    topology = _point_cloud_topology(simplices, cloud, radius_, policy_, "vietoris-rips")
     return PointCloudComplexResult(
         topology,
         simplices,
@@ -278,7 +255,7 @@ def cech_complex(
     simplices = _closed_simplices(accepted, policy_.maximum_dimension)
     if sum(level.shape[0] for level in simplices) > policy_.maximum_simplices:
         raise ValueError("Cech complex exceeds maximum_simplices.")
-    topology = _simplex_topology(simplices, "point-cloud:cech")
+    topology = _point_cloud_topology(simplices, cloud, radius_, policy_, "cech")
     return PointCloudComplexResult(
         topology,
         simplices,
@@ -417,7 +394,7 @@ def alpha_complex(
     simplices = _closed_simplices(accepted, maximum_dimension)
     if sum(level.shape[0] for level in simplices) > policy_.maximum_simplices:
         raise ValueError("Alpha complex exceeds maximum_simplices.")
-    topology = _simplex_topology(simplices, "point-cloud:alpha")
+    topology = _point_cloud_topology(simplices, cloud, radius_, policy_, "alpha")
     return PointCloudComplexResult(
         topology,
         simplices,
@@ -839,22 +816,36 @@ def cup_product(
     /,
     *,
     coefficients: PrimeField,
+    left_topology_id: str,
+    right_topology_id: str,
 ) -> Array:
-    left_ = jnp.asarray(left, dtype=jnp.int32)
-    right_ = jnp.asarray(right, dtype=jnp.int32)
+    if not isinstance(diagonal, CellDiagonalApproximation):
+        raise TypeError("diagonal must be a CellDiagonalApproximation.")
+    if not isinstance(coefficients, PrimeField):
+        raise TypeError("coefficients must be a PrimeField.")
+    if left_topology_id != right_topology_id or left_topology_id != diagonal.topology_id:
+        raise ValueError("Cup-product operands and diagonal must share topology_id.")
+    left_ = jnp.asarray(left, dtype=jnp.int64)
+    right_ = jnp.asarray(right, dtype=jnp.int64)
     if left_.shape != (diagonal.left_cell_count,):
         raise ValueError("Left cochain length does not match its declared degree.")
     if right_.shape != (diagonal.right_cell_count,):
         raise ValueError("Right cochain length does not match its declared degree.")
+    # Each product is reduced before the next multiplication. With p <= 2**31-1,
+    # every product of two residues fits int64, unlike the unreduced triple.
     terms = (
-        diagonal.coefficients * left_[diagonal.left_cells] * right_[diagonal.right_cells]
-    )
+        (left_[diagonal.left_cells] % coefficients.modulus)
+        * (right_[diagonal.right_cells] % coefficients.modulus)
+    ) % coefficients.modulus
+    terms = (
+        (diagonal.coefficients.astype(jnp.int64) % coefficients.modulus) * terms
+    ) % coefficients.modulus
     return (
-        jnp.zeros((diagonal.source_cell_count,), dtype=jnp.int32)
+        jnp.zeros((diagonal.source_cell_count,), dtype=jnp.int64)
         .at[diagonal.source_cells]
         .add(terms)
         % coefficients.modulus
-    )
+    ).astype(jnp.int32)
 
 
 def _matmul_mod(left: np.ndarray, right: np.ndarray, modulus: int, /) -> np.ndarray:
@@ -868,64 +859,29 @@ def _cellular_sheaf_route_maps(
     topology: CellComplexTopology,
     restrictions: tuple[np.ndarray, ...],
     /,
-) -> tuple[dict[tuple[int, int], np.ndarray], ...]:
+) -> tuple[dict[int, np.ndarray], ...]:
     route_maps = []
     cursor = 0
     for incidence in topology.incidences:
         valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
-        lower = np.asarray(incidence.relation.source_indices)
-        upper = np.asarray(incidence.relation.target_indices)
         degree_maps = {}
         for route in range(incidence.relation.capacity):
             if valid[route]:
-                degree_maps[(int(lower[route]), int(upper[route]))] = restrictions[cursor]
+                degree_maps[route] = restrictions[cursor]
             cursor += 1
         route_maps.append(degree_maps)
     return tuple(route_maps)
 
 
-def _validate_restriction_paths(
-    topology: CellComplexTopology,
-    dimensions: tuple[np.ndarray, ...],
-    route_maps: tuple[dict[tuple[int, int], np.ndarray], ...],
-    modulus: int,
-    /,
-) -> None:
-    for start_degree in range(len(topology.entity_sets) - 2):
-        for start_cell in range(topology.entity_sets[start_degree].count):
-            paths = {
-                start_cell: np.eye(
-                    int(dimensions[start_degree][start_cell]), dtype=np.int64
-                )
-            }
-            for upper_degree in range(start_degree + 1, len(topology.entity_sets)):
-                candidates: dict[int, np.ndarray] = {}
-                for (lower_cell, upper_cell), restriction in route_maps[
-                    upper_degree - 1
-                ].items():
-                    if lower_cell not in paths:
-                        continue
-                    composed = _matmul_mod(restriction, paths[lower_cell], modulus)
-                    if upper_cell in candidates and not np.array_equal(
-                        candidates[upper_cell], composed
-                    ):
-                        raise ValueError(
-                            "Cellular sheaf has incompatible restriction routes."
-                        )
-                    candidates[upper_cell] = composed
-                paths = candidates
-
-
 def _cellular_sheaf_differentials(
     topology: CellComplexTopology,
     dimensions: tuple[np.ndarray, ...],
-    restrictions: tuple[np.ndarray, ...],
+    route_maps: tuple[dict[int, np.ndarray], ...],
     modulus: int,
     /,
 ) -> tuple[np.ndarray, ...]:
     totals = tuple(int(np.sum(value, dtype=np.int64)) for value in dimensions)
     differentials = []
-    cursor = 0
     for incidence in topology.incidences:
         lower_offsets = np.concatenate(
             ([0], np.cumsum(dimensions[incidence.degree - 1], dtype=np.int64))
@@ -938,15 +894,18 @@ def _cellular_sheaf_differentials(
             dtype=np.int64,
         )
         valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
+        degree_maps = route_maps[incidence.degree - 1]
         for route in range(incidence.relation.capacity):
             if valid[route]:
                 lower = int(incidence.relation.source_indices[route])
                 upper = int(incidence.relation.target_indices[route])
-                matrix[
-                    upper_offsets[upper] : upper_offsets[upper + 1],
-                    lower_offsets[lower] : lower_offsets[lower + 1],
-                ] = (int(incidence.signs[route]) * restrictions[cursor]) % modulus
-            cursor += 1
+                block = (
+                    slice(upper_offsets[upper], upper_offsets[upper + 1]),
+                    slice(lower_offsets[lower], lower_offsets[lower + 1]),
+                )
+                matrix[block] = (
+                    matrix[block] + int(incidence.signs[route]) * degree_maps[route]
+                ) % modulus
         differentials.append(matrix)
     return tuple(differentials)
 
@@ -1025,9 +984,8 @@ class CellularSheaf(StrictModule, NonTrainableState):
                 cursor += 1
 
         route_maps = _cellular_sheaf_route_maps(topology, maps)
-        _validate_restriction_paths(topology, dimensions, route_maps, field.modulus)
         differentials = _cellular_sheaf_differentials(
-            topology, dimensions, maps, field.modulus
+            topology, dimensions, route_maps, field.modulus
         )
         _validate_coboundaries(differentials, field.modulus)
         self.topology = topology
@@ -1043,7 +1001,10 @@ class CellularSheaf(StrictModule, NonTrainableState):
             np.asarray(value, dtype=np.int64) for value in self.restrictions
         )
         differentials = _cellular_sheaf_differentials(
-            self.topology, dimensions, restrictions, self.field.modulus
+            self.topology,
+            dimensions,
+            _cellular_sheaf_route_maps(self.topology, restrictions),
+            self.field.modulus,
         )
         _validate_coboundaries(differentials, self.field.modulus)
         totals = tuple(int(np.sum(value, dtype=np.int64)) for value in dimensions)

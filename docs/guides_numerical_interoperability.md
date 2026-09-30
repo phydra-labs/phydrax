@@ -269,12 +269,12 @@ derivative contract is `linearize(state)` only. Point queries of the same
 reconstructions use `prepare_finite_volume_field_reconstruction`. See
 [Unstructured finite volume](guides_unstructured_finite_volume.md#face-traces-and-field-views).
 
-Current limits: finite-element side traces act on identity-mapped H1 and L2
-fields; Piola-mapped H(div)/H(curl) finite-element facet traces are not
-published. Point-cloud owners publish no side actions, and boundary-element
-owners publish their native trace spaces instead of facet side actions (see
-above). Finite-volume traces on polyhedral faces, periodic seam faces, and
-structured stencils that reach a bounded axis boundary are refused.
+Finite-element form reconstruction publishes Piola-mapped H(curl)/H(div) point
+queries and tangential/normal side traces through `FormValueSpec`; embedded maps
+require declared coorientation. Point-cloud owners publish no side actions and
+boundary-element owners publish native trace spaces instead of facet actions.
+Finite-volume polyhedral/seam faces and bounded-edge-reaching structured stencils
+retain their owning refusal contracts.
 
 ## Spatial coupled problems
 
@@ -2441,8 +2441,8 @@ Geometry, bindings, and components:
   consumes them: transmission, flux, and boundary-integral laws require a
   two-sided binding, and a junction never expands into pairwise laws. The N-way
   junction exchange is owned by `PreparedPlateauBorder`.
-- Components are scalar and single-field; mixed forms are refused. Piola-mapped
-  H(div)/H(curl) finite-element facet traces are not published.
+- Spatial coupling components remain scalar and single-field; this component
+  boundary does not negate standalone form reconstruction and Piola facet traces.
 - The exact common refinement covers 2-D interfaces of straight facets only;
   curved facets and 3-D surface interfaces are refused.
 
@@ -2468,9 +2468,12 @@ Boundary integrals:
 - The spectral-element trace reaches the P1/DP0 boundary data through a declared
   L2 projection, so no exponential total p-convergence is claimed. No solver
   route for the gauged singular Johnson–Nédélec system is qualified.
-- The 3-D nonmatching dense and dynamic convolution-quadrature FEM–BEM products
-  are not wrapped as components; no H(curl)-to-RWG construction or 3-D
-  virtual-element compiler is claimed.
+- The 3-D nonmatching dense and dynamic convolution-quadrature products are not
+  generic spatial components. Standalone matching Maxwell FEM–BEM does provide
+  H(curl)-to-RWG trace, BC dual conormal and actual boundary operators through
+  `prepare_matching_maxwell_fem_bem_3d`; caller-built periodic bounded-image
+  coupling remains a separate envelope, not automatic infinite-lattice coupling.
+  No three-dimensional VEM compiler is inferred from that route.
 
 Derivatives:
 

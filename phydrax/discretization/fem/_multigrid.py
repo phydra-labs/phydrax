@@ -208,10 +208,9 @@ def finite_element_p_transfer(
     if (
         coarse.cell_kind != fine.cell_kind
         or not compatible_family
-        or coarse.conformity != fine.conformity
+        or coarse.continuity != fine.continuity
         or coarse.representation != fine.representation
-        or coarse.mapping != fine.mapping
-        or coarse.value_shape != fine.value_shape
+        or coarse.value_spec.value_spec_id != fine.value_spec.value_spec_id
         or not increasing_degree
     ):
         raise ValueError(

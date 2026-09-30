@@ -4,56 +4,100 @@
 
 from __future__ import annotations
 
-from typing import Any
+from functools import lru_cache
+from typing import final
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
+
+from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, DenseLinearOperator
+from ..._validation import canonical_identifier
+from ...exterior._algebra import map_reference_values
+from ...exterior._form_type import FormType, FormValueSpec
+from ...linalg import ArraySpace
+from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._boundary_trace_space import (
     boundary_geometry_revision,
     BoundaryTraceSpaceCapability,
-    sparse_gram_trace_space,
 )
+from .._gram import sparse_gram_space
 from .._spaces import EntityDofLayout
+from ..fem._form_elements import form_element
+from ..fem._reference import FiniteElementSpec
 from ._surface_complex import OrientedTriangleSurfaceComplex3D
+
+
+@lru_cache(maxsize=1)
+def _rwg_element() -> FiniteElementSpec:
+    return form_element("triangle", 1, 1, twist="twisted", proxy="flux")
+
+
+def _reference_edge_dofs(element: FiniteElementSpec, /) -> Array:
+    basis = element.form_basis
+    if basis is None:
+        raise ValueError("RWG requires a canonical polynomial form basis.")
+    cyclic_edges = ((0, 1), (1, 2), (0, 2))
+    dofs: list[int] = []
+    for edge in cyclic_edges:
+        matches = tuple(
+            index for index, label in enumerate(basis.dof_labels) if label[0] == edge
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                "RWG requires exactly one constant form moment per triangle edge."
+            )
+        dofs.append(matches[0])
+    return jnp.asarray(dofs, dtype=jnp.int32)
+
+
+def _rwg_tabulate(
+    surface: OrientedTriangleSurfaceComplex3D,
+    points: Array,
+    element: FiniteElementSpec,
+    /,
+) -> tuple[Array, Array]:
+    corners = surface.vertices[surface.triangles]
+    jacobians = jnp.swapaxes(corners[:, 1:] - corners[:, :1], -1, -2)
+    offsets = points - corners[:, :1]
+    gram = jnp.swapaxes(jacobians, -1, -2) @ jacobians
+    rhs = jnp.swapaxes(jacobians, -1, -2) @ jnp.swapaxes(offsets, -1, -2)
+    reference = jnp.swapaxes(jnp.linalg.solve(gram, rhs), -1, -2)
+    reference_values, gradients = jax.vmap(element.tabulate)(reference)
+
+    def map_basis(values: Array, jacobian: Array) -> Array:
+        return map_reference_values(values, element.value_spec, jacobian, coorientation=1)
+
+    mapped = jax.vmap(map_basis)(reference_values, jacobians)
+    dofs = _reference_edge_dofs(element)
+    lengths = surface.edge_lengths[surface.face_edges]
+    scale = surface.face_edge_signs * lengths * jnp.asarray((1.0, 1.0, -1.0))
+    basis_values = mapped[:, :, dofs] * scale[:, None, :, None]
+    reference_divergence = jnp.trace(gradients, axis1=-2, axis2=-1)[:, :, dofs]
+    divergence = (
+        reference_divergence
+        * scale[:, None, :]
+        / (2.0 * surface.face_areas[:, None, None])
+    )
+    return basis_values, divergence
 
 
 def rwg_gram_entries(
     surface: OrientedTriangleSurfaceComplex3D, /
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return host `(targets, sources, values)` of the exact RWG area Gram map.
-
-    On a flat triangle `x = Σ_a λ_a v_a` and `∫ λ_a λ_b dA = A (1 + δ_ab) / 12`,
-    so `∫ (x - p_i)·(x - p_j) dA = A/12 [(Σ_a d_ia)·(Σ_b d_jb) + Σ_a d_ia·d_ja]`
-    with `d_ia = v_a - p_i`; each RWG piece is `s_i l_i / (2A) (x - p_i)`.
-    """
-    points = np.asarray(surface.vertices, dtype=np.float64)
-    corners = points[np.asarray(surface.triangles)]
-    opposite = points[np.asarray(surface.opposite_vertices)]
+) -> tuple[np.ndarray, np.ndarray, Array]:
+    """Exact area Gram of the canonical surface flux element in RWG coordinates."""
+    corners = surface.vertices[surface.triangles]
+    points = 0.5 * (corners + jnp.roll(corners, -1, axis=1))
+    basis, _ = _rwg_tabulate(surface, points, _rwg_element())
+    local = contract("fqic,fqjc,f->fij", basis, basis, surface.face_areas / 3.0)
     edges = np.asarray(surface.face_edges, dtype=np.int32)
-    areas = np.asarray(surface.face_areas, dtype=np.float64)
-    scale = (
-        np.asarray(surface.face_edge_signs, dtype=np.float64)
-        * np.asarray(surface.edge_lengths, dtype=np.float64)[edges]
-        / (2.0 * areas[:, None])
-    )
-    offsets = corners[:, None, :, :] - opposite[:, :, None, :]
-    summed = np.sum(offsets, axis=2)
-    flat = offsets.reshape((offsets.shape[0], 3, 9))
-    moments = np.matmul(summed, np.swapaxes(summed, 1, 2)) + np.matmul(
-        flat, np.swapaxes(flat, 1, 2)
-    )
-    local = (
-        (areas / 12.0)[:, None, None] * moments * scale[:, :, None] * scale[:, None, :]
-    )
     targets = np.repeat(edges, 3, axis=1).reshape((-1,))
     sources = np.tile(edges, (1, 3)).reshape((-1,))
     return targets, sources, local.reshape((-1,))
@@ -77,15 +121,17 @@ class TangentialTracePairing3D(StrictModule, NonTrainableState):
     pairing_id: str = eqx.field(static=True)
 
 
+@final
 class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
     """One oriented Rao-Wilton-Glisson surface-current DOF per mesh edge."""
 
     surface: OrientedTriangleSurfaceComplex3D
+    element: FiniteElementSpec
     layout: EntityDofLayout
     vector_space: ArraySpace
     centroid_basis: Array
     divergence_matrix: Array
-    divergence_operator: DenseLinearOperator
+    divergence_operator: SparseCoordinateOperator
     trace_pairing: TangentialTracePairing3D
     space_id: str = eqx.field(static=True)
 
@@ -94,7 +140,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         surface: OrientedTriangleSurfaceComplex3D,
         /,
         *,
-        coefficient_dtype: Any = np.complex128,
+        coefficient_dtype: DTypeLike = np.complex128,
     ) -> None:
         if not isinstance(surface, OrientedTriangleSurfaceComplex3D):
             raise TypeError("surface must be OrientedTriangleSurfaceComplex3D.")
@@ -109,12 +155,12 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
             surface.edge_count,
         )
         local_edges = surface.face_edges
-        lengths = surface.edge_lengths[local_edges]
-        signs = surface.face_edge_signs
-        opposite = surface.vertices[surface.opposite_vertices]
-        scale = signs * lengths / (2.0 * surface.face_areas[:, None])
-        basis = scale[:, :, None] * (surface.face_centroids[:, None, :] - opposite)
-        divergence_local = signs * lengths / surface.face_areas[:, None]
+        element = _rwg_element()
+        basis_values, divergence_values = _rwg_tabulate(
+            surface, surface.face_centroids[:, None], element
+        )
+        basis = basis_values[:, 0]
+        divergence_local = divergence_values[:, 0]
         divergence = jnp.zeros(
             (surface.face_count, surface.edge_count), dtype=surface.vertices.dtype
         )
@@ -150,10 +196,18 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
                 }
             ),
         )
-        divergence_operator = DenseLinearOperator(
-            divergence.astype(coefficient_space.dtype),
+        divergence_operator = SparseCoordinateOperator(
+            EdgeRelation(
+                np.asarray(local_edges).reshape((-1,)),
+                np.repeat(np.arange(surface.face_count, dtype=np.int32), 3),
+                source_size=surface.edge_count,
+                target_size=surface.face_count,
+            ),
+            divergence_local.reshape((-1,)).astype(coefficient_space.dtype),
             source=coefficient_space,
             target=divergence_space,
+            operator_id=f"{space_id}:surface-divergence",
+            accumulation_dtype=coefficient_space.dtype,
         )
         trace_pairing = TangentialTracePairing3D(
             ambient_dimension=3,
@@ -165,7 +219,6 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
             resource_evidence=f"one complex coefficient per {surface.edge_count} edges",
             error_evidence="exact signed edge assembly; piecewise-linear geometric approximation only",
             non_goals=(
-                "BC/RBC dual spaces",
                 "Calderon products",
                 "continuum trace certification",
             ),
@@ -175,6 +228,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
             pairing_id=pairing_id,
         )
         self.surface = surface
+        self.element = element
         self.layout = layout
         self.vector_space = coefficient_space
         self.centroid_basis = basis
@@ -182,6 +236,17 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         self.divergence_operator = divergence_operator
         self.trace_pairing = trace_pairing
         self.space_id = space_id
+
+    @property
+    def value_spec(self) -> FormValueSpec:
+        """Twisted intrinsic surface flux with an embedded Cartesian proxy."""
+        return FormValueSpec(
+            FormType(2, 1, twist="twisted", ambient_dimension=3), proxy="flux"
+        )
+
+    @property
+    def form_type(self) -> FormType:
+        return self.value_spec.form_type
 
     @property
     def size(self) -> int:
@@ -197,14 +262,8 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
             raise ValueError(
                 f"points must have shape {(self.surface.face_count, 3)}; got {values.shape}."
             )
-        opposite = self.surface.vertices[self.surface.opposite_vertices]
-        lengths = self.surface.edge_lengths[self.surface.face_edges]
-        scale = (
-            self.surface.face_edge_signs
-            * lengths
-            / (2.0 * self.surface.face_areas[:, None])
-        )
-        return scale[:, :, None] * (values[:, None, :] - opposite)
+        basis, _ = _rwg_tabulate(self.surface, values[:, None], self.element)
+        return basis[:, 0]
 
     def current_at_centroids(self, coefficients: ArrayLike, /) -> Array:
         values = self.validate(coefficients)
@@ -245,7 +304,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         return jnp.max(jnp.stack(defects))
 
     def trace_capability(
-        self, /, *, gram_tolerance: float = 1.0e-13
+        self, /, *, gram_tolerance: float = 1.0e-13, numeric_revision: str | None = None
     ) -> BoundaryTraceSpaceCapability:
         """Publish the RWG surface-current trace space with its area Gram pairing.
 
@@ -253,9 +312,11 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         `∫ conj(j)·k dA` through the exact RWG Gram map; its inverse is a
         prepared conjugate-gradient solve to `gram_tolerance`. RWG currents are
         an H(div_Γ) representation and never a scalar Cauchy trace.
+        Supply a stable ``numeric_revision`` binding for differentiable numeric
+        refreshes; omitted revisions fingerprint an eager geometry admission.
         """
         targets, sources, values = rwg_gram_entries(self.surface)
-        gram_space, mass = sparse_gram_trace_space(
+        gram_space, mass = sparse_gram_space(
             targets,
             sources,
             values,
@@ -274,7 +335,9 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
             gram_space=gram_space,
             mass=mass,
             ambient_dimension=3,
-            revision_id=boundary_geometry_revision(
-                self.surface.vertices, self.surface.triangles
+            revision_id=(
+                boundary_geometry_revision(self.surface.vertices, self.surface.triangles)
+                if numeric_revision is None
+                else canonical_identifier(numeric_revision, "numeric_revision")
             ),
         )

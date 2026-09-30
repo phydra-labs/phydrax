@@ -38,6 +38,7 @@ from .._model._ports import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_integer
+from ..exterior._form_type import FormValueSpec
 from ..linalg import ArraySpace, inverse_small_linear, SmallLinearSolvePlan
 from ..typing import parse
 from ._cell_complex import PolygonalConnectivity
@@ -683,6 +684,8 @@ def polygon_value_port(
     space_id: str,
     value_port: ValuePort | None,
     /,
+    *,
+    form: FormValueSpec | None = None,
 ) -> ValuePort:
     """Return the declared value port of a polygon reconstruction or its default."""
     if value_port is None:
@@ -695,6 +698,7 @@ def polygon_value_port(
             else tuple(f"{name}[{index}]" for index in range(size)),
             representation=representation,
             space_id=space_id,
+            form=form,
         )
     if not isinstance(value_port, ValuePort):
         raise TypeError("value_port must be a ValuePort or None.")
@@ -703,6 +707,11 @@ def polygon_value_port(
             f"value_port event_shape must equal the reconstruction value shape "
             f"{event_shape}."
         )
+    if form is not None:
+        if value_port.form is None:
+            raise ValueError("value_port must declare the reconstruction form.")
+        if value_port.form.value_spec_id != form.value_spec_id:
+            raise ValueError("value_port form must match the reconstruction form.")
     return value_port
 
 

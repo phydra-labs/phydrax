@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import combinations
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -1381,7 +1383,293 @@ def _tetrahedral_complex(
     )
 
 
+def simplicial_cell_complex(
+    simplices: Sequence[ArrayLike],
+    /,
+    *,
+    topology_id: str | None = None,
+) -> CellComplexTopology:
+    """Build a face-closed simplicial complex in arbitrary dimension.
+
+    Each degree supplies its increasing vertex rows, in the desired cell order.
+    Vertex labels are nonnegative integers; they need not be contiguous.
+    """
+    levels = tuple(np.asarray(level) for level in simplices)
+    if not levels:
+        raise ValueError("simplices must supply at least the vertex degree.")
+    for degree, level in enumerate(levels):
+        if level.ndim != 2 or level.shape[1] != degree + 1:
+            raise ValueError(f"simplices[{degree}] must have {degree + 1} columns.")
+        if not np.issubdtype(level.dtype, np.integer):
+            raise TypeError("Simplex vertices must be integers.")
+        if np.any(level < 0) or np.any(level[:, 1:] <= level[:, :-1]):
+            raise ValueError("Simplex vertices must be nonnegative and increasing.")
+        if _has_duplicate_rows(level):
+            raise ValueError("Each simplex must appear exactly once per degree.")
+    entities = tuple(
+        EntitySet(
+            f"simplicial_{degree}_cells",
+            degree,
+            level[:, 0] if degree == 0 else _canonical_entity_ids(level),
+        )
+        for degree, level in enumerate(levels)
+    )
+    incidences: list[OrientedIncidence] = []
+    for degree, upper in enumerate(levels[1:], start=1):
+        lower = levels[degree - 1]
+        positions = np.arange(degree + 1, dtype=np.int32)
+        face_columns = np.stack(
+            [positions[positions != removed] for removed in range(degree + 1)]
+        )
+        faces = upper[:, face_columns].reshape((-1, degree))
+        _, groups = np.unique(np.concatenate((lower, faces)), axis=0, return_inverse=True)
+        lookup = np.full((groups.max(initial=-1) + 1,), -1, dtype=np.int32)
+        lookup[groups[: lower.shape[0]]] = np.arange(lower.shape[0], dtype=np.int32)
+        source = lookup[groups[lower.shape[0] :]]
+        if np.any(source < 0):
+            raise ValueError("Simplex family must be face closed.")
+        target = np.repeat(np.arange(upper.shape[0], dtype=np.int32), degree + 1)
+        signs = np.tile(np.where(positions % 2, -1.0, 1.0), upper.shape[0])
+        relation = EdgeRelation(
+            source, target, source_size=lower.shape[0], target_size=upper.shape[0]
+        )
+        incidences.append(
+            OrientedIncidence(
+                degree, entities[degree - 1], entities[degree], relation, signs
+            )
+        )
+    return CellComplexTopology(entities, incidences, topology_id=topology_id)
+
+
+def simplicial_cell_geometry(
+    topology: CellComplexTopology, /
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    """Recover ascending vertex-index rows and cell orientation coefficients.
+
+    Vertex indices index the degree-zero coordinate array, not entity IDs.
+    Nonsimplicial cells and inconsistent incidence are refused explicitly.
+    """
+    if not isinstance(topology, CellComplexTopology):
+        raise TypeError("Simplex geometry requires CellComplexTopology.")
+    rows: list[np.ndarray] = [
+        np.arange(topology.entity_sets[0].count, dtype=np.int32)[:, None]
+    ]
+    orientations: list[np.ndarray] = [
+        np.ones(topology.entity_sets[0].count, dtype=np.float64)
+    ]
+    for degree, incidence in enumerate(topology.incidences, start=1):
+        count = topology.entity_sets[degree].count
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
+        sources = np.asarray(incidence.relation.source_indices)[valid]
+        targets = np.asarray(incidence.relation.target_indices)[valid]
+        coefficients = np.asarray(incidence.signs)[valid]
+        order = np.argsort(targets, kind="stable")
+        sources, targets, coefficients = (
+            sources[order],
+            targets[order],
+            coefficients[order],
+        )
+        if np.any(np.bincount(targets, minlength=count) != degree + 1):
+            raise ValueError("Every degree-k simplex must have k+1 distinct faces.")
+        faces = sources.reshape((count, degree + 1))
+        boundary = coefficients.reshape((count, degree + 1))
+        cell_rows = np.empty((count, degree + 1), dtype=np.int32)
+        cell_signs = np.empty(count, dtype=np.float64)
+        for cell in range(count):
+            vertices = np.unique(rows[degree - 1][faces[cell]])
+            if vertices.shape != (degree + 1,):
+                raise ValueError("Simplex incidence must span k+1 distinct vertices.")
+            cell_rows[cell] = vertices
+            induced: list[float] = []
+            removed_vertices: list[int] = []
+            for face, coefficient in zip(faces[cell], boundary[cell], strict=True):
+                removed = np.flatnonzero(~np.isin(vertices, rows[degree - 1][face]))
+                if removed.size != 1:
+                    raise ValueError("Simplex faces must omit exactly one vertex.")
+                position = int(removed[0])
+                removed_vertices.append(position)
+                induced.append(
+                    float(coefficient * orientations[degree - 1][face])
+                    * (-1.0 if position % 2 else 1.0)
+                )
+            if len(set(removed_vertices)) != degree + 1 or len(set(induced)) != 1:
+                raise ValueError("Simplex boundary orientations are inconsistent.")
+            cell_signs[cell] = induced[0]
+        rows.append(cell_rows)
+        orientations.append(cell_signs)
+    return tuple(rows), tuple(orientations)
+
+
+@final
+class CubicalCellComplex(StrictModule, NonTrainableState):
+    """Tensor-product cells with explicit orientation-block indexing."""
+
+    topology: CellComplexTopology
+    shape: tuple[int, ...] = eqx.field(static=True)
+    periodic: tuple[bool, ...] = eqx.field(static=True)
+    orientations: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
+    orientation_shapes: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
+    orientation_offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    cell_multi_indices: tuple[Array, ...]
+    route_axes: tuple[Array, ...]
+
+
+def _cubical_incidence(
+    degree: int,
+    entities: tuple[EntitySet, ...],
+    orientations: tuple[tuple[tuple[int, ...], ...], ...],
+    shapes: tuple[tuple[tuple[int, ...], ...], ...],
+    offsets: tuple[tuple[int, ...], ...],
+    indices: tuple[Array, ...],
+    point_counts: tuple[int, ...],
+    /,
+) -> tuple[OrientedIncidence, Array]:
+    source_blocks: list[np.ndarray] = []
+    target_blocks: list[np.ndarray] = []
+    sign_blocks: list[np.ndarray] = []
+    axis_blocks: list[np.ndarray] = []
+    for block, axes in enumerate(orientations[degree]):
+        count = int(np.prod(shapes[degree][block]))
+        start = offsets[degree][block]
+        coordinates = np.asarray(indices[degree])[start : start + count]
+        targets = np.arange(start, start + count, dtype=np.int32)
+        sources = np.empty((count, 2 * degree), dtype=np.int32)
+        signs = np.empty((count, 2 * degree), dtype=np.float64)
+        route_axes = np.empty((count, 2 * degree), dtype=np.int32)
+        for position, axis in enumerate(axes):
+            lower_axes = axes[:position] + axes[position + 1 :]
+            lower_block = orientations[degree - 1].index(lower_axes)
+            lower_shape = shapes[degree - 1][lower_block]
+            lower_start = offsets[degree - 1][lower_block]
+            high = coordinates.copy()
+            high[:, axis] = (high[:, axis] + 1) % point_counts[axis]
+            sources[:, 2 * position] = lower_start + np.ravel_multi_index(
+                coordinates.T, lower_shape
+            )
+            sources[:, 2 * position + 1] = lower_start + np.ravel_multi_index(
+                high.T, lower_shape
+            )
+            signs[:, 2 * position] = -1.0 if position % 2 == 0 else 1.0
+            signs[:, 2 * position + 1] = -signs[:, 2 * position]
+            route_axes[:, 2 * position : 2 * position + 2] = axis
+        source_blocks.append(sources.reshape(-1))
+        target_blocks.append(np.repeat(targets, 2 * degree))
+        sign_blocks.append(signs.reshape(-1))
+        axis_blocks.append(route_axes.reshape(-1))
+    relation = EdgeRelation(
+        np.concatenate(source_blocks),
+        np.concatenate(target_blocks),
+        source_size=entities[degree - 1].count,
+        target_size=entities[degree].count,
+    )
+    return (
+        OrientedIncidence(
+            degree,
+            entities[degree - 1],
+            entities[degree],
+            relation,
+            np.concatenate(sign_blocks),
+        ),
+        jnp.asarray(np.concatenate(axis_blocks)),
+    )
+
+
+def cubical_cell_complex(
+    shape: Sequence[int],
+    /,
+    *,
+    periodic: bool | Sequence[bool] = False,
+) -> CubicalCellComplex:
+    """Build an n-D cubical complex from point counts, not interval counts.
+
+    Cells are orientation-major, then C-order within each orientation block.
+    Periodic axes have as many intervals as points; others have one fewer.
+    """
+    point_counts = tuple(shape)
+    periodic_axes = (
+        (periodic,) * len(point_counts) if isinstance(periodic, bool) else tuple(periodic)
+    )
+    if len(periodic_axes) != len(point_counts) or any(
+        not isinstance(value, bool) for value in periodic_axes
+    ):
+        raise ValueError("periodic must contain one Boolean per axis.")
+    if not point_counts or any(
+        not isinstance(count, int)
+        or isinstance(count, bool)
+        or count < (1 if wraps else 2)
+        for count, wraps in zip(point_counts, periodic_axes, strict=True)
+    ):
+        raise ValueError(
+            "Point counts must be positive, and nonperiodic counts at least two."
+        )
+    dimension = len(point_counts)
+    orientations = tuple(
+        tuple(combinations(range(dimension), degree)) for degree in range(dimension + 1)
+    )
+    shapes = tuple(
+        tuple(
+            tuple(
+                count if periodic_axes[axis] or axis not in axes else count - 1
+                for axis, count in enumerate(point_counts)
+            )
+            for axes in degree_axes
+        )
+        for degree_axes in orientations
+    )
+    offsets = tuple(
+        tuple(
+            int(value)
+            for value in np.concatenate(
+                (
+                    np.zeros(1, dtype=np.int64),
+                    np.cumsum([np.prod(s) for s in degree_shapes])[:-1],
+                )
+            )
+        )
+        for degree_shapes in shapes
+    )
+    indices = tuple(
+        jnp.asarray(
+            np.concatenate(
+                [
+                    np.indices(block_shape, dtype=np.int32).reshape((dimension, -1)).T
+                    for block_shape in degree_shapes
+                ]
+            )
+        )
+        for degree_shapes in shapes
+    )
+    entities = tuple(
+        EntitySet(
+            f"structured_{degree}_cells",
+            degree,
+            np.arange(index.shape[0], dtype=np.int64),
+        )
+        for degree, index in enumerate(indices)
+    )
+    routes = tuple(
+        _cubical_incidence(
+            degree, entities, orientations, shapes, offsets, indices, point_counts
+        )
+        for degree in range(1, dimension + 1)
+    )
+    return CubicalCellComplex(
+        topology=CellComplexTopology(entities, tuple(route[0] for route in routes)),
+        shape=point_counts,
+        periodic=periodic_axes,
+        orientations=orientations,
+        orientation_shapes=shapes,
+        orientation_offsets=offsets,
+        cell_multi_indices=indices,
+        route_axes=tuple(route[1] for route in routes),
+    )
+
+
 __all__ = [
+    "CubicalCellComplex",
+    "cubical_cell_complex",
+    "simplicial_cell_complex",
+    "simplicial_cell_geometry",
     "PolygonalConnectivity",
     "IntervalConnectivity",
     "interval_cell_complex",

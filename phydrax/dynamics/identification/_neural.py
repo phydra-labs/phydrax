@@ -21,6 +21,8 @@ import optax
 from jax import Array
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import (
     array_tree_fingerprint,
@@ -1233,8 +1235,8 @@ def _resolve_discrete_fit_request(
         rate = float(learning_rate)
         if not np.isfinite(rate) or rate < 0.0:
             raise ValueError("learning_rate must be finite and nonnegative.")
-        optimizer = optax.adam(rate)
-        resolved_optimizer_id = f"optax.adam:{rate:.17g}"
+        optimizer = adam(rate)
+        resolved_optimizer_id = f"phydrax.optim.adam:{rate:.17g}"
     else:
         if not isinstance(optimizer_id, str) or not optimizer_id:
             raise ValueError("Custom optimizers require a stable optimizer_id.")

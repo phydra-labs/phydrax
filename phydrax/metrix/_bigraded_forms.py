@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from itertools import combinations
 from math import comb
 
 import jax.numpy as jnp
@@ -13,19 +12,9 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..exterior._basis import exterior_indices, wedge_sign
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives
 from ._utils import _pointwise_array
-
-
-def _indices(dimension: int, degree: int, /) -> tuple[tuple[int, ...], ...]:
-    return tuple(combinations(range(dimension), degree))
-
-
-def _wedge_sign(left: tuple[int, ...], right: tuple[int, ...], /) -> int:
-    if set(left).intersection(right):
-        return 0
-    inversions = sum(left_axis > right_axis for left_axis in left for right_axis in right)
-    return -1 if inversions % 2 else 1
 
 
 class BigradedForm(StrictModule):
@@ -58,8 +47,8 @@ class BigradedForm(StrictModule):
         self.convention = convention
         self.p = p
         self.q = q
-        self.holomorphic_indices = _indices(dimension, p)
-        self.antiholomorphic_indices = _indices(dimension, q)
+        self.holomorphic_indices = exterior_indices(dimension, p)
+        self.antiholomorphic_indices = exterior_indices(dimension, q)
 
     @property
     def bidegree(self) -> tuple[int, int]:
@@ -80,8 +69,6 @@ class BigradedForm(StrictModule):
 
     def _coefficients_point(self, coordinates: Array, /) -> Array:
         values = jnp.asarray(self.coefficient_function(coordinates))
-        if self.coefficient_count == 1 and values.shape == ():
-            values = values[None]
         expected = (self.coefficient_count,)
         if values.shape != expected:
             raise ValueError(
@@ -110,8 +97,10 @@ class _DolbeaultCoefficients(StrictModule):
         output_q = form.q + 1 if antiholomorphic else form.q
         self.output_pairs = tuple(
             (holomorphic, antiholomorphic_index)
-            for holomorphic in _indices(form.convention.complex_dimension, output_p)
-            for antiholomorphic_index in _indices(
+            for holomorphic in exterior_indices(
+                form.convention.complex_dimension, output_p
+            )
+            for antiholomorphic_index in exterior_indices(
                 form.convention.complex_dimension, output_q
             )
         )
@@ -158,10 +147,10 @@ class _BigradedWedgeCoefficients(StrictModule):
         self.right = right
         self.output_pairs = tuple(
             (holomorphic, antiholomorphic)
-            for holomorphic in _indices(
+            for holomorphic in exterior_indices(
                 left.convention.complex_dimension, left.p + right.p
             )
-            for antiholomorphic in _indices(
+            for antiholomorphic in exterior_indices(
                 left.convention.complex_dimension, left.q + right.q
             )
         )
@@ -176,8 +165,8 @@ class _BigradedWedgeCoefficients(StrictModule):
         crossing = -1 if (self.left.q * self.right.p) % 2 else 1
         for left_position, (left_h, left_a) in enumerate(self.left.index_pairs):
             for right_position, (right_h, right_a) in enumerate(self.right.index_pairs):
-                holomorphic_sign = _wedge_sign(left_h, right_h)
-                antiholomorphic_sign = _wedge_sign(left_a, right_a)
+                holomorphic_sign = wedge_sign(left_h, right_h)
+                antiholomorphic_sign = wedge_sign(left_a, right_a)
                 sign = crossing * holomorphic_sign * antiholomorphic_sign
                 if sign == 0:
                     continue

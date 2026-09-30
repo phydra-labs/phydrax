@@ -56,8 +56,9 @@ total mass, external loss, exchange defect, and minimum concentration.
 ## Flow
 
 `TaylorHoodCSFFlowPlan` prepares the existing P2/P1 mixed Stokes operator with an
-explicit pressure gauge. `tetrahedral_rt_element` and
-`tetrahedral_bdm_element` add native tetrahedral H(div) reference families.
+explicit pressure gauge. Tetrahedral H(div) families use
+`form_element("tetrahedron", 2, order, family="trimmed" | "full",
+twist="twisted", proxy="flux")`, with trimmed/full selecting RT/BDM spaces.
 `HDivStokesPlan` uses the complete BDM₂/DG₁ pair: six degree-two normal-flux
 moments per face, six interior moments, contravariant Piola mapping, and
 discontinuous linear pressure.

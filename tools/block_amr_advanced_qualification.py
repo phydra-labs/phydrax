@@ -69,10 +69,10 @@ def qualify() -> dict[str, object]:
         compiled.topology.plan.levels[0].refinement_ratio,
         (256, 256, 256),
     )
-    commuting = all(
-        transfer.evidence.commuting_defect <= 1.0e-12
-        and transfer.evidence.roundtrip_defect <= 1.0e-12
-        for transfer in transfers.transfers
+    commuting = (
+        bool(transfers.evidence.valid)
+        and bool(jnp.all(transfers.evidence.commuting_defects <= 1.0e-12))
+        and all(transfer.roundtrip_defect <= 1.0e-12 for transfer in transfers.transfers)
     )
     ale = phx.discretization.VariablePatchALEPlan(
         geometry_plan,

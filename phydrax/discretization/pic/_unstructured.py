@@ -5,20 +5,21 @@
 from __future__ import annotations
 
 import math
+from typing import final, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
+    ArraySpace,
     ConjugateGradient,
-    DenseLinearOperator,
+    FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
@@ -28,6 +29,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...typing import AnyDim, Bool, Dim, Float, Int32, Scalar
 from .._simplicial_locator import CellLocationResult, PreparedSimplicialCellLocator
 from ..particle import ParticlePopulationState
 from ._charge_state import PICChargeModelPlan, PICChargeState
@@ -35,38 +37,63 @@ from ._method import PIC_CODE_RELATIVITY, RelativisticPushPlan
 from ._types import PICParticleState
 
 
+class ElectrostaticParticleDim(Dim):
+    pass
+
+
+class ElectrostaticVertexDim(Dim):
+    pass
+
+
+class ElectrostaticCellDim(Dim):
+    pass
+
+
+class ElectrostaticAmbientDim(Dim):
+    pass
+
+
+@final
 class UnstructuredElectrostaticPICState(StrictModule):
+    __strict_contract__ = True
+
     particles: PICParticleState
     population: ParticlePopulationState
     charge: PICChargeState
-    cell_ids: Array
-    barycentric: Array
-    nodal_charge: Array
-    potential: Array
-    electric: Array
-    time: Array
+    cell_ids: Int32[ElectrostaticParticleDim]
+    barycentric: Float[ElectrostaticParticleDim, AnyDim]
+    nodal_charge: Float[ElectrostaticVertexDim]
+    potential: Float[ElectrostaticVertexDim]
+    electric: Float[ElectrostaticParticleDim, Literal[3]]
+    time: Float[Scalar]
 
 
+@final
 class UnstructuredElectrostaticPICResult(StrictModule):
+    __strict_contract__ = True
+
     candidate_state: UnstructuredElectrostaticPICState
     accepted_state: UnstructuredElectrostaticPICState
     location: CellLocationResult
-    poisson_residual: Array
-    charge_balance_defect: Array
-    energy: Array
-    finite: Array
-    successful: Array
+    poisson_residual: Float[Scalar]
+    charge_balance_defect: Float[Scalar]
+    energy: Float[Scalar]
+    finite: Bool[Scalar]
+    successful: Bool[Scalar]
     plan_id: str = eqx.field(static=True)
 
 
+@final
 class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
+    __strict_contract__ = True
+
     locator: PreparedSimplicialCellLocator
     charge_model: PICChargeModelPlan
     pusher: RelativisticPushPlan
-    gradients: Array
-    cell_measures: Array
-    stiffness: Array
-    dirichlet_mask: Array
+    gradients: Float[ElectrostaticCellDim, AnyDim, ElectrostaticAmbientDim]
+    cell_measures: Float[ElectrostaticCellDim]
+    stiffness: FunctionLinearOperator
+    dirichlet_mask: Bool[ElectrostaticVertexDim]
     prepared_linear: PreparedLinearSolve
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -95,34 +122,39 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         cells = np.asarray(locator.cells, dtype=np.int32)
         coordinates = np.asarray(locator.coordinates, dtype=np.float64)
         dimension = locator.dimension
-        gradients = []
-        measures = []
+        gradients = locator.affine_gradients()
+        vertices = coordinates[cells]
+        jacobians = np.swapaxes(vertices[:, 1:] - vertices[:, :1], 1, 2)
+        measures = np.abs(np.linalg.det(jacobians)) / math.factorial(dimension)
         vertex_count = coordinates.shape[0]
-        stiffness = np.zeros((vertex_count, vertex_count), dtype=np.float64)
-        for cell in cells:
-            vertices = coordinates[cell]
-            jacobian = (vertices[1:] - vertices[0]).T
-            inverse = np.linalg.solve(
-                jacobian,
-                np.eye(dimension, dtype=jacobian.dtype),
-            )
-            local_gradients = np.concatenate(
-                (-np.sum(inverse, axis=0, keepdims=True), inverse), axis=0
-            )
-            measure = abs(np.linalg.det(jacobian)) / math.factorial(dimension)
-            local = epsilon * measure * (local_gradients @ local_gradients.T)
-            stiffness[np.ix_(cell, cell)] += local
-            gradients.append(local_gradients)
-            measures.append(measure)
+        cell_measures = jnp.asarray(measures)
+        local_stiffness = (
+            epsilon
+            * cell_measures[:, None, None]
+            * jnp.sum(gradients[:, :, None, :] * gradients[:, None, :, :], axis=-1)
+        )
         boundary = np.asarray(dirichlet_vertices, dtype=np.bool_)
         if boundary.shape != (vertex_count,) or not np.any(boundary):
             raise ValueError("At least one Dirichlet vertex is required.")
-        interior = ~boundary
-        modified = interior[:, None] * stiffness * interior[None, :] + np.diag(
-            boundary.astype("float64")
-        )
-        operator = DenseLinearOperator(
-            jnp.asarray(modified),
+        cell_indices = locator.cells
+        boundary_array = jnp.asarray(boundary)
+
+        def stiffness_action(potential: Array) -> Array:
+            values = jnp.where(boundary_array, 0.0, potential)[cell_indices]
+            local = jnp.sum(local_stiffness * values[:, None, :], axis=-1)
+            output = (
+                jnp.zeros_like(potential)
+                .at[cell_indices.reshape((-1,))]
+                .add(local.reshape((-1,)))
+            )
+            return jnp.where(boundary_array, potential, output)
+
+        space = ArraySpace((vertex_count,), dtype=jnp.float64)
+        operator = FunctionLinearOperator(
+            stiffness_action,
+            source=space,
+            target=space,
+            transpose_action=stiffness_action,
             properties=OperatorProperties(
                 self_adjoint=True,
                 positive_definite=True,
@@ -154,9 +186,9 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
             if pusher is None
             else pusher
         )
-        self.gradients = jnp.asarray(gradients)
-        self.cell_measures = jnp.asarray(measures)
-        self.stiffness = jnp.asarray(modified)
+        self.gradients = gradients
+        self.cell_measures = cell_measures
+        self.stiffness = operator
         self.dirichlet_mask = jnp.asarray(boundary)
         self.prepared_linear = prepared
         self.tolerance = float(tolerance)
@@ -196,7 +228,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         guess = jnp.zeros_like(rhs) if initial is None else jnp.asarray(initial)
         result = solve(self.prepared_linear, rhs, initial_guess=guess)
         potential = jnp.where(self.dirichlet_mask, 0.0, result.value)
-        residual = self.stiffness @ potential - rhs
+        residual = self.stiffness.mv(potential) - rhs
         return potential, residual, result
 
     def gather_electric(
@@ -289,7 +321,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         )
         balance = jnp.abs(jnp.sum(nodal) - jnp.sum(macrocharge))
         residual_norm = jnp.sqrt(jnp.sum(residual**2))
-        energy = 0.5 * potential @ (self.stiffness @ potential)
+        energy = 0.5 * potential @ self.stiffness.mv(potential)
         finite = jnp.all(jnp.isfinite(potential)) & jnp.all(
             jnp.isfinite(final.proper_velocity)
         )
@@ -310,12 +342,13 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(predicate: Array, candidate: PyTree, current: PyTree) -> PyTree:
+def jax_tree_where[T](predicate: Array, candidate: T, current: T) -> T:
     import jax
 
-    return jax.tree.map(
-        lambda proposed, old: jnp.where(predicate, proposed, old), candidate, current
-    )
+    def select(proposed: Array, old: Array) -> Array:
+        return jnp.where(predicate, proposed, old)
+
+    return jax.tree.map(select, candidate, current)
 
 
 __all__ = [

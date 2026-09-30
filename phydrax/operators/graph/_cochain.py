@@ -2,64 +2,60 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Metric cochain operators over graph-backed ``DomainFunction`` fields."""
+"""Cochain GraphIR algorithms bound to ``DomainFunction`` carriers."""
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Callable
+from typing import final
+
+import equinox as eqx
 
 from phydrax.domain import DomainFunction
-from phydrax.domain.graph import (
-    cochain_field_spec,
-    with_cochain_field_spec,
-)
+from phydrax.domain.graph import as_cochain_field, cochain_form_type, GraphModel
 
-from ...discretization import CochainBoundaryKind, CochainFieldSpec
-from ...domain.graph import GraphModel
-from ...graph import (
-    CochainCodifferential,
-    CochainExteriorDerivative,
-    CochainHarmonicProjection,
-    CochainHodgeLaplacian,
-    HodgeLaplacianComponent,
-)
+from ..._strict import StrictModule
+from ...exterior._complex import ComplexBoundary
+from ...exterior._form_type import FormType
+from ...graph._ir import GraphIR
+from ...linalg import HodgeLaplacianPart
 
 
 _INPUT_KEY = "_phydrax_cochain_input"
 _OUTPUT_KEY = "_phydrax_cochain_output"
 
 
-def _validate_primal_field(field: DomainFunction, /) -> CochainFieldSpec:
-    if not isinstance(field, DomainFunction):
-        raise TypeError("Cochain operators require a DomainFunction.")
-    spec = cochain_field_spec(field)
-    if spec.complex_side != "primal":
-        raise ValueError(
-            "Metric cochain DomainFunction operators currently support primal cochains only."
-        )
-    expected_orientation = "invariant" if spec.degree == 0 else "signed"
-    if spec.cell_orientation != expected_orientation:
-        raise ValueError(
-            f"Degree-{spec.degree} primal cochains require {expected_orientation!r} cell orientation semantics."
-        )
-    return spec
+@final
+class _TypedCochainOperator(StrictModule):
+    module: Callable[[GraphIR], GraphIR]
+    form_type: FormType = eqx.field(static=True)
 
+    def __init__(
+        self,
+        module: Callable[[GraphIR], GraphIR],
+        form_type: FormType,
+        /,
+    ) -> None:
+        self.module = module
+        self.form_type = form_type
 
-def _sampling_for_degree(degree: int) -> Literal["point_value", "cell_integral"]:
-    return "point_value" if int(degree) == 0 else "cell_integral"
+    def __call__(self, graph: GraphIR, /) -> GraphIR:
+        from ...graph._cochain_residual import _admit_form_type
+
+        return self.module(_admit_form_type(graph, self.form_type))
 
 
 def _bind_graph_module(
     field: DomainFunction,
-    module: object,
-    output_spec: CochainFieldSpec,
+    module: Callable[[GraphIR], GraphIR],
+    output_type: FormType,
     /,
 ) -> DomainFunction:
     result = DomainFunction(
         domain=field.domain,
         deps=field.deps,
         func=GraphModel(
-            module,
+            _TypedCochainOperator(module, cochain_form_type(field)),
             input_fn=field,
             input_key=_INPUT_KEY,
             output="nodes",
@@ -67,33 +63,28 @@ def _bind_graph_module(
         ),
         metadata=field.metadata,
     )
-    return with_cochain_field_spec(result, output_spec)
+    return as_cochain_field(result, output_type, representation="cochain")
 
 
 def cochain_exterior_derivative(
     field: DomainFunction,
     /,
     *,
-    boundary_policy: CochainBoundaryKind = "absolute",
+    boundary: ComplexBoundary = "absolute",
 ) -> DomainFunction:
-    """Apply the exact sparse exterior derivative ``d_k`` to a k-cochain field."""
-    spec = _validate_primal_field(field)
-    target_degree = spec.degree + 1
-    output_spec = CochainFieldSpec(
-        target_degree,
-        complex_side="primal",
-        cell_orientation="signed",
-        sampling=_sampling_for_degree(target_degree),
-    )
+    """Apply the exact differential to a graph-backed domain cochain field."""
+    from ...graph import CochainExteriorDerivative
+
+    form_type = cochain_form_type(field)
     return _bind_graph_module(
         field,
         CochainExteriorDerivative(
-            spec.degree,
+            form_type.degree,
             input_key=_INPUT_KEY,
             output_key=_OUTPUT_KEY,
-            boundary_policy=boundary_policy,
+            boundary=boundary,
         ),
-        output_spec,
+        form_type.exterior_derivative_type(),
     )
 
 
@@ -101,28 +92,21 @@ def cochain_codifferential(
     field: DomainFunction,
     /,
     *,
-    boundary_policy: CochainBoundaryKind = "absolute",
+    boundary: ComplexBoundary = "absolute",
 ) -> DomainFunction:
-    """Apply the exact metric codifferential ``delta_k`` to a k-cochain field."""
-    spec = _validate_primal_field(field)
-    if spec.degree == 0:
-        raise ValueError("The codifferential is undefined for degree-0 cochains.")
-    target_degree = spec.degree - 1
-    output_spec = CochainFieldSpec(
-        target_degree,
-        complex_side="primal",
-        cell_orientation="invariant" if target_degree == 0 else "signed",
-        sampling=_sampling_for_degree(target_degree),
-    )
+    """Apply the metric Hilbert adjoint to a domain cochain field."""
+    from ...graph import CochainCodifferential
+
+    form_type = cochain_form_type(field)
     return _bind_graph_module(
         field,
         CochainCodifferential(
-            spec.degree,
+            form_type.degree,
             input_key=_INPUT_KEY,
             output_key=_OUTPUT_KEY,
-            boundary_policy=boundary_policy,
+            boundary=boundary,
         ),
-        output_spec,
+        form_type.codifferential_type(),
     )
 
 
@@ -130,21 +114,23 @@ def cochain_hodge_laplacian(
     field: DomainFunction,
     /,
     *,
-    component: HodgeLaplacianComponent = "complete",
-    boundary_policy: CochainBoundaryKind = "absolute",
+    part: HodgeLaplacianPart = "complete",
+    boundary: ComplexBoundary = "absolute",
 ) -> DomainFunction:
-    """Apply the lower, upper, or complete metric Hodge Laplacian."""
-    spec = _validate_primal_field(field)
+    """Apply the metric Laplacian to a graph-backed domain cochain field."""
+    from ...graph import CochainHodgeLaplacian
+
+    form_type = cochain_form_type(field)
     return _bind_graph_module(
         field,
         CochainHodgeLaplacian(
-            spec.degree,
+            form_type.degree,
             input_key=_INPUT_KEY,
             output_key=_OUTPUT_KEY,
-            component=component,
-            boundary_policy=boundary_policy,
+            part=part,
+            boundary=boundary,
         ),
-        spec,
+        form_type,
     )
 
 
@@ -152,19 +138,21 @@ def cochain_harmonic_projection(
     field: DomainFunction,
     /,
     *,
-    boundary_policy: CochainBoundaryKind = "absolute",
+    boundary: ComplexBoundary = "absolute",
 ) -> DomainFunction:
-    """Project a cochain field onto the metric harmonic subspace."""
-    spec = _validate_primal_field(field)
+    """Bind the graph harmonic projection to a domain cochain field."""
+    from ...graph import CochainHarmonicProjection
+
+    form_type = cochain_form_type(field)
     return _bind_graph_module(
         field,
         CochainHarmonicProjection(
-            spec.degree,
+            form_type.degree,
             input_key=_INPUT_KEY,
             output_key=_OUTPUT_KEY,
-            boundary_policy=boundary_policy,
+            boundary=boundary,
         ),
-        spec,
+        form_type,
     )
 
 

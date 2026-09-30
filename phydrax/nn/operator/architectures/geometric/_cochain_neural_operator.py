@@ -10,7 +10,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from math import sqrt
-from typing import Any, ClassVar, Literal
+from typing import Any, assert_never, ClassVar, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax.nn as jnn
@@ -20,7 +20,9 @@ from jax import Array
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
-from phydrax.discretization import CochainBoundaryKind, CochainBoundaryPolicy
+from phydrax.exterior._complex import ComplexBoundary
+from phydrax.exterior._form_type import FormType
+from phydrax.graph._cochain_execution import _cochain_metric_valid
 from phydrax.graph._cochain_ops import (
     cochain_codifferential,
     cochain_exterior_derivative,
@@ -43,10 +45,19 @@ from phydrax.nn.operator.topology import (
     materialize_operator_fields,
 )
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-_ROUTE_ORDER = (
+_TopologicalRoute: TypeAlias = Literal[
+    "self",
+    "exterior_derivative",
+    "codifferential",
+    "lower_laplacian",
+    "upper_laplacian",
+    "harmonic",
+]
+
+_ROUTE_ORDER: tuple[_TopologicalRoute, ...] = (
     "self",
     "exterior_derivative",
     "codifferential",
@@ -69,19 +80,20 @@ def _channel_matrix(key: PRNGKey, in_channels: int, out_channels: int, /) -> Arr
 def _node_degree_mask(
     graph: GraphIR,
     degree: int,
-    boundary_policy: CochainBoundaryKind,
+    boundary: ComplexBoundary,
     /,
 ) -> Array:
     if not isinstance(graph.nodes, Mapping):
         raise ValueError("Cochain operators require named graph-node metadata.")
     mask = jnp.asarray(graph.nodes["cell_dim"]) == int(degree)
-    if boundary_policy == "relative":
+    if boundary == "relative":
         mask = mask & ~jnp.asarray(graph.nodes["boundary"], dtype=jnp.bool_)
     if graph.node_mask is not None:
         mask = mask & graph.node_mask
     return mask
 
 
+@final
 class TopologicalRouteConfig(StrictModule):
     """Static admissible routes for a rigid cochain operator block."""
 
@@ -122,7 +134,7 @@ class TopologicalRouteConfig(StrictModule):
         ) = values
 
     @property
-    def enabled_routes(self) -> tuple[str, ...]:
+    def enabled_routes(self) -> tuple[_TopologicalRoute, ...]:
         flags = (
             self.self_route,
             self.exterior_derivative,
@@ -136,6 +148,7 @@ class TopologicalRouteConfig(StrictModule):
         )
 
 
+@final
 class TopologicalCochainBlock(StrictModule):
     """One orientation-equivariant block with fixed DEC information routes.
 
@@ -147,9 +160,10 @@ class TopologicalCochainBlock(StrictModule):
     degree_embeddings: Array
     residual_scales: Array
     route_config: TopologicalRouteConfig = eqx.field(static=True)
-    route_names: tuple[str, ...] = eqx.field(static=True)
+    route_names: tuple[_TopologicalRoute, ...] = eqx.field(static=True)
     active_degrees: tuple[int, ...] = eqx.field(static=True)
-    boundary_policy: CochainBoundaryKind = eqx.field(static=True)
+    dimension: int = eqx.field(static=True)
+    boundary: ComplexBoundary = eqx.field(static=True)
     width: int = eqx.field(static=True)
     norm_epsilon: float = eqx.field(static=True)
 
@@ -159,24 +173,27 @@ class TopologicalCochainBlock(StrictModule):
         active_degrees: Sequence[int],
         /,
         *,
+        dimension: int,
         routes: TopologicalRouteConfig | None = None,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
         norm_epsilon: float = 1e-6,
         residual_scale: float = 0.25,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         resolved_width = int(width)
-        degrees = tuple(sorted({int(value) for value in active_degrees}))
+        degrees = tuple(sorted(set(active_degrees)))
         if resolved_width <= 0:
             raise ValueError("Topological cochain width must be positive.")
-        if not degrees or degrees[0] < 0:
-            raise ValueError("active_degrees must contain non-negative degrees.")
+        if not degrees:
+            raise ValueError("active_degrees must contain at least one degree.")
+        for degree in degrees:
+            FormType(dimension, degree)
         if float(norm_epsilon) <= 0.0:
             raise ValueError("norm_epsilon must be positive.")
         route_config = TopologicalRouteConfig() if routes is None else routes
         if not isinstance(route_config, TopologicalRouteConfig):
             raise TypeError("routes must be a TopologicalRouteConfig.")
-        policy = CochainBoundaryPolicy(boundary_policy)
+        policy = parse(boundary, ComplexBoundary, "boundary")
         route_names = route_config.enabled_routes
         self.route_weights = tuple(
             jnp.stack(
@@ -201,60 +218,76 @@ class TopologicalCochainBlock(StrictModule):
         self.route_config = route_config
         self.route_names = route_names
         self.active_degrees = degrees
-        self.boundary_policy = policy.kind
+        self.dimension = int(dimension)
+        self.boundary = policy
         self.width = resolved_width
         self.norm_epsilon = float(norm_epsilon)
 
+    def _route_is_admissible(self, name: _TopologicalRoute, degree: int, /) -> bool:
+        match name:
+            case "self" | "harmonic":
+                return True
+            case "exterior_derivative" | "lower_laplacian":
+                return degree > 0
+            case "codifferential" | "upper_laplacian":
+                return degree < self.dimension
+            case _:
+                assert_never(name)
+
     def _route(
         self,
-        name: str,
+        name: _TopologicalRoute,
         graph: GraphIR,
         hidden: Array,
         degree: int,
         /,
     ) -> Array:
+        name = parse(name, _TopologicalRoute, "route")
+        if not self._route_is_admissible(name, degree):
+            raise ValueError(
+                f"Topological route {name!r} is absent at degree {degree} "
+                f"in dimension {self.dimension}."
+            )
         if name == "self":
             return hidden
         if name == "exterior_derivative":
-            if degree == 0:
-                return jnp.zeros_like(hidden)
             return cochain_exterior_derivative(
                 graph,
                 hidden,
                 degree - 1,
-                boundary_policy=self.boundary_policy,
+                boundary=self.boundary,
             )
         if name == "codifferential":
             return cochain_codifferential(
                 graph,
                 hidden,
                 degree + 1,
-                boundary_policy=self.boundary_policy,
+                boundary=self.boundary,
             )
         if name == "lower_laplacian":
             return cochain_hodge_laplacian(
                 graph,
                 hidden,
                 degree,
-                component="lower",
-                boundary_policy=self.boundary_policy,
+                part="lower",
+                boundary=self.boundary,
             )
         if name == "upper_laplacian":
             return cochain_hodge_laplacian(
                 graph,
                 hidden,
                 degree,
-                component="upper",
-                boundary_policy=self.boundary_policy,
+                part="upper",
+                boundary=self.boundary,
             )
         if name == "harmonic":
             return cochain_harmonic_projection(
                 graph,
                 hidden,
                 degree,
-                boundary_policy=self.boundary_policy,
+                boundary=self.boundary,
             )
-        raise ValueError(f"Unknown topological route {name!r}.")
+        assert_never(name)
 
     def __call__(self, graph: GraphIR, hidden: Any, /) -> Array:
         values = jnp.asarray(hidden)
@@ -269,9 +302,11 @@ class TopologicalCochainBlock(StrictModule):
             raise ValueError("Topological hidden values must align with graph nodes.")
         output = jnp.zeros_like(values)
         for degree_index, degree in enumerate(self.active_degrees):
-            degree_mask = _node_degree_mask(graph, degree, self.boundary_policy)[:, None]
+            degree_mask = _node_degree_mask(graph, degree, self.boundary)[:, None]
             mixed = jnp.zeros_like(values)
             for route_index, route_name in enumerate(self.route_names):
+                if not self._route_is_admissible(route_name, degree):
+                    continue
                 routed = self._route(route_name, graph, values, degree)
                 mixed = mixed + routed @ self.route_weights[route_index][degree_index]
             rms = jnp.sqrt(
@@ -282,7 +317,11 @@ class TopologicalCochainBlock(StrictModule):
                 self.residual_scales[degree_index] * degree_gate * jnn.tanh(mixed / rms)
             )
             output = output + jnp.where(degree_mask, values + update, 0)
-        return output
+        return eqx.error_if(
+            output,
+            ~_cochain_metric_valid(graph.cochain_bindings),
+            "Native cochain pairing must remain finite and positive definite.",
+        )
 
 
 def _predict_cochain_operator(
@@ -295,8 +334,10 @@ def _predict_cochain_operator(
     fields = {}
     for name in model.target_names:
         field = model._field(name)
-        assert field.query_name is not None
-        assert field.output_spec is not None
+        if field.query_name is None or field.output_spec is None:
+            raise ValueError(
+                "Cochain prediction targets require query_name and output_spec."
+            )
         fields[name] = OperatorFieldBatch(
             values[name],
             query_name=field.query_name,
@@ -321,12 +362,13 @@ def _cochain_operator_contract(
     )
 
 
+@final
 class CochainNeuralOperator(AbstractOperatorModel):
     """Named multi-field neural operator over a shared metric cochain complex.
 
     All inter-cell communication is an exact sparse DEC route. Trainable maps
-    act only on channels at individual cells; signed incidence, Hodge stars,
-    boundary policy, and optional harmonic projectors remain runtime data.
+    act only on channels at individual cells; native differentials, full Riesz
+    maps, boundary policy, and harmonic evidence remain prepared runtime data.
     """
 
     operator_architecture = "CochainNeuralOperator"
@@ -342,7 +384,7 @@ class CochainNeuralOperator(AbstractOperatorModel):
     target_names: tuple[str, ...] = eqx.field(static=True)
     active_degrees: tuple[int, ...] = eqx.field(static=True)
     default_target: str = eqx.field(static=True)
-    boundary_policy: CochainBoundaryKind = eqx.field(static=True)
+    boundary: ComplexBoundary = eqx.field(static=True)
     routes: TopologicalRouteConfig = eqx.field(static=True)
     width: int = eqx.field(static=True)
     depth: int = eqx.field(static=True)
@@ -358,7 +400,7 @@ class CochainNeuralOperator(AbstractOperatorModel):
         width: int = 64,
         depth: int = 4,
         routes: TopologicalRouteConfig | None = None,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
         default_target: str | None = None,
         norm_epsilon: float = 1e-6,
         key: PRNGKey = DOC_KEY0,
@@ -368,35 +410,47 @@ class CochainNeuralOperator(AbstractOperatorModel):
             raise TypeError("CochainNeuralOperator requires OperatorFieldSpec fields.")
         if len({field.name for field in specs}) != len(specs):
             raise ValueError("Cochain operator field names must be unique.")
-        if any(field.cochain is None for field in specs):
-            raise ValueError("Every cochain operator field requires cochain semantics.")
         if any(
-            field.cochain.complex_side != "primal" for field in specs if field.cochain
+            field.form_type is None or field.representation != "cochain"
+            for field in specs
         ):
             raise ValueError(
-                "The initial cochain operator supports primal cochains only."
+                "Every cochain operator field requires form_type and cochain representation."
             )
+        dimensions = {
+            (field.form_type.dimension, field.form_type.ambient_dimension)
+            for field in specs
+            if field.form_type is not None
+        }
+        if len(dimensions) != 1:
+            raise ValueError("Cochain operator fields must share one form dimension.")
         sources = tuple(field.name for field in specs if field.is_source)
         targets = tuple(field.name for field in specs if field.is_target)
         if not sources or not targets:
             raise ValueError("CochainNeuralOperator requires source and target fields.")
         for field in specs:
             if field.is_target:
-                assert field.output_spec is not None
+                if field.output_spec is None:
+                    raise ValueError("Target fields require an output_spec.")
                 if _get_size(field.output_spec.channels) != field.channel_count:
                     raise ValueError(
                         "Target output channels must match the cochain field channels."
                     )
         inferred_degrees = tuple(
-            sorted({field.cochain.degree for field in specs if field.cochain is not None})
+            sorted(
+                {field.form_type.degree for field in specs if field.form_type is not None}
+            )
         )
         degrees = (
             inferred_degrees
             if active_degrees is None
-            else tuple(sorted({int(value) for value in active_degrees}))
+            else tuple(sorted(set(active_degrees)))
         )
-        if not degrees or degrees[0] < 0 or not set(inferred_degrees).issubset(degrees):
+        if not degrees or not set(inferred_degrees).issubset(degrees):
             raise ValueError("active_degrees must include every configured field degree.")
+        dimension = next(iter(dimensions))[0]
+        for degree in degrees:
+            FormType(dimension, degree)
         resolved_width = int(width)
         resolved_depth = int(depth)
         if resolved_width <= 0 or resolved_depth <= 0:
@@ -404,7 +458,7 @@ class CochainNeuralOperator(AbstractOperatorModel):
         route_config = TopologicalRouteConfig() if routes is None else routes
         if not isinstance(route_config, TopologicalRouteConfig):
             raise TypeError("routes must be a TopologicalRouteConfig.")
-        policy = CochainBoundaryPolicy(boundary_policy)
+        policy = parse(boundary, ComplexBoundary, "boundary")
         chosen_target = targets[0] if default_target is None else str(default_target)
         if chosen_target not in targets:
             raise ValueError("default_target must name a configured target field.")
@@ -414,13 +468,14 @@ class CochainNeuralOperator(AbstractOperatorModel):
         self.target_names = targets
         self.active_degrees = degrees
         self.default_target = chosen_target
-        self.boundary_policy = policy.kind
+        self.boundary = policy
         self.routes = route_config
         self.width = resolved_width
         self.depth = resolved_depth
         self.in_size = tuple(self._field(name).channel_count for name in sources)
         default_spec = self._field(chosen_target).output_spec
-        assert default_spec is not None
+        if default_spec is None:
+            raise ValueError("The default target requires an output_spec.")
         self.out_size = default_spec.channels
         self.source_encoders = tuple(
             _channel_matrix(
@@ -434,8 +489,9 @@ class CochainNeuralOperator(AbstractOperatorModel):
             TopologicalCochainBlock(
                 resolved_width,
                 degrees,
+                dimension=dimension,
                 routes=route_config,
-                boundary_policy=policy.kind,
+                boundary=policy,
                 norm_epsilon=norm_epsilon,
                 residual_scale=1.0 / sqrt(float(resolved_depth)),
                 key=_named_key(key, f"block:{index}"),
@@ -468,13 +524,14 @@ class CochainNeuralOperator(AbstractOperatorModel):
         hidden = jnp.zeros((node_count, self.width), dtype=jnp.float64)
         for name, encoder in zip(self.source_names, self.source_encoders, strict=True):
             field = self._field(name)
-            assert field.cochain is not None
+            if field.form_type is None:
+                raise ValueError("Cochain source fields require a form_type.")
             values = jnp.asarray(graph.nodes[f"field:{name}"])
             if values.ndim == 1:
                 values = values[:, None]
-            degree_mask = _node_degree_mask(
-                graph, field.cochain.degree, self.boundary_policy
-            )[:, None]
+            degree_mask = _node_degree_mask(graph, field.form_type.degree, self.boundary)[
+                :, None
+            ]
             hidden = hidden + jnp.where(degree_mask, values @ encoder, 0)
         return hidden
 
@@ -488,25 +545,32 @@ class CochainNeuralOperator(AbstractOperatorModel):
         del key
         if not isinstance(batch, OperatorBatch):
             raise TypeError("CochainNeuralOperator requires an OperatorBatch.")
+        from phydrax.graph._cochain_residual import _admit_form_type
+
         graph = materialize_operator_fields(batch, self.fields)
+        for field in self.fields:
+            if field.form_type is None:
+                raise ValueError("Cochain fields require a form_type.")
+            graph = _admit_form_type(graph, field.form_type)
         if self.routes.harmonic and (
             not isinstance(graph.nodes, Mapping) or "harmonic_basis" not in graph.nodes
         ):
             raise ValueError(
                 "The harmonic route requires a precomputed HarmonicSubspace on the topology."
             )
+        metric_valid = _cochain_metric_valid(graph.cochain_bindings)
         hidden = self._encode(graph)
         for block in self.blocks:
             hidden = block(graph, hidden)
         outputs: dict[str, Array] = {}
         for name, decoder in zip(self.target_names, self.target_decoders, strict=True):
             field = self._field(name)
-            assert field.cochain is not None
-            assert field.query_name is not None
+            if field.form_type is None or field.query_name is None:
+                raise ValueError("Cochain targets require form_type and query_name.")
             query = batch.query(field.query_name)
-            degree_mask = _node_degree_mask(
-                graph, field.cochain.degree, self.boundary_policy
-            )[:, None]
+            degree_mask = _node_degree_mask(graph, field.form_type.degree, self.boundary)[
+                :, None
+            ]
             node_values = jnp.where(degree_mask, hidden @ decoder, 0)
             gathered = jnp.asarray(
                 gather_operator_graph_entities(
@@ -517,7 +581,11 @@ class CochainNeuralOperator(AbstractOperatorModel):
             )
             if field.channels == "scalar":
                 gathered = gathered[..., 0]
-            outputs[name] = gathered
+            outputs[name] = eqx.error_if(
+                gathered,
+                ~metric_valid,
+                "Native cochain pairing must remain finite and positive definite.",
+            )
         return outputs
 
     def __call_operator_batch__(

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax
@@ -27,7 +27,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import AbstractFixedStepMethod, FixedStepResult
 from ...solver._mac_ale import MACALEStageGeometry
-from ._free_surface_ale import FaceTuple
+from ._free_surface_ale import FaceTuple, MappedHodgeSolveResult
 from ._free_surface_step import (
     FreeSurfaceALEContinuationState,
     OnePhaseFreeSurfaceALEMethod,
@@ -69,6 +69,7 @@ class MappedMarkerTransferEvidence(StrictModule):
     transfer_id: str = eqx.field(static=True)
 
 
+@final
 class BodyCouplingEvidence(StrictModule):
     constraint_residual: Array
     force: Array
@@ -78,6 +79,7 @@ class BodyCouplingEvidence(StrictModule):
     modal_work: Array
     power_defect: Array
     viscous_dissipation: Array
+    hodge_result: MappedHodgeSolveResult
     finite: Array
     converged: Array
     successful: Array
@@ -438,11 +440,12 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             + self.modal_basis @ body.modal_velocity
         )
         slip = gather_linearization.primal - body_normal_velocity
+        fluid_pairing = hydrodynamics.surface.hodge_pairing(geometry)
 
         def fluid_response(multiplier: Array) -> Array:
             covector = gather_linearization.vjp(multiplier)
-            inverse = hydrodynamics.surface.inverse_hodge(geometry, covector)
-            return gather(inverse.velocity)
+            inverse = fluid_pairing.inverse_riesz(covector)
+            return gather(geometry.validate_velocity(inverse))
 
         marker_count = markers.shape[0]
         space = la.ArraySpace((marker_count,), dtype=markers.dtype)
@@ -492,9 +495,10 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             value - correction
             for value, correction in zip(momentum, fluid_covector, strict=True)
         )
-        corrected_velocity = hydrodynamics.surface.inverse_hodge(
+        corrected_hodge = hydrodynamics.surface.inverse_hodge(
             geometry, corrected_momentum
-        ).velocity
+        )
+        corrected_velocity = corrected_hodge.velocity
         body_impulse = body_map.T @ multiplier
         twist = (
             jnp.concatenate((body.rigid.linear_velocity, body.rigid.angular_velocity))
@@ -531,6 +535,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         power_defect = fluid_work + body_work + modal_work
         finite = (
             linear_result.successful
+            & corrected_hodge.successful
             & jnp.all(jnp.isfinite(multiplier))
             & jnp.all(jnp.isfinite(residual))
             & jnp.isfinite(power_defect)
@@ -547,6 +552,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             modal_work=modal_work,
             power_defect=power_defect,
             viscous_dissipation=viscous_dissipation,
+            hodge_result=corrected_hodge,
             finite=finite,
             converged=converged,
             successful=finite & converged,

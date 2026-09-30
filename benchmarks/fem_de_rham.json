@@ -1,0 +1,167 @@
+{
+  "benchmark": "fem-de-rham",
+  "cases": [
+    {
+      "assembly_seconds": 13.994169625,
+      "cell_capacity": 2,
+      "compilation": {
+        "compilation_seconds": 0.106140083,
+        "lowering_seconds": 0.840615083
+      },
+      "compiler": {
+        "argument_bytes": 959,
+        "bytes_accessed": 7061,
+        "flops": 1121,
+        "generated_code_bytes": 0,
+        "output_bytes": 40,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 2888,
+        "unavailable_reason": null
+      },
+      "degree_one_dofs": 5,
+      "dense_reference": {
+        "assembly_seconds": 0.262397125,
+        "evaluated": true,
+        "maximum_admitted_dofs": 512,
+        "retained_bytes": 200,
+        "solution_relative_error": 1.395335007598736e-16,
+        "solve_seconds": 0.043037791
+      },
+      "errors": {
+        "initial_solve_relative_residual": 2.2974478008138056e-16,
+        "nilpotency_absolute_error": 1.6653345369377348e-16,
+        "updated_solve_relative_residual": 2.004440300833515e-16
+      },
+      "estimated_device_memory_bytes": 3887,
+      "first_execution_seconds": 0.003381417,
+      "mesh_subdivisions": 1,
+      "polynomial_order": 1,
+      "prepared_execution": {
+        "count": 2,
+        "max_seconds": 0.002922708,
+        "mean_seconds": 0.002656479,
+        "median_seconds": 0.002656479,
+        "min_seconds": 0.00239025,
+        "samples_seconds": [
+          0.002922708,
+          0.00239025
+        ],
+        "std_seconds": 0.000266229
+      },
+      "retained_complex_bytes": 10215,
+      "successful": true
+    },
+    {
+      "assembly_seconds": 12.785879125,
+      "cell_capacity": 8,
+      "compilation": {
+        "compilation_seconds": 0.120762208,
+        "lowering_seconds": 0.435893583
+      },
+      "compiler": {
+        "argument_bytes": 3532,
+        "bytes_accessed": 22939,
+        "flops": 3817,
+        "generated_code_bytes": 0,
+        "output_bytes": 128,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 4296,
+        "unavailable_reason": null
+      },
+      "degree_one_dofs": 16,
+      "dense_reference": {
+        "assembly_seconds": 0.277360166,
+        "evaluated": true,
+        "maximum_admitted_dofs": 512,
+        "retained_bytes": 2048,
+        "solution_relative_error": 1.1202978298638862e-16,
+        "solve_seconds": 0.055809125
+      },
+      "errors": {
+        "initial_solve_relative_residual": 1.2518474594341673e-16,
+        "nilpotency_absolute_error": 5.551115123125783e-17,
+        "updated_solve_relative_residual": 1.5350311100820973e-16
+      },
+      "estimated_device_memory_bytes": 7956,
+      "first_execution_seconds": 0.003009667,
+      "mesh_subdivisions": 2,
+      "polynomial_order": 1,
+      "prepared_execution": {
+        "count": 2,
+        "max_seconds": 0.002986166,
+        "mean_seconds": 0.0026917495,
+        "median_seconds": 0.0026917495,
+        "min_seconds": 0.002397333,
+        "samples_seconds": [
+          0.002986166,
+          0.002397333
+        ],
+        "std_seconds": 0.0002944165
+      },
+      "retained_complex_bytes": 31992,
+      "successful": true
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "ac0f0c9ef9ef2d90cf51151e278ffc870ff2893553db9c902d8cb6a1b83a2b7a",
+    "evidence_schema": {
+      "fields": [
+        "assembly_seconds",
+        "cell_capacity",
+        "compilation",
+        "compiler",
+        "degree_one_dofs",
+        "dense_reference",
+        "errors",
+        "estimated_device_memory_bytes",
+        "first_execution_seconds",
+        "mesh_subdivisions",
+        "polynomial_order",
+        "prepared_execution",
+        "retained_complex_bytes",
+        "successful"
+      ],
+      "signature": "0d86494f920ce8b104114ac7e688620260ca35d802fb5245c207a726515234db"
+    },
+    "fingerprint": "ce2227637816d902ca93150a9f73489bc294ff5c1511c21c0c5fef2085b1a3b8",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2"
+  },
+  "successful": true
+}

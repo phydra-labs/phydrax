@@ -1140,7 +1140,9 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         dof_map = discretization.dof_maps[field_index]
         if (
             any(
-                element.conformity != "L2" or element.representation != "point_value"
+                element.continuity != "discontinuous"
+                or element.value_spec.form_type.degree != 0
+                or element.representation != "point_value"
                 for element in elements
             )
             or dof_map.association != "cell"

@@ -396,6 +396,12 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
     ) -> None:
         if not isinstance(plan, SpectralDecomposition):
             raise TypeError("plan must be a SpectralDecomposition.")
+        weights = plan.quadrature_weights
+        if weights is None:
+            raise ValueError(
+                "EigenbasisDiscretization requires a pointwise quadrature measure; "
+                "an operator Gram spectrum is not a point-value discretization."
+            )
         fields = tuple(str(name) for name in field_names)
         if (
             not fields
@@ -417,10 +423,10 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
             "spectral",
             support.support_id,
             points.entity_set_id,
-            plan.quadrature_weights,
+            weights,
             normalization="physical",
         )
-        pairing = DiagonalPairing(plan.quadrature_weights)
+        pairing = DiagonalPairing(weights)
         layout = TensorDofLayout(("point",), (plan.num_points,))
         spaces = tuple(
             DiscreteFieldSpace(
@@ -473,7 +479,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
             "spectral-spatial",
             plan.decomposition_id,
             plan.eigenvalues,
-            plan.quadrature_weights,
+            weights,
         )
         self.plan = plan
         self.key = key_
@@ -494,7 +500,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
 
     @property
     def quadrature_weights(self) -> Array:
-        return self.plan.quadrature_weights
+        return self.plan.probability_measure
 
     @property
     def discretization_id(self) -> str:

@@ -133,6 +133,31 @@ refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow
 through the same preconditioner plan/prepare/refresh provenance as deterministic
 builders.
 
+### Exterior calculus: scientific types and realizations
+
+`phydrax.exterior.FormType` and `FormValueSpec` declare degree, twist, fiber,
+ambient dimension and physical proxy independently of the value carrier.
+Chart/domain forms use one lexicographic algebra kernel with an always-present
+component axis. Smooth Hodge star flips twist without an orientation argument;
+orientation conversion is explicit.
+
+Discrete realizations expose `hilbert_complex(boundary=...)`; native
+`HilbertComplex` and `ComplexMap` own degree spaces/operators and commuting maps.
+Metric Hodges remain separate from constitutive weighted forms. Relative boundary
+uses the restricted pairing inverse and excludes inactive coordinates from
+harmonics/spectra. FE, spline, Fourier and sphere realizations compose existing
+native owners rather than graph-private algebra.
+
+Prepared de Rham/Whitney integration, facet-split trajectories, outward traces,
+topology-owned cup diagonals and coefficient-system transport share scientific
+realization identities. Forms-aware PDE IR and Hodge–Laplace/cavity recipes retain
+solver and residual evidence. Matching Maxwell FEM–BEM constructs actual trace,
+BC dual conormal and boundary operators; caller-built periodic coupling remains
+a separately bounded envelope.
+See [Exterior calculus](guides_exterior_calculus.md) and
+[API → Exterior](api/exterior/index.md).
+
+
 ### Discretization: supports, field spaces, and formulations
 
 `phydrax.discretization` binds labeled continuum semantics to finite topology,

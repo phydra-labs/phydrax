@@ -69,6 +69,7 @@ from ._cylindrical_hankel import (
     SharedGridHankelOffset,
     SharedGridHankelPlan,
 )
+from ._de_rham import FourierDeRhamComplex, FourierNyquistPolicy
 from ._dealias import (
     AbstractDealiasingPlan,
     DealiasingKind,
@@ -183,6 +184,7 @@ from ._spherical_algebra import (
     SphericalClebschGordanReport,
     SphericalRotationPlan,
 )
+from ._spherical_de_rham import SphericalDeRhamComplex
 from ._spherical_layout import SphericalModeLayout
 from ._spherical_operators import (
     PreparedSphericalSpinOperator,
@@ -243,6 +245,8 @@ __all__ = [
     "BrillouinZonePlan",
     "DealiasingReport",
     "FourierBasisPlan",
+    "FourierDeRhamComplex",
+    "FourierNyquistPolicy",
     "FourierLaguerrePlan",
     "HermitianSpectralCoordinates",
     "IncompressibleSpectralDiagnostics",
@@ -301,6 +305,7 @@ __all__ = [
     "SphericalClebschGordanReport",
     "SphericalCoordinate",
     "SphericalCoordinateDerivativeResult",
+    "SphericalDeRhamComplex",
     "SphericalDerivativeRepresentation",
     "SphericalExecution",
     "SphericalHarmonicPlan",

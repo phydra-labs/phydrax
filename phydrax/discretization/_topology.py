@@ -358,16 +358,13 @@ class OrientedIncidence(StrictModule, NonTrainableState):
             raise ValueError("Active incidence signs must be ±1.")
         source = np.asarray(relation.source_indices)[valid]
         target = np.asarray(relation.target_indices)[valid]
-        pairs = np.stack((source, target), axis=1)
-        if _has_duplicate_rows(pairs):
-            raise ValueError("Active incidence pairs must be unique.")
         lower_ids = np.asarray(lower.entity_ids, dtype=np.int64)[source]
         upper_ids = np.asarray(upper.entity_ids, dtype=np.int64)[target]
         canonical_incidence = np.stack(
             (lower_ids, upper_ids, active_coefficients.astype(np.int64)),
             axis=1,
         )
-        # Unique pairs make every lexicographic row order the same order.
+        # Preserve attaching-face multiplicity, including repeated signed routes.
         canonical_incidence = canonical_incidence[_row_order(canonical_incidence)]
         self.degree = degree_
         self.lower_entity_set_id = lower.entity_set_id

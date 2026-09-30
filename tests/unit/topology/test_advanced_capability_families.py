@@ -2,8 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from jax.typing import ArrayLike
 
 import phydrax as phx
 
@@ -127,6 +131,8 @@ def test_advanced_capability_families_scenario_2() -> None:
         jnp.asarray([2]),
         diagonal,
         coefficients=phx.topology.PrimeField(3),
+        left_topology_id=interval.topology.topology_id,
+        right_topology_id=interval.topology.topology_id,
     )
     assert jnp.array_equal(product, jnp.asarray([2]))
 
@@ -145,6 +151,8 @@ def test_advanced_capability_families_scenario_2() -> None:
         jnp.asarray([2, 1]),
         empty_diagonal,
         coefficients=phx.topology.PrimeField(3),
+        left_topology_id=interval.topology.topology_id,
+        right_topology_id=interval.topology.topology_id,
     )
     assert jnp.array_equal(zero_product, jnp.zeros((2,), dtype=jnp.int32))
     with pytest.raises(ValueError, match="Left cochain length"):
@@ -153,6 +161,8 @@ def test_advanced_capability_families_scenario_2() -> None:
             jnp.asarray([2, 1]),
             empty_diagonal,
             coefficients=phx.topology.PrimeField(3),
+            left_topology_id=interval.topology.topology_id,
+            right_topology_id=interval.topology.topology_id,
         )
 
     sheaf = phx.topology.CellularSheaf(
@@ -175,7 +185,7 @@ def test_advanced_capability_families_scenario_2() -> None:
     restrictions = [jnp.ones((1, 1), dtype="int64") for _ in range(9)]
     restrictions[0] = jnp.zeros((1, 1), dtype="int64")
 
-    with pytest.raises(ValueError, match="incompatible restriction routes"):
+    with pytest.raises(ValueError, match="nonzero consecutive coboundary"):
         phx.topology.CellularSheaf(
             triangle.topology,
             dimensions,
@@ -271,3 +281,176 @@ def test_advanced_capability_families_scenario_3() -> None:
     assert bool(result.convergence_certified)
     assert jnp.array_equal(result.page_dimensions[0], result.page_dimensions[1])
     assert jnp.sum(result.differential_ranks) == 0
+
+
+@pytest.mark.parametrize(
+    "builder",
+    (
+        phx.topology.vietoris_rips_complex,
+        phx.topology.cech_complex,
+        phx.topology.alpha_complex,
+    ),
+)
+def test_point_cloud_identity_includes_content_and_filtration(
+    builder: Callable[[ArrayLike, float], phx.topology.PointCloudComplexResult],
+) -> None:
+    points = np.asarray([[0.0, 0.0], [1.0, 0.0], [0.2, 0.8]], dtype=np.float64)
+    original = builder(points, 1.7)
+    identical = builder(points.copy(), 1.7)
+    translated = builder(points + np.asarray([2.0, -3.0]), 1.7)
+    changed_radius = builder(points, 1.8)
+    assert original.topology.topology_id == identical.topology.topology_id
+    assert original.topology.topology_id != translated.topology.topology_id
+    assert original.topology.topology_id != changed_radius.topology.topology_id
+
+
+def test_cup_large_prime_matches_python_integer_oracle() -> None:
+    prime = 2_147_483_629
+    interval = phx.topology.vietoris_rips_complex(
+        np.asarray([[0.0], [1.0]], dtype=np.float64), 1.1
+    )
+    topology = interval.topology
+    coefficient_values = np.asarray(
+        [prime - 1, prime - 2, -7, 1_073_741_824, -prime + 3], dtype=np.int64
+    )
+    left = np.asarray([prime - 2, -prime - 5], dtype=np.int64)
+    right = np.asarray([prime - 3, 2 * prime - 1], dtype=np.int64)
+    left_cells = np.asarray([0, 1, 0, 1, 0], dtype=np.int32)
+    right_cells = np.asarray([1, 0, 0, 1, 1], dtype=np.int32)
+    source_cells = np.asarray([0, 0, 1, 1, 0], dtype=np.int32)
+    diagonal = phx.topology.CellDiagonalApproximation(
+        topology, 0, 0, 0, source_cells, left_cells, right_cells, coefficient_values
+    )
+    expected = [0, 0]
+    for source, a, b, c in zip(
+        source_cells, left_cells, right_cells, coefficient_values, strict=True
+    ):
+        expected[int(source)] = (
+            expected[int(source)] + int(c) * int(left[a]) * int(right[b])
+        ) % prime
+    result = phx.topology.cup_product(
+        left,
+        right,
+        diagonal,
+        coefficients=phx.topology.PrimeField(prime),
+        left_topology_id=topology.topology_id,
+        right_topology_id=topology.topology_id,
+    )
+    np.testing.assert_array_equal(result, np.asarray(expected, dtype=np.int32))
+
+
+def test_cup_refuses_equal_size_distinct_topologies() -> None:
+    first = phx.topology.vietoris_rips_complex(
+        np.asarray([[0.0], [1.0]], dtype=np.float64), 1.1
+    )
+    second = phx.topology.vietoris_rips_complex(
+        np.asarray([[2.0], [3.0]], dtype=np.float64), 1.1
+    )
+    diagonal = phx.topology.CellDiagonalApproximation(
+        first.topology,
+        0,
+        0,
+        0,
+        np.asarray([0]),
+        np.asarray([0]),
+        np.asarray([0]),
+        np.asarray([1]),
+    )
+    for left_id, right_id in (
+        (first.topology.topology_id, second.topology.topology_id),
+        (second.topology.topology_id, second.topology.topology_id),
+    ):
+        with pytest.raises(ValueError, match="topology_id"):
+            phx.topology.cup_product(
+                np.asarray([1, 2]),
+                np.asarray([3, 4]),
+                diagonal,
+                coefficients=phx.topology.PrimeField(5),
+                left_topology_id=left_id,
+                right_topology_id=right_id,
+            )
+
+
+def test_one_vertex_circle_preserves_each_restriction_occurrence() -> None:
+    vertices = phx.discretization.EntitySet("circle:vertices", 0, np.asarray([0]))
+    edges = phx.discretization.EntitySet("circle:edges", 1, np.asarray([0]))
+    incidence = phx.discretization.OrientedIncidence(
+        1,
+        vertices,
+        edges,
+        phx.sparse.EdgeRelation(
+            np.asarray([0, 0]),
+            np.asarray([0, 0]),
+            source_size=1,
+            target_size=1,
+        ),
+        np.asarray([-1, 1], dtype=np.int32),
+    )
+    topology = phx.discretization.CellComplexTopology((vertices, edges), (incidence,))
+    stalks = (np.asarray([1]), np.asarray([1]))
+    constant = phx.topology.CellularSheaf(
+        topology,
+        stalks,
+        (np.asarray([[1]]), np.asarray([[1]])),
+        field=phx.topology.PrimeField(5),
+    )
+    monodromy = phx.topology.CellularSheaf(
+        topology,
+        stalks,
+        (np.asarray([[1]]), np.asarray([[2]])),
+        field=phx.topology.PrimeField(5),
+    )
+    np.testing.assert_array_equal(constant.cohomology_dimensions(), np.asarray([1, 1]))
+    np.testing.assert_array_equal(monodromy.cohomology_dimensions(), np.asarray([0, 0]))
+
+
+def test_klein_bottle_route_orientation_system_has_top_cohomology() -> None:
+    vertices = phx.discretization.EntitySet("klein:v", 0, np.asarray([0]))
+    edges = phx.discretization.EntitySet("klein:e", 1, np.asarray([0, 1]))
+    faces = phx.discretization.EntitySet("klein:f", 2, np.asarray([0]))
+    vertex_edge = phx.discretization.OrientedIncidence(
+        1,
+        vertices,
+        edges,
+        phx.sparse.EdgeRelation(
+            np.asarray([0, 0, 0, 0]),
+            np.asarray([0, 0, 1, 1]),
+            source_size=1,
+            target_size=2,
+        ),
+        np.asarray([-1, 1, -1, 1]),
+    )
+    # The attaching word a b a^-1 b reverses orientation along a.
+    edge_face = phx.discretization.OrientedIncidence(
+        2,
+        edges,
+        faces,
+        phx.sparse.EdgeRelation(
+            np.asarray([0, 1, 0, 1]),
+            np.asarray([0, 0, 0, 0]),
+            source_size=2,
+            target_size=1,
+        ),
+        np.asarray([1, 1, -1, 1]),
+    )
+    topology = phx.discretization.CellComplexTopology(
+        (vertices, edges, faces), (vertex_edge, edge_face)
+    )
+    stalks = (np.asarray([1]), np.asarray([1, 1]), np.asarray([1]))
+    field = phx.topology.PrimeField(5)
+    constant = phx.topology.CellularSheaf(
+        topology,
+        stalks,
+        tuple(np.asarray([[1]]) for _ in range(8)),
+        field=field,
+    )
+    orientation = phx.topology.CellularSheaf(
+        topology,
+        stalks,
+        tuple(np.asarray([[value]]) for value in (1, -1, 1, 1, 1, 1, 1, -1)),
+        field=field,
+    )
+    np.testing.assert_array_equal(constant.cohomology_dimensions(), np.asarray([1, 1, 0]))
+    np.testing.assert_array_equal(
+        orientation.cohomology_dimensions(), np.asarray([0, 1, 1])
+    )

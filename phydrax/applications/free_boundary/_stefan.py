@@ -15,6 +15,8 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
@@ -640,7 +642,7 @@ def fit_stefan_pinn(
         raise ValueError("steps must be nonnegative.")
     if not callable(loss):
         raise TypeError("loss must be callable.")
-    transformation = optax.adam(1.0e-3) if optimizer is None else optimizer
+    transformation = adam(1.0e-3) if optimizer is None else optimizer
     kernel = prepare_training_kernel(
         model,
         (

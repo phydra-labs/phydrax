@@ -49,7 +49,7 @@ from ._finite_feature import (
     kernel_feature_rank,
     kernel_features,
 )
-from ._hodge import CochainHodgeSpectralKernel
+from ._hodge import HodgeSpectralKernel
 from ._linear import LinearKernel
 from ._noncompact import (
     hyperbolic_feature_proposal,
@@ -110,7 +110,7 @@ __all__ = [
     "CARMAKernel",
     "ExactQuantumStateFidelityKernel",
     "FiniteFeatureKernel",
-    "CochainHodgeSpectralKernel",
+    "HodgeSpectralKernel",
     "kernel_feature_rank",
     "kernel_features",
     "GrassmannSpectralKernel",

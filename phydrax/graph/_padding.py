@@ -150,9 +150,24 @@ def pad_with_graphs(
         globals=_pad_tree_leading(graph.globals, pad_n_graph),
         n_node=n_node_out,
         n_edge=n_edge_out,
-        node_mask=jnp.arange(n_node, dtype=jnp.int32) < num_nodes,
-        edge_mask=jnp.arange(n_edge, dtype=jnp.int32) < num_edges,
+        node_mask=jnp.concatenate(
+            (
+                jnp.ones((num_nodes,), dtype=jnp.bool_)
+                if graph.node_mask is None
+                else graph.node_mask,
+                jnp.zeros((pad_n_node,), dtype=jnp.bool_),
+            )
+        ),
+        edge_mask=jnp.concatenate(
+            (
+                jnp.ones((num_edges,), dtype=jnp.bool_)
+                if graph.edge_mask is None
+                else graph.edge_mask,
+                jnp.zeros((pad_n_edge,), dtype=jnp.bool_),
+            )
+        ),
         graph_mask=jnp.arange(n_graph, dtype=jnp.int32) < num_graphs,
+        cochain_bindings=graph.cochain_bindings,
         validate=True,
     )
     return out
@@ -174,25 +189,23 @@ def get_number_of_padding_with_graphs_graphs(padded_graph: GraphIR) -> int:
 
 
 def get_number_of_padding_with_graphs_nodes(padded_graph: GraphIR) -> int:
-    if padded_graph.node_mask is not None:
-        node_mask = np.asarray(padded_graph.node_mask, dtype=np.bool_)
-        return int(node_mask.shape[0] - node_mask.sum())
-
     n_padding_graph = get_number_of_padding_with_graphs_graphs(padded_graph)
-    return int(np.asarray(padded_graph.n_node)[-n_padding_graph])
+    if n_padding_graph == 0:
+        return 0
+    return int(np.asarray(padded_graph.n_node)[-n_padding_graph:].sum())
 
 
 def get_number_of_padding_with_graphs_edges(padded_graph: GraphIR) -> int:
-    if padded_graph.edge_mask is not None:
-        edge_mask = np.asarray(padded_graph.edge_mask, dtype=np.bool_)
-        return int(edge_mask.shape[0] - edge_mask.sum())
-
     n_padding_graph = get_number_of_padding_with_graphs_graphs(padded_graph)
-    return int(np.asarray(padded_graph.n_edge)[-n_padding_graph])
+    if n_padding_graph == 0:
+        return 0
+    return int(np.asarray(padded_graph.n_edge)[-n_padding_graph:].sum())
 
 
 def unpad_with_graphs(padded_graph: GraphIR) -> GraphIR:
     n_padding_graph = get_number_of_padding_with_graphs_graphs(padded_graph)
+    if n_padding_graph == 0:
+        return padded_graph
     n_padding_node = get_number_of_padding_with_graphs_nodes(padded_graph)
     n_padding_edge = get_number_of_padding_with_graphs_edges(padded_graph)
 
@@ -218,6 +231,22 @@ def unpad_with_graphs(padded_graph: GraphIR) -> GraphIR:
         globals=_trim_tree_leading(padded_graph.globals, n_node.shape[0]),
         n_node=n_node,
         n_edge=n_edge,
+        node_mask=(
+            None
+            if padded_graph.node_mask is None
+            else padded_graph.node_mask[:real_nodes]
+        ),
+        edge_mask=(
+            None
+            if padded_graph.edge_mask is None
+            else padded_graph.edge_mask[:real_edges]
+        ),
+        graph_mask=(
+            None
+            if padded_graph.graph_mask is None
+            else padded_graph.graph_mask[: n_node.shape[0]]
+        ),
+        cochain_bindings=padded_graph.cochain_bindings,
         validate=True,
     )
 

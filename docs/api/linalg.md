@@ -334,6 +334,14 @@ replacement; van der Vorst & Ye, *SIAM J. Sci. Comput.* 22 (2000) 1035–1062). 
 stop test and the certified status are one test on one quantity. The extra
 actions are counted in `matvec_count`.
 
+Native `GMRES` and `FGMRES` also certify each restart-cycle candidate against
+`b - A x`. Projected convergence can end an Arnoldi cycle early, but if the
+original residual still exceeds the unchanged tolerance, execution restarts
+from that residual using the remaining iteration budget. A shortened cycle
+consumes its actual Arnoldi steps, not the full restart length. This applies
+to both early-exit and algorithmic fixed-trip execution, including Float32
+learned corrections transferred between distinct field spaces.
+
 `TreeTopology(parent_index)` prepares one rooted tree and its elimination order.
 `TreeLinearOperator(diagonal, lower, upper, topology)` stores linear-size
 coefficients; for each nonroot child, `lower[child]` is the child-parent entry
@@ -518,7 +526,7 @@ certification residual is.
 
 ### Tiny matrices and host construction
 
-`inverse_small_linear` is the specialized 1x1, 2x2, and 3x3 path. It scales
+`inverse_small_linear` is the specialized 1x1 through 4x4 path. It scales
 before determinant/cofactor evaluation, reports determinant/rank/condition and
 residual evidence, and applies residual-decreasing refinement. Geometry and
 mechanics kernels with statically tiny matrices should use it rather than
@@ -3528,12 +3536,13 @@ rejected rather than approximated.
 ## Geophysical composite preconditioners
 
 These constructors compose already-prepared native actions. They do not inspect a PDE
-or infer a block structure. The H(curl) route adds an edge action and scalar-gradient
-auxiliary correction. Shifted Helmholtz solves one explicitly damped complex system.
+or infer a block structure. Hiptmair–Xu builds coordinate-space smoothing and
+vector/potential subspace corrections from a Hilbert complex; degree2 supports
+recursive ADS interpolation. Shifted Helmholtz solves an explicitly damped system.
 The CPR route applies a local stage, forms the true residual through the supplied
 system operator, then applies the pressure restriction/inverse correction.
 
-::: phydrax.linalg.hcurl_auxiliary_space_preconditioner
+::: phydrax.linalg.hiptmair_xu_preconditioner_builder
 
 ::: phydrax.linalg.shifted_helmholtz_preconditioner
 
@@ -3555,3 +3564,55 @@ admissibility; this substrate owns only the numerical matrix evidence.
 ---
 
 ::: phydrax.linalg.verify_dense_properties
+
+## Exterior algebra and Hilbert complexes
+
+`compound_matrix(matrix, degree, /, *, maximum_minor_entries=1 << 24)` returns
+lexicographically ordered exterior powers for rectangular/batched matrices.
+Degree0 retains `(1,1)` axes, out-of-range exterior dimensions are zero-extent,
+and the resource budget is checked before allocation. Singular-minor derivatives
+are determinant derivatives, not an assumed zero from a log-determinant.
+
+`HilbertComplex(spaces, differentials, /, *, complex_id)` and
+`ComplexMap(source, target, maps, /, *, map_id, degree_offset=0)` require scientific
+identities and matching degree spaces. Adjoint uses the space pairing and
+conjugation. Coordinate mass/stiffness/mixed forms are Euclidean endomorphisms;
+semantic V→Dual(V) views carry no inappropriate SA/PD certification.
+
+`prepare_hodge_decomposition(complex, degree, /, *, harmonic,
+lower_harmonic=None, policy=None)` prepares repeated mixed solves. For degree>0
+the lower-degree harmonic space is required, not assumed empty.
+Prepared decomposition and harmonic projection extend real metric actions to
+complex states through reused real/imaginary solves and full sesquilinear defect
+checks. A complex harmonic basis itself requires complex-coordinate Hilbert
+complex admission; it is not silently attached to a real coordinate contract.
+
+`python -m tools.exterior_linalg_benchmarks --capacities 8 32 128 --repeats 3`
+records lowering/compile/first/warm, compiler temporary/output/code and retained
+bytes, with Cauchy–Binet, singular-adjugate and decomposition-evidence gates.
+The producer structure is not an empirical timing claim before execution.
+
+
+::: phydrax.linalg.compound_matrix
+
+::: phydrax.linalg.HilbertComplex
+
+::: phydrax.linalg.ComplexMap
+
+::: phydrax.linalg.coordinate_space
+
+::: phydrax.linalg.coordinate_operator
+
+::: phydrax.linalg.mass_form
+
+::: phydrax.linalg.stiffness_form
+
+::: phydrax.linalg.hodge_laplacian_form
+
+::: phydrax.linalg.mixed_hodge_laplacian
+
+::: phydrax.linalg.harmonic_subspace
+
+::: phydrax.linalg.prepare_hodge_decomposition
+
+::: phydrax.linalg.hodge_decomposition

@@ -1,0 +1,249 @@
+{
+  "benchmark": "unstructured-maxwell",
+  "cases": [
+    {
+      "assembly_seconds": 20.453367041,
+      "cell_capacity": 6,
+      "compilation": {
+        "compilation_seconds": 0.259065083,
+        "lowering_seconds": 0.959519333
+      },
+      "compiler": {
+        "argument_bytes": 14913,
+        "bytes_accessed": 100936,
+        "flops": 16117,
+        "generated_code_bytes": 0,
+        "output_bytes": 496,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 17128,
+        "unavailable_reason": null
+      },
+      "coordinate_counts": [
+        8,
+        19,
+        18,
+        6
+      ],
+      "dense_preparation_seconds": 1.530077125,
+      "dense_reference": {
+        "compilation": {
+          "compilation_seconds": 0.0868495,
+          "lowering_seconds": 0.027844959
+        },
+        "compiler": {
+          "argument_bytes": 10464,
+          "bytes_accessed": 40505,
+          "flops": 4449,
+          "generated_code_bytes": 0,
+          "output_bytes": 384,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 7560,
+          "unavailable_reason": null
+        },
+        "evaluated": true,
+        "maximum_admitted_coordinates": 512,
+        "prepared_execution": {
+          "count": 3,
+          "max_seconds": 0.000142625,
+          "mean_seconds": 0.00012244433333333333,
+          "median_seconds": 0.000115,
+          "min_seconds": 0.000109708,
+          "samples_seconds": [
+            0.000142625,
+            0.000109708,
+            0.000115
+          ],
+          "std_seconds": 1.4432504895393442e-05
+        },
+        "retained_bytes": 9944
+      },
+      "errors": {
+        "closedness_absolute_error": 8.881784197001252e-16,
+        "dense_step_absolute_error": 6.661338147750939e-16,
+        "gauss_absolute_error": 2.3092638912203256e-14
+      },
+      "estimated_device_memory_bytes": 32537,
+      "first_execution_seconds": 0.005242458,
+      "mesh_quality": {
+        "maximum_aspect_ratio": 1.7320508075688772,
+        "minimum_measure": 0.16666666666666666,
+        "minimum_scaled_jacobian": 0.5773502691896256,
+        "report_id": "e8428cf5097661113ffa5eda9f97c53992953f97ec732775325a65ea6915a489",
+        "sampled_invalid_count": 0
+      },
+      "mesh_subdivisions": 1,
+      "prepared_execution": {
+        "count": 2,
+        "max_seconds": 0.004589709,
+        "mean_seconds": 0.004511875,
+        "median_seconds": 0.004511875,
+        "min_seconds": 0.004434041,
+        "samples_seconds": [
+          0.004589709,
+          0.004434041
+        ],
+        "std_seconds": 7.783400000000015e-05
+      },
+      "retained_runtime_bytes": 274397,
+      "runtime_preparation_seconds": 5.521678042,
+      "spectral_admission": "trace-certified",
+      "step_capacity": 4,
+      "successful": true
+    },
+    {
+      "assembly_seconds": 21.056583208,
+      "cell_capacity": 48,
+      "compilation": {
+        "compilation_seconds": 0.285961125,
+        "lowering_seconds": 1.041106583
+      },
+      "compiler": {
+        "argument_bytes": 95359,
+        "bytes_accessed": 634358,
+        "flops": 100632,
+        "generated_code_bytes": 0,
+        "output_bytes": 2768,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 92328,
+        "unavailable_reason": null
+      },
+      "coordinate_counts": [
+        27,
+        98,
+        120,
+        48
+      ],
+      "dense_preparation_seconds": 1.584956458,
+      "dense_reference": {
+        "compilation": {
+          "compilation_seconds": 0.091721125,
+          "lowering_seconds": 0.029103375
+        },
+        "compiler": {
+          "argument_bytes": 315864,
+          "bytes_accessed": 1010729,
+          "flops": 135566,
+          "generated_code_bytes": 0,
+          "output_bytes": 1984,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 162056,
+          "unavailable_reason": null
+        },
+        "evaluated": true,
+        "maximum_admitted_coordinates": 512,
+        "prepared_execution": {
+          "count": 3,
+          "max_seconds": 0.000228167,
+          "mean_seconds": 0.00021848633333333334,
+          "median_seconds": 0.0002255,
+          "min_seconds": 0.000201792,
+          "samples_seconds": [
+            0.000201792,
+            0.0002255,
+            0.000228167
+          ],
+          "std_seconds": 1.1854782335505879e-05
+        },
+        "retained_bytes": 313112
+      },
+      "errors": {
+        "closedness_absolute_error": 1.3322676295501878e-15,
+        "dense_step_absolute_error": 3.3015812306302905e-12,
+        "gauss_absolute_error": 5.303490979713388e-11
+      },
+      "estimated_device_memory_bytes": 190455,
+      "first_execution_seconds": 0.005756833,
+      "mesh_quality": {
+        "maximum_aspect_ratio": 1.7320508075688772,
+        "minimum_measure": 0.020833333333333332,
+        "minimum_scaled_jacobian": 0.5773502691896256,
+        "report_id": "7188f8affb70a39493759046adefa61ce04c27d1ed20d3b555ece311c23a0b60",
+        "sampled_invalid_count": 0
+      },
+      "mesh_subdivisions": 2,
+      "prepared_execution": {
+        "count": 2,
+        "max_seconds": 0.005572292,
+        "mean_seconds": 0.005244688000000001,
+        "median_seconds": 0.005244688000000001,
+        "min_seconds": 0.004917084,
+        "samples_seconds": [
+          0.005572292,
+          0.004917084
+        ],
+        "std_seconds": 0.000327604
+      },
+      "retained_runtime_bytes": 1991789,
+      "runtime_preparation_seconds": 1.611822541,
+      "spectral_admission": "caller-bound",
+      "step_capacity": 4,
+      "successful": true
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "5905ec3dfb8a2469cc8da18d0bbd3c4013840e1a59f508659df2a3443acf269a",
+    "evidence_schema": {
+      "fields": [
+        "assembly_seconds",
+        "cell_capacity",
+        "compilation",
+        "compiler",
+        "coordinate_counts",
+        "dense_preparation_seconds",
+        "dense_reference",
+        "errors",
+        "estimated_device_memory_bytes",
+        "first_execution_seconds",
+        "mesh_quality",
+        "mesh_subdivisions",
+        "prepared_execution",
+        "retained_runtime_bytes",
+        "runtime_preparation_seconds",
+        "spectral_admission",
+        "step_capacity",
+        "successful"
+      ],
+      "signature": "41f43c2f435e71df4a6f2ff4bad6d2c2263c590b18e31f450875b663ca599359"
+    },
+    "fingerprint": "397b362e4c19eaf155b69a032a2eb4f79b2e5ea847b778dd2205b7ca2b3e80b6",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2"
+  },
+  "successful": true
+}

@@ -46,29 +46,6 @@ def _coordinate_term(global_space: Any, local_space: Any, row: Any) -> Any:
 
 
 def test_linalg_preconditioning_scenario_1() -> None:
-    edge_space = la.ArraySpace((1,), dtype=jnp.complex128)
-    scalar_space = la.ArraySpace((1,), dtype=jnp.complex128)
-    edge_inverse = la.OperatorPreconditioner(
-        la.IdentityLinearOperator(edge_space),
-        positive_definite=True,
-    )
-    scalar_inverse = la.OperatorPreconditioner(
-        la.IdentityLinearOperator(scalar_space),
-        positive_definite=True,
-    )
-    gradient = la.DenseLinearOperator(
-        jnp.asarray([[1.0j]]),
-        source=scalar_space,
-        target=edge_space,
-    )
-    preconditioner = la.hcurl_auxiliary_space_preconditioner(
-        edge_inverse,
-        gradient,
-        scalar_inverse,
-    )
-    residual = jnp.asarray([2.0 - 3.0j])
-
-    assert jnp.allclose(preconditioner.apply(residual), 2.0 * residual)
     space = la.ArraySpace((2,), dtype=jnp.float64)
     local = la.ArraySpace((1,), dtype=jnp.float64)
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])

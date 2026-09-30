@@ -8,6 +8,15 @@ three-dimensional multivalued cut complexes, moving topology transactions, and
 node/edge/face/cell cochains. Every numerical route belongs to an immutable
 `TopologyEpoch`, geometry revision, layout, and partition identity.
 
+Compatible forest/entity/cut-cell transfers expose native `ComplexMap` and
+`ComplexMapEvidence`. Forest Hilbert spaces use active master coordinates;
+relative cut-cell maps use the actual restricted RMRᴴ pairing before inverse
+and zero-extension. `CutCellCochainPlan.prepare()` returns canonical
+`CochainDiscretization` with boundary masks and stable numerical binding revision.
+Transfer apply, transpose and Hilbert adjoint are distinct operations and retain
+topology-change evidence. See [AMR APIs](api/discretization/amr.md).
+
+
 The baseline public example is
 [`examples/block_amr_cartesian_fv.py`](https://github.com/phydra-labs/phydrax/blob/main/examples/block_amr_cartesian_fv.py).
 The advanced geometry/entity example is

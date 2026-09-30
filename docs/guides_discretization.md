@@ -27,6 +27,22 @@ The main distinctions are:
 Quadrature points are not assumed to be DOFs. A spectral basis is not assumed to be
 its evaluation grid. A point cloud is not fabricated into a cell complex.
 
+## Forms and realization identity
+
+`FormType` declares scientific degree, twist, fiber and ambient dimension;
+`FormValueSpec` additionally declares scalar/circulation/flux/density/components
+representation. `DiscreteFieldSpace(form_type=...)` fingerprints metadata only
+when declared. Cochain representation uses conformity `"unrestricted"`, not a
+separate cochain-conformity vocabulary.
+
+`CochainDiscretization` binds canonical topology to metric-only Hodges.
+`hilbert_complex(boundary=...).space(k)` owns vector-space access; calculus calls
+use `boundary="absolute"` or `"relative"`. Relative restriction inverts the active
+Gram, not a masked full inverse. Dynamic measures/geometry/Hodge leaves retain
+stable explicit binding identities during compiled refresh. See
+[Exterior calculus](guides_exterior_calculus.md).
+
+
 ## Tensor grids and numerical axes
 
 Numerical axis specifications live in `phydrax.discretization`. The axis declares its

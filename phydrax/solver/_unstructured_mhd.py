@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
@@ -12,14 +14,16 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CochainDiscretization
+from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
 
 
+@final
 class UnstructuredMagneticState(StrictModule):
     face_flux: Array
     time: Array
 
 
+@final
 class UnstructuredFaradayDiagnostics(StrictModule):
     constraint_before: Array
     constraint_after: Array
@@ -27,10 +31,11 @@ class UnstructuredFaradayDiagnostics(StrictModule):
     successful: Array
 
 
+@final
 class UnstructuredConstrainedTransportPlan(StrictModule, NonTrainableState):
     """Topology-exact Faraday update on an arbitrary prepared cochain complex."""
 
-    cochain: CochainDiscretization
+    cochain: AbstractCellDeRhamComplex
     spatial_dimension: int = eqx.field(static=True)
     magnetic_degree: int = eqx.field(static=True)
     electromotive_degree: int = eqx.field(static=True)
@@ -38,15 +43,15 @@ class UnstructuredConstrainedTransportPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractCellDeRhamComplex,
         spatial_dimension: int,
         /,
     ) -> None:
         dimension = int(spatial_dimension)
         if (
-            not isinstance(cochain, CochainDiscretization)
+            not isinstance(cochain, AbstractCellDeRhamComplex)
             or dimension not in (2, 3)
-            or cochain.max_degree < dimension
+            or cochain.dimension != dimension
         ):
             raise ValueError("Unstructured constrained transport topology is invalid.")
         self.cochain = cochain
@@ -56,7 +61,7 @@ class UnstructuredConstrainedTransportPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "unstructured-constrained-transport",
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "spatial_dimension": dimension,
             }
         )

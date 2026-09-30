@@ -9,7 +9,7 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
@@ -41,11 +41,15 @@ def _check_bounds(
 ) -> Array:
     if indices.size == 0:
         return indices
-    return eqx.error_if(
-        indices,
-        jnp.any(valid & ((indices < 0) | (indices >= int(size)))),
-        f"A valid {name} lies outside [0, {int(size)}).",
-    )
+    invalid = jnp.any(valid & ((indices < 0) | (indices >= size)))
+    message = f"A valid {name} lies outside [0, {size})."
+    # Immutable symbolic admission is eager even under compile-time evaluation.
+    # Keep it out of a nested error callback; traced routes retain device checks.
+    if not isinstance(invalid, jax_core.Tracer):
+        if bool(invalid):
+            raise ValueError(message)
+        return indices
+    return eqx.error_if(indices, invalid, message)
 
 
 class EdgeRelation(StrictModule, NonTrainableState):

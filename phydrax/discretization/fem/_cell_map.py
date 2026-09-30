@@ -30,14 +30,34 @@ class FiniteElementCellMapEvaluation(StrictModule):
     valid: Array
 
 
+def _whole_support_routes(
+    discretization: FiniteElementDiscretization, coordinate_element: FiniteElementSpec, /
+) -> tuple[Array, int, tuple[str, ...]]:
+    for element, mesh_block in zip(
+        discretization.coordinate_elements, discretization.mesh.blocks, strict=True
+    ):
+        if not isinstance(element, FiniteElementSpec):
+            raise TypeError("FE cell maps require finite-element coordinate charts.")
+        if element.cell_kind != mesh_block.cell_kind:
+            raise ValueError("Coordinate element and cell block kinds differ.")
+        if element.element_id != coordinate_element.element_id:
+            raise ValueError(
+                "A whole-support cell map requires one coordinate-element identity."
+            )
+    coordinate_dofs = jnp.concatenate(discretization.coordinate_dofs, axis=0)
+    cell_count = sum(mesh_block.cell_count for mesh_block in discretization.mesh.blocks)
+    block_ids = tuple(mesh_block.block_id for mesh_block in discretization.mesh.blocks)
+    return coordinate_dofs, cell_count, block_ids
+
+
 class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
-    """Fixed-topology coordinate map for one finite-element cell block."""
+    """Fixed-topology coordinate map for one block or one homogeneous support."""
 
     coordinate_element: FiniteElementSpec
     coordinate_dofs: Array
     precision_policy: FiniteElementPrecisionPolicy
     block_name: str = eqx.field(static=True)
-    block_index: int = eqx.field(static=True)
+    block_index: int | None = eqx.field(static=True)
     cell_count: int = eqx.field(static=True)
     coordinate_count: int = eqx.field(static=True)
     reference_dimension: int = eqx.field(static=True)
@@ -49,26 +69,42 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
-        block_index: int,
+        block_index: int | None,
         /,
     ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
-        index = int(block_index)
-        if index < 0 or index >= len(discretization.mesh.blocks):
-            raise IndexError("block_index is outside the finite-element mesh.")
-        block = discretization.mesh.blocks[index]
-        coordinate_element = discretization.coordinate_elements[index]
-        coordinate_dofs = discretization.coordinate_dofs[index]
-        if coordinate_element.cell_kind != block.cell_kind:
-            raise ValueError("Coordinate element and cell block kinds differ.")
-        # ty: ignore[invalid-assignment]
+        if block_index is None:
+            index = None
+            block = discretization.mesh.blocks[0]
+            coordinate_element = discretization.coordinate_elements[0]
+            if not isinstance(coordinate_element, FiniteElementSpec):
+                raise TypeError("FE cell maps require finite-element coordinate charts.")
+            coordinate_dofs, cell_count, block_ids = _whole_support_routes(
+                discretization, coordinate_element
+            )
+            block_name = "whole-mesh"
+            block_identity = {"blocks": block_ids}
+        else:
+            index = int(block_index)
+            if index < 0 or index >= len(discretization.mesh.blocks):
+                raise IndexError("block_index is outside the finite-element mesh.")
+            block = discretization.mesh.blocks[index]
+            coordinate_element = discretization.coordinate_elements[index]
+            if not isinstance(coordinate_element, FiniteElementSpec):
+                raise TypeError("FE cell maps require finite-element coordinate charts.")
+            coordinate_dofs = discretization.coordinate_dofs[index]
+            if coordinate_element.cell_kind != block.cell_kind:
+                raise ValueError("Coordinate element and cell block kinds differ.")
+            block_name = block.name
+            cell_count = block.cell_count
+            block_identity = {"block": block.block_id}
         self.coordinate_element = coordinate_element
         self.coordinate_dofs = jnp.asarray(coordinate_dofs)
         self.precision_policy = discretization.precision_policy
-        self.block_name = block.name
+        self.block_name = block_name
         self.block_index = index
-        self.cell_count = block.cell_count
+        self.cell_count = cell_count
         self.coordinate_count = discretization.default_runtime.coordinates.shape[0]
         self.reference_dimension = block.topological_dimension
         self.ambient_dimension = discretization.mesh.ambient_dimension
@@ -79,7 +115,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
                 "kind": "prepared-finite-element-cell-map",
                 "topology": self.topology_id,
                 "geometry_layout": self.geometry_layout_id,
-                "block": block.block_id,
+                **block_identity,
                 "coordinate_element": coordinate_element.element_id,
                 "coordinate_dofs": array_tree_fingerprint(coordinate_dofs),
             }
@@ -158,10 +194,10 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
 
 def prepare_finite_element_cell_map(
     discretization: FiniteElementDiscretization,
-    block_index: int,
+    block_index: int | None,
     /,
 ) -> PreparedFiniteElementCellMap:
-    """Prepare one reusable fixed-topology finite-element coordinate map."""
+    """Prepare a reusable block or homogeneous whole-support coordinate map."""
 
     return PreparedFiniteElementCellMap(discretization, block_index)
 

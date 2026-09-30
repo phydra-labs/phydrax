@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from enum import IntEnum
-from typing import TypeAlias
+from typing import final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_b
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import Bool, Dim, Float, Int32, Integer
 from ._cell_geometry_validity import _bernstein_plan
 from .fem._cell_map import PreparedFiniteElementCellMap
 
@@ -38,6 +39,7 @@ class CellLocationStatus(IntEnum):
     INVERSE_MAP_EXHAUSTED = 5
 
 
+@final
 class SimplicialLocationPolicy(StrictModule, NonTrainableState):
     maximum_candidates: int = eqx.field(static=True)
     maximum_iterations: int = eqx.field(static=True)
@@ -84,6 +86,7 @@ class SimplicialLocationPolicy(StrictModule, NonTrainableState):
         )
 
 
+@final
 class CellLocationResult(StrictModule):
     """Located cell, reference coordinates, and every containing candidate.
 
@@ -110,12 +113,37 @@ class CellLocationResult(StrictModule):
     locator_id: str = eqx.field(static=True)
 
 
+class SegmentPointDim(Dim):
+    """Independently traversed trajectories."""
+
+
+class SegmentSlotDim(Dim):
+    """Fixed facet interval capacity."""
+
+
+class LocatorCellDim(Dim):
+    """Cells of the admitted coordinate map."""
+
+
+class LocatorStarDim(Dim):
+    """Prepared neighboring-cell tie capacity."""
+
+
+@final
 class SegmentLocationResult(StrictModule):
+    __strict_contract__ = True
+
     start: CellLocationResult
     end: CellLocationResult
-    crossed: Array
-    exited: Array
-    successful: Array
+    crossed: Bool[SegmentPointDim]
+    exited: Bool[SegmentPointDim]
+    successful: Bool[SegmentPointDim]
+    cell_ids: Integer[SegmentPointDim, SegmentSlotDim]
+    intervals: Float[SegmentPointDim, SegmentSlotDim, Literal[2]]
+    valid: Bool[SegmentPointDim, SegmentSlotDim]
+    counts: Int32[SegmentPointDim]
+    overflow: Bool[SegmentPointDim]
+    tied: Bool[SegmentPointDim, SegmentSlotDim]
     locator_id: str = eqx.field(static=True)
 
 
@@ -174,6 +202,7 @@ def _certified_cell_bounds(
     )
 
 
+@final
 class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     """Bounded damped-Newton locator over a canonical prepared FE cell map.
 
@@ -183,9 +212,13 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     their nodes are never pruned.
     """
 
+    __strict_contract__ = True
+
     cell_map: PreparedFiniteElementCellMap
     coordinates: Array
     cells: Array
+    vertex_star_cells: Int32[LocatorCellDim, LocatorStarDim]
+    vertex_star_valid: Bool[LocatorCellDim, LocatorStarDim]
     centroids: Array
     bvh: PackedBVH
     policy: SimplicialLocationPolicy
@@ -200,8 +233,11 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     ) -> None:
         if not isinstance(cell_map, PreparedFiniteElementCellMap):
             raise TypeError("cell_map must be PreparedFiniteElementCellMap.")
-        if cell_map.coordinate_element.cell_kind not in ("triangle", "tetrahedron"):
-            raise ValueError("Simplicial locator requires a triangle/tetrahedron map.")
+        kind = cell_map.coordinate_element.cell_kind
+        if kind not in ("interval", "triangle", "tetrahedron") and not kind.startswith(
+            "simplex:"
+        ):
+            raise ValueError("Simplicial locator requires a simplex coordinate map.")
         if not isinstance(policy, SimplicialLocationPolicy):
             raise TypeError("policy must be SimplicialLocationPolicy.")
         values = jnp.asarray(coordinates)
@@ -216,9 +252,16 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             dtype=values.dtype,
         )
         centroids = jnp.mean(values[cells], axis=1)
+        if cell_map.coordinate_element.degree == 1:
+            star_cells, star_valid = _vertex_star_routes(np.asarray(cells))
+        else:
+            star_cells = np.zeros((cell_map.cell_count, 1), dtype=np.int32)
+            star_valid = np.zeros(star_cells.shape, dtype=np.bool_)
         self.cell_map = cell_map
         self.coordinates = values
         self.cells = cells
+        self.vertex_star_cells = jnp.asarray(star_cells)
+        self.vertex_star_valid = jnp.asarray(star_valid)
         self.centroids = centroids
         self.bvh = bvh
         self.policy = policy
@@ -464,17 +507,253 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             self.locator_id,
         )
 
-    def locate_segment(
-        self, start: ArrayLike, end: ArrayLike, /
-    ) -> SegmentLocationResult:
-        left = self.locate(start)
-        right = self.locate(end)
-        crossed = left.inside & right.inside & (left.cell_ids != right.cell_ids)
-        exited = left.inside & ~right.inside
-        successful = left.successful & (right.successful | exited)
-        return SegmentLocationResult(
-            left, right, crossed, exited, successful, self.locator_id
+    def _affine_geometry(self) -> tuple[Array, Array, Array, Array]:
+        if self.cell_map.coordinate_element.degree != 1:
+            raise ValueError("Exact facet traversal requires an affine cell map.")
+        reference = jnp.zeros(
+            (self.cell_count, self.dimension), dtype=self.coordinates.dtype
         )
+        geometry = self.cell_map.evaluate(
+            self.coordinates, jnp.arange(self.cell_count, dtype=jnp.int32), reference
+        )
+        gradients = jnp.concatenate(
+            (
+                -jnp.sum(geometry.inverse_jacobian, axis=1, keepdims=True),
+                geometry.inverse_jacobian,
+            ),
+            axis=1,
+        )
+        return geometry.physical_points, gradients, geometry.valid, geometry.jacobian
+
+    def affine_gradients(self) -> Array:
+        """Return the single owning barycentric-gradient table, cell/local/ambient."""
+        return self._affine_geometry()[1]
+
+    def affine_barycentric(self, points: ArrayLike, /) -> Array:
+        """Evaluate all affine cells, with shape (point, cell, local vertex)."""
+        values = jnp.asarray(points, dtype=self.coordinates.dtype)
+        if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
+            raise ValueError("Affine points have incompatible ambient dimension.")
+        origins, gradients, _, _ = self._affine_geometry()
+        coordinates = contract("pcd,cvd->pcv", values[:, None] - origins[None], gradients)
+        return coordinates.at[:, :, 0].add(1.0)
+
+    def locate_segment(
+        self,
+        start: ArrayLike,
+        end: ArrayLike,
+        /,
+        *,
+        maximum_segments: int | None = None,
+    ) -> SegmentLocationResult:
+        """Walk exact affine facet intervals, choosing the lowest cell on ties.
+
+        Prepared vertex stars admit face, edge, and vertex crossings without
+        allocating point-by-mesh search tables. Gaps terminate at the first
+        domain exit rather than joining disconnected pieces. No uniform
+        temporal subdivision or endpoint-only admission is used.
+        """
+        capacity = self.cell_count if maximum_segments is None else maximum_segments
+        if capacity < 1:
+            raise ValueError("maximum_segments must be positive.")
+        first = jnp.asarray(start, dtype=self.coordinates.dtype)
+        last = jnp.asarray(end, dtype=first.dtype)
+        if first.shape != last.shape or first.ndim != 2:
+            raise ValueError("Segment endpoints must be matching rank-two arrays.")
+        if first.shape[1] != self.cell_map.ambient_dimension:
+            raise ValueError("Segment endpoints have incompatible ambient dimension.")
+        origins, gradients, geometry_valid, jacobians = self._affine_geometry()
+        left = self.locate(first)
+        right = self.locate(last)
+        cell_ids, intervals, valid, tied, cursor, current = _walk_facet_intervals(
+            first,
+            last,
+            origins,
+            gradients,
+            jacobians,
+            geometry_valid,
+            self.vertex_star_cells,
+            self.vertex_star_valid,
+            left.cell_ids,
+            capacity,
+        )
+        choice, _, _ = _outgoing_affine_cell(
+            first,
+            last,
+            origins,
+            gradients,
+            jacobians,
+            geometry_valid,
+            self.vertex_star_cells,
+            self.vertex_star_valid,
+            current,
+            cursor,
+        )
+        counts = jnp.sum(valid, axis=1, dtype=jnp.int32)
+        started = counts > 0
+        overflow = started & (cursor < 1) & (choice >= 0)
+        exited = started & (cursor < 1) & ~overflow
+        finite = jnp.all(jnp.isfinite(first) & jnp.isfinite(last), axis=1)
+        successful = started & finite & ~overflow
+        return SegmentLocationResult(
+            left,
+            right,
+            counts > 1,
+            exited,
+            successful,
+            cell_ids,
+            intervals,
+            valid,
+            counts,
+            overflow,
+            tied,
+            self.locator_id,
+        )
+
+
+def _vertex_star_routes(cells: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare sorted local tie candidates; any facet crossing stays in this star."""
+    incident: dict[int, set[int]] = {}
+    for cell_index, vertices in enumerate(cells.tolist()):
+        for vertex in vertices:
+            incident.setdefault(vertex, set()).add(cell_index)
+    stars = [
+        sorted(set().union(*(incident[vertex] for vertex in vertices)))
+        for vertices in cells.tolist()
+    ]
+    capacity = max(map(len, stars))
+    routes = np.zeros((cells.shape[0], capacity), dtype=np.int32)
+    valid = np.zeros(routes.shape, dtype=np.bool_)
+    for cell_index, star in enumerate(stars):
+        routes[cell_index, : len(star)] = star
+        valid[cell_index, : len(star)] = True
+    return routes, valid
+
+
+def _affine_segment_intervals(
+    barycentric: Array, slopes: Array, geometry_valid: Array, /
+) -> tuple[Array, Array, Array]:
+    """Intersect a line with affine barycentric half-spaces without perturbing t."""
+    nonzero = slopes != 0
+    roots = -barycentric / jnp.where(nonzero, slopes, 1)
+    enter = jnp.maximum(0, jnp.max(jnp.where(slopes > 0, roots, -jnp.inf), axis=2))
+    leave = jnp.minimum(1, jnp.min(jnp.where(slopes < 0, roots, jnp.inf), axis=2))
+    tolerance = 32 * jnp.finfo(barycentric.dtype).eps
+    parallel_valid = jnp.all(nonzero | (barycentric >= -tolerance), axis=2)
+    finite = jnp.all(jnp.isfinite(barycentric) & jnp.isfinite(slopes), axis=2)
+    valid = geometry_valid & parallel_valid & finite & (leave > enter)
+    return enter, leave, valid
+
+
+def _outgoing_affine_cell(
+    start: Array,
+    end: Array,
+    origins: Array,
+    gradients: Array,
+    jacobians: Array,
+    geometry_valid: Array,
+    star_cells: Array,
+    star_valid: Array,
+    current: Array,
+    time: Array,
+    /,
+) -> tuple[Array, Array, Array]:
+    safe = jnp.clip(current, 0, origins.shape[0] - 1)
+    candidates = star_cells[safe]
+    candidate_valid = star_valid[safe] & (current[:, None] >= 0)
+    local_gradients = gradients[candidates]
+    barycentric = (
+        contract("psd,psvd->psv", start[:, None] - origins[candidates], local_gradients)
+        .at[:, :, 0]
+        .add(1.0)
+    )
+    slopes = contract("pd,psvd->psv", end - start, local_gradients)
+    if start.shape[1] != gradients.shape[1] - 1:
+        local_jacobians = jacobians[candidates]
+        projected_start = origins[candidates] + contract(
+            "psdn,psn->psd", local_jacobians, barycentric[:, :, 1:]
+        )
+        projected_direction = contract("psdn,psn->psd", local_jacobians, slopes[:, :, 1:])
+        tolerance = 32 * jnp.finfo(start.dtype).eps
+        scale = jnp.maximum(1, jnp.max(jnp.abs(start), axis=1))
+        candidate_valid = (
+            candidate_valid
+            & (
+                jnp.max(jnp.abs(projected_start - start[:, None]), axis=2)
+                <= tolerance * scale[:, None]
+            )
+            & (
+                jnp.max(jnp.abs(projected_direction - (end - start)[:, None]), axis=2)
+                <= tolerance * scale[:, None]
+            )
+        )
+    enter, leave, intersects = _affine_segment_intervals(
+        barycentric, slopes, geometry_valid[candidates] & candidate_valid
+    )
+    tolerance = 32 * jnp.finfo(start.dtype).eps
+    outgoing = intersects & (enter <= time[:, None] + tolerance) & (leave > time[:, None])
+    slot = jnp.argmin(jnp.where(outgoing, candidates, origins.shape[0]), axis=1)
+    rows = jnp.arange(start.shape[0])
+    found = jnp.any(outgoing, axis=1) & (time < 1)
+    choice = jnp.where(found, candidates[rows, slot], -1)
+    stop = jnp.where(found, leave[rows, slot], time)
+    endpoint = barycentric[rows, slot] + stop[:, None] * slopes[rows, slot]
+    facet_tie = jnp.sum(jnp.abs(endpoint) <= tolerance, axis=1) > 1
+    tied = found & (facet_tie | (jnp.sum(outgoing, axis=1) > 1))
+    return choice, stop, tied
+
+
+def _walk_facet_intervals(
+    start: Array,
+    end: Array,
+    origins: Array,
+    gradients: Array,
+    jacobians: Array,
+    geometry_valid: Array,
+    star_cells: Array,
+    star_valid: Array,
+    initial_cells: Array,
+    capacity: int,
+    /,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Bounded exact walk with deterministic lowest-index outgoing-cell ties."""
+    point_count = start.shape[0]
+    ids = jnp.full((point_count, capacity), -1, dtype=jnp.int32)
+    intervals = jnp.zeros((point_count, capacity, 2), dtype=start.dtype)
+    valid = jnp.zeros((point_count, capacity), dtype=jnp.bool_)
+    tied = jnp.zeros_like(valid)
+    cursor = jnp.zeros((point_count,), dtype=start.dtype)
+
+    def advance(
+        slot: int, carry: tuple[Array, Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        routes, spans, active, ties, time, current = carry
+        choice, stop, facet_tie = _outgoing_affine_cell(
+            start,
+            end,
+            origins,
+            gradients,
+            jacobians,
+            geometry_valid,
+            star_cells,
+            star_valid,
+            current,
+            time,
+        )
+        admitted = choice >= 0
+        routes = routes.at[:, slot].set(choice)
+        spans = spans.at[:, slot].set(
+            jnp.stack(
+                (jnp.where(admitted, time, 0), jnp.where(admitted, stop, 0)), axis=1
+            )
+        )
+        active = active.at[:, slot].set(admitted)
+        ties = ties.at[:, slot].set(facet_tie)
+        return routes, spans, active, ties, stop, jnp.where(admitted, choice, current)
+
+    return jax.lax.fori_loop(
+        0, capacity, advance, (ids, intervals, valid, tied, cursor, initial_cells)
+    )
 
 
 __all__ = [

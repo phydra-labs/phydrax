@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +20,7 @@ from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..axes import AxisKey
+from ..exterior._form_type import FormType
 from ..linalg import AbstractVectorSpace, DualSpace
 from ..sparse import RowRelation
 from ..typing import parse
@@ -44,11 +45,31 @@ FieldConformity: TypeAlias = Literal[
     "H1",
     "Hdiv",
     "Hcurl",
+    "HLambda",
     "L2",
     "discontinuous",
-    "cochain",
     "unrestricted",
 ]
+
+
+def _validate_form_conformity(
+    form_type: FormType, conformity: FieldConformity, /
+) -> None:
+    match conformity:
+        case "H1":
+            required_degree = 0
+        case "Hcurl":
+            required_degree = 1
+        case "Hdiv":
+            required_degree = form_type.dimension - 1
+        case "HLambda" | "L2" | "discontinuous" | "unrestricted":
+            return
+        case _:
+            assert_never(conformity)
+    if form_type.degree != required_degree:
+        raise ValueError(
+            f"{conformity} conformity requires form degree {required_degree}."
+        )
 
 
 def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -347,6 +368,7 @@ class BlockDofLayout(AbstractDofLayout):
 DofLayout: TypeAlias = TensorDofLayout | EntityDofLayout | ModalDofLayout | BlockDofLayout
 
 
+@final
 class DiscreteFieldSpace(StrictModule, NonTrainableState):
     """One scientific field bound to exact finite coordinates and pairing."""
 
@@ -360,6 +382,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
     reconstruction_id: str | None = eqx.field(static=True)
     trace_space_id: str | None = eqx.field(static=True)
     field_space_id: str = eqx.field(static=True)
+    form_type: FormType | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -375,6 +398,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
         reconstruction_id: str | None = None,
         trace_space_id: str | None = None,
         field_space_id: str | None = None,
+        form_type: FormType | None = None,
     ) -> None:
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
@@ -391,6 +415,12 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             )
         representation = parse(representation, FieldRepresentation, "representation")
         conformity = parse(conformity, FieldConformity, "conformity")
+        if form_type is not None and not isinstance(form_type, FormType):
+            raise TypeError("form_type must be a FormType or None.")
+        if conformity == "HLambda" and form_type is None:
+            raise ValueError("HLambda conformity requires a declared form_type.")
+        if form_type is not None:
+            _validate_form_conformity(form_type, conformity)
         projection = (
             None
             if projection_id is None
@@ -406,6 +436,21 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             if trace_space_id is None
             else nonempty_identifier("trace_space_id", trace_space_id)
         )
+        identity = {
+            "kind": "discrete-field-space",
+            "name": name_,
+            "support": support_id_,
+            "layout": layout.layout_id,
+            "vector_space": vector_space.space_id,
+            "representation": representation,
+            "conformity": conformity,
+            "projection": projection,
+            "reconstruction": reconstruction,
+            "trace_space": trace,
+        }
+        if form_type is not None:
+            identity["form_type"] = form_type.form_type_id
+        identifier = resolved_identifier("field_space_id", field_space_id, identity)
         self.name = name_
         self.support_id = support_id_
         self.layout = layout
@@ -415,22 +460,8 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
         self.projection_id = projection
         self.reconstruction_id = reconstruction
         self.trace_space_id = trace
-        self.field_space_id = resolved_identifier(
-            "field_space_id",
-            field_space_id,
-            {
-                "kind": "discrete-field-space",
-                "name": name_,
-                "support": support_id_,
-                "layout": layout.layout_id,
-                "vector_space": vector_space.space_id,
-                "representation": representation,
-                "conformity": conformity,
-                "projection": projection,
-                "reconstruction": reconstruction,
-                "trace_space": trace,
-            },
-        )
+        self.form_type = form_type
+        self.field_space_id = identifier
 
     def value_port(self) -> ValuePort:
         """Return the `ValuePort` of this field's complete coefficient array.

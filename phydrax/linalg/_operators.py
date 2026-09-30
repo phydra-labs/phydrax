@@ -107,7 +107,7 @@ def _validate_action_dtype(
 ) -> None:
     result_dtype = np.dtype(
         jax.dtypes.canonicalize_dtype(
-            jnp.result_type(np.dtype(coefficient_dtype), _coordinate_dtype(source))
+            np.result_type(np.dtype(coefficient_dtype), _coordinate_dtype(source))
         )
     )
     if result_dtype != _coordinate_dtype(target):
@@ -136,7 +136,7 @@ def _tree_add(left: PyTree[Array], right: PyTree[Array], /) -> PyTree[Array]:
 
 
 def _tree_scale(value: PyTree[Array], scalar: Array, /) -> PyTree[Array]:
-    return jax.tree.map(lambda leaf: scalar * leaf, value)
+    return jax.tree.map(lambda leaf: scalar.astype(leaf.dtype) * leaf, value)
 
 
 def _tree_conj(value: PyTree[Array], /) -> PyTree[Array]:

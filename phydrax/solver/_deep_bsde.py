@@ -8,8 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.random as jr
-import optax
 from jax.typing import ArrayLike
+
+from phydrax.optim._adam import adam
 
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
@@ -69,7 +70,7 @@ def solve_deep_bsde(
     if control_name not in functions:
         raise KeyError(f"Missing Deep BSDE control function {control_name!r}.")
     if optim is None:
-        optim = optax.adam(1e-3)
+        optim = adam(1e-3)
     root_key = jr.key(int(seed))
     objective = DeepBSDEShootingTerm(
         problem,

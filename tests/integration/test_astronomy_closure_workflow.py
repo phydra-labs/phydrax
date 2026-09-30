@@ -27,6 +27,22 @@ def test_orbit_to_calibrated_pixel_workflow() -> None:
         jnp.linspace(0.0, 0.2, 5),
     )
     assert bool(jnp.all(trajectory.valid))
+    assert trajectory.position.dtype == initial.position.dtype
+    assert trajectory.velocity.dtype == initial.velocity.dtype
+    assert jnp.issubdtype(trajectory.position.dtype, jnp.floating)
+    np.testing.assert_allclose(
+        trajectory.position,
+        jnp.stack(
+            (
+                jnp.cos(trajectory.times),
+                jnp.sin(trajectory.times),
+                jnp.zeros_like(trajectory.times),
+            ),
+            axis=-1,
+        ),
+        atol=1e-9,
+        rtol=1e-9,
+    )
 
     physics = phx.applications.astrophysics
     wcs = physics.TangentSipWcsPlan(

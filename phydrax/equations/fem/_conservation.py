@@ -1071,7 +1071,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             raise ValueError("DGSEM conserved field ordering is inconsistent.")
         dof_map = discretization.dof_maps[field_index]
         element = discretization.elements[field_index][0]
-        if dof_map.association != "cell" or element.conformity != "L2":
+        if dof_map.association != "cell" or element.continuity != "discontinuous":
             raise ValueError(
                 "DGSEM conserved state requires discontinuous cell-local DOFs."
             )

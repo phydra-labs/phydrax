@@ -18,10 +18,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import optax
 
 import phydrax as phx
 from benchmarks._runtime import logical_array_bytes, measure_repeated, synchronize
+from phydrax.optim import adam
 
 
 def _measure(
@@ -55,7 +55,7 @@ def _compile_and_train(
     steps: int,
     learning_rate: float,
 ) -> tuple[Any, float, float, float, float]:
-    optimizer = optax.adam(learning_rate)
+    optimizer = adam(learning_rate)
     optimizer_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
     def update(candidate: Any, state: Any) -> Any:

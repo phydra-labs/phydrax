@@ -2634,17 +2634,22 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
             electric, magnetic = field.averaged_electric, field.averaged_magnetic
         match self.plan.grid:
             case "staggered":
-                e = tuple(
-                    splat.gather(route, electric[..., axis])
-                    for axis, (splat, route) in enumerate(
-                        zip(transfer.electric, routes.electric, strict=True)
-                    )
+                e_gather = transfer.gather_electric(
+                    routes,
+                    transfer.bridge.pack_edge_circulation(
+                        (electric[..., 0], electric[..., 1], electric[..., 2])
+                    ),
                 )
-                b = tuple(
-                    splat.gather(route, magnetic[..., axis])
-                    for axis, (splat, route) in enumerate(
-                        zip(transfer.magnetic, routes.magnetic, strict=True)
-                    )
+                b_gather = transfer.gather_magnetic(
+                    routes,
+                    transfer.bridge.pack_face_flux(
+                        (magnetic[..., 0], magnetic[..., 1], magnetic[..., 2])
+                    ),
+                )
+                return (
+                    e_gather.values,
+                    b_gather.values,
+                    e_gather.support & b_gather.support,
                 )
             case "collocated":
                 e = tuple(

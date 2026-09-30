@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -15,12 +17,14 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
+from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import ArraySpace, DenseLinearOperator
 from .._boundary_trace_space import (
     boundary_geometry_revision,
     BoundaryTraceSpaceCapability,
-    sparse_gram_trace_space,
 )
+from .._gram import sparse_gram_space
 from ._rwg import rwg_gram_entries, RWGSurfaceCurrentSpace3D
 from ._surface_complex import OrientedTriangleSurfaceComplex3D
 
@@ -35,6 +39,7 @@ class BuffaChristiansenDualEvidence3D(StrictModule, NonTrainableState):
     evidence_id: str = eqx.field(static=True)
 
 
+@final
 class BuffaChristiansenDualSpace3D(StrictModule, NonTrainableState):
     """BC edge space represented in RWGs on the barycentric refinement."""
 
@@ -42,10 +47,19 @@ class BuffaChristiansenDualSpace3D(StrictModule, NonTrainableState):
     barycentric_surface: OrientedTriangleSurfaceComplex3D
     barycentric_rwg: RWGSurfaceCurrentSpace3D
     barycentric_transform: Array
+    gram_routes: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
     cross_mass: DenseLinearOperator
     vector_space: ArraySpace
     evidence: BuffaChristiansenDualEvidence3D
     space_id: str = eqx.field(static=True)
+
+    @property
+    def value_spec(self) -> FormValueSpec:
+        return self.primal.value_spec
+
+    @property
+    def form_type(self) -> FormType:
+        return self.value_spec.form_type
 
     @property
     def size(self) -> int:
@@ -60,7 +74,7 @@ class BuffaChristiansenDualSpace3D(StrictModule, NonTrainableState):
         return contract("re,e->r", self.barycentric_transform, values)
 
     def trace_capability(
-        self, /, *, gram_tolerance: float = 1.0e-13
+        self, /, *, gram_tolerance: float = 1.0e-13, numeric_revision: str | None = None
     ) -> BoundaryTraceSpaceCapability:
         """Publish the BC dual-current trace space with its area Gram pairing.
 
@@ -70,16 +84,21 @@ class BuffaChristiansenDualSpace3D(StrictModule, NonTrainableState):
         `cross_mass`, not this Gram map.
         """
         targets, sources, values = rwg_gram_entries(self.barycentric_surface)
-        transform = np.asarray(self.barycentric_transform, dtype=np.float64)
-        applied = np.zeros_like(transform)
-        np.add.at(applied, targets, values[:, None] * transform[sources])
-        gram = transform.T @ applied
-        gram = 0.5 * (gram + gram.T)
-        rows, columns = np.nonzero(gram)
-        gram_space, mass = sparse_gram_trace_space(
-            rows.astype(np.int32),
-            columns.astype(np.int32),
-            gram[rows, columns],
+        rows = np.array([route[0] for route in self.gram_routes], dtype=np.int32)
+        columns = np.array([route[1] for route in self.gram_routes], dtype=np.int32)
+        refined_routes = np.array(
+            [route[2] for route in self.gram_routes], dtype=np.int32
+        )
+        transform = self.barycentric_transform
+        coefficients = (
+            values[jnp.asarray(refined_routes)]
+            * transform[jnp.asarray(targets[refined_routes]), jnp.asarray(rows)]
+            * transform[jnp.asarray(sources[refined_routes]), jnp.asarray(columns)]
+        )
+        gram_space, mass = sparse_gram_space(
+            rows,
+            columns,
+            coefficients,
             size=self.size,
             dtype=self.vector_space.dtype,
             space_id=canonical_fingerprint(
@@ -95,8 +114,12 @@ class BuffaChristiansenDualSpace3D(StrictModule, NonTrainableState):
             gram_space=gram_space,
             mass=mass,
             ambient_dimension=3,
-            revision_id=boundary_geometry_revision(
-                self.primal.surface.vertices, self.primal.surface.triangles
+            revision_id=(
+                boundary_geometry_revision(
+                    self.primal.surface.vertices, self.primal.surface.triangles
+                )
+                if numeric_revision is None
+                else canonical_identifier(numeric_revision, "numeric_revision")
             ),
         )
 
@@ -312,6 +335,24 @@ def _rwg_bc_cross_mass(
     return cross_mass
 
 
+def _bc_gram_routes(
+    surface: OrientedTriangleSurfaceComplex3D, transform: np.ndarray, /
+) -> tuple[tuple[int, int, int], ...]:
+    """Fixed sparse T^T G T recipe from the topological BC support."""
+    edges = np.asarray(surface.face_edges, dtype=np.int32)
+    targets = np.repeat(edges, 3, axis=1).reshape((-1,))
+    sources = np.tile(edges, (1, 3)).reshape((-1,))
+    support = tuple(np.flatnonzero(row) for row in transform)
+    routes: list[tuple[int, int, int]] = []
+    for route, (left, right) in enumerate(zip(targets, sources, strict=True)):
+        routes.extend(
+            (int(target), int(source), route)
+            for target in support[left]
+            for source in support[right]
+        )
+    return tuple(routes)
+
+
 def prepare_buffa_christiansen_dual_3d(
     primal: RWGSurfaceCurrentSpace3D, /, *, maximum_condition_number: float = 1e10
 ) -> BuffaChristiansenDualSpace3D:
@@ -428,6 +469,7 @@ def prepare_buffa_christiansen_dual_3d(
         barycentric_surface,
         barycentric_rwg,
         jnp.asarray(stored_transform),
+        _bc_gram_routes(barycentric_surface, stored_transform),
         operator,
         vector_space,
         evidence,

@@ -11,6 +11,7 @@ from numbers import Integral
 from typing import Any
 
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax.exterior._form_type import FormValueSpec
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 
 from ._ir import (
@@ -104,6 +105,8 @@ def _canonical_expression(expression: PDEExpression, /) -> dict[str, Any]:
         result["order"] = int(expression.order)
     if expression.region is not None:
         result["region"] = expression.region
+    if expression.op == "wedge":
+        result["product"] = expression.product
     if not expression.dimension.is_dimensionless:
         result["dimension"] = expression.dimension.to_dict()
     return result
@@ -133,6 +136,7 @@ def pde_ir_to_dict(problem: PDEProblemIR, /) -> dict[str, Any]:
                 "dimension": item.dimension.to_dict(),
                 "scale": list(item.scale),
                 "component_names": list(item.component_names),
+                "form": None if item.form is None else item.form.to_dict(),
             }
             for item in sorted(problem.fields, key=lambda value: value.name)
         ],
@@ -211,12 +215,17 @@ def _expression_from_dict(value: Mapping[str, Any], /) -> PDEExpression:
         "order",
         "region",
         "dimension",
+        "product",
     }
     unknown = set(value) - allowed
     if unknown:
         raise ValueError(f"Unknown PDE expression fields {sorted(unknown)}.")
     if "op" not in value:
         raise ValueError("Serialized PDE expression is missing op.")
+    if "product" in value and value["op"] != "wedge":
+        raise ValueError("Serialized PDE product metadata is only valid for wedge.")
+    if value["op"] == "wedge" and "product" not in value:
+        raise ValueError("Serialized PDE wedge is missing product.")
     return PDEExpression(
         value["op"],
         tuple(_expression_from_dict(argument) for argument in value.get("args", ())),
@@ -228,6 +237,7 @@ def _expression_from_dict(value: Mapping[str, Any], /) -> PDEExpression:
         axis=value.get("axis"),
         order=int(value.get("order", 1)),
         region=value.get("region"),
+        product=value.get("product", "scalar"),
         dimension=(
             DIMENSIONLESS
             if "dimension" not in value
@@ -294,6 +304,7 @@ def pde_ir_from_dict(value: Mapping[str, Any], /) -> PDEProblemIR:
             "dimension",
             "scale",
             "component_names",
+            "form",
         },
         "field",
     )
@@ -341,6 +352,9 @@ def pde_ir_from_dict(value: Mapping[str, Any], /) -> PDEProblemIR:
             dimension=_dimension_from_dict(item["dimension"]),
             scale=tuple(item.get("scale", (1.0,))),
             component_names=tuple(item.get("component_names", ())),
+            form=(
+                None if item["form"] is None else FormValueSpec.from_dict(item["form"])
+            ),
         )
         for item in field_records
     )

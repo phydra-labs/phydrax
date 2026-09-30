@@ -53,6 +53,7 @@ from jax import Array
 
 import phydrax as phx
 from phydrax.discretization import EntitySelection, FacetTraceRule, IntegrationDomain
+from phydrax.optim import adam
 
 
 jax.config.update("jax_enable_x64", True)
@@ -741,7 +742,7 @@ def learned_preconditioner(prepared: cpl.PreparedCoupledProblem) -> None:
     result = phx.solver.train_components(
         initial,
         (objective,),
-        optimizer=optax.adam(5e-3),
+        optimizer=adam(5e-3),
         steps=ACCELERATOR_STEPS,
         key=jr.key(0),
     )

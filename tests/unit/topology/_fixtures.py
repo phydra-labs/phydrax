@@ -53,7 +53,16 @@ def annulus_complex() -> Any:
         + [(index, 4 + (index + 1) % 4, 4 + index) for index in range(4)],
         dtype=np.int32,
     )
-    return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    topology = phx.discretization.polygonal_cell_complex(faces, None, len(vertices))
+    hodges = phx.discretization.simplicial_dual_hodges(
+        topology, vertices, dual="barycentric"
+    )
+    boundary_masks = tuple(
+        entity.subset("boundary").mask for entity in topology.entity_sets
+    )
+    return phx.discretization.CochainDiscretization(
+        topology, hodges, boundary_masks=boundary_masks
+    )
 
 
 def projective_plane_topology() -> Any:

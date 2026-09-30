@@ -23,6 +23,7 @@ from jax.flatten_util import ravel_pytree
 import phydrax as phx
 from phydrax._trainable import require_parameter_roles
 from phydrax.operators.differential import laplacian, partial_n
+from phydrax.optim import adam
 from phydrax.solver._functional_residual import (
     prepare_functional_residual,
     prepared_residual_jacobians,
@@ -407,7 +408,7 @@ def _run_one(args: Any) -> None:
     elif args.optimizer == "adam":
         trained = solver.solve(
             num_iter=args.steps,
-            optim=optax.adam(1e-3),
+            optim=adam(1e-3),
             seed=args.seed,
             log_every=0,
             keep_best=False,

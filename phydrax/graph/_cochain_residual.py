@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, final
 
+import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
@@ -20,38 +21,45 @@ from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._identity import callable_payload
 from .._strict import StrictModule
-from ..discretization import CochainFieldSpec
+from ..exterior._form_type import FormType
 from ..typing import PRNGKey
 from ._ir import GraphIR
 
 
 def _validate_specs(
     name: str,
-    specs: Mapping[str, CochainFieldSpec],
+    specs: Mapping[str, FormType],
     /,
-) -> frozendict[str, CochainFieldSpec]:
+) -> frozendict[str, FormType]:
     if not isinstance(specs, Mapping) or not specs:
         raise ValueError(f"Cochain residual {name} specs must be a non-empty mapping.")
-    out: dict[str, CochainFieldSpec] = {}
+    out: dict[str, FormType] = {}
     for field_name, spec in specs.items():
         key = str(field_name)
         if not key:
             raise ValueError(f"Cochain residual {name} names must be non-empty.")
-        if not isinstance(spec, CochainFieldSpec):
-            raise TypeError(
-                f"Cochain residual {name} spec {key!r} is not a CochainFieldSpec."
-            )
-        if spec.complex_side != "primal":
-            raise ValueError(
-                "CochainResidualProgram currently supports primal fields only."
-            )
-        expected = "invariant" if spec.degree == 0 else "signed"
-        if spec.cell_orientation != expected:
-            raise ValueError(
-                f"Degree-{spec.degree} residual fields require {expected!r} orientation."
-            )
+        if not isinstance(spec, FormType):
+            raise TypeError(f"Cochain residual {name} spec {key!r} is not a FormType.")
         out[key] = spec
     return frozendict(out)
+
+
+def _admit_form_type(graph: GraphIR, form_type: FormType, /) -> GraphIR:
+    """Check that cell coordinates realize the declared primal form placement."""
+    if not isinstance(graph, GraphIR):
+        raise TypeError("Cochain form admission requires a GraphIR.")
+    if not graph.cochain_bindings:
+        raise ValueError("Cochain form admission requires a prepared native realization.")
+    for binding in graph.cochain_bindings:
+        owner = binding.discretization
+        if (
+            owner.dimension != form_type.dimension
+            or owner.primal_twist != form_type.twist
+        ):
+            raise ValueError(
+                "Cochain form_type dimension or twist is incompatible with primal graph placement."
+            )
+    return graph
 
 
 def _node_degrees(graph: GraphIR, /) -> Array:
@@ -93,6 +101,7 @@ def _mask_field(
     return jnp.where(expanded, array, jnp.zeros((), dtype=array.dtype))
 
 
+@final
 class CochainResidualProgram(StrictModule):
     """A canonical full-complex residual with static field semantics.
 
@@ -104,36 +113,40 @@ class CochainResidualProgram(StrictModule):
     ``residual_semantic_id`` and ``residual_numeric_id``.
     """
 
-    input_specs: frozendict[str, CochainFieldSpec]
-    output_specs: frozendict[str, CochainFieldSpec]
+    input_specs: frozendict[str, FormType]
+    output_specs: frozendict[str, FormType]
     residual_fn: Callable[..., Mapping[str, Any]]
     identity: str
 
     def __init__(
         self,
         *,
-        inputs: Mapping[str, CochainFieldSpec],
-        outputs: Mapping[str, CochainFieldSpec],
+        inputs: Mapping[str, FormType],
+        outputs: Mapping[str, FormType],
         residual_fn: Callable[..., Mapping[str, Any]],
         residual_semantic_id: str | None = None,
         residual_numeric_id: str | None = None,
     ) -> None:
         if not callable(residual_fn):
             raise TypeError("CochainResidualProgram residual_fn must be callable.")
-        self.input_specs = _validate_specs("input", inputs)
-        self.output_specs = _validate_specs("output", outputs)
+        input_specs = _validate_specs("input", inputs)
+        output_specs = _validate_specs("output", outputs)
         residual_identity = callable_payload(
             residual_fn,
             semantic_id=residual_semantic_id,
             numeric_id=residual_numeric_id,
         )
-        self.identity = canonical_fingerprint(
+        identity = canonical_fingerprint(
             {
                 "semantic": residual_identity["semantic_content_id"],
                 "numeric": residual_identity["numeric_content_id"],
             }
         )
-        self.residual_fn = _ensure_special_kwonly_args(residual_fn)
+        callable_fn = _ensure_special_kwonly_args(residual_fn)
+        self.input_specs = input_specs
+        self.output_specs = output_specs
+        self.identity = identity
+        self.residual_fn = callable_fn
 
     @property
     def fingerprint(self) -> str:
@@ -174,6 +187,8 @@ class CochainResidualProgram(StrictModule):
                 f"Cochain residual input schema mismatch; missing={missing}, extra={extra}."
             )
 
+        for form_type in (*self.input_specs.values(), *self.output_specs.values()):
+            graph = _admit_form_type(graph, form_type)
         cell_degree = _node_degrees(graph)
         masked_inputs = frozendict(
             {
@@ -196,12 +211,19 @@ class CochainResidualProgram(StrictModule):
             raise ValueError(
                 f"Cochain residual output schema mismatch; missing={missing}, extra={extra}."
             )
+        from ._cochain_execution import _cochain_metric_valid
+
+        metric_valid = _cochain_metric_valid(graph.cochain_bindings)
         return frozendict(
             {
-                name: _mask_field(
-                    name,
-                    raw[name],
-                    _degree_mask(graph, cell_degree, spec.degree),
+                name: eqx.error_if(
+                    _mask_field(
+                        name,
+                        raw[name],
+                        _degree_mask(graph, cell_degree, spec.degree),
+                    ),
+                    ~metric_valid,
+                    "Native cochain pairing must remain finite and positive definite.",
                 )
                 for name, spec in self.output_specs.items()
             }

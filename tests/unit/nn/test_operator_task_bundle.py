@@ -6,6 +6,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -15,6 +16,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._trainable import combine_parameters, partition_parameters
+from phydrax.exterior import FormType, FormValueSpec
 
 
 def _batch(*, cases: Any = 2, size: Any = 8) -> Any:
@@ -231,6 +233,130 @@ def test_operator_task_contracts() -> None:
     legacy_query["queries"][0]["coordinate_dimensions"] = [[1.0]]
     with pytest.raises(TypeError, match="canonical mappings"):
         phx.nn.operator.OperatorTask.from_dict(legacy_query)
+
+
+def test_operator_task_refuses_saved_field_without_form_type() -> None:
+    payload = _task().to_dict()
+    del payload["fields"][0]["form_type"]
+    with pytest.raises(ValueError, match="form_type"):
+        phx.nn.operator.OperatorTask.from_dict(payload)
+
+
+def test_operator_task_form_round_trip_binds_embedded_pde_identity() -> None:
+    form_type = FormType(1, 0)
+    pde = phx.equations.PDEProblemIR(
+        coordinates=(phx.equations.PDECoordinate("x", "space"),),
+        fields=(
+            phx.equations.PDEField(
+                "u",
+                coordinates=("x",),
+                form=FormValueSpec(form_type, proxy="scalar"),
+            ),
+        ),
+    )
+    task = phx.nn.operator.OperatorTask(
+        "form-map",
+        fields=(
+            phx.nn.operator.OperatorFieldSpec(
+                "u",
+                role="target",
+                query_name="query",
+                representation="scalar",
+                form_type=form_type,
+            ),
+        ),
+        queries=(
+            phx.nn.operator.OperatorQuerySpec(
+                "query", geometry_kind="point_cloud", coordinate_components=("x",)
+            ),
+        ),
+        pde=pde,
+    )
+    restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
+    assert restored.fingerprint == task.fingerprint
+    assert restored.to_dict() == task.to_dict()
+    missing_form = task.to_dict()
+    missing_form["pde"]["fields"][0]["form"] = None
+    with pytest.raises(ValueError, match="form identity"):
+        phx.nn.operator.OperatorTask.from_dict(missing_form)
+
+
+@pytest.mark.parametrize(
+    "form_type",
+    [
+        None,
+        FormType(2, 0),
+        FormType(1, 1, twist="twisted"),
+        FormType(1, 0, fiber_shape=(1,)),
+        FormType(1, 0, ambient_dimension=2),
+    ],
+    ids=["absent", "dimension", "degree-twist", "fiber", "ambient"],
+)
+def test_operator_task_rejects_equal_channel_count_with_wrong_form_identity(
+    form_type: FormType | None,
+) -> None:
+    pde = phx.equations.PDEProblemIR(
+        coordinates=(phx.equations.PDECoordinate("x", "space"),),
+        fields=(
+            phx.equations.PDEField(
+                "u",
+                coordinates=("x",),
+                form=FormValueSpec(FormType(1, 0), proxy="scalar"),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="form identity"):
+        phx.nn.operator.OperatorTask(
+            "wrong-form-map",
+            fields=(
+                phx.nn.operator.OperatorFieldSpec(
+                    "u",
+                    role="target",
+                    query_name="query",
+                    representation="scalar",
+                    form_type=form_type,
+                ),
+            ),
+            queries=(
+                phx.nn.operator.OperatorQuerySpec(
+                    "query", geometry_kind="point_cloud", coordinate_components=("x",)
+                ),
+            ),
+            pde=pde,
+        )
+
+
+def test_operator_artifact_round_trip_preserves_form_binding(tmp_path: Path) -> None:
+    base = _task()
+    task_payload = base.to_dict()
+    task_payload["fields"][1]["form_type"] = FormType(1, 0).to_dict()
+    task = phx.nn.operator.OperatorTask.from_dict(task_payload)
+    trained = phx.nn.operator.training.TrainedOperator(
+        _trained().execution_model,
+        task,
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        **_solution_binding(task),
+    )
+    destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+    assert restored.task.to_dict() == task.to_dict()
+    assert restored.task_fingerprint == trained.task_fingerprint
+    assert jnp.allclose(
+        restored.predict(_batch()).field("solution").values,
+        trained.predict(_batch()).field("solution").values,
+    )
+
+
+def test_operator_artifact_refuses_missing_saved_form_identity(tmp_path: Path) -> None:
+    destination = phx.nn.operator.training.save_operator_artifact(tmp_path, _trained())
+    manifest_path = destination / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del payload["task"]["fields"][0]["form_type"]
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="form_type"):
+        phx.nn.operator.training.load_trained_operator(destination)
 
 
 def test_trained_operator_contracts() -> None:

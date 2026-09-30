@@ -86,7 +86,9 @@ def qualify() -> dict[str, object]:
     )
     complex_ = phx.imaging.build_compartment_complex(labels, definitions, (interface,))
     surfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
-    element = phx.discretization.tetrahedral_rt_element()
+    element = phx.discretization.fem.form_element(
+        "tetrahedron", 2, 1, family="trimmed", twist="twisted", proxy="flux"
+    )
     centers = np.asarray(
         (
             (1 / 3, 1 / 3, 0.0),
@@ -110,7 +112,11 @@ def qualify() -> dict[str, object]:
             for face in range(4)
         ]
     )
-    flux_error = float(np.max(np.abs(flux - np.eye(4))))
+    _, center_gradients = element.tabulate(np.full((1, 3), 0.25, dtype=np.float64))
+    integrated_divergence = (
+        np.trace(np.asarray(center_gradients[0]), axis1=-2, axis2=-1) / 6.0
+    )
+    flux_error = float(np.max(np.abs(np.sum(flux, axis=0) - integrated_divergence)))
     tetrahedron = phx.discretization.CellMesh.from_tetrahedra(
         np.asarray(
             (

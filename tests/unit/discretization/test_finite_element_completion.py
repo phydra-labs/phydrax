@@ -252,13 +252,19 @@ def test_finite_element_completion_scenario_2() -> None:
     rt = phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
-            "q", phx.discretization.raviart_thomas_element("triangle")
+            "q",
+            phx.discretization.form_element(
+                "triangle", 1, 1, twist="twisted", proxy="flux"
+            ),
         ),
     ).prepare()
     ne = phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
-            "e", phx.discretization.nedelec_element("triangle")
+            "e",
+            phx.discretization.form_element(
+                "triangle", 1, 1, twist="untwisted", proxy="circulation"
+            ),
         ),
     ).prepare()
 
@@ -280,7 +286,9 @@ def test_finite_element_completion_scenario_2() -> None:
         mesh,
         phx.discretization.FiniteElementFieldSpec(
             "q",
-            phx.discretization.raviart_thomas_element("triangle"),
+            phx.discretization.form_element(
+                "triangle", 1, 1, twist="twisted", proxy="flux"
+            ),
         ),
     ).prepare()
     rule = phx.integration.ReferenceTriangleRule(phx.integration.GaussLegendreRule(4))

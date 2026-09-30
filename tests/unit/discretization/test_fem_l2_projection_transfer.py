@@ -351,7 +351,10 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
     vector = phx.discretization.FiniteElementPlan(
         first,
         phx.discretization.FiniteElementFieldSpec(
-            "u", phx.discretization.raviart_thomas_element("triangle")
+            "u",
+            phx.discretization.form_element(
+                "triangle", 1, 1, twist="twisted", proxy="flux"
+            ),
         ),
     ).prepare()
     with pytest.raises(ValueError, match="scalar Lagrange elements"):

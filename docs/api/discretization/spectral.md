@@ -1,5 +1,31 @@
 # Global spectral methods
 
+## Exterior realizations
+
+`FourierDeRhamComplex(space, /, *, nyquist_policy="zero-self-conjugate")`
+requires an explicit Nyquist policy and composes the existing spectral owner.
+Its compact vectors exclude padded/forbidden modes. `from_modal` / `to_modal`
+use an explicit last component axis and orthonormal Fourier Parseval pairing.
+`hilbert_complex(boundary="absolute")` supplies degree spaces; relative boundary
+is refused on this periodic realization.
+
+`SphericalDeRhamComplex(space, /)` uses independent real harmonic coordinates
+and normalized poloidal/toroidal modes, with radius² pairing and Betti (1, 0, 1).
+Degree0/2 physical values are scalar and degree1 values use east/north components.
+Both expose metric Riesz `hodge_star` / `inverse_hodge_star`; `metric_star` is the
+separate smooth complement rotation.
+Spectral `hodge_decomposition` retains its optimized analytic route and accepts
+optional `harmonic` / `lower_harmonic` artifacts only after complex/degree/kernel
+rank, metric-orthonormality and current-evidence checks. Degree0 refuses a lower
+artifact. Non-None iterative `policy` is explicitly refused rather than silently
+ignored by a closed-form solve.
+
+
+::: phydrax.discretization.FourierDeRhamComplex
+
+::: phydrax.discretization.SphericalDeRhamComplex
+
+
 ## Basis and tensor spaces
 
 ::: phydrax.discretization.AxisDomain

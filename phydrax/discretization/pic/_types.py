@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from enum import IntEnum, IntFlag
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 from jax import Array
 
 from ..._strict import StrictModule
 from ...discretization.splatting import ParticleGridSplatState, SplatBalanceEvidence
+from ...exterior._chains import PreparedChainQuery
 
 
 class PICRunStatus(IntEnum):
@@ -57,12 +58,13 @@ class RelativisticPushResult(StrictModule):
     successful: Array
 
 
+@final
 class PICTransferState(StrictModule):
     """Instantaneous charge and oriented field routes for one species."""
 
     charge: ParticleGridSplatState
-    electric: tuple[ParticleGridSplatState, ...]
-    magnetic: tuple[ParticleGridSplatState, ...]
+    electric: PreparedChainQuery
+    magnetic: PreparedChainQuery | None
     transfer_id: str = eqx.field(static=True)
 
 

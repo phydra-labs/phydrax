@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...discretization._cell_complex import cubical_cell_complex
 from ...discretization._topology import CellComplexTopology
 from ...linalg._materialization import MaterializationPolicy
 from ...operators.quantum._fermionic_fock import (
@@ -47,6 +48,7 @@ class PeriodicSchwingerModel(StrictModule):
     """Periodic staggered Schwinger model with retained regulated U(1) links."""
 
     layout: HilbertRegisterLayout
+    topology: CellComplexTopology
     mode_order: FermionModeOrder = eqx.field(static=True)
     fermion_basis: FermionicFockBasis = eqx.field(static=True)
     link_space: TruncatedU1LinkHilbertSpace
@@ -93,6 +95,7 @@ class PeriodicSchwingerModel(StrictModule):
         if coupling < 0.0:
             raise ValueError("gauge_coupling must be non-negative.")
         link_space = TruncatedU1LinkHilbertSpace(int(maximum_flux), center_flux=sector)
+        topology = cubical_cell_complex((sites,), periodic=True).topology
         if link_space.dimension > int(maximum_link_dimension):
             raise ValueError("Periodic Schwinger link exceeds maximum_link_dimension.")
         matter_ids = tuple(f"matter:{site}" for site in range(sites))
@@ -120,6 +123,7 @@ class PeriodicSchwingerModel(StrictModule):
             }
         )
         self.layout = layout
+        self.topology = topology
         self.mode_order = order
         self.fermion_basis = FermionicFockBasis(order)
         self.link_space = link_space
@@ -391,10 +395,8 @@ def periodic_schwinger_gauss_network(
 ) -> GaussConstraintNetwork:
     if not isinstance(model, PeriodicSchwingerModel):
         raise TypeError("model must be PeriodicSchwingerModel.")
-    incidence = np.zeros((model.site_count, model.site_count), dtype=np.int8)
-    for site in range(model.site_count):
-        incidence[site, site] = 1
-        incidence[(site + 1) % model.site_count, site] = -1
+    # Boundary is -tail,+head; physical electric divergence is its negative.
+    incidence = -model.topology.incidences[0].scipy_boundary().toarray()
     electric = model.link_space.electric_field[None, :, :]
     link_generators = tuple(electric for _ in range(model.site_count))
     number = jnp.diag(jnp.asarray((0.0, 1.0), dtype=jnp.complex128))

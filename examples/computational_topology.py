@@ -39,15 +39,16 @@ diagram = persistence.diagram()
 packed = persistence.pack(4)
 frozen = phx.topology.freeze_persistence_pairing(persistence, filtration)
 evaluation = frozen.evaluate(filtration.values)
-metric_complex = phx.graph.triangle_mesh_to_cochain_complex(
-    jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
-    jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
+vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+hodges = phx.discretization.simplicial_dual_hodges(
+    mesh_topology, vertices, dual="barycentric"
 )
-harmonics, hodge_report = phx.graph.validate_hodge_homology(metric_complex, 0)
-_, kernel_certificate, _ = phx.graph.cochain_harmonic_kernel_certificate(
+metric_complex = phx.discretization.CochainDiscretization(mesh_topology, hodges)
+harmonics, hodge_report = phx.exterior.validate_harmonic_cohomology(metric_complex, 0)
+_, kernel_certificate, _ = phx.exterior.harmonic_kernel_certificate(
     metric_complex,
     0,
-    harmonic_subspace=harmonics,
+    harmonic=harmonics,
 )
 
 print("homology", homology.dimensions)

@@ -10,19 +10,25 @@ from math import prod
 from typing import Any, final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._algebra import map_reference_values, pullback, vector_to_form
+from ...exterior._form_type import FormType
 from ...linalg import (
     ArraySpace,
     BlockSpace,
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
     inverse_small_linear,
     OperatorProperties,
     SmallLinearSolvePlan,
@@ -42,7 +48,7 @@ from .._cell_complex import (
     TetrahedralConnectivity,
 )
 from .._cell_geometry import CellGeometryElement, CellGeometrySpec
-from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
+from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock, SimplicialConnectivity
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -81,6 +87,77 @@ from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec, lagrange_element
 
 
+def _linear_reference_element(cell_kind: str, /) -> FiniteElementSpec:
+    """Select the owning scalar coordinate chart without a generic Lagrange alias."""
+    if cell_kind.startswith(("simplex:", "tensor:")):
+        from ._form_elements import form_element
+
+        family = "tensor-trimmed" if cell_kind.startswith("tensor:") else "trimmed"
+        return form_element(
+            cell_kind, 0, 1, family=family, twist="untwisted", proxy="scalar"
+        )
+    return lagrange_element(cell_kind, 1)
+
+
+def _field_element_assignments(
+    elements: FiniteElementSpec | Mapping[str, FiniteElementSpec],
+    block_names: Sequence[str] | None,
+    /,
+) -> tuple[tuple[str, ...], tuple[FiniteElementSpec, ...]]:
+    if isinstance(elements, FiniteElementSpec):
+        names = () if block_names is None else tuple(str(block) for block in block_names)
+        element_values = (elements,) if not names else (elements,) * len(names)
+    else:
+        items = tuple(
+            sorted((str(block), element) for block, element in elements.items())
+        )
+        if not items:
+            raise ValueError("Field element mapping must be non-empty.")
+        names = tuple(block for block, _ in items)
+        element_values = tuple(element for _, element in items)
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError("Field block names must be unique and non-empty.")
+    if not all(isinstance(element, FiniteElementSpec) for element in element_values):
+        raise TypeError("Field elements must be FiniteElementSpec instances.")
+    return names, element_values
+
+
+def _resolve_field_assignments(
+    mesh: CellMesh, names: tuple[str, ...], elements: tuple[FiniteElementSpec, ...], /
+) -> tuple[FiniteElementSpec, ...]:
+    if not names:
+        if len(elements) != 1:
+            raise ValueError("Implicit field element assignment requires one element.")
+        return (elements[0],) * len(mesh.blocks)
+    assignments = dict(zip(names, elements, strict=True))
+    if set(assignments) != {block.name for block in mesh.blocks}:
+        raise ValueError(
+            "Field element assignments must match the mesh block names exactly."
+        )
+    return tuple(assignments[block.name] for block in mesh.blocks)
+
+
+def _validate_resolved_elements(
+    mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
+) -> None:
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        if block.cell_kind != element.cell_kind:
+            raise ValueError(
+                f"Element {element.cell_kind!r} is incompatible with block {block.name!r} ({block.cell_kind!r})."
+            )
+    if len({element.conformity for element in elements}) != 1:
+        raise ValueError("One field must use one conformity across mesh blocks.")
+    if len({element.representation for element in elements}) != 1:
+        raise ValueError(
+            "One field must use one coefficient representation across mesh blocks."
+        )
+    if len({element.mapping for element in elements}) != 1:
+        raise ValueError("One field must use one mapping across mesh blocks.")
+    if len({element.value_shape for element in elements}) != 1:
+        raise ValueError("One field must use one value shape across mesh blocks.")
+
+
+@final
 class FiniteElementFieldSpec(StrictModule, NonTrainableState):
     """One named field and its reference element on every mesh block."""
 
@@ -105,24 +182,7 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("Field component dimensions must be positive.")
-        if isinstance(elements, FiniteElementSpec):
-            if block_names is None:
-                names = ()
-            else:
-                names = tuple(str(block) for block in block_names)
-            element_values = (elements,) if not names else (elements,) * len(names)
-        else:
-            items = tuple(
-                sorted((str(block), element) for block, element in elements.items())
-            )
-            if not items:
-                raise ValueError("Field element mapping must be non-empty.")
-            names = tuple(block for block, _ in items)
-            element_values = tuple(element for _, element in items)
-        if any(not name_ for name_ in names) or len(set(names)) != len(names):
-            raise ValueError("Field block names must be unique and non-empty.")
-        if not all(isinstance(element, FiniteElementSpec) for element in element_values):
-            raise TypeError("Field elements must be FiniteElementSpec instances.")
+        names, element_values = _field_element_assignments(elements, block_names)
         self.name = field_name
         self.block_names = names
         self.elements = element_values
@@ -138,35 +198,8 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         )
 
     def resolve(self, mesh: CellMesh, /) -> tuple[FiniteElementSpec, ...]:
-        if not self.block_names:
-            if len(self.elements) != 1:
-                raise ValueError(
-                    "Implicit field element assignment requires one element."
-                )
-            element = self.elements[0]
-            resolved = (element,) * len(mesh.blocks)
-        else:
-            assignments = dict(zip(self.block_names, self.elements, strict=True))
-            if set(assignments) != {block.name for block in mesh.blocks}:
-                raise ValueError(
-                    "Field element assignments must match the mesh block names exactly."
-                )
-            resolved = tuple(assignments[block.name] for block in mesh.blocks)
-        for block, element in zip(mesh.blocks, resolved, strict=True):
-            if block.cell_kind != element.cell_kind:
-                raise ValueError(
-                    f"Element {element.cell_kind!r} is incompatible with block {block.name!r} ({block.cell_kind!r})."
-                )
-        if len({element.conformity for element in resolved}) != 1:
-            raise ValueError("One field must use one conformity across mesh blocks.")
-        if len({element.representation for element in resolved}) != 1:
-            raise ValueError(
-                "One field must use one coefficient representation across mesh blocks."
-            )
-        if len({element.mapping for element in resolved}) != 1:
-            raise ValueError("One field must use one mapping across mesh blocks.")
-        if len({element.value_shape for element in resolved}) != 1:
-            raise ValueError("One field must use one value shape across mesh blocks.")
+        resolved = _resolve_field_assignments(mesh, self.block_names, self.elements)
+        _validate_resolved_elements(mesh, resolved)
         return resolved
 
 
@@ -377,9 +410,154 @@ class _FiniteElementDofLayout:
     edge_starts: np.ndarray | None = None
     face_widths: np.ndarray | None = None
     face_starts: np.ndarray | None = None
-    compatible_face_width: int | None = None
-    compatible_cell_width: int | None = None
     cell_starts: np.ndarray | None = None
+    canonical_routes: tuple[np.ndarray, ...] | None = None
+    canonical_transforms: tuple[np.ndarray, ...] | None = None
+    canonical_boundary: np.ndarray | None = None
+
+
+def _topology_vertex_sets(mesh: CellMesh, /) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    """Recover canonical entity vertex sets from the owning incidence."""
+    result = [tuple((vertex,) for vertex in range(mesh.coordinates.shape[0]))]
+    for degree, incidence in enumerate(mesh.topology.incidences, start=1):
+        relation = incidence.relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        source = np.asarray(relation.source_indices)[valid]
+        target = np.asarray(relation.target_indices)[valid]
+        vertices = [set() for _ in range(mesh.topology.entity_sets[degree].count)]
+        for lower, upper in zip(source, target, strict=True):
+            vertices[upper].update(result[-1][lower])
+        result.append(tuple(tuple(sorted(entity)) for entity in vertices))
+    return tuple(result)
+
+
+def _record_form_entity_widths(
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    lookups: tuple[dict[tuple[int, ...], int], ...],
+    widths: list[np.ndarray],
+    /,
+) -> None:
+    basis = element.form_basis
+    if basis is None:
+        raise ValueError("Canonical form routing requires form-basis metadata.")
+    for cell in np.asarray(block.vertices):
+        for dimension, faces in enumerate(basis.entity_vertices):
+            for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
+                entity = lookups[dimension][tuple(sorted(cell[list(face)]))]
+                old = widths[dimension][entity]
+                if old not in (0, len(dofs)):
+                    raise ValueError("Shared form entities require equal moment spaces.")
+                widths[dimension][entity] = len(dofs)
+
+
+def _orient_form_cell_matrix(
+    matrix: np.ndarray,
+    mesh: CellMesh,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    cell: np.ndarray,
+    /,
+) -> None:
+    basis = element.form_basis
+    if basis is None:
+        raise ValueError("Canonical form routing requires form-basis metadata.")
+    matrix[:] = np.asarray(basis.entity_permutation_matrix(tuple(cell.tolist())))
+    if basis.form_degree == mesh.topological_dimension:
+        permutation = basis.canonical_permutation(tuple(cell.tolist()))
+        sign = (-1) ** sum(
+            permutation[i] > permutation[j]
+            for i in range(len(permutation))
+            for j in range(i + 1, len(permutation))
+        )
+        if basis.family == "tensor-trimmed":
+            chart = _linear_reference_element(block.cell_kind)
+            reference_vertices = np.asarray(chart.reference_nodes)
+            affine = np.linalg.lstsq(
+                np.c_[reference_vertices, np.ones((len(cell),), dtype=np.float64)],
+                reference_vertices[list(permutation)],
+                rcond=None,
+            )[0]
+            sign = np.sign(np.linalg.det(affine[:-1].T))
+        matrix *= sign
+    if element.value_spec.form_type.twist == "twisted":
+        chart = _linear_reference_element(block.cell_kind)
+        gradients = np.asarray(
+            chart.tabulate(np.mean(np.asarray(chart.reference_nodes), axis=0)[None])[1][0]
+        )
+        jacobian = np.asarray(mesh.coordinates)[cell].T @ gradients
+        if jacobian.shape[0] != jacobian.shape[1]:
+            raise ValueError(
+                "Twisted embedded FE moments require explicit ambient coorientation."
+            )
+        matrix *= np.sign(np.linalg.det(jacobian))
+
+
+def _canonical_form_dof_layout(
+    mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
+) -> _FiniteElementDofLayout:
+    """Prepare permutation-covariant entity moment coordinates."""
+    entities = _topology_vertex_sets(mesh)
+    lookups = tuple(
+        {vertices: index for index, vertices in enumerate(level)} for level in entities
+    )
+    widths = [np.zeros((len(level),), dtype=np.int32) for level in entities]
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        _record_form_entity_widths(block, element, lookups, widths)
+    counts = tuple(int(np.sum(level)) for level in widths)
+    offsets = np.cumsum((0, *counts), dtype=np.int64)
+    starts = tuple(
+        offsets[degree] + np.cumsum(np.r_[0, level[:-1]], dtype=np.int64)
+        for degree, level in enumerate(widths)
+    )
+    boundary = np.zeros((int(offsets[-1]),), dtype=np.bool_)
+    for degree, level in enumerate(widths):
+        mask = np.asarray(mesh.topology.entity_sets[degree].subset("boundary").mask)
+        for entity in np.flatnonzero(mask):
+            start = starts[degree][entity]
+            boundary[start : start + level[entity]] = True
+    routes, transforms = _canonical_form_block_routes(mesh, elements, lookups, starts)
+    return _FiniteElementDofLayout(
+        conformity=elements[0].conformity,
+        association="form_entity",
+        global_count=int(offsets[-1]),
+        entity_dof_counts=counts,
+        entity_dofs_per_entity=tuple(_uniform_entity_width(level) for level in widths),
+        canonical_routes=routes,
+        canonical_transforms=transforms,
+        canonical_boundary=boundary,
+    )
+
+
+def _canonical_form_block_routes(
+    mesh: CellMesh,
+    elements: tuple[FiniteElementSpec, ...],
+    lookups: tuple[dict[tuple[int, ...], int], ...],
+    starts: tuple[np.ndarray, ...],
+    /,
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    routes, transforms = [], []
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        basis = element.form_basis
+        if basis is None:
+            raise ValueError("Canonical form routing requires form-basis metadata.")
+        local = np.empty((block.cell_count, element.local_dof_count), dtype=np.int32)
+        matrices = np.empty(
+            (block.cell_count, element.local_dof_count, element.local_dof_count),
+            dtype=np.float64,
+        )
+        for row, cell in enumerate(np.asarray(block.vertices)):
+            _orient_form_cell_matrix(matrices[row], mesh, block, element, cell)
+            for dimension, faces in enumerate(basis.entity_vertices):
+                for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
+                    # Vertex-set matching, never positional reference-face matching.
+                    entity = lookups[dimension][tuple(sorted(cell[list(face)]))]
+                    local[row, list(dofs)] = starts[dimension][entity] + np.arange(
+                        len(dofs)
+                    )
+        routes.append(local)
+        transforms.append(matrices)
+    return tuple(routes), tuple(transforms)
 
 
 _HIGH_ORDER_H1_CONNECTIVITIES = (
@@ -395,6 +573,12 @@ def _prepare_finite_element_dof_layout(
     components: tuple[int, ...],
     /,
 ) -> _FiniteElementDofLayout:
+    if all(element.form_basis is not None for element in resolved):
+        if components:
+            raise ValueError(
+                "Canonical form elements do not replicate coefficient fibers."
+            )
+        return _canonical_form_dof_layout(mesh, resolved)
     conformities = {element.conformity for element in resolved}
     if len(conformities) != 1:
         raise ValueError("One field must use one conformity across cell blocks.")
@@ -410,8 +594,8 @@ def _prepare_finite_element_dof_layout(
                     for block, element in zip(mesh.blocks, resolved, strict=True)
                 ),
             )
-        case "Hdiv" | "Hcurl":
-            return _compatible_dof_layout(mesh, resolved, components, conformity)
+        case "Hdiv" | "Hcurl" | "HLambda":
+            raise ValueError("Compatible fields require canonical form-element metadata.")
         case "H1":
             if not any(_has_nonvertex_dofs(element) for element in resolved):
                 return _single_association_dof_layout(
@@ -437,71 +621,6 @@ def _single_association_dof_layout(
         global_count=global_count,
         entity_dof_counts=(0,) * entity_count,
         entity_dofs_per_entity=(1,) * entity_count,
-    )
-
-
-def _compatible_dof_layout(
-    mesh: CellMesh,
-    resolved: tuple[FiniteElementSpec, ...],
-    components: tuple[int, ...],
-    conformity: str,
-    /,
-) -> _FiniteElementDofLayout:
-    if components:
-        raise ValueError(
-            "H(div)/H(curl) element values cannot add replicated components."
-        )
-    connectivity = mesh.connectivity
-    if isinstance(connectivity, PolygonalConnectivity):
-        return _single_association_dof_layout(
-            mesh, conformity, "edge", connectivity.edges.shape[0]
-        )
-    if isinstance(connectivity, TetrahedralConnectivity) and conformity == "Hdiv":
-        return _tetrahedral_hdiv_dof_layout(mesh, resolved, connectivity)
-    raise ValueError(
-        "Compatible spaces require polygonal edges or tetrahedral H(div) faces."
-    )
-
-
-def _tetrahedral_hdiv_dof_layout(
-    mesh: CellMesh,
-    resolved: tuple[FiniteElementSpec, ...],
-    connectivity: TetrahedralConnectivity,
-    /,
-) -> _FiniteElementDofLayout:
-    face_widths = {
-        len(face_dofs) for element in resolved for face_dofs in element.entity_dofs[2]
-    }
-    if len(face_widths) != 1 or not face_widths or next(iter(face_widths)) < 1:
-        raise ValueError(
-            "Tetrahedral H(div) faces require one uniform positive moment width."
-        )
-    if any(
-        any(entity for dimension in (0, 1) for entity in element.entity_dofs[dimension])
-        for element in resolved
-    ):
-        raise ValueError(
-            "Tetrahedral H(div) elements require face and cell moments only."
-        )
-    cell_widths = {
-        len(element.entity_dofs[3][0])
-        for element in resolved
-        if len(element.entity_dofs[3]) == 1
-    }
-    if len(cell_widths) != 1:
-        raise ValueError("Tetrahedral H(div) cells require one uniform interior width.")
-    face_width = next(iter(face_widths))
-    cell_width = next(iter(cell_widths))
-    face_dof_count = connectivity.faces.shape[0] * face_width
-    cell_dof_count = sum(block.cell_count for block in mesh.blocks) * cell_width
-    return _FiniteElementDofLayout(
-        conformity="Hdiv",
-        association="hdiv_entity",
-        global_count=face_dof_count + cell_dof_count,
-        entity_dof_counts=(0, 0, face_dof_count, cell_dof_count),
-        entity_dofs_per_entity=(0, 0, face_width, cell_width),
-        compatible_face_width=face_width,
-        compatible_cell_width=cell_width,
     )
 
 
@@ -761,10 +880,11 @@ def _build_finite_element_dof_routes(
                     connectivity.cell_edge_signs,
                     dtype=np.float64,
                 )[rows, : element.local_dof_count]
-            case "hdiv_entity":
-                local, orientation = _tetrahedral_hdiv_block_routes(
-                    mesh, layout, block, element, vertices, cell_offset
-                )
+            case "form_entity":
+                if layout.canonical_routes is None:
+                    raise RuntimeError("Canonical form DOF routes were not prepared.")
+                local = layout.canonical_routes[len(block_dofs)]
+                orientation = np.ones_like(local, dtype=np.float64)
             case "entity":
                 local = _high_order_h1_block_routes(
                     mesh, layout, block, element, vertices, cell_offset
@@ -784,101 +904,6 @@ def _build_finite_element_dof_routes(
         relations.append(RowRelation(local, source_size=layout.global_count))
         cell_offset += block.cell_count
     return tuple(block_dofs), tuple(orientations), tuple(relations)
-
-
-def _tetrahedral_hdiv_block_routes(
-    mesh: CellMesh,
-    layout: _FiniteElementDofLayout,
-    block: CellBlock | PolyhedralBlock,
-    element: FiniteElementSpec,
-    vertices: np.ndarray,
-    cell_offset: int,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise TypeError("Compatible face map requires tetrahedral connectivity.")
-    compatible_face_width = layout.compatible_face_width
-    compatible_cell_width = layout.compatible_cell_width
-    if compatible_face_width is None:
-        raise RuntimeError("Compatible face width was not prepared.")
-    if compatible_cell_width is None:
-        raise RuntimeError("Compatible cell width was not prepared.")
-    _, _, block_cell_faces = _tetrahedral_entity_routes(connectivity, vertices)
-    local = np.full(
-        (block.cell_count, element.local_dof_count),
-        -1,
-        dtype=np.int32,
-    )
-    orientation = np.ones_like(local, dtype=np.float64)
-    for local_face, face_dofs in enumerate(element.entity_dofs[2]):
-        width = len(face_dofs)
-        if width != compatible_face_width:
-            raise ValueError("Tetrahedral H(div) face widths are inconsistent.")
-        local_vertices = _TETRAHEDRAL_FACES[local_face]
-        face_vertex_ids = vertices[:, np.asarray(local_vertices, dtype=np.int32)]
-        positions, face_signs = _tetrahedral_hdiv_face_moment_routes(
-            face_vertex_ids, width
-        )
-        dofs = np.asarray(face_dofs, dtype=np.int32)
-        local[:, dofs] = block_cell_faces[:, local_face, None] * width + positions
-        orientation[:, dofs] = face_signs[:, None]
-    interior_dofs = element.entity_dofs[3][0]
-    if len(interior_dofs) != compatible_cell_width:
-        raise ValueError("Tetrahedral H(div) cell widths are inconsistent.")
-    if interior_dofs:
-        face_dof_count = connectivity.faces.shape[0] * compatible_face_width
-        starts = (
-            face_dof_count
-            + (cell_offset + np.arange(block.cell_count)) * compatible_cell_width
-        )
-        local[:, np.asarray(interior_dofs, dtype=np.int32)] = (
-            starts[:, None] + np.arange(compatible_cell_width, dtype=np.int32)[None, :]
-        )
-    if np.any(local < 0):
-        raise ValueError("Tetrahedral H(div) map left unassigned DOFs.")
-    return local, orientation
-
-
-def _tetrahedral_hdiv_face_moment_routes(
-    face_vertex_ids: np.ndarray,
-    width: int,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return canonical face-moment positions and normal signs for one local face."""
-    vertex_positions = np.argsort(np.argsort(face_vertex_ids, axis=1), axis=1).astype(
-        np.int32
-    )
-    inversions = (
-        (face_vertex_ids[:, 0] > face_vertex_ids[:, 1]).astype(np.int32)
-        + (face_vertex_ids[:, 0] > face_vertex_ids[:, 2]).astype(np.int32)
-        + (face_vertex_ids[:, 1] > face_vertex_ids[:, 2]).astype(np.int32)
-    )
-    face_signs = 1.0 - 2.0 * (inversions % 2)
-    if width == 1:
-        positions = np.zeros((face_vertex_ids.shape[0], 1), dtype=np.int32)
-    elif width == 3:
-        positions = vertex_positions
-    elif width == 6:
-        edge_positions = []
-        for first_local, second_local in ((0, 1), (1, 2), (2, 0)):
-            first = vertex_positions[:, first_local]
-            second = vertex_positions[:, second_local]
-            low = np.minimum(first, second)
-            high = np.maximum(first, second)
-            edge_positions.append(
-                np.where(
-                    (low == 0) & (high == 1),
-                    3,
-                    np.where((low == 1) & (high == 2), 4, 5),
-                )
-            )
-        positions = np.column_stack((vertex_positions, *edge_positions)).astype(np.int32)
-    else:
-        raise ValueError(
-            "Tetrahedral H(div) supports one, three, or six moments per face."
-        )
-    return positions, face_signs
 
 
 def _high_order_h1_block_routes(
@@ -1042,7 +1067,7 @@ def _build_finite_element_dof_coordinates(
 ) -> tuple[tuple[Array, ...], Array, Array]:
     global_count = layout.global_count
     coordinate_weights = tuple(
-        lagrange_element(block.cell_kind, 1).tabulate(element.reference_nodes)[0]
+        _linear_reference_element(block.cell_kind).tabulate(element.reference_nodes)[0]
         for block, element in zip(mesh.blocks, resolved, strict=True)
     )
     match layout.association:
@@ -1059,14 +1084,16 @@ def _build_finite_element_dof_coordinates(
                 np.asarray(mesh.coordinates)[edge_vertices],
                 axis=1,
             )
-        case "hdiv_entity":
-            boundary = _tetrahedral_hdiv_boundary_mask(mesh, layout)
+        case "form_entity":
+            if layout.canonical_boundary is None:
+                raise RuntimeError("Canonical form boundary was not prepared.")
+            boundary = layout.canonical_boundary
             dof_coordinates = _averaged_dof_coordinates(
                 mesh,
                 coordinate_weights,
                 block_dofs,
                 global_count,
-                "Compatible face coordinates contain unassigned DOFs.",
+                "Canonical form coordinates contain unassigned DOFs.",
             )
         case "entity":
             boundary = _high_order_h1_boundary_mask(mesh, layout)
@@ -1150,26 +1177,6 @@ def _vertex_boundary_mask(mesh: CellMesh, global_count: int, /) -> np.ndarray:
     return boundary
 
 
-def _tetrahedral_hdiv_boundary_mask(
-    mesh: CellMesh,
-    layout: _FiniteElementDofLayout,
-    /,
-) -> np.ndarray:
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise TypeError("Compatible face map requires tetrahedral connectivity.")
-    compatible_face_width = layout.compatible_face_width
-    if compatible_face_width is None or layout.compatible_cell_width is None:
-        raise RuntimeError("Compatible H(div) widths were not prepared.")
-    boundary = np.zeros((layout.global_count,), dtype=np.bool_)
-    face_dof_count = connectivity.faces.shape[0] * compatible_face_width
-    boundary[:face_dof_count] = np.repeat(
-        np.asarray(connectivity.boundary_faces, dtype=np.bool_),
-        compatible_face_width,
-    )
-    return boundary
-
-
 def _high_order_h1_boundary_mask(
     mesh: CellMesh,
     layout: _FiniteElementDofLayout,
@@ -1219,6 +1226,7 @@ def _canonical_finite_element_routes(
     return tuple(canonical_routes), tuple(canonical_orientations)
 
 
+@final
 class FiniteElementDofMap(StrictModule, NonTrainableState):
     """Per-block FE local gathers into one global field coordinate array."""
 
@@ -1226,6 +1234,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
     cell_dofs: tuple[Array, ...]
     relations: tuple[RowRelation, ...]
     orientations: tuple[Array, ...]
+    cell_transforms: tuple[Array, ...]
     cell_coordinate_weights: tuple[Array, ...]
     global_dof_count: int = eqx.field(static=True)
     entity_dof_counts: tuple[int, ...] = eqx.field(static=True)
@@ -1270,6 +1279,14 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         self.block_names = tuple(block.name for block in mesh.blocks)
         self.cell_dofs = tuple(block_dofs)
         self.orientations = tuple(orientations)
+        self.cell_transforms = (
+            tuple(jnp.asarray(value) for value in layout.canonical_transforms)
+            if layout.canonical_transforms is not None
+            else tuple(
+                jnp.asarray(np.eye(routes.shape[1])[None] * np.asarray(signs)[:, None, :])
+                for routes, signs in zip(block_dofs, orientations, strict=True)
+            )
+        )
         self.cell_coordinate_weights = tuple(
             jnp.asarray(value) for value in coordinate_weights
         )
@@ -1321,7 +1338,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 raise TypeError("Edge DOF coordinates require polygonal connectivity.")
             edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
             return 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
-        if self.association in ("entity", "face", "hdiv_entity"):
+        if self.association in ("entity", "face", "form_entity"):
             accumulated = jnp.zeros(
                 (self.global_dof_count, mesh.ambient_dimension),
                 dtype=points.dtype,
@@ -1436,6 +1453,12 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
             np.asarray(connectivity.face_owner_local, dtype=np.int32),
             np.asarray(connectivity.face_neighbor_local, dtype=np.int32),
         )
+    elif isinstance(connectivity, SimplicialConnectivity):
+        cell_facets = np.asarray(
+            connectivity.cell_entities[mesh.topological_dimension - 1]
+        )
+        valid = np.ones_like(cell_facets, dtype=np.bool_)
+        facet_count = connectivity.entities[mesh.topological_dimension - 1].shape[0]
     else:
         cell_facets = np.asarray(connectivity.cell_faces, dtype=np.int32)
         valid = np.ones_like(cell_facets, dtype=np.bool_)
@@ -1460,75 +1483,98 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     return owner, neighbor, owner_local, neighbor_local
 
 
+def _cell_metric_determinants(
+    cell_kind: str, points: np.ndarray, /
+) -> tuple[np.ndarray, str]:
+    """Evaluate the admitted cell family's existing metric determinant formula."""
+    if cell_kind.startswith("simplex:"):
+        edge_matrix = np.swapaxes(points[:, 1:] - points[:, :1], -1, -2)
+        determinant = np.linalg.det(np.swapaxes(edge_matrix, -1, -2) @ edge_matrix)
+        return np.asarray(
+            determinant
+        ), "Finite-element simplices require positive finite metric determinant."
+    if cell_kind.startswith("tensor:"):
+        chart = _linear_reference_element(cell_kind)
+        gradients = np.asarray(chart.tabulate(chart.reference_nodes)[1])
+        jacobian = np.asarray(ein.contract("qir,cid->cqdr", gradients, points))
+        determinant = np.linalg.det(np.swapaxes(jacobian, -1, -2) @ jacobian)
+        return np.asarray(
+            determinant
+        ), "Finite-element tensor cells require positive finite metric determinant."
+    if cell_kind == "interval":
+        difference = points[:, 1] - points[:, 0]
+        determinant = np.sum(difference * difference, axis=-1)
+    elif cell_kind == "triangle":
+        first = points[:, 1] - points[:, 0]
+        second = points[:, 2] - points[:, 0]
+        determinant = (
+            np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
+            - np.sum(first * second, axis=-1) ** 2
+        )
+    elif cell_kind == "quadrilateral":
+        first = points[:, 1] - points[:, 0]
+        second = points[:, 3] - points[:, 0]
+        determinant = (
+            np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
+            - np.sum(first * second, axis=-1) ** 2
+        )
+    elif cell_kind == "tetrahedron":
+        edge_matrix = np.stack(
+            (
+                points[:, 1] - points[:, 0],
+                points[:, 2] - points[:, 0],
+                points[:, 3] - points[:, 0],
+            ),
+            axis=-1,
+        )
+        gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
+        determinant = np.linalg.det(gram)
+    elif cell_kind == "hexahedron":
+        edge_matrix = np.stack(
+            (
+                points[:, 1] - points[:, 0],
+                points[:, 3] - points[:, 0],
+                points[:, 4] - points[:, 0],
+            ),
+            axis=-1,
+        )
+        gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
+        determinant = np.linalg.det(gram)
+    elif cell_kind in ("prism", "pyramid"):
+        tetrahedra = (
+            ((0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3))
+            if cell_kind == "prism"
+            else ((0, 1, 2, 4), (0, 2, 3, 4))
+        )
+        determinants = []
+        for first_vertex, second_vertex, third_vertex, fourth_vertex in tetrahedra:
+            edge_matrix = np.stack(
+                (
+                    points[:, second_vertex] - points[:, first_vertex],
+                    points[:, third_vertex] - points[:, first_vertex],
+                    points[:, fourth_vertex] - points[:, first_vertex],
+                ),
+                axis=-1,
+            )
+            gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
+            determinants.append(np.linalg.det(gram))
+        determinant = np.min(np.stack(tuple(determinants), axis=-1), axis=-1)
+    else:
+        raise ValueError("Unsupported finite-element cell kind.")
+    return np.asarray(
+        determinant
+    ), "Finite-element cells require positive finite metric determinant."
+
+
 def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     for block in mesh.blocks:
         cells = np.asarray(block.vertices, dtype=np.int32)
-        points = coordinates[cells]
-        if block.cell_kind == "interval":
-            difference = points[:, 1] - points[:, 0]
-            determinant = np.sum(difference * difference, axis=-1)
-        elif block.cell_kind == "triangle":
-            first = points[:, 1] - points[:, 0]
-            second = points[:, 2] - points[:, 0]
-            determinant = (
-                np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
-                - np.sum(first * second, axis=-1) ** 2
-            )
-        elif block.cell_kind == "quadrilateral":
-            first = points[:, 1] - points[:, 0]
-            second = points[:, 3] - points[:, 0]
-            determinant = (
-                np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
-                - np.sum(first * second, axis=-1) ** 2
-            )
-        elif block.cell_kind == "tetrahedron":
-            edge_matrix = np.stack(
-                (
-                    points[:, 1] - points[:, 0],
-                    points[:, 2] - points[:, 0],
-                    points[:, 3] - points[:, 0],
-                ),
-                axis=-1,
-            )
-            gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-            determinant = np.linalg.det(gram)
-        elif block.cell_kind == "hexahedron":
-            edge_matrix = np.stack(
-                (
-                    points[:, 1] - points[:, 0],
-                    points[:, 3] - points[:, 0],
-                    points[:, 4] - points[:, 0],
-                ),
-                axis=-1,
-            )
-            gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-            determinant = np.linalg.det(gram)
-        elif block.cell_kind in ("prism", "pyramid"):
-            tetrahedra = (
-                ((0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3))
-                if block.cell_kind == "prism"
-                else ((0, 1, 2, 4), (0, 2, 3, 4))
-            )
-            determinants = []
-            for first_vertex, second_vertex, third_vertex, fourth_vertex in tetrahedra:
-                edge_matrix = np.stack(
-                    (
-                        points[:, second_vertex] - points[:, first_vertex],
-                        points[:, third_vertex] - points[:, first_vertex],
-                        points[:, fourth_vertex] - points[:, first_vertex],
-                    ),
-                    axis=-1,
-                )
-                gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-                determinants.append(np.linalg.det(gram))
-            determinant = np.min(np.stack(tuple(determinants), axis=-1), axis=-1)
-        else:
-            raise ValueError("Unsupported finite-element cell kind.")
+        determinant, failure = _cell_metric_determinants(
+            block.cell_kind, coordinates[cells]
+        )
         if np.any(~np.isfinite(determinant)) or np.any(determinant <= 0.0):
-            raise ValueError(
-                "Finite-element cells require positive finite metric determinant."
-            )
+            raise ValueError(failure)
 
 
 def _validate_mixed_prism_tetrahedron_admission(
@@ -1545,7 +1591,7 @@ def _validate_mixed_prism_tetrahedron_admission(
             "Mixed prism/tetrahedron finite elements require PolyhedralConnectivity."
         )
     canonical_elements = tuple(
-        lagrange_element(block.cell_kind, 1) for block in mesh.blocks
+        _linear_reference_element(block.cell_kind) for block in mesh.blocks
     )
     if any(
         element.conformity == "H1" and element.degree > 1
@@ -1586,11 +1632,35 @@ def _validate_mixed_prism_tetrahedron_admission(
         )
 
 
+def _coefficient_dtype(value: DTypeLike, /) -> np.dtype:
+    dtype = jnp.dtype(jax.dtypes.canonicalize_dtype(np.dtype(value)))
+    if not jnp.issubdtype(dtype, jnp.inexact):
+        raise TypeError(
+            "Finite-element coefficient dtype must be real or complex floating point."
+        )
+    return dtype
+
+
+def _validate_vertex_usage(mesh: CellMesh, /) -> None:
+    used_vertices = np.unique(
+        np.concatenate(
+            tuple(
+                np.asarray(block.vertices, dtype=np.int32).reshape((-1,))
+                for block in mesh.blocks
+            )
+        )
+    )
+    if used_vertices.size != mesh.coordinates.shape[0]:
+        raise ValueError("FiniteElementPlan requires every mesh vertex to be used.")
+
+
+@final
 class FiniteElementPlan(AbstractDiscretizationPlan):
     mesh: CellMesh
     fields: tuple[FiniteElementFieldSpec, ...]
     coordinate_spec: CellGeometrySpec
     precision_policy: FiniteElementPrecisionPolicy
+    coefficient_dtype: np.dtype = eqx.field(static=True)
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -1603,20 +1673,13 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         *,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         coordinate_spec: CellGeometrySpec | None = None,
+        coefficient_dtype: DTypeLike = jnp.float64,
     ) -> None:
+        dtype = _coefficient_dtype(coefficient_dtype)
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         _validate_mesh_geometry(mesh)
-        used_vertices = np.unique(
-            np.concatenate(
-                tuple(
-                    np.asarray(block.vertices, dtype=np.int32).reshape((-1,))
-                    for block in mesh.blocks
-                )
-            )
-        )
-        if used_vertices.size != mesh.coordinates.shape[0]:
-            raise ValueError("FiniteElementPlan requires every mesh vertex to be used.")
+        _validate_vertex_usage(mesh)
         field_specs = (
             (fields,) if isinstance(fields, FiniteElementFieldSpec) else tuple(fields)
         )
@@ -1652,6 +1715,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         self.fields = field_specs
         self.coordinate_spec = coordinates
         self.precision_policy = precision
+        self.coefficient_dtype = dtype
         self.key = DiscretizationKey("finite_element", DiscretizationRole.PHYSICAL)
         self.capabilities = (
             DiscretizationCapability.PROJECTION,
@@ -1670,6 +1734,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
                 "fields": [field.field_spec_id for field in field_specs],
                 "coordinate_spec": coordinates.geometry_layout_id,
                 "precision_policy": precision.policy_id,
+                "coefficient_dtype": dtype.str,
             }
         )
 
@@ -1677,6 +1742,163 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         return FiniteElementDiscretization(self, numeric_version=numeric_version)
 
 
+def _finite_element_field_layout(
+    mesh: CellMesh, dof_map: FiniteElementDofMap, components: tuple[int, ...], /
+) -> EntityDofLayout | BlockDofLayout:
+    vertex_count = mesh.coordinates.shape[0]
+    if dof_map.association == "vertex":
+        return EntityDofLayout(
+            mesh.topology.entity_sets[0].entity_set_id,
+            vertex_count,
+            vertex_count,
+            component_shape=components,
+        )
+    if dof_map.association in ("entity", "form_entity"):
+        entity_names = (
+            ("vertices", "edges", "faces", "cells")
+            if mesh.topological_dimension <= 3
+            else tuple(
+                f"entities_{degree}" for degree in range(mesh.topological_dimension + 1)
+            )
+        )
+        block_names, layouts = [], []
+        for dimension, (entity_dof_count, dofs_per_entity) in enumerate(
+            zip(dof_map.entity_dof_counts, dof_map.entity_dofs_per_entity, strict=True)
+        ):
+            if entity_dof_count == 0:
+                continue
+            entities = mesh.topology.entity_sets[dimension]
+            block_names.append(entity_names[dimension])
+            layouts.append(
+                EntityDofLayout(
+                    entities.entity_set_id,
+                    entities.count,
+                    entity_dof_count,
+                    dofs_per_entity=dofs_per_entity,
+                    component_shape=components,
+                )
+            )
+        return BlockDofLayout(tuple(block_names), tuple(layouts))
+    if dof_map.association == "edge":
+        edge_count = dof_map.global_dof_count
+        return EntityDofLayout(
+            mesh.topology.entity_sets[1].entity_set_id,
+            edge_count,
+            edge_count,
+            component_shape=components,
+        )
+    if dof_map.association == "cell":
+        cell_dof_count = dof_map.global_dof_count
+        return EntityDofLayout(
+            mesh.topology.entity_sets[mesh.topological_dimension].entity_set_id,
+            cell_dof_count,
+            cell_dof_count,
+            component_shape=components,
+        )
+    raise ValueError("Unknown finite-element DOF association.")
+
+
+def _prepare_finite_element_field(
+    mesh: CellMesh,
+    field: FiniteElementFieldSpec,
+    coefficient_dtype: np.dtype,
+    coordinate_elements: tuple[CellGeometryElement, ...],
+    coordinate_dofs: tuple[Array, ...],
+    coordinate_values: Array,
+    precision_policy: FiniteElementPrecisionPolicy,
+    /,
+) -> tuple[
+    tuple[FiniteElementSpec, ...],
+    FiniteElementDofMap,
+    DiscreteFieldSpace,
+    tuple[FiniteElementBlockGeometry, ...],
+]:
+    elements = field.resolve(mesh)
+    dof_map = FiniteElementDofMap(mesh, elements, component_shape=field.component_shape)
+    vector_shape = (dof_map.global_dof_count,) + field.component_shape
+    vector_space = ArraySpace(vector_shape, dtype=coefficient_dtype)
+    layout = _finite_element_field_layout(mesh, dof_map, field.component_shape)
+    conformity = elements[0].conformity
+    representation = elements[0].representation
+    space = DiscreteFieldSpace(
+        field.name,
+        mesh.support.support_id,
+        layout,
+        vector_space,
+        representation=representation,
+        conformity=conformity,
+        form_type=FormType(
+            elements[0].value_spec.form_type.dimension,
+            elements[0].value_spec.form_type.degree,
+            twist=elements[0].value_spec.form_type.twist,
+            fiber_shape=elements[0].value_spec.form_type.fiber_shape
+            + field.component_shape,
+            ambient_dimension=mesh.ambient_dimension,
+        ),
+        projection_id=canonical_fingerprint(
+            {"kind": "finite-element-projection", "field": field.field_spec_id}
+        ),
+        reconstruction_id=canonical_fingerprint(
+            {"kind": "finite-element-reconstruction", "field": field.field_spec_id}
+        ),
+    )
+    geometries = tuple(
+        _prepare_block_geometry(
+            mesh,
+            block,
+            element,
+            coordinates=coordinate_values,
+            coordinate_element=coordinate_element,
+            geometry_dofs=geometry_dofs,
+            precision_policy=precision_policy,
+        )
+        for block, element, coordinate_element, geometry_dofs in zip(
+            mesh.blocks, elements, coordinate_elements, coordinate_dofs, strict=True
+        )
+    )
+    return elements, dof_map, space, geometries
+
+
+def _finite_element_domains(
+    mesh: CellMesh, routes: tuple[np.ndarray, ...], /
+) -> tuple[IntegrationDomain, IntegrationDomain, IntegrationDomain]:
+    owner, neighbor, owner_local, neighbor_local = routes
+    exterior = np.flatnonzero(neighbor < 0)
+    interior = np.flatnonzero(neighbor >= 0)
+    cell_count = sum(block.cell_count for block in mesh.blocks)
+    cell_entities = mesh.topology.entity_sets[mesh.topological_dimension]
+    facet_entities = mesh.topology.entity_sets[mesh.topological_dimension - 1]
+    cell_domain = IntegrationDomain(
+        "cell",
+        np.arange(cell_count, dtype=np.int32),
+        mesh.support.support_id,
+        cell_entities.entity_set_id,
+        owner_cells=np.arange(cell_count, dtype=np.int32),
+    )
+    exterior_domain = IntegrationDomain(
+        "exterior_facet",
+        exterior,
+        mesh.support.support_id,
+        facet_entities.entity_set_id,
+        owner_cells=owner[exterior],
+        neighbor_cells=neighbor[exterior],
+        owner_local_entities=owner_local[exterior],
+        neighbor_local_entities=neighbor_local[exterior],
+    )
+    interior_domain = IntegrationDomain(
+        "interior_facet",
+        interior,
+        mesh.support.support_id,
+        facet_entities.entity_set_id,
+        owner_cells=owner[interior],
+        neighbor_cells=neighbor[interior],
+        owner_local_entities=owner_local[interior],
+        neighbor_local_entities=neighbor_local[interior],
+    )
+    return cell_domain, exterior_domain, interior_domain
+
+
+@final
 class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     mesh: CellMesh
     dof_maps: tuple[FiniteElementDofMap, ...]
@@ -1694,6 +1916,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     block_space: BlockSpace
     measures: tuple[DiscreteMeasure, ...]
     precision_policy: FiniteElementPrecisionPolicy
+    coefficient_dtype: np.dtype = eqx.field(static=True)
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -1716,113 +1939,18 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         all_geometries = []
         cell_measures = None
         for field in plan.fields:
-            elements = field.resolve(mesh)
-            all_elements.append(elements)
-            dof_map = FiniteElementDofMap(
+            elements, dof_map, field_space, geometries = _prepare_finite_element_field(
                 mesh,
-                elements,
-                component_shape=field.component_shape,
+                field,
+                plan.coefficient_dtype,
+                coordinate_elements,
+                coordinate_dofs,
+                coordinate_values,
+                plan.precision_policy,
             )
+            all_elements.append(elements)
             dof_maps.append(dof_map)
-            vector_shape = (dof_map.global_dof_count,) + field.component_shape
-            vector_space = ArraySpace(vector_shape)
-            vertex_count = mesh.coordinates.shape[0]
-            conformity = elements[0].conformity
-            if dof_map.association == "vertex":
-                layout = EntityDofLayout(
-                    mesh.topology.entity_sets[0].entity_set_id,
-                    vertex_count,
-                    vertex_count,
-                    component_shape=field.component_shape,
-                )
-            elif dof_map.association in ("entity", "hdiv_entity"):
-                entity_names = ("vertices", "edges", "faces", "cells")
-                block_names = []
-                layouts = []
-                for dimension, (
-                    entity_dof_count,
-                    dofs_per_entity,
-                ) in enumerate(
-                    zip(
-                        dof_map.entity_dof_counts,
-                        dof_map.entity_dofs_per_entity,
-                        strict=True,
-                    )
-                ):
-                    if entity_dof_count == 0:
-                        continue
-                    entities = mesh.topology.entity_sets[dimension]
-                    block_names.append(entity_names[dimension])
-                    layouts.append(
-                        EntityDofLayout(
-                            entities.entity_set_id,
-                            entities.count,
-                            entity_dof_count,
-                            dofs_per_entity=dofs_per_entity,
-                            component_shape=field.component_shape,
-                        )
-                    )
-                layout = BlockDofLayout(tuple(block_names), tuple(layouts))
-            elif dof_map.association == "edge":
-                edge_count = dof_map.global_dof_count
-                layout = EntityDofLayout(
-                    mesh.topology.entity_sets[1].entity_set_id,
-                    edge_count,
-                    edge_count,
-                    component_shape=field.component_shape,
-                )
-            elif dof_map.association == "cell":
-                cell_dof_count = dof_map.global_dof_count
-                layout = EntityDofLayout(
-                    mesh.topology.entity_sets[mesh.topological_dimension].entity_set_id,
-                    cell_dof_count,
-                    cell_dof_count,
-                    component_shape=field.component_shape,
-                )
-            else:
-                raise ValueError("Unknown finite-element DOF association.")
-            representation = elements[0].representation
-            field_spaces.append(
-                DiscreteFieldSpace(
-                    field.name,
-                    mesh.support.support_id,
-                    layout,
-                    vector_space,
-                    representation=representation,
-                    # ty: ignore[invalid-argument-type]
-                    conformity=conformity,
-                    projection_id=canonical_fingerprint(
-                        {
-                            "kind": "finite-element-projection",
-                            "field": field.field_spec_id,
-                        }
-                    ),
-                    reconstruction_id=canonical_fingerprint(
-                        {
-                            "kind": "finite-element-reconstruction",
-                            "field": field.field_spec_id,
-                        }
-                    ),
-                )
-            )
-            geometries = tuple(
-                _prepare_block_geometry(
-                    mesh,
-                    block,
-                    element,
-                    coordinates=coordinate_values,
-                    coordinate_element=coordinate_element,
-                    geometry_dofs=geometry_dofs,
-                    precision_policy=plan.precision_policy,
-                )
-                for block, element, coordinate_element, geometry_dofs in zip(
-                    mesh.blocks,
-                    elements,
-                    coordinate_elements,
-                    coordinate_dofs,
-                    strict=True,
-                )
-            )
+            field_spaces.append(field_space)
             all_geometries.append(geometries)
             if cell_measures is None:
                 cell_measures = jnp.concatenate(
@@ -1862,12 +1990,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             capabilities=plan.capabilities,
             preparation=preparation,
         )
-        owner, neighbor, owner_local, neighbor_local = _facet_routes(mesh)
-        exterior = np.flatnonzero(neighbor < 0)
-        interior = np.flatnonzero(neighbor >= 0)
-        cell_count = sum(block.cell_count for block in mesh.blocks)
-        cell_entities = mesh.topology.entity_sets[mesh.topological_dimension]
-        facet_entities = mesh.topology.entity_sets[mesh.topological_dimension - 1]
+        facet_routes = _facet_routes(mesh)
         self.mesh = mesh
         self.default_runtime = FiniteElementRuntimeData(
             mesh,
@@ -1880,35 +2003,12 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         self.coordinate_elements = coordinate_elements
         self.coordinate_dofs = coordinate_dofs
         self.block_geometries = tuple(all_geometries)
-        self.cell_domain = IntegrationDomain(
-            "cell",
-            np.arange(cell_count, dtype=np.int32),
-            mesh.support.support_id,
-            cell_entities.entity_set_id,
-            owner_cells=np.arange(cell_count, dtype=np.int32),
-        )
-        self.exterior_facet_domain = IntegrationDomain(
-            "exterior_facet",
-            exterior,
-            mesh.support.support_id,
-            facet_entities.entity_set_id,
-            owner_cells=owner[exterior],
-            neighbor_cells=neighbor[exterior],
-            owner_local_entities=owner_local[exterior],
-            neighbor_local_entities=neighbor_local[exterior],
-        )
-        self.interior_facet_domain = IntegrationDomain(
-            "interior_facet",
-            interior,
-            mesh.support.support_id,
-            facet_entities.entity_set_id,
-            owner_cells=owner[interior],
-            neighbor_cells=neighbor[interior],
-            owner_local_entities=owner_local[interior],
-            neighbor_local_entities=neighbor_local[interior],
+        self.cell_domain, self.exterior_facet_domain, self.interior_facet_domain = (
+            _finite_element_domains(mesh, facet_routes)
         )
         self.key = plan.key
         self.precision_policy = plan.precision_policy
+        self.coefficient_dtype = plan.coefficient_dtype
         self.support = mesh.support
         self.block_space = BlockSpace(
             tuple(space.vector_space for space in spaces),
@@ -2106,27 +2206,41 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             raise TypeError("function must be callable.")
         field_index = self._field_index(field_name)
         realized = self.default_runtime if runtime is None else runtime
-        conformity = self.elements[field_index][0].conformity
-        if conformity in ("Hdiv", "Hcurl"):
-            if not isinstance(self.mesh.connectivity, PolygonalConnectivity):
-                raise ValueError(
-                    "Compatible projection currently requires polygonal edges."
-                )
-            edge_vertices = jnp.asarray(self.mesh.connectivity.edges, dtype=jnp.int32)
-            edge_points = realized.coordinates[edge_vertices]
-            tangent = edge_points[:, 1] - edge_points[:, 0]
-            midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
-            values = jnp.asarray(function(midpoint, args))
-            if values.shape != tangent.shape:
-                raise ValueError(
-                    "Compatible edge projection function must return one vector per edge midpoint."
-                )
-            if conformity == "Hcurl":
-                moments = jnp.sum(values * tangent, axis=-1)
-            else:
-                normal_measure = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
-                moments = jnp.sum(values * normal_measure, axis=-1)
-            return self.field_spaces[field_index].vector_space.validate(moments)
+        if self.elements[field_index][0].form_basis is not None:
+            from ._cell_map import PreparedFiniteElementCellMap
+
+            dofs = self.dof_maps[field_index]
+            moments = jnp.zeros((dofs.global_dof_count,), dtype=self.coefficient_dtype)
+            counts = jnp.zeros((dofs.global_dof_count,), dtype=jnp.int32)
+            for block_index, element in enumerate(self.elements[field_index]):
+                basis = element.form_basis
+                if basis is None:
+                    raise ValueError(
+                        "Canonical projection requires complete form-basis metadata."
+                    )
+                cell_map = PreparedFiniteElementCellMap(self, block_index)
+                for cell in range(cell_map.cell_count):
+                    cells = jnp.full(
+                        (basis.functional_points.shape[0],), cell, dtype=jnp.int32
+                    )
+                    geometry = cell_map.evaluate(
+                        realized.coordinates, cells, basis.functional_points
+                    )
+                    values = vector_to_form(
+                        jnp.asarray(function(geometry.physical_points, args)),
+                        element.value_spec,
+                    )
+                    reference = pullback(
+                        values, element.value_spec.form_type, geometry.jacobian
+                    )
+                    local = jnp.linalg.solve(
+                        dofs.cell_transforms[block_index][cell],
+                        basis.interpolate(reference),
+                    )
+                    routes = dofs.cell_dofs[block_index][cell]
+                    moments = moments.at[routes].add(local)
+                    counts = counts.at[routes].add(1)
+            return moments / counts
         coordinates = self.dof_maps[field_index].evaluate_coordinates(
             self.mesh,
             realized.coordinates,
@@ -2270,12 +2384,15 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         local = jnp.asarray(coefficients)[
             self.dof_maps[field_index].cell_dofs[block_index]
         ]
-        orientation = self.dof_maps[field_index].orientations[block_index]
-        local = local * orientation.reshape(
-            orientation.shape + (1,) * (local.ndim - orientation.ndim)
+        local = ein.contract(
+            "cij,cj...->ci...",
+            self.dof_maps[field_index].cell_transforms[block_index],
+            local,
         )
         if geometry.basis_values.ndim == 2:
             return ein.contract("qi,ci...->cq...", geometry.basis_values, local)
+        if geometry.basis_values.ndim == 3:
+            return ein.contract("cqi,ci...->cq...", geometry.basis_values, local)
         return ein.contract("cqiv,ci->cqv", geometry.basis_values, local)
 
     def _field_index(self, field_name: str, /) -> int:
@@ -2371,6 +2488,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 "finite-element-mass",
                 positive_definite=True,
                 component_shape=dof_map.component_shape,
+                coefficient_dtype=self.coefficient_dtype,
             ),
             _assemble_local_operator(
                 dof_map,
@@ -2378,6 +2496,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 "finite-element-stiffness",
                 positive_definite=False,
                 component_shape=dof_map.component_shape,
+                coefficient_dtype=self.coefficient_dtype,
             ),
         )
 
@@ -2418,6 +2537,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             positive_definite=False,
             component_shape=dof_map.component_shape,
             properties=properties_,
+            coefficient_dtype=self.coefficient_dtype,
         )
 
 
@@ -2425,6 +2545,13 @@ def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
     if geometry.basis_values.ndim == 2:
         return ein.contract(
             "cq,qi,qj->cij",
+            geometry.physical_weights,
+            geometry.basis_values,
+            geometry.basis_values,
+        )
+    if geometry.basis_values.ndim == 3:
+        return ein.contract(
+            "cq,cqi,cqj->cij",
             geometry.physical_weights,
             geometry.basis_values,
             geometry.basis_values,
@@ -2456,6 +2583,25 @@ def _local_stiffness_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
 def _degree_aware_reference_rule(
     cell_kind: str, polynomial_degree: int, /
 ) -> tuple[Array, Array]:
+    if cell_kind.startswith(("simplex:", "tensor:")):
+        kind, dimension_text = cell_kind.split(":")
+        dimension = int(dimension_text)
+        count = max(2, polynomial_degree + dimension)
+        axis, weights = np.polynomial.legendre.leggauss(count)
+        axis, weights = 0.5 * (axis + 1), 0.5 * weights
+        grids = np.meshgrid(*((axis,) * dimension), indexing="ij")
+        weight_grids = np.meshgrid(*((weights,) * dimension), indexing="ij")
+        points = np.stack(grids, axis=-1)
+        combined = np.prod(np.stack(weight_grids, axis=-1), axis=-1)
+        if kind == "simplex":
+            scale = np.ones_like(grids[0])
+            for coordinate in range(dimension):
+                points[..., coordinate] = scale * grids[coordinate]
+                combined *= (1 - grids[coordinate]) ** (dimension - coordinate - 1)
+                scale *= 1 - grids[coordinate]
+        return jnp.asarray(points.reshape((-1, dimension))), jnp.asarray(
+            combined.reshape((-1,))
+        )
     count = max(2, int(polynomial_degree) + 1)
     if cell_kind == "tetrahedron":
         count = max(count, int(polynomial_degree) + 2)
@@ -2562,21 +2708,39 @@ def _evaluate_coordinate_map(
         physical_points = ein.contract("qi,cid->cqd", geometry_values, cell_coordinates)
         jacobian = ein.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
     metric = ein.contract("...di,...dj->...ij", jacobian, jacobian)
-    inverse_result = inverse_small_linear(
-        SmallLinearSolvePlan(metric.shape[-1]),
-        metric,
-    )
-    inverse_metric = inverse_result.value
-    gram_determinant = jnp.where(
-        inverse_result.successful,
-        inverse_result.determinant,
-        0.0,
-    )
+    if metric.shape[-1] <= 4:
+        inverse_result = inverse_small_linear(
+            SmallLinearSolvePlan(metric.shape[-1]), metric
+        )
+        inverse_metric = inverse_result.value
+        successful = inverse_result.successful
+        gram_determinant = jnp.where(successful, inverse_result.determinant, 0.0)
+    else:
+        tangent = ArraySpace(
+            (metric.shape[-1],),
+            dtype=metric.dtype,
+            space_id=f"finite-element-reference-tangent:{metric.shape[-1]}",
+        )
+        factors = factorize(
+            DenseLinearOperator(
+                metric,
+                source=tangent,
+                target=tangent,
+                operator_id=f"finite-element-geometry-gram:{metric.shape[-1]}",
+            ),
+            FactorizationPolicy("lu"),
+        )
+        inverse_result = factors.materialize_inverse()
+        inverse_metric = inverse_result.value
+        successful = inverse_result.successful
+        gram_determinant = jnp.where(
+            successful, jnp.exp(factors.log_abs_determinant()), 0
+        )
     measure = jnp.sqrt(gram_determinant)
     inverse_jacobian = ein.contract("...ij,...dj->...id", inverse_metric, jacobian)
     if jacobian.shape[-2] == jacobian.shape[-1]:
         determinant = jnp.where(
-            inverse_result.successful,
+            successful,
             jnp.linalg.det(jacobian),
             0.0,
         )
@@ -2620,7 +2784,7 @@ def _prepare_block_geometry(
             "Finite-element coordinate geometry requires FiniteElementSpec elements."
         )
     geometry_element = (
-        lagrange_element(block.cell_kind, 1)
+        _linear_reference_element(block.cell_kind)
         if coordinate_element is None
         else coordinate_element
     )
@@ -2659,7 +2823,10 @@ def _prepare_block_geometry(
         jnp.any(~jnp.isfinite(measure_factor) | (measure_factor <= 0.0)),
         "Finite-element geometry requires positive finite metric determinant.",
     )
-    if element.mapping == "identity":
+    if (
+        element.mapping == "identity"
+        and element.value_spec.form_type.twist == "untwisted"
+    ):
         physical_basis = basis_values
         physical_gradients = ein.contract(
             "cqdi,cqij,qkj->cqkd",
@@ -2667,38 +2834,33 @@ def _prepare_block_geometry(
             inverse_metric,
             reference_gradients,
         )
-    elif element.mapping == "contravariant_piola":
-        physical_basis = (
-            ein.contract(
-                "cqdm,qkm->cqkd",
-                jacobian,
-                basis_values,
-            )
-            / measure_factor[..., None, None]
-        )
-        physical_gradients = (
-            ein.contract(
-                "cqdm,qkmr,cqrn->cqkdn",
-                jacobian,
-                reference_gradients,
-                inverse_jacobian,
-            )
-            / measure_factor[..., None, None, None]
-        )
-    elif element.mapping == "covariant_piola":
-        physical_basis = ein.contract(
-            "cqmd,qkm->cqkd",
-            inverse_jacobian,
-            basis_values,
-        )
-        physical_gradients = ein.contract(
-            "cqmd,qkmr,cqrn->cqkdn",
-            inverse_jacobian,
-            reference_gradients,
-            inverse_jacobian,
-        )
     else:
-        raise ValueError(f"Unsupported finite-element mapping {element.mapping!r}.")
+        physical_basis = map_reference_values(
+            basis_values[None], element.value_spec, jacobian[:, :, None]
+        )
+
+        def mapped_reference(reference: Array, cell_coordinates: Array, /) -> Array:
+            gradients = geometry_element.tabulate(reference[None])[1][0]
+            jacobian_ = cell_coordinates.T @ gradients
+            values_ = element.tabulate(reference[None])[0][0]
+            return map_reference_values(values_, element.value_spec, jacobian_[None])
+
+        routes_ = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
+        coordinates_ = (
+            mesh.coordinates if coordinates is None else jnp.asarray(coordinates)
+        )
+        mapped_gradient = jax.vmap(
+            jax.vmap(jax.jacfwd(mapped_reference, argnums=0), in_axes=(0, None)),
+            in_axes=(None, 0),
+        )(reference_points, coordinates_[routes_])
+        if element.value_shape:
+            physical_gradients = ein.contract(
+                "cqivr,cqrd->cqivd", mapped_gradient, inverse_jacobian
+            )
+        else:
+            physical_gradients = ein.contract(
+                "cqir,cqrd->cqid", mapped_gradient, inverse_jacobian
+            )
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]
     )
@@ -2724,12 +2886,16 @@ def _assemble_local_operator(
     positive_definite: bool,
     component_shape: Sequence[int] = (),
     properties: OperatorProperties | None = None,
+    coefficient_dtype: DTypeLike = jnp.float64,
 ) -> SparseLinearMap:
     source_parts = []
     target_parts = []
     coefficient_parts = []
     component_count = prod(tuple(component_shape)) if component_shape else 1
     for cell_dofs, values in zip(dof_map.cell_dofs, local_values, strict=True):
+        block_index = len(source_parts)
+        transform = dof_map.cell_transforms[block_index]
+        values = ein.contract("cai,cab,cbj->cij", transform, values, transform)
         indices = np.asarray(cell_dofs, dtype=np.int32)
         width = indices.shape[1]
         components = np.arange(component_count, dtype=np.int32)
@@ -2776,9 +2942,15 @@ def _assemble_local_operator(
         raise TypeError("properties must be OperatorProperties or None.")
     return SparseLinearMap(
         relation,
-        jnp.concatenate(tuple(coefficient_parts)),
+        jnp.concatenate(tuple(coefficient_parts)).astype(coefficient_dtype),
         properties=properties_,
-        operator_id=canonical_fingerprint({"kind": kind, "dof_map": dof_map.dof_map_id}),
+        operator_id=canonical_fingerprint(
+            {
+                "kind": kind,
+                "dof_map": dof_map.dof_map_id,
+                "coefficient_dtype": np.dtype(coefficient_dtype).str,
+            }
+        ),
     )
 
 

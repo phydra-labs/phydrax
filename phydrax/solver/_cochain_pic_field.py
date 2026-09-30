@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, assert_never
+from typing import Any, assert_never, final
 
 import equinox as eqx
 import jax
@@ -28,6 +28,7 @@ from jax.typing import ArrayLike
 from .._dtype_names import RealPrecisionDType
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..discretization import StructuredCochainBridge
 from ..discretization.pic import (
     ChargeConservingCurrentPlan,
     PICMaxwellCurrentArguments,
@@ -61,6 +62,16 @@ from ._pic_field_solver import (
 )
 
 
+def _structured_pic_bridge(
+    maxwell: PreparedCompatibleMaxwell, /
+) -> StructuredCochainBridge:
+    """Admit the structured realization required by PIC transfer and layout."""
+    bridge = maxwell.plan.bridge
+    if not isinstance(bridge, StructuredCochainBridge):
+        raise TypeError("Cochain PIC requires a StructuredCochainBridge realization.")
+    return bridge
+
+
 def _shift_without_wrap(value: Array, axis: int, cells: int, /) -> Array:
     shifted = jnp.roll(value, -cells, axis=axis)
     index: list[slice] = [slice(None)] * value.ndim
@@ -68,6 +79,7 @@ def _shift_without_wrap(value: Array, axis: int, cells: int, /) -> Array:
     return shifted.at[tuple(index)].set(0.0)
 
 
+@final
 class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableState):
     """3-D compatible Maxwell with spline-Whitney charge-conserving transfer.
 
@@ -120,7 +132,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
             not isinstance(value, ChargeConservingCurrentPlan) for value in current_values
         ):
             raise TypeError("PIC transfers and current plans have incompatible types.")
-        bridge = maxwell.plan.bridge
+        bridge = _structured_pic_bridge(maxwell)
         if bridge.dimension != 3:
             raise ValueError("Cochain PIC field solver requires a 3-D grid.")
         if electrostatic.bridge.bridge_id != bridge.bridge_id or any(
@@ -186,6 +198,10 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
                 "currents": [value.plan_id for value in current_values],
             }
         )
+
+    @property
+    def bridge(self) -> StructuredCochainBridge:
+        return _structured_pic_bridge(self.maxwell)
 
     @property
     def pic_configuration(self) -> str:
@@ -295,8 +311,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     def displacement_widths(self) -> Array:
         return jnp.stack(
             tuple(
-                jnp.min(axis.interval_widths)
-                for axis in self.maxwell.plan.bridge.grid.structured_axes
+                jnp.min(axis.interval_widths) for axis in self.bridge.grid.structured_axes
             )
         )
 
@@ -319,7 +334,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         and the stencil limits of higher shape orders.
         """
         del species
-        axes = self.maxwell.plan.bridge.grid.structured_axes
+        axes = self.bridge.grid.structured_axes
         slot = np.arange(capacity)
 
         def cell(axis_count: int, periodic: bool) -> np.ndarray:
@@ -374,7 +389,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
 
     def _axis_edges(self, axis: int, value: ArrayLike, /) -> Array:
         """Edge cochain equal to ``value`` (broadcast) on ``axis`` edges, else zero."""
-        bridge = self.maxwell.plan.bridge
+        bridge = self.bridge
         zeros = bridge.unpack(1, jnp.zeros((bridge.cochain.cell_counts[1],)))
         return bridge.pack(
             1,
@@ -421,7 +436,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         if not np.isfinite(light) or light <= 0.0:
             raise ValueError("speed_of_light must be positive and finite.")
         maxwell = self.maxwell
-        bridge = maxwell.plan.bridge
+        bridge = self.bridge
         measures = bridge.unpack(1, bridge.cochain.primal_measures[1])
         electric = jnp.zeros((maxwell.layout.electric_count,), dtype=jnp.float64)
         potential = jnp.zeros_like(electric)
@@ -528,9 +543,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         if not self.grounded:
             return field
         mask = self.electrostatic.boundary.dirichlet_mask
-        gauss = -self.maxwell.plan.bridge.codifferential(
-            1, field.primary.electric_displacement
-        )
+        gauss = -self.bridge.codifferential(1, field.primary.electric_displacement)
         return CompatibleMaxwellState(
             MaxwellPrimaryState(
                 field.primary.electric_displacement,
@@ -600,12 +613,8 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
             jnp.isfinite(candidate.primary.magnetic_flux)
         )
         # Continuity of the deposited current alone: ρ̇ = δJ (δ = −div).
-        charge = (
-            field.primary.charge
-            + step_size
-            * self.maxwell.plan.bridge.codifferential(
-                self.maxwell.layout.electric_degree, current
-            )
+        charge = field.primary.charge + step_size * self.bridge.codifferential(
+            self.maxwell.layout.electric_degree, current
         )
         return PICFieldAdvance(
             candidate,
@@ -628,19 +637,17 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         transfer = self.transfers[species]
         routes = transfer.build(position, active_mask=active)
         electric = transfer.gather_electric(routes, self.maxwell.electric_field(field))
-        magnetic = transfer.gather_magnetic(routes, self.maxwell.magnetic_field(field))
+        magnetic = transfer.gather_magnetic(routes, self.maxwell.magnetic_flux(field))
         return electric.values, magnetic.values, electric.support & magnetic.support
 
     @property
     def tensor_periodic(self) -> tuple[bool, ...]:
-        return tuple(
-            bool(axis.periodic) for axis in self.maxwell.plan.bridge.grid.structured_axes
-        )
+        return tuple(bool(axis.periodic) for axis in self.bridge.grid.structured_axes)
 
     def _map_cochain(self, degree: int, value: Array, function: PICTensorMap, /) -> Array:
         # Oriented components of degree k are intervals along their orientation
         # axes; those axes carry the odd mirror parity (polar edges, axial faces).
-        bridge = self.maxwell.plan.bridge
+        bridge = self.bridge
         mapped = []
         for orientation, component in zip(
             bridge.orientations[degree], bridge.unpack(degree, value), strict=True
@@ -656,7 +663,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         return bridge.pack(degree, tuple(mapped))
 
     def tensor_template(self, kind: PICTensorKind, /) -> Any:
-        counts = self.maxwell.plan.bridge.cochain.cell_counts
+        counts = self.bridge.cochain.cell_counts
         match kind:
             case "charge":
                 return jnp.zeros((counts[0],), dtype=jnp.float64)
@@ -670,11 +677,11 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     def map_tensors(
         self, kind: PICTensorKind, value: Any, function: PICTensorMap, /
     ) -> Any:
-        """Map charge, current, or the gathered ``E``/``H`` cochains of a field.
+        """Map charge, current, or the gathered ``E``/``B`` cochains of a field.
 
-        Field maps act on the physical ``E`` and ``H`` the gather interpolates and
-        return ``D``/``B`` through the instantaneous constitutive law; charge,
-        auxiliary, and observer state are unchanged.
+        Field maps act on physical ``E`` and raw magnetic flux ``B``; only the
+        electric field is converted back through the instantaneous constitutive
+        law. Charge, auxiliary, and observer state are unchanged.
         """
         match kind:
             case "charge":
@@ -693,13 +700,13 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
                 )
                 magnetic = self._map_cochain(
                     2,
-                    constitutive.magnetic_field(value.primary.magnetic_flux, material),
+                    value.primary.magnetic_flux,
                     function,
                 )
                 return CompatibleMaxwellState(
                     MaxwellPrimaryState(
                         constitutive.electric_displacement(electric, material),
-                        constitutive.magnetic_flux(magnetic, material),
+                        magnetic,
                         value.primary.charge,
                     ),
                     value.auxiliary,
@@ -784,7 +791,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         constitutive = maxwell.constitutive
         material = field.auxiliary.material
         layout = maxwell.layout
-        cochain = maxwell.plan.bridge.cochain
+        cochain = self.bridge.cochain
         electric = maxwell.electric_field(field)
         magnetic = maxwell.magnetic_field(field)
         _, displacement = jax.jvp(
@@ -798,10 +805,10 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
             (magnetic,),
         )
         electric_energy = 0.5 * jnp.real(
-            jnp.vdot(electric, cochain.apply_hodge(layout.electric_degree, displacement))
+            jnp.vdot(electric, cochain.hodge_star(layout.electric_degree, displacement))
         )
         magnetic_energy = 0.5 * jnp.real(
-            jnp.vdot(magnetic, cochain.apply_hodge(layout.magnetic_degree, flux))
+            jnp.vdot(magnetic, cochain.hodge_star(layout.magnetic_degree, flux))
         )
         total = maxwell.energy(field)
         leapfrog = maxwell.leapfrog_energy(field, step_size)
@@ -838,7 +845,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         spacing = jnp.asarray(
             [
                 np.asarray(axis.interval_widths)[0]
-                for axis in self.maxwell.plan.bridge.grid.structured_axes
+                for axis in self.bridge.grid.structured_axes
             ]
         )
         speed = 1.0 / np.sqrt(float(epsilon.flat[0]) * float(mu.flat[0]))
@@ -860,21 +867,19 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         )
 
     def window_interval(self, axis: int, /) -> float:
-        widths = np.asarray(
-            self.maxwell.plan.bridge.grid.structured_axes[axis].interval_widths
-        )
+        widths = np.asarray(self.bridge.grid.structured_axes[axis].interval_widths)
         if not np.allclose(widths, widths[0]):
             raise ValueError("Moving windows require a uniform window axis.")
         return float(widths[0])
 
     def window_bounds(self, axis: int, /) -> tuple[float, float]:
-        bounds = self.maxwell.plan.bridge.grid.structured_axes[axis].bounds
+        bounds = self.bridge.grid.structured_axes[axis].bounds
         return float(bounds[0]), float(bounds[1])
 
     def _shift_cochain(
         self, degree: int, value: Array, axis: int, cells: int, /
     ) -> Array:
-        bridge = self.maxwell.plan.bridge
+        bridge = self.bridge
         return bridge.pack(
             degree,
             tuple(
@@ -886,7 +891,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     def shift_window(
         self, field: CompatibleMaxwellState, axis: int, cells: int, /
     ) -> CompatibleMaxwellState:
-        counts = self.maxwell.plan.bridge.cochain.cell_counts
+        counts = self.bridge.cochain.cell_counts
 
         def shift_leaf(value: Any) -> Any:
             # Auxiliary and observer arrays are shifted when they are full

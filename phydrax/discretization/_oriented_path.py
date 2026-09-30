@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -15,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._cell_complex import CubicalCellComplex
 from ._topology import CellComplexTopology
 
 
@@ -189,18 +191,30 @@ class CellBoundaryPathPlan(StrictModule, NonTrainableState):
             raise ValueError("cell_indices lie outside the degree-two entity set.")
         if np.unique(cells).size != cells.size:
             raise ValueError("Cell boundary paths require distinct cell indices.")
-        boundary = topology.incidences[1].scipy_boundary().toarray()
+        boundary = topology.incidences[1].scipy_boundary().tocsc()
+        boundary.eliminate_zeros()
         path_edges = np.asarray(paths.edge_indices)
         path_signs = np.asarray(paths.orientations)
         path_valid = np.asarray(paths.valid)
         for path_index, cell in enumerate(cells):
-            coefficients = np.zeros((topology.entities(1).count,), dtype=np.int64)
-            np.add.at(
-                coefficients,
+            coefficients: dict[int, int] = {}
+            for edge, sign in zip(
                 path_edges[path_index, path_valid[path_index]],
                 path_signs[path_index, path_valid[path_index]],
+                strict=True,
+            ):
+                key = int(edge)
+                coefficients[key] = coefficients.get(key, 0) + int(sign)
+            coefficients = {edge: sign for edge, sign in coefficients.items() if sign}
+            start, end = boundary.indptr[cell : cell + 2]
+            expected = dict(
+                zip(
+                    boundary.indices[start:end].tolist(),
+                    boundary.data[start:end].tolist(),
+                    strict=True,
+                )
             )
-            if not np.array_equal(coefficients, boundary[:, cell]):
+            if coefficients != expected:
                 raise ValueError(
                     "Ordered path coefficients do not reproduce the selected cell boundary."
                 )
@@ -240,17 +254,19 @@ def prepare_cell_boundary_paths(
         raise ValueError("cell_indices lie outside the degree-two entity set.")
     if np.unique(cells).size != cells.size:
         raise ValueError("cell_indices must be distinct.")
-    boundary = topology.incidences[1].scipy_boundary().toarray()
+    boundary = topology.incidences[1].scipy_boundary().tocsc()
+    boundary.eliminate_zeros()
     ordered_edges: list[list[int]] = []
     ordered_signs: list[list[int]] = []
     for cell in cells:
-        coefficients = boundary[:, cell]
-        active_edges = np.flatnonzero(coefficients)
-        if active_edges.size == 0 or np.any(np.abs(coefficients[active_edges]) != 1):
+        begin, end = boundary.indptr[cell : cell + 2]
+        active_edges = boundary.indices[begin:end]
+        coefficients = boundary.data[begin:end]
+        if active_edges.size == 0 or np.any(np.abs(coefficients) != 1):
             raise ValueError(
                 "Two-cell boundaries must be non-empty simple oriented cycles."
             )
-        signs = coefficients[active_edges].astype("int64")
+        signs = coefficients.astype(np.int64)
         starts = np.where(signs > 0, tails[active_edges], heads[active_edges])
         ends = np.where(signs > 0, heads[active_edges], tails[active_edges])
         first = int(np.lexsort((active_edges, starts))[0])
@@ -315,10 +331,161 @@ def reverse_oriented_paths(plan: OrientedEdgePathPlan, /) -> OrientedEdgePathPla
     )
 
 
+def _prepare_cubical_boundary_paths(cells: CubicalCellComplex, /) -> CellBoundaryPathPlan:
+    """Retain ordered cubical attachments even when repeated incidences cancel."""
+    if cells.topology.dimension < 2:
+        raise ValueError("Cubical boundary paths require at least two lattice axes.")
+    edge_coordinates = np.asarray(cells.cell_multi_indices[1])
+    lookup: dict[tuple[tuple[int, ...], int], int] = {}
+    for axis, (begin, block_shape) in enumerate(
+        zip(cells.orientation_offsets[1], cells.orientation_shapes[1], strict=True)
+    ):
+        count = int(np.prod(block_shape))
+        for edge in range(begin, begin + count):
+            lookup[(tuple(int(x) for x in edge_coordinates[edge]), axis)] = edge
+    face_coordinates = np.asarray(cells.cell_multi_indices[2])
+    edges = np.empty((face_coordinates.shape[0], 4), dtype=np.int32)
+    for axes, begin, block_shape in zip(
+        cells.orientations[2],
+        cells.orientation_offsets[2],
+        cells.orientation_shapes[2],
+        strict=True,
+    ):
+        mu, nu = axes
+        count = int(np.prod(block_shape))
+        for face in range(begin, begin + count):
+            base = tuple(int(x) for x in face_coordinates[face])
+            at_mu = list(base)
+            at_nu = list(base)
+            at_mu[mu] = (at_mu[mu] + 1) % cells.shape[mu]
+            at_nu[nu] = (at_nu[nu] + 1) % cells.shape[nu]
+            edges[face] = (
+                lookup[(base, mu)],
+                lookup[(tuple(at_mu), nu)],
+                lookup[(tuple(at_nu), mu)],
+                lookup[(base, nu)],
+            )
+    paths = OrientedEdgePathPlan(
+        cells.topology,
+        edges,
+        np.broadcast_to(np.asarray((1, 1, -1, -1), dtype=np.int32), edges.shape),
+        require_closed=True,
+    )
+    return CellBoundaryPathPlan(paths, np.arange(edges.shape[0], dtype=np.int32))
+
+
+def _prepare_lattice_plane_paths(
+    topology: CellComplexTopology,
+    forward_sites: np.ndarray,
+    forward_edges: np.ndarray,
+    forward_orientations: np.ndarray,
+    /,
+) -> tuple[tuple[OrientedEdgePathPlan, ...], ...]:
+    """Prepare four positively oriented clover loops per periodic axis plane."""
+    site_count, dimension = forward_sites.shape
+    backward_sites = np.empty_like(forward_sites)
+    vertices = np.arange(site_count, dtype=np.int32)
+    for axis in range(dimension):
+        backward_sites[forward_sites[:, axis], axis] = vertices
+    planes: list[tuple[OrientedEdgePathPlan, ...]] = []
+    for mu in range(dimension):
+        for nu in range(mu + 1, dimension):
+            loops: list[OrientedEdgePathPlan] = []
+            for first, first_sign, second, second_sign in (
+                (mu, 1, nu, 1),
+                (nu, 1, mu, -1),
+                (mu, -1, nu, -1),
+                (nu, -1, mu, 1),
+            ):
+                sites = vertices.copy()
+                edges = np.empty((site_count, 4), dtype=np.int32)
+                signs = np.empty_like(edges)
+                for position, (axis, direction) in enumerate(
+                    (
+                        (first, first_sign),
+                        (second, second_sign),
+                        (first, -first_sign),
+                        (second, -second_sign),
+                    )
+                ):
+                    if direction < 0:
+                        sites = backward_sites[sites, axis]
+                    edges[:, position] = forward_edges[sites, axis]
+                    signs[:, position] = direction * forward_orientations[sites, axis]
+                    if direction > 0:
+                        sites = forward_sites[sites, axis]
+                loops.append(
+                    OrientedEdgePathPlan(topology, edges, signs, require_closed=True)
+                )
+            planes.append(tuple(loops))
+    return tuple(planes)
+
+
+def _ordered_path_transport(
+    edge_indices: Array,
+    orientations: Array,
+    valid: Array,
+    links: Array,
+    /,
+) -> Array:
+    """Execute admitted routes, including dynamic subsets of a prepared plan."""
+    identity = jnp.broadcast_to(
+        jnp.eye(links.shape[-1], dtype=links.dtype),
+        edge_indices.shape[:-1] + links.shape[-2:],
+    )
+
+    def step(product: Array, position: Array) -> tuple[Array, None]:
+        active = valid[..., position]
+        edges = jnp.where(active, edge_indices[..., position], 0)
+        factor = links[edges]
+        inverse = jnp.swapaxes(jnp.conj(factor), -1, -2)
+        oriented = jnp.where(
+            (orientations[..., position] > 0)[..., None, None], factor, inverse
+        )
+        candidate = product @ oriented
+        return jnp.where(active[..., None, None], candidate, product), None
+
+    products, _ = jax.lax.scan(
+        step, identity, jnp.arange(edge_indices.shape[-1], dtype=jnp.int32)
+    )
+    return products
+
+
+def ordered_path_transport(
+    plan: OrientedEdgePathPlan | CellBoundaryPathPlan,
+    links: ArrayLike,
+    /,
+) -> Array:
+    """Multiply ordered unitary links on native oriented topology.
+
+    Links transport head fibers to tail fibers. Negative traversals use the
+    adjoint, and padded route entries act as identities. This is nonlinear
+    group transport, not a differential or a linear cochain complex.
+    """
+    if isinstance(plan, CellBoundaryPathPlan):
+        paths = plan.paths
+    elif isinstance(plan, OrientedEdgePathPlan):
+        paths = plan
+    else:
+        raise TypeError("plan must be an oriented edge or cell boundary path plan.")
+    values = jnp.asarray(links)
+    if (
+        values.ndim != 3
+        or values.shape[0] != paths.topology.entities(1).count
+        or values.shape[-1] != values.shape[-2]
+        or values.shape[-1] < 1
+    ):
+        raise ValueError("links must have shape (topology edges, color, color).")
+    return _ordered_path_transport(
+        paths.edge_indices, paths.orientations, paths.valid, values
+    )
+
+
 __all__ = [
     "CellBoundaryPathPlan",
     "OrientedEdgePathPlan",
     "oriented_edge_endpoints",
+    "ordered_path_transport",
     "prepare_cell_boundary_paths",
     "reverse_oriented_paths",
 ]

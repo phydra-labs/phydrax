@@ -17,6 +17,10 @@ from jaxtyping import PyTree
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...discretization import CellBoundaryPathPlan
+from ...discretization._oriented_path import (
+    _ordered_path_transport,
+    ordered_path_transport,
+)
 from ...graph import MatrixGaugeLinkSpace
 from ...metrix import SpecialUnitaryGroup, UnitaryGroup
 from ._lattice_action import AbstractIncrementalLatticeAction, LatticeActionEvidence
@@ -136,35 +140,16 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
 
     def _selected_holonomies(self, links: Array, path_indices: Array, /) -> Array:
         paths = self.boundaries.paths
-        identity = jnp.broadcast_to(
-            self.link_space.group.identity(dtype=links.dtype),
-            (path_indices.shape[0],) + self.link_space.point_shape,
+        return _ordered_path_transport(
+            paths.edge_indices[path_indices],
+            paths.orientations[path_indices],
+            paths.valid[path_indices],
+            links,
         )
-
-        def step(accumulator: Array, position: Array) -> tuple[Array, None]:
-            edges = paths.edge_indices[path_indices, position]
-            factors = links[edges]
-            inverses = self.link_space.group.inverse(factors)
-            oriented = jnp.where(
-                (paths.orientations[path_indices, position] > 0)[..., None, None],
-                factors,
-                inverses,
-            )
-            product = self.link_space.group.compose(accumulator, oriented)
-            active = paths.valid[path_indices, position][..., None, None]
-            return jnp.where(active, product, accumulator), None
-
-        holonomies, _ = jax.lax.scan(
-            step,
-            identity,
-            jnp.arange(paths.max_length),
-        )
-        return holonomies
 
     def plaquette_holonomies(self, links: ArrayLike, /) -> Array:
         values = self._links(links)
-        indices = jnp.arange(self.num_plaquettes, dtype=jnp.int32)
-        return self._selected_holonomies(values, indices)
+        return ordered_path_transport(self.boundaries, values)
 
     def plaquette_traces(self, links: ArrayLike, /) -> Array:
         holonomies = self.plaquette_holonomies(links)

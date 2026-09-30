@@ -1028,17 +1028,29 @@ measure, not a remedy for missing mesh volumes.
 
 Use `CochainNeuralOperator` when unknowns live on different cell degrees of one
 oriented complex—for example, vertex pressure and edge flux. Do not flatten
-these fields into an untyped point cloud: incidence signs, Hodge-star measures,
-boundary cells, and degree determine both the neural operator and its physics
-loss.
+these fields into an untyped point cloud: incidence signs, native Gram/Riesz
+pairings, boundary cells, and degree determine both the neural operator and its
+physics loss. Use `quadrature="native_pairing_required"` for cochain query
+contracts. This requires the native positive-definite pairing, not scalar
+quadrature inferred from a coupled Gram's diagonal.
 
 ```python
 cochain_vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
 cochain_faces = jnp.asarray([[0, 1, 2], [0, 2, 3]], dtype=jnp.int32)
-cochain_complex = phx.graph.triangle_mesh_to_cochain_complex(
-    cochain_vertices,
-    cochain_faces,
+cochain_topology = phx.discretization.polygonal_cell_complex(
+    cochain_faces, None, len(cochain_vertices)
 )
+cochain_hodges = phx.discretization.simplicial_dual_hodges(
+    cochain_topology, cochain_vertices, dual="barycentric"
+)
+cochain_cells, _ = phx.discretization.simplicial_cell_geometry(cochain_topology)
+cochain_coordinates = tuple(
+    jnp.mean(cochain_vertices[cells], axis=1) for cells in cochain_cells
+)
+cochain_realization = phx.discretization.CochainDiscretization(
+    cochain_topology, cochain_hodges, coordinates=cochain_coordinates
+)
+cochain_complex = phx.graph.CochainComplexIR(cochain_realization)
 forcing_values = jnp.arange(8.0).reshape(2, 4)
 cochain_batch = phx.nn.operator.OperatorBatch(
     inputs={
@@ -1063,34 +1075,29 @@ cochain_batch = phx.nn.operator.OperatorBatch(
     case_axes=("case",),
     case_shape=(2,),
 )
-zero_form = phx.discretization.CochainFieldSpec(
-    0,
-    cell_orientation="invariant",
-    sampling="point_value",
-)
-one_form = phx.discretization.CochainFieldSpec(
-    1,
-    cell_orientation="signed",
-    sampling="cell_integral",
-)
+zero_form = phx.exterior.FormType(2, 0, twist="untwisted")
+one_form = phx.exterior.FormType(2, 1, twist="untwisted")
 cochain_fields = (
     phx.nn.operator.OperatorFieldSpec(
         "forcing",
         role="source",
         source_name="forcing",
-        cochain=zero_form,
+        form_type=zero_form,
+        representation="cochain",
     ),
     phx.nn.operator.OperatorFieldSpec(
         "pressure",
         role="target",
         query_name="vertices",
-        cochain=zero_form,
+        form_type=zero_form,
+        representation="cochain",
     ),
     phx.nn.operator.OperatorFieldSpec(
         "flux",
         role="target",
         query_name="edges",
-        cochain=one_form,
+        form_type=one_form,
+        representation="cochain",
     ),
 )
 cochain_task = phx.nn.operator.OperatorTask(
@@ -1102,14 +1109,14 @@ cochain_task = phx.nn.operator.OperatorTask(
             geometry_kind="cell_complex",
             coordinate_components=("x", "y"),
             topology_site="cell",
-            quadrature="physical_required",
+            quadrature="native_pairing_required",
         ),
         phx.nn.operator.OperatorQuerySpec(
             "edges",
             geometry_kind="cell_complex",
             coordinate_components=("x", "y"),
             topology_site="cell",
-            quadrature="physical_required",
+            quadrature="native_pairing_required",
         ),
     ),
     problem=phx.nn.operator.OperatorProblemSpec(
@@ -1130,13 +1137,16 @@ assert cochain_prediction.field("flux").values.shape == (2, 5)
 ```
 
 The default route configuration uses self, exterior-derivative,
-codifferential, and split Hodge-Laplacian paths. Harmonic projection is opt-in
-because it requires topology-level preprocessing:
-`compute_harmonic_subspace(complex_ir)` followed by
-`complex_ir.with_harmonic_subspace(...)` and
-`TopologicalRouteConfig(harmonic=True)`. Absolute and relative boundary
-policies are distinct operators; use the same policy when constructing samples,
-the neural operator, and physics residuals.
+codifferential, and split Hodge-Laplacian paths, with only degree-valid routes
+dispatched: degree zero has the upper Laplacian, the top degree has the lower
+Laplacian, and middle degrees have both. Native full sparse Gram pairings remain
+on the topology owner; `SparseHodge` samples do not expose fake scalar
+quadrature. Harmonic projection is opt-in because it requires topology-level
+preprocessing:
+native `phydrax.linalg.harmonic_subspace` preparation on the selected
+`hilbert_complex(boundary=...)`, then `CochainComplexIR(..., harmonic=...)` and
+`TopologicalRouteConfig(harmonic=True)`. Absolute/relative boundaries are distinct
+operators; use the same boundary for samples, model and physics residuals.
 
 ### Physics-only topological operator fitting
 
@@ -1154,13 +1164,13 @@ def mixed_darcy_residual(graph, fields, *, key):
         graph,
         fields["pressure"],
         0,
-        boundary_policy="absolute",
+        boundary="absolute",
     )
-    flux_divergence = phx.graph.cochain_codifferential(
+    flux_divergence = -phx.graph.cochain_codifferential(
         graph,
         fields["flux"],
         1,
-        boundary_policy="absolute",
+        boundary="absolute",
     )
     return {
         "constitutive": fields["flux"] + pressure_gradient,
@@ -1239,10 +1249,13 @@ reduction, optional topology lock, and every other loss setting enter the exact
 checkpoint contract, so changing the residual rejects resume rather than
 silently continuing a different optimization problem.
 
-`graph_mean` treats every cell equally within a complex, `metric_mean`
-normalizes by Hodge-star mass, and `metric_sum` retains that mass. Every
-nonempty complex contributes one segment regardless of mesh cardinality, and
-padded cells are excluded. Set `topology_fingerprint` on a
+`graph_mean` treats every cell equally within a complex. `metric_sum` evaluates
+the native paired energy $r^\ast M r$; `metric_mean` divides that energy by the
+active Gram trace. Neither mode approximates a coupled Gram by scalar
+quadrature. Physical flux divergence is $-\delta$: the codifferential itself is
+the positive Hilbert adjoint. Every nonempty complex contributes one segment
+regardless of mesh cardinality, and padded cells are excluded. Set
+`topology_fingerprint` on a
 `CochainResidualLoss` when training must remain locked to one exact canonical
 complex; omit it for topology-varying batches that still satisfy the declared
 field schema.
@@ -1252,6 +1265,12 @@ The benchmark ladders `cochain_mixed_darcy` and
 prediction under mesh refinement and a rank-one harmonic projection on a
 noncontractible annulus. The benchmark emits named pressure/flux/harmonic field
 metrics rather than concatenating physically different cochain spaces.
+The annulus producer declares a bounded native dense harmonic reference policy:
+at most 512 active coordinates per degree, with the unchanged $10^{-9}$
+admission tolerance. Exact rational cohomology independently validates the
+declared annulus Betti ranks and the prepared frame. Larger reference complexes
+are refused; solver nonconvergence is not converted into a valid frame or an
+automatic dense fallback.
 
 ## Multiple inputs and POD
 

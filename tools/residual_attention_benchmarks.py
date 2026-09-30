@@ -13,9 +13,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 
 import phydrax as phx
+from phydrax.optim import adam
 
 
 def _solver(method: str, seed: int, points: int) -> Any:
@@ -85,7 +85,7 @@ def _run(method: str, seed: int, points: int, iterations: int) -> Any:
     started = time.perf_counter()
     trained = solver.solve(
         num_iter=iterations,
-        optim=optax.adam(2e-3),
+        optim=adam(2e-3),
         seed=seed + 100,
         jit=True,
         keep_best=False,

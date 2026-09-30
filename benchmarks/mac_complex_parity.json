@@ -1,0 +1,353 @@
+{
+  "cases": [
+    {
+      "actions": [
+        {
+          "action": "mac_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.025141875,
+            "lowering_seconds": 0.005693459
+          },
+          "compiler": {
+            "argument_bytes": 640,
+            "bytes_accessed": 1752,
+            "flops": 196,
+            "generated_code_bytes": 0,
+            "output_bytes": 152,
+            "source": "jax-compiled",
+            "temporary_bytes": 352,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000152625,
+            "mean_seconds": 0.00014310400000000002,
+            "median_seconds": 0.00014310400000000002,
+            "min_seconds": 0.000133583,
+            "samples_seconds": [
+              0.000152625,
+              0.000133583
+            ],
+            "std_seconds": 9.521000000000006e-06
+          }
+        },
+        {
+          "action": "complex_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.036777833,
+            "lowering_seconds": 0.006345541
+          },
+          "compiler": {
+            "argument_bytes": 1536,
+            "bytes_accessed": 2940,
+            "flops": 350,
+            "generated_code_bytes": 0,
+            "output_bytes": 152,
+            "source": "jax-compiled",
+            "temporary_bytes": 513,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 6.4583e-05,
+            "mean_seconds": 5.6312e-05,
+            "median_seconds": 5.6312e-05,
+            "min_seconds": 4.8041e-05,
+            "samples_seconds": [
+              6.4583e-05,
+              4.8041e-05
+            ],
+            "std_seconds": 8.271e-06
+          }
+        }
+      ],
+      "adjoint_error": 0.0,
+      "count_per_axis": 4,
+      "dimension": 2,
+      "face_coordinates": 40,
+      "pairing_preparation_seconds": 0.009541583,
+      "periodic": false,
+      "preparation_seconds": 2.604110542,
+      "pressure_coordinates": 16,
+      "retained_bytes": 6231
+    },
+    {
+      "actions": [
+        {
+          "action": "mac_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.034469875,
+            "lowering_seconds": 0.007665084
+          },
+          "compiler": {
+            "argument_bytes": 608,
+            "bytes_accessed": 1720,
+            "flops": 214,
+            "generated_code_bytes": 0,
+            "output_bytes": 152,
+            "source": "jax-compiled",
+            "temporary_bytes": 352,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000158625,
+            "mean_seconds": 0.000152958,
+            "median_seconds": 0.000152958,
+            "min_seconds": 0.000147291,
+            "samples_seconds": [
+              0.000158625,
+              0.000147291
+            ],
+            "std_seconds": 5.6669999999999984e-06
+          }
+        },
+        {
+          "action": "complex_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.038893333,
+            "lowering_seconds": 0.005946042
+          },
+          "compiler": {
+            "argument_bytes": 1376,
+            "bytes_accessed": 2744,
+            "flops": 326,
+            "generated_code_bytes": 0,
+            "output_bytes": 152,
+            "source": "jax-compiled",
+            "temporary_bytes": 480,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 5.675e-05,
+            "mean_seconds": 5.0375e-05,
+            "median_seconds": 5.0375e-05,
+            "min_seconds": 4.4e-05,
+            "samples_seconds": [
+              5.675e-05,
+              4.4e-05
+            ],
+            "std_seconds": 6.374999999999999e-06
+          }
+        }
+      ],
+      "adjoint_error": 0.0,
+      "count_per_axis": 4,
+      "dimension": 2,
+      "face_coordinates": 32,
+      "pairing_preparation_seconds": 0.008151708,
+      "periodic": true,
+      "preparation_seconds": 0.180068,
+      "pressure_coordinates": 16,
+      "retained_bytes": 5258
+    },
+    {
+      "actions": [
+        {
+          "action": "mac_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.029283291,
+            "lowering_seconds": 0.006030292
+          },
+          "compiler": {
+            "argument_bytes": 2304,
+            "bytes_accessed": 6360,
+            "flops": 780,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 1152,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000165583,
+            "mean_seconds": 0.000151979,
+            "median_seconds": 0.000151979,
+            "min_seconds": 0.000138375,
+            "samples_seconds": [
+              0.000165583,
+              0.000138375
+            ],
+            "std_seconds": 1.3604e-05
+          }
+        },
+        {
+          "action": "complex_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.039649875,
+            "lowering_seconds": 0.006537792
+          },
+          "compiler": {
+            "argument_bytes": 5632,
+            "bytes_accessed": 10524,
+            "flops": 1302,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 1281,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 8.75e-05,
+            "mean_seconds": 8.33125e-05,
+            "median_seconds": 8.33125e-05,
+            "min_seconds": 7.9125e-05,
+            "samples_seconds": [
+              8.75e-05,
+              7.9125e-05
+            ],
+            "std_seconds": 4.1875e-06
+          }
+        }
+      ],
+      "adjoint_error": 0.0,
+      "count_per_axis": 8,
+      "dimension": 2,
+      "face_coordinates": 144,
+      "pairing_preparation_seconds": 0.009828125,
+      "periodic": false,
+      "preparation_seconds": 2.369165292,
+      "pressure_coordinates": 64,
+      "retained_bytes": 21743
+    },
+    {
+      "actions": [
+        {
+          "action": "mac_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.034829958,
+            "lowering_seconds": 0.007559792
+          },
+          "compiler": {
+            "argument_bytes": 2208,
+            "bytes_accessed": 6200,
+            "flops": 806,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 1152,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000189666,
+            "mean_seconds": 0.000168979,
+            "median_seconds": 0.000168979,
+            "min_seconds": 0.000148292,
+            "samples_seconds": [
+              0.000189666,
+              0.000148292
+            ],
+            "std_seconds": 2.0687e-05
+          }
+        },
+        {
+          "action": "complex_laplacian",
+          "compilation": {
+            "compilation_seconds": 0.036988583,
+            "lowering_seconds": 0.006535958
+          },
+          "compiler": {
+            "argument_bytes": 5280,
+            "bytes_accessed": 10296,
+            "flops": 1254,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 1664,
+            "unavailable_reason": null
+          },
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000171375,
+            "mean_seconds": 0.000128479,
+            "median_seconds": 0.000128479,
+            "min_seconds": 8.5583e-05,
+            "samples_seconds": [
+              0.000171375,
+              8.5583e-05
+            ],
+            "std_seconds": 4.2896000000000004e-05
+          }
+        }
+      ],
+      "adjoint_error": 0.0,
+      "count_per_axis": 8,
+      "dimension": 2,
+      "face_coordinates": 128,
+      "pairing_preparation_seconds": 0.008194792,
+      "periodic": true,
+      "preparation_seconds": 0.17830675,
+      "pressure_coordinates": 64,
+      "retained_bytes": 19850
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "b5cbc8b079ad4a6f660e33ed3c1ff13117fcb2f9940dfa9a342a5b05a787ceff",
+    "evidence_schema": {
+      "fields": [
+        "actions",
+        "adjoint_error",
+        "count_per_axis",
+        "dimension",
+        "face_coordinates",
+        "pairing_preparation_seconds",
+        "periodic",
+        "preparation_seconds",
+        "pressure_coordinates",
+        "retained_bytes"
+      ],
+      "signature": "4440b05704106a1e2e8fca205e723aea6f8b44a7d7cb9da3887d792b45d61a8e"
+    },
+    "fingerprint": "6093100a6fb1b05b465f0dbf7dee424da2f6deb00328943e702c3af017a8689e",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2"
+  }
+}

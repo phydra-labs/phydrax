@@ -210,6 +210,8 @@ def _pyramid_rule() -> ReferencePyramidRule:
 
 
 def _default_rule(cell_kind: str, /) -> ReferenceRule:
+    if cell_kind == "interval":
+        return _interval_rule()
     if cell_kind == "triangle":
         return _triangle_rule()
     if cell_kind == "quadrilateral":
@@ -222,6 +224,14 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
         return _prism_rule()
     if cell_kind == "pyramid":
         return _pyramid_rule()
+    if cell_kind.startswith(("simplex:", "tensor:")):
+        from ..discretization._reference_cell import reference_cell_topology
+        from ..integration import CubatureRule
+
+        topology = reference_cell_topology(cell_kind)
+        if cell_kind.startswith("simplex:"):
+            return CubatureRule("simplex", 5, dimension=topology.dimension)
+        return CubatureRule("tensor", 5, dimension=topology.dimension)
     raise ValueError(f"No finite-element rule exists for cell kind {cell_kind!r}.")
 
 
@@ -2252,7 +2262,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         match discretization:
             case FiniteElementDiscretization():
                 h1 = all(
-                    element.conformity == "H1"
+                    element.continuity == "conforming"
+                    and element.value_spec.form_type.degree == 0
                     for element in discretization.elements[field_index]
                 )
             case _:

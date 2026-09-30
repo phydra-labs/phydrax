@@ -260,14 +260,15 @@ def prepare_gauge_update(
         raise ValueError(
             "Gauge group, link count, coloring, and staple link space disagree."
         )
-    route_edges = np.asarray(staple_plan.complement_edges, dtype=np.int32)
-    route_active = (
-        np.asarray(staple_plan.complement_valid, dtype=np.bool_)
-        & np.asarray(staple_plan.route_valid, dtype=np.bool_)[..., None]
-    )
+    paths = staple_plan.complement_paths
+    path_edges = np.asarray(paths.edge_indices, dtype=np.int32)
+    path_active = np.asarray(paths.valid, dtype=np.bool_)
+    route_indices = np.asarray(staple_plan.route_indices, dtype=np.int32)
+    route_active = np.asarray(staple_plan.route_valid, dtype=np.bool_)
     required_conflicts = np.zeros_like(conflicts)
     for edge in range(num_links):
-        dependencies = route_edges[edge][route_active[edge]]
+        selected_paths = route_indices[edge, route_active[edge]]
+        dependencies = path_edges[selected_paths][path_active[selected_paths]]
         required_conflicts[edge, dependencies] = True
         required_conflicts[dependencies, edge] = True
     np.fill_diagonal(required_conflicts, False)

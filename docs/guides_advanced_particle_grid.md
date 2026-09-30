@@ -80,10 +80,12 @@ solves the native stiffness system, gathers cellwise electric field, and advance
 `ElectrostaticConductorCoupling` solves fixed-size equipotential/charge constraints through one
 native KKT system.
 
-`UnstructuredWhitneyCurrentPlan` deposits Whitney-0 endpoint charge and integrated Whitney-1 path
-current over bounded in-cell trajectory segments. `UnstructuredMaxwellPICFieldSolver` couples it
-to compatible tetrahedral Maxwell evolution through the inverse Hodge stars and rejects any path
-whose subdivision does not resolve cell ownership.
+`UnstructuredWhitneyCurrentPlan` deposits Whitney-0 endpoint charge and integrated
+Whitney-1 current on exact affine facet intervals. The owning locator performs one
+fixed-capacity traversal with deterministic ties, zero segments and exit/overflow
+evidence. `UnstructuredMaxwellPICFieldSolver` requires a relative conducting
+`UnstructuredMaxwellPlan`, restricted inverse Hodges and Whitney-2 physical B
+gather; it never substitutes uniform subdivisions or per-cell least squares.
 
 `PICParticleResponsePlan` supplies a matrix-free gather/rotation/scatter response.
 `SemiImplicitPICPlan` solves the periodic nonrelativistic theta response through bounded GMRES and

@@ -18,6 +18,9 @@ from ._validate import infer_expression_type, validate_pde_ir
 if TYPE_CHECKING:
     from phydrax.domain import DomainFunction
     from phydrax.integration import IntegrationSource
+    from phydrax.operators.differential._form_ops import DomainDifferentialForm
+
+    from ._form_compile import PDEFormGeometry
 
 
 DifferentialBackend: TypeAlias = Literal["ad", "jet", "fd", "basis"]
@@ -86,11 +89,12 @@ def compile_pde_expression(
     problem: PDEProblemIR,
     /,
     *,
-    fields: Mapping[str, DomainFunction],
+    fields: Mapping[str, DomainFunction | DomainDifferentialForm],
     parameters: Mapping[str, Any] | None = None,
     coordinates: Mapping[str, DomainFunction] | None = None,
     differential_backend: DifferentialBackend = "ad",
     integral_compiler: IntegralCompiler | None = None,
+    form_geometry: PDEFormGeometry | None = None,
 ) -> Any:
     """Compile a validated expression DAG to native PhydraX operations."""
     differential_backend = parse(
@@ -103,29 +107,148 @@ def compile_pde_expression(
     if parameters is not None:
         parameter_values.update(parameters)
     coordinate_values = {} if coordinates is None else dict(coordinates)
+    from phydrax.domain import DomainFunction
+
+    from ..operators.differential._form_ops import DomainDifferentialForm
+    from ._form_compile import domain_form_proxy, lower_domain_form_operation
+
+    form_bases: dict[PDEExpression, DomainDifferentialForm] = {}
+
+    def as_form(node: PDEExpression) -> DomainDifferentialForm:
+        if node not in form_bases:
+            raise ValueError(
+                "Exterior lowering requires an explicit charted form binding."
+            )
+        return form_bases[node]
+
+    def compile_form_node(node: PDEExpression, args: tuple[Any, ...]) -> DomainFunction:
+        spec = infer_expression_type(node, problem).form
+        if spec is None:
+            raise ValueError("Exterior lowering requires a form-valued expression.")
+        operands = tuple(
+            as_form(argument)
+            for argument in node.args
+            if infer_expression_type(argument, problem).form is not None
+        )
+        vector = (
+            _require_domain_function(args[0], node.op)
+            if node.op in ("interior_product", "lie_derivative")
+            else None
+        )
+        output = lower_domain_form_operation(
+            node,
+            operands,
+            vector=vector,
+            geometry=form_geometry,
+            backend=differential_backend,
+        )
+        if output.form_type.form_type_id != spec.form_type.form_type_id:
+            raise ValueError(
+                "Smooth exterior lowering produced an incompatible form type."
+            )
+        form_bases[node] = output
+        return domain_form_proxy(output.coefficients, spec)
+
+    def compile_form_arithmetic(
+        node: PDEExpression, args: tuple[Any, ...]
+    ) -> DomainFunction:
+        spec = infer_expression_type(node, problem).form
+        if spec is None:
+            raise ValueError("Form arithmetic requires a form-valued expression.")
+        bases = tuple(
+            form_bases[argument] for argument in node.args if argument in form_bases
+        )
+        if not bases:
+            raise ValueError("A form-valued expression lost its chart binding.")
+        base = bases[0]
+        if any(
+            not base.chart.compatible_with(other.chart) or base.var != other.var
+            for other in bases[1:]
+        ):
+            raise ValueError("Form arithmetic requires a common chart and variable.")
+        coefficients = tuple(
+            form_bases[argument].coefficients if argument in form_bases else value
+            for argument, value in zip(node.args, args, strict=True)
+        )
+        match node.op:
+            case "add":
+                result = coefficients[0]
+                for value in coefficients[1:]:
+                    result = result + value
+            case "multiply":
+                result = coefficients[0]
+                for value in coefficients[1:]:
+                    result = result * value
+            case "divide":
+                result = coefficients[0] / coefficients[1]
+            case "negate":
+                result = -coefficients[0]
+            case "derivative":
+                from ..operators.differential import partial_n
+
+                if node.coordinate is None:
+                    raise ValueError("A compiled derivative requires a coordinate.")
+                result = partial_n(
+                    base.coefficients,
+                    var=node.coordinate,
+                    axis=node.axis,
+                    order=node.order,
+                    backend=differential_backend,
+                )
+            case _:
+                raise ValueError(f"{node.op} cannot implicitly reinterpret a form.")
+        output = DomainDifferentialForm(
+            _require_domain_function(result, node.op),
+            chart=base.chart,
+            degree=spec.form_type.degree,
+            twist=spec.form_type.twist,
+            fiber_shape=spec.form_type.fiber_shape,
+            var=base.var,
+        )
+        form_bases[node] = output
+        return domain_form_proxy(output.coefficients, spec)
 
     def compile_node(node: PDEExpression) -> Any:
         if node.op == "constant":
-            assert node.value is not None
+            if node.value is None:
+                raise ValueError("A compiled constant requires a value.")
             return (
                 node.value
                 if isinstance(node.value, float)
                 else jnp.asarray(float(node.value))
             )
         if node.op == "field":
-            assert node.symbol is not None
+            if node.symbol is None:
+                raise ValueError("A compiled field requires a symbol.")
             if node.symbol not in fields:
                 raise KeyError(
                     f"No DomainFunction supplied for PDE field {node.symbol!r}."
                 )
-            return fields[node.symbol]
+            binding = fields[node.symbol]
+            schema = next(item for item in problem.fields if item.name == node.symbol)
+            if schema.form is None:
+                if not isinstance(binding, DomainFunction):
+                    raise TypeError("Untyped PDE fields require DomainFunction bindings.")
+                return binding
+            if not isinstance(binding, DomainDifferentialForm):
+                raise TypeError(
+                    "Typed PDE fields require explicit DomainDifferentialForm bindings."
+                )
+            if binding.form_type.form_type_id != schema.form.form_type.form_type_id:
+                raise ValueError(
+                    "PDE field binding has a different scientific form type."
+                )
+            form_bases[node] = binding
+            return domain_form_proxy(binding.coefficients, schema.form)
         if node.op == "parameter":
-            assert node.symbol is not None
+            if node.symbol is None:
+                raise ValueError("A compiled parameter requires a symbol.")
             if node.symbol not in parameter_values:
                 raise KeyError(f"No value supplied for PDE parameter {node.symbol!r}.")
             return parameter_values[node.symbol]
         if node.op == "coordinate":
-            assert node.symbol is not None
+            if node.symbol is None:
+                raise ValueError("A compiled coordinate requires a symbol.")
             if node.symbol not in coordinate_values:
                 raise KeyError(
                     f"No DomainFunction supplied for PDE coordinate {node.symbol!r}."
@@ -133,6 +256,23 @@ def compile_pde_expression(
             return coordinate_values[node.symbol]
 
         args = tuple(compile_node(argument) for argument in node.args)
+        value_type = infer_expression_type(node, problem)
+        if value_type.form is not None and node.op in (
+            "exterior_derivative",
+            "codifferential",
+            "hodge_star",
+            "wedge",
+            "interior_product",
+            "lie_derivative",
+            "trace",
+            "gradient",
+            "curl",
+            "divergence",
+            "laplacian",
+        ):
+            return compile_form_node(node, args)
+        if value_type.form is not None:
+            return compile_form_arithmetic(node, args)
         if node.op == "add":
             result = args[0]
             for argument in args[1:]:
@@ -160,7 +300,8 @@ def compile_pde_expression(
         if node.op == "sqrt":
             return _map_value(args[0], jnp.sqrt)
         if node.op == "component":
-            assert node.axis is not None
+            if node.axis is None:
+                raise ValueError("A compiled component requires an axis.")
             return _map_value(args[0], lambda value: value[..., node.axis])
         if node.op == "dot":
             product = args[0] * args[1]
@@ -175,7 +316,8 @@ def compile_pde_expression(
             from ..operators.differential import curl, div, grad, laplacian, partial_n
 
         if node.op == "derivative":
-            assert node.coordinate is not None
+            if node.coordinate is None:
+                raise ValueError("A compiled derivative requires a coordinate.")
             return partial_n(
                 _require_domain_function(args[0], node.op),
                 var=node.coordinate,
@@ -184,28 +326,32 @@ def compile_pde_expression(
                 backend=differential_backend,
             )
         if node.op == "gradient":
-            assert node.coordinate is not None
+            if node.coordinate is None:
+                raise ValueError("A compiled gradient requires a coordinate.")
             return grad(
                 _require_domain_function(args[0], node.op),
                 var=node.coordinate,
                 backend=differential_backend,
             )
         if node.op == "divergence":
-            assert node.coordinate is not None
+            if node.coordinate is None:
+                raise ValueError("A compiled divergence requires a coordinate.")
             return div(
                 _require_domain_function(args[0], node.op),
                 var=node.coordinate,
                 backend=differential_backend,
             )
         if node.op == "curl":
-            assert node.coordinate is not None
+            if node.coordinate is None:
+                raise ValueError("A compiled curl requires a coordinate.")
             return curl(
                 _require_domain_function(args[0], node.op),
                 var=node.coordinate,
                 backend=differential_backend,
             )
         if node.op == "laplacian":
-            assert node.coordinate is not None
+            if node.coordinate is None:
+                raise ValueError("A compiled Laplacian requires a coordinate.")
             return laplacian(
                 _require_domain_function(args[0], node.op),
                 var=node.coordinate,
@@ -217,7 +363,8 @@ def compile_pde_expression(
                     "Integral expressions require an integral_compiler bound to a "
                     "concrete sampling or quadrature contract."
                 )
-            assert node.region is not None
+            if node.region is None:
+                raise ValueError("A compiled integral requires a region.")
             return integral_compiler(args[0], node.region, problem)
         raise ValueError(f"Unsupported PDE expression operation {node.op!r}.")
 
@@ -234,6 +381,7 @@ def make_pde_operator(
     coordinates: Mapping[str, DomainFunction] | None = None,
     differential_backend: DifferentialBackend = "ad",
     integral_compiler: IntegralCompiler | None = None,
+    form_geometry: PDEFormGeometry | None = None,
 ) -> Callable[..., Any]:
     """Adapt an expression to the operator signature used by PhydraX constraints."""
     differential_backend = parse(
@@ -251,7 +399,7 @@ def make_pde_operator(
     if len(names) != len(set(names)):
         raise ValueError("PDE constraint field names must be unique.")
 
-    def operator(*field_values: DomainFunction) -> Any:
+    def operator(*field_values: DomainFunction | DomainDifferentialForm) -> Any:
         if len(field_values) != len(names):
             raise ValueError(
                 f"PDE operator expected {len(names)} fields, got {len(field_values)}."
@@ -264,6 +412,7 @@ def make_pde_operator(
             coordinates=coordinates,
             differential_backend=differential_backend,
             integral_compiler=integral_compiler,
+            form_geometry=form_geometry,
         )
 
     return operator
@@ -283,6 +432,7 @@ def compile_pde_residual_term(
     integral_compiler: IntegralCompiler | None = None,
     scale: Any = 1.0,
     label: str | None = None,
+    form_geometry: PDEFormGeometry | None = None,
 ) -> Any:
     """Compile an IR equation into a declarative residual and numerical penalty."""
     from ..conditions import Residual
@@ -301,6 +451,7 @@ def compile_pde_residual_term(
         coordinates=coordinates,
         differential_backend=differential_backend,
         integral_compiler=integral_compiler,
+        form_geometry=form_geometry,
     )
     condition = Residual(names, component, operator, label=label)
     return ResidualPenalty(condition, source, scale=scale)
@@ -310,11 +461,12 @@ def compile_pde_problem(
     problem: PDEProblemIR,
     /,
     *,
-    fields: Mapping[str, DomainFunction],
+    fields: Mapping[str, DomainFunction | DomainDifferentialForm],
     parameters: Mapping[str, Any] | None = None,
     coordinates: Mapping[str, DomainFunction] | None = None,
     differential_backend: DifferentialBackend = "ad",
     integral_compiler: IntegralCompiler | None = None,
+    form_geometry: PDEFormGeometry | None = None,
 ) -> CompiledPDEProblem:
     """Compile every equation and restriction to executable residuals."""
     differential_backend = parse(
@@ -331,6 +483,7 @@ def compile_pde_problem(
             coordinates=coordinates,
             differential_backend=differential_backend,
             integral_compiler=integral_compiler,
+            form_geometry=form_geometry,
         )
 
     equations = tuple(

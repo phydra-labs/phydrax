@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from phydrax.exterior import ComplexBoundary
+from phydrax.typing import parse
 
 from .scenarios import augment_square_group_training, OperatorBenchmarkScenario
 
@@ -2327,14 +2329,17 @@ def _cochain_factory(
         base_width = 8 if quick else 24
         width = max(2, round(base_width * float(size_scale) ** 0.5))
         depth = 2 if quick else 4
-        boundary_policy = dict(scenario.metadata).get("boundary_policy", "absolute")
+        boundary = parse(
+            dict(scenario.metadata).get("boundary", "absolute"),
+            ComplexBoundary,
+            "boundary",
+        )
         return phx.nn.operator.architectures.CochainNeuralOperator(
             scenario.task.fields,
             width=width,
             depth=depth,
             routes=routes,
-            # ty: ignore[invalid-argument-type]
-            boundary_policy=boundary_policy,
+            boundary=boundary,
             key=jr.key(seed),
         )
 
@@ -2356,8 +2361,8 @@ def _cochain_configuration(
             ("depth", str(2 if quick else 4)),
             ("routes", ",".join(routes.enabled_routes)),
             (
-                "boundary_policy",
-                dict(scenario.metadata).get("boundary_policy", "absolute"),
+                "boundary",
+                dict(scenario.metadata).get("boundary", "absolute"),
             ),
         )
 
@@ -2433,7 +2438,8 @@ def compatible_architectures(
 ) -> tuple[OperatorArchitecture, ...]:
     """Return every architecture whose physical input contract matches ``scenario``."""
     if scenario.task is not None and any(
-        field.cochain is not None for field in scenario.task.fields
+        field.form_type is not None and field.representation == "cochain"
+        for field in scenario.task.fields
     ):
         return _cochain_architectures(scenario, quick=quick)
     source_name, source = _primary_source(scenario)

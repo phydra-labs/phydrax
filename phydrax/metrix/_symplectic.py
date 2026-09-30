@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from itertools import combinations
 from math import factorial
 
 import equinox as eqx
@@ -17,6 +16,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..exterior._basis import exterior_indices
 from ..linalg import inverse as matrix_inverse
 from ._chart import CoordinateChart
 from ._forms import DifferentialForm, exterior_derivative, wedge
@@ -30,7 +30,7 @@ class _CanonicalSymplecticCoefficients(StrictModule):
 
     def __init__(self, dimension: int, /) -> None:
         half = dimension // 2
-        indices = tuple(combinations(range(dimension), 2))
+        indices = exterior_indices(dimension, 2)
         lookup = {index: position for position, index in enumerate(indices)}
         self.dimension = dimension
         self.pair_positions = tuple(lookup[(axis, half + axis)] for axis in range(half))
@@ -54,6 +54,8 @@ class SymplecticForm(StrictModule):
             raise TypeError("SymplecticForm requires a DifferentialForm.")
         if form.degree != 2:
             raise ValueError("A symplectic form must have degree two.")
+        if form.form_type.twist != "untwisted" or form.form_type.fiber_shape:
+            raise ValueError("A symplectic form must be untwisted and scalar-valued.")
         if form.chart.dimension % 2:
             raise ValueError("A symplectic chart must have even dimension.")
         self.form = form
