@@ -493,6 +493,7 @@ def prepare_virtual_element_field_reconstruction(
             f"virtual-element-{channel_}",
             field_space_id,
             value_port,
+            form=discretization.field.element.value_spec,
         ),
         regularity=DerivativeRegularity.piecewise_polynomial(
             continuity=-1, degree_bound=discretization.field.element.degree

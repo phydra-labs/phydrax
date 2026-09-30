@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
@@ -21,6 +20,7 @@ from ..discretization import (
     oriented_edge_endpoints,
     OrientedEdgePathPlan,
 )
+from ..discretization._oriented_path import ordered_path_transport
 from ..linalg import ArraySpace
 from ..metrix import (
     AbstractLieGroup,
@@ -92,7 +92,7 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
             layout,
             vector_space,
             representation="custom",
-            conformity="cochain",
+            conformity="unrestricted",
         )
         geometry = PointwiseStateGeometry(
             LieGroupStateGeometry(group),
@@ -196,40 +196,6 @@ def gauge_transform_links(
     )
 
 
-def path_holonomy(
-    space: MatrixGaugeLinkSpace,
-    links: ArrayLike,
-    paths: OrientedEdgePathPlan,
-    /,
-) -> Array:
-    """Multiply ordered oriented link factors for every fixed-capacity path."""
-    values = _links(space, links)
-    if not isinstance(paths, OrientedEdgePathPlan):
-        raise TypeError("paths must be OrientedEdgePathPlan.")
-    if paths.topology_id != space.topology.topology_id:
-        raise ValueError("Gauge-link space and path topology identities must agree.")
-    identity = jnp.broadcast_to(
-        space.group.identity(dtype=values.dtype),
-        (paths.num_paths,) + space.point_shape,
-    )
-
-    def step(accumulator: Array, index: Array) -> tuple[Array, None]:
-        edges = paths.edge_indices[:, index]
-        factor = values[edges]
-        reverse = space.group.inverse(factor)
-        oriented = jnp.where(
-            (paths.orientations[:, index] > 0)[..., None, None],
-            factor,
-            reverse,
-        )
-        product = space.group.compose(accumulator, oriented)
-        active = paths.valid[:, index][..., None, None]
-        return jnp.where(active, product, accumulator), None
-
-    result, _ = jax.lax.scan(step, identity, jnp.arange(paths.max_length))
-    return result
-
-
 def closed_path_trace(
     space: MatrixGaugeLinkSpace,
     links: ArrayLike,
@@ -241,7 +207,10 @@ def closed_path_trace(
     """Return complex traces of paths certified closed by their plan."""
     if not paths.require_closed:
         raise ValueError("closed_path_trace requires paths prepared as closed.")
-    holonomy = path_holonomy(space, links, paths)
+    values = _links(space, links)
+    if paths.topology_id != space.topology.topology_id:
+        raise ValueError("Gauge-link space and path topology identities must agree.")
+    holonomy = ordered_path_transport(paths, values)
     trace = jnp.trace(holonomy, axis1=-2, axis2=-1)
     return trace / space.point_shape[0] if normalized else trace
 
@@ -250,5 +219,4 @@ __all__ = [
     "MatrixGaugeLinkSpace",
     "closed_path_trace",
     "gauge_transform_links",
-    "path_holonomy",
 ]

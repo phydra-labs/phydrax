@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax
@@ -22,7 +22,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_mesh import CellMesh
-from ..discretization.fem._nedelec_tetrahedron import TetrahedralNedelecSpace
+from ..discretization.fem._de_rham import FiniteElementDeRhamComplex
 from ..linalg import (
     ArraySpace,
     ComplexCartesianCoordinates,
@@ -1088,13 +1088,13 @@ class HcurlCapabilityStatus(IntEnum):
     """Truthful disposition of an adaptive H(curl) request."""
 
     SUPPORTED = 0
-    UNSUPPORTED_POLYNOMIAL_ORDER = 1
     ADAPTATION_TRANSACTION_REQUIRED = 2
     HCURL_TRANSFER_REQUIRED = 3
     RESOURCE_LIMIT_EXCEEDED = 4
     UNSUPPORTED_MESH = 5
 
 
+@final
 class HcurlCapabilityEvidence(StrictModule, NonTrainableState):
     status: int = eqx.field(static=True)
     assembly_supported: bool = eqx.field(static=True)
@@ -1109,22 +1109,23 @@ class HcurlCapabilityEvidence(StrictModule, NonTrainableState):
     capability_id: str = eqx.field(static=True)
 
 
+@final
 class PreparedAdaptiveHcurlCapability(StrictModule, NonTrainableState):
-    """Native lowest-order Nedelec space and explicit AMR transaction binding."""
+    """Native conforming form complex and explicit AMR transaction binding."""
 
-    space: TetrahedralNedelecSpace
+    space: FiniteElementDeRhamComplex
     transaction: FiniteElementTopologyTransaction | None
     evidence: HcurlCapabilityEvidence
     prepared_id: str = eqx.field(static=True)
 
 
+@final
 class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
     """Capability gate over the existing tetrahedral FEM/AMR substrate.
 
-    Phydrax currently owns a lowest-order first-family tetrahedral Nedelec kernel.
-    Higher order is reported unsupported rather than relabeled. Adaptive transfer is
-    admitted only when a finite-element topology transaction supplies an explicit
-    edge-field transfer; its automatic P1 vertex transfer is not claimed for H(curl).
+    The trimmed tetrahedral form family supports every positive polynomial order.
+    Adaptive transfer is admitted only when a finite-element topology transaction
+    supplies an explicit form-field transfer, not an automatic P1 vertex transfer.
     """
 
     mesh: CellMesh
@@ -1170,6 +1171,13 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             and mesh.ambient_dimension == 3
             and all(block.cell_kind == "tetrahedron" for block in mesh.blocks)
         )
+        if mesh_supported:
+            # Count all conforming H(curl) coefficients before allocating a basis.
+            edge_count = (
+                order * edge_count
+                + order * (order - 1) * mesh.entity_set(2).entity_ids.size
+                + order * (order - 1) * (order - 2) * cell_count // 2
+            )
         if not mesh_supported:
             status = HcurlCapabilityStatus.UNSUPPORTED_MESH
             assembly = False
@@ -1180,11 +1188,6 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             assembly = False
             adaptation = False
             reason = "tetrahedral H(curl) mesh exceeds the declared fixed resources"
-        elif order != 1:
-            status = HcurlCapabilityStatus.UNSUPPORTED_POLYNOMIAL_ORDER
-            assembly = False
-            adaptation = False
-            reason = "native tetrahedral H(curl) is lowest-order first-family only"
         elif require_adaptation and transaction is None:
             status = HcurlCapabilityStatus.ADAPTATION_TRANSACTION_REQUIRED
             assembly = True
@@ -1203,13 +1206,13 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             status = HcurlCapabilityStatus.SUPPORTED
             assembly = True
             adaptation = require_adaptation
-            reason = "native lowest-order tetrahedral Nedelec assembly admitted"
+            reason = "native trimmed tetrahedral H(curl) assembly admitted"
         capability_id = canonical_fingerprint(
             {
                 "kind": "adaptive-hcurl-capability",
                 "mesh": mesh.mesh_id,
                 "requested_polynomial_order": order,
-                "native_polynomial_order": 1,
+                "native_polynomial_order": order,
                 "require_adaptation": require_adaptation,
                 "transaction": None
                 if transaction is None
@@ -1226,7 +1229,7 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             assembly,
             adaptation,
             order,
-            1,
+            order,
             edge_count,
             cell_count,
             edge_limit,
@@ -1247,12 +1250,14 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedAdaptiveHcurlCapability:
         if self.evidence.status != int(HcurlCapabilityStatus.SUPPORTED):
             raise NotImplementedError(self.evidence.reason)
-        space = TetrahedralNedelecSpace(self.mesh)
+        space = FiniteElementDeRhamComplex(
+            self.mesh, family="trimmed", order=self.evidence.requested_polynomial_order
+        )
         prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-adaptive-hcurl-capability",
                 "plan": self.plan_id,
-                "space": space.space_id,
+                "space": space.realization_id,
                 "transaction": None
                 if self.transaction is None
                 else self.transaction.transaction_id,

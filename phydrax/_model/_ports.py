@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from math import prod
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, assert_never, final, Literal, Protocol, runtime_checkable
 
 import equinox as eqx
 
@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..axes._core import AxisKey
+from ..exterior._form_type import FormValueSpec
 from ..typing import parse
 from ..units._dimension import DimensionSignature
 
@@ -23,7 +24,7 @@ from ..units._dimension import DimensionSignature
 type PortVariance = Literal["neutral", "primal", "dual", "covariant", "contravariant"]
 
 _DIRECTIONS = ("input", "output")
-_ASPECTS = ("axes", "dimensions", "frame", "normalization", "space")
+_ASPECTS = ("axes", "dimensions", "frame", "normalization", "space", "form")
 
 
 def _identifier(value: Any, name: str, /) -> str:
@@ -87,6 +88,19 @@ def _optional_aligned(
     return aligned
 
 
+def _form_variance(form: FormValueSpec, /) -> PortVariance:
+    match form.proxy:
+        case "scalar" | "density":
+            return "neutral"
+        case "circulation" | "components":
+            return "covariant"
+        case "flux":
+            return "contravariant"
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
+@final
 class ValuePort(StrictModule, NonTrainableState):
     """Explicit scientific identity of one value a model consumes or produces.
 
@@ -97,8 +111,9 @@ class ValuePort(StrictModule, NonTrainableState):
     are `None` when undeclared; declare an explicit identifier (for example an
     identity normalization) to state that no transformation applies. `variance`
     records whether the value is a neutral quantity, a primal or dual space
-    element, or covariant or contravariant tensor components. `port_id`
-    content-addresses every declared field.
+    element, or covariant or contravariant tensor components. A declared `form`
+    owns the event shape and derives variance from its proxy; callers must not
+    also supply `variance`. `port_id` content-addresses every declared field.
     """
 
     semantic_id: str = eqx.field(static=True)
@@ -112,6 +127,7 @@ class ValuePort(StrictModule, NonTrainableState):
     axis_keys: tuple[AxisKey, ...] | None = eqx.field(static=True)
     variance: PortVariance = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
+    form: FormValueSpec | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -126,7 +142,8 @@ class ValuePort(StrictModule, NonTrainableState):
         frame_id: str | None = None,
         normalization_id: str | None = None,
         axis_keys: Iterable[AxisKey] | None = None,
-        variance: PortVariance = "neutral",
+        variance: PortVariance | None = None,
+        form: FormValueSpec | None = None,
     ) -> None:
         semantic_id_ = _identifier(semantic_id, "semantic_id")
         shape = _event_shape(event_shape)
@@ -142,11 +159,42 @@ class ValuePort(StrictModule, NonTrainableState):
         axes = _optional_aligned(
             axis_keys, AxisKey, len(shape), "axis_keys", "event axis", distinct=True
         )
-        variance = parse(variance, PortVariance, "variance")
+        if form is None:
+            variance_ = parse(
+                "neutral" if variance is None else variance, PortVariance, "variance"
+            )
+        else:
+            if not isinstance(form, FormValueSpec):
+                raise TypeError("form must be a FormValueSpec or None.")
+            if variance is not None:
+                raise ValueError("variance must not be supplied with form.")
+            if shape != form.value_shape:
+                raise ValueError("event_shape must equal form.value_shape.")
+            variance_ = _form_variance(form)
         representation_ = _identifier(representation, "representation")
         space = _optional_identifier(space_id, "space_id")
         frame = _optional_identifier(frame_id, "frame_id")
         normalization = _optional_identifier(normalization_id, "normalization_id")
+        identity = {
+            "kind": "value-port",
+            "semantic_id": semantic_id_,
+            "space_id": space,
+            "event_shape": list(shape),
+            "component_ids": list(components),
+            "dimensions": (
+                None
+                if dimensions_ is None
+                else [value.dimension_id for value in dimensions_]
+            ),
+            "representation": representation_,
+            "frame_id": frame,
+            "normalization_id": normalization,
+            "axis_keys": None if axes is None else [[k.scope, k.name] for k in axes],
+            "variance": variance_,
+        }
+        if form is not None:
+            identity["form"] = form.value_spec_id
+        identifier = canonical_fingerprint(identity)
         self.semantic_id = semantic_id_
         self.space_id = space
         self.event_shape = shape
@@ -156,30 +204,13 @@ class ValuePort(StrictModule, NonTrainableState):
         self.frame_id = frame
         self.normalization_id = normalization
         self.axis_keys = axes
-        self.variance = variance
-        self.port_id = canonical_fingerprint(
-            {
-                "kind": "value-port",
-                "semantic_id": semantic_id_,
-                "space_id": space,
-                "event_shape": list(shape),
-                "component_ids": list(components),
-                "dimensions": (
-                    None
-                    if dimensions_ is None
-                    else [value.dimension_id for value in dimensions_]
-                ),
-                "representation": representation_,
-                "frame_id": frame,
-                "normalization_id": normalization,
-                "axis_keys": None if axes is None else [[k.scope, k.name] for k in axes],
-                "variance": variance,
-            }
-        )
+        self.variance = variance_
+        self.form = form
+        self.port_id = identifier
 
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical JSON-compatible record of this port, with `port_id`."""
-        return {
+        payload = {
             "semantic_id": self.semantic_id,
             "space_id": self.space_id,
             "event_shape": list(self.event_shape),
@@ -200,6 +231,9 @@ class ValuePort(StrictModule, NonTrainableState):
             "variance": self.variance,
             "port_id": self.port_id,
         }
+        if self.form is not None:
+            payload["form"] = self.form.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any], /) -> ValuePort:
@@ -219,6 +253,8 @@ class ValuePort(StrictModule, NonTrainableState):
             "variance",
             "port_id",
         }
+        if "form" in payload:
+            expected.add("form")
         if set(payload) != expected:
             raise ValueError(
                 "ValuePort payload must use the canonical fields; "
@@ -239,6 +275,7 @@ class ValuePort(StrictModule, NonTrainableState):
             raise TypeError(
                 "ValuePort payload axis_keys must be [scope, name] pairs or None."
             )
+        form = None if "form" not in payload else FormValueSpec.from_dict(payload["form"])
         port = cls(
             payload["semantic_id"],
             event_shape=payload["event_shape"],
@@ -257,8 +294,11 @@ class ValuePort(StrictModule, NonTrainableState):
                 if axis_keys is None
                 else [AxisKey(scope, name) for scope, name in axis_keys]
             ),
-            variance=payload["variance"],
+            variance=payload["variance"] if form is None else None,
+            form=form,
         )
+        if payload["variance"] != port.variance:
+            raise ValueError("ValuePort payload variance does not match its form.")
         if payload["port_id"] != port.port_id:
             raise ValueError("ValuePort payload port_id does not match its content.")
         return port
@@ -352,7 +392,8 @@ class PortBindingEvidence(StrictModule, NonTrainableState):
     port order. `unverified` holds sorted `(direction, model_port_id, aspect)`
     records for every aspect (`"axes"`, `"dimensions"`, `"frame"`,
     `"normalization"`, `"space"`) left unverified because a side did not declare
-    it; declared mismatches never produce evidence.
+    it; declared mismatches never produce evidence. `"form"` is also unverified
+    when exactly one side declares form metadata.
     """
 
     inputs: tuple[tuple[str, str], ...] = eqx.field(static=True)
@@ -446,7 +487,12 @@ def _check_pair(
     ):
         if left != right:
             raise ValueError(f"{label} {aspect} mismatch: {left!r} != {right!r}.")
+    if model.form is not None and owner.form is not None:
+        if model.form.value_spec_id != owner.form.value_spec_id:
+            raise ValueError(f"{label} form mismatch.")
     unverified = []
+    if (model.form is None) != (owner.form is None):
+        unverified.append((direction, model.port_id, "form"))
     for aspect, left, right in (
         ("axes", model.axis_keys, owner.axis_keys),
         ("dimensions", model.dimensions, owner.dimensions),

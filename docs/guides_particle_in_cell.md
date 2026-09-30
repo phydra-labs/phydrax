@@ -54,10 +54,11 @@ and the packed degree-zero cochain. Electric and magnetic gather first use
 component from its exact tensor location.
 
 `shape_order` (`PICShapeOrder`, 1–3) selects the spline-Whitney family. Order one is the
-lowest-order Whitney transfer: multilinear charge and multilinear interpolation of each edge/face
-component. Order `p = 2, 3` deposits charge with the degree-`p` cardinal B-spline and gathers
-each oriented component with degree `p − 1` along the axes the entity spans and degree `p` across
-the others (`TensorBSplineSplatAssignment` with per-axis degrees). Because
+lowest-order Whitney transfer: multilinear charge, with degree-zero interpolation along
+each edge/face span and linear interpolation across it. Order `p = 2, 3` deposits charge
+with the degree-`p` cardinal B-spline and gathers each oriented component with degree
+`p − 1` along the axes the entity spans and degree `p` across the others
+(`TensorBSplineSplatAssignment` with per-axis degrees). Because
 `dN^p(x − i)/dx = N^{p−1}(x − i + ½) − N^{p−1}(x − i − ½)`, the gathered `E` of a discrete
 gradient field is exactly the gradient of the degree-`p` charge-shape interpolant of the potential.
 
@@ -83,19 +84,17 @@ and finite-state checks all pass.
 
 ## Charge-conserving electromagnetic coupling
 
-`ChargeConservingCurrentPlan` supports uniform 3-D grids with periodic or wall-bounded axes (paths
-are clipped at bounded faces) and trajectories that cross at most one cell per axis in one step, at
-the transfer's shape order. Order one splits a
-straight trajectory at crossed faces and integrates cubical Whitney edge forms in closed form.
-Orders two and three split the path at the common knot lattice of the spline-Whitney forms
-(half-integers for `p = 2`, integers for `p = 3`) and integrate the path integrals
-`q/Δt ∫ N^{p−1}(q_a − e − ½) N^p(q_b − j) N^p(q_c − k) dq_a`, polynomials of degree `3p − 1`
-per segment, exactly with `⌈3p/2⌉`-point Gauss–Legendre; their contributions are reduced by
-`phydrax.sparse` in canonical cell-binned particle order, so the current is bitwise invariant to
-particle slot order. Every order satisfies
+`ChargeConservingCurrentPlan` prepares fixed-capacity exact spline-Whitney chain
+integration on periodic or wall-bounded structured grids. Paths may cross multiple
+cells; the declared positive segment capacity determines admission, with explicit
+overflow/exit evidence rather than a one-cell-per-axis rule.
+Order one uses actual nonuniform widths and exact facet intervals. Orders two and
+three on uniform axes split at the common knot lattice and integrate the polynomial
+chain moments exactly. Prepared gather/deposit routes are conjugate adjoints and
+reuse canonical DOF offsets. Current content is +∫W and every order satisfies
 
 ```text
-(rho_new - rho_old) / dt + delta(J_mid) = 0
+(rho_new - rho_old) / dt - delta(J_mid) = 0
 ```
 
 to roundoff under the exact `StructuredCochainBridge.codifferential`. Segment overflow, dropped
@@ -181,10 +180,11 @@ unadmitted protocol refuses when called for the configuration reason in `basis`.
 "—" is unpublished. Without `open-domain`, periodic particle faces are refused and bounded faces are
 not inset-checked; without `energy-accounting` the ledger uses the total field energy.
 
-The Whitney transfer returns nodal charge content and integrated edge flow; the unstructured
-solver maps them through the inverse degree-0/degree-1 Hodge stars onto Maxwell's charge density
-and current on Maxwell's edge order. Boundary vertices are absolutely constrained, so charge lives
-on interior vertices. On a nonperiodic reduced axis the stored layout keeps the upper wall face
+The Whitney transfer returns endpoint nodal charge and integrated edge flow.
+Unstructured conducting PIC explicitly requires `UnstructuredMaxwellPlan(...,
+boundary="relative")`; the degree0/1 metric inverses are genuinely restricted,
+then zero-extended onto Maxwell's layout. Charge lives on interior vertices.
+On a nonperiodic reduced axis the stored layout keeps the upper wall face
 and omits the lower one: the backward difference reads zero below the lower wall and the forward
 difference zero beyond the last cell, a skew-adjoint pair. The reduced 1-D and 2-D curl updates
 therefore conserve energy exactly, the divergence of the curl vanishes axis by axis, and Gauss's
@@ -297,14 +297,17 @@ collisions, ionization, moving windows, and semi-implicit response.
 
 ## Open, dispersive, and magnetized PIC
 
-`CochainMaxwellPICFieldSolver` accepts any linear passive `PreparedCompatibleMaxwell`: bounded
-axes with `MaxwellCPMLPlan` absorbers and PEC/PMC/impedance `MaxwellBoundaryPlan`s, lossy
+`CochainMaxwellPICFieldSolver` accepts linear passive `PreparedCompatibleMaxwell`
+on a `StructuredCochainBridge`: bounded axes with
+`MaxwellCPMLPlan` absorbers and PEC/PMC/impedance `MaxwellBoundaryPlan`s, lossy
 conductors (`ConductiveMaxwellConstitutivePlan`), Lorentz–Drude electric poles and magnetic poles
 (`LorentzDrudeMaxwellConstitutivePlan`, negative index when both are resonant), and the magnetized
 cold plasma (`MagnetizedColdPlasmaMaxwellConstitutivePlan`). Nonlinear or active media are refused.
 Particles deposit through `ChargeConservingCurrentPlan`, which clips paths at wall-bounded faces,
 and the gather is its exact Galerkin transpose (Whitney forms at order one), so the gathered field
 does exactly the work `⟨E, ⋆J⟩` the deposited current does on the grid.
+The magnetic gather is constrained raw physical B from `magnetic_flux(state)`,
+not constitutive H; this remains true for passive magnetic dispersion and μ≠1.
 
 The electrostatic plan initializes Gauss-consistent fields from the filtered deposited charge: a
 periodic boundary on periodic grids, a Dirichlet (grounded) or mixed boundary on bounded grids,

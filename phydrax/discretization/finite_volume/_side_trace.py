@@ -38,7 +38,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...linalg import (
     ArraySpace,
     DiagonalPairing,
@@ -1089,11 +1089,11 @@ class _MeshFaceStateEvaluator(_AbstractFaceStateEvaluator, NonTrainableState):
 
 
 @final
-class _StructuredFaceStateEvaluator(_AbstractFaceStateEvaluator, NonTrainableState):
+class _StructuredFaceStateEvaluator(_AbstractFaceStateEvaluator):
     plan: MUSCLReconstruction | WENOReconstructionPlan
-    stencils: Array
-    widths: Array
-    upper: Array
+    stencils: Array = fixed_field()
+    widths: Array = fixed_field()
+    upper: Array = fixed_field()
     cell_count: int = eqx.field(static=True)
     sites_per_facet: int = eqx.field(static=True)
 

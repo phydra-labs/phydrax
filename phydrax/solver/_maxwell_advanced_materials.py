@@ -16,8 +16,10 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CochainDiscretization, StructuredCochainBridge
+from ..discretization import StructuredCochainBridge
+from ..exterior._complex import AbstractDeRhamComplex
 from ..geometry._contracts import CompiledGeometry, GeometryKind
+from ..linalg import AbstractVectorSpace
 from ._maxwell import (
     _apply_hodge_metric,
     _positive_angular_frequency,
@@ -84,7 +86,7 @@ class KerrPockelsMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedKerrPockelsMaxwellConstitutive:
@@ -106,7 +108,7 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
     def __init__(
         self,
         plan: KerrPockelsMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
@@ -145,7 +147,7 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
             {
                 "kind": "prepared-kerr-pockels-maxwell",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -211,8 +213,8 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         del electric, magnetic, electric_star, magnetic_star
@@ -237,8 +239,8 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -264,8 +266,8 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         return jnp.real(
@@ -338,7 +340,7 @@ class ActiveGainMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedActiveGainMaxwellConstitutive:
@@ -357,7 +359,7 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
     def __init__(
         self,
         plan: ActiveGainMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
@@ -383,7 +385,7 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
             {
                 "kind": "prepared-active-gain-maxwell",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -430,8 +432,8 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         del magnetic, magnetic_star
@@ -456,8 +458,8 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -474,8 +476,8 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         return jnp.real(

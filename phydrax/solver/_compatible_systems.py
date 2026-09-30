@@ -110,7 +110,7 @@ class CompatibleElasticityDynamics(StrictModule, NonTrainableState):
         )
 
     def energy(self, state: CompatibleElasticityState, /) -> Array:
-        h0 = self.bridge.cochain.hodge_stars[0]
+        h0 = self.bridge.cochain.hodge_diagonal(0)
         kinetic = jnp.sum(
             h0.reshape((-1,) + (1,) * (state.velocity.ndim - 1)) * state.velocity**2
         )
@@ -118,7 +118,7 @@ class CompatibleElasticityDynamics(StrictModule, NonTrainableState):
             lambda component: self.bridge.exterior_derivative(0, component),
             state.displacement,
         )
-        h1 = self.bridge.cochain.hodge_stars[1]
+        h1 = self.bridge.cochain.hodge_diagonal(1)
         potential = self.wave_speed**2 * jnp.sum(
             h1.reshape((-1,) + (1,) * (gradient.ndim - 1)) * gradient**2
         )
@@ -396,9 +396,9 @@ class CompatiblePoroelasticDynamics(StrictModule, NonTrainableState):
         self.coupling = float(coupling)
 
     def drift(self, state: CompatiblePoroelasticState, /) -> CompatiblePoroelasticState:
-        laplace_u = self.bridge.laplace_de_rham(0, state.displacement)
-        laplace_p = self.bridge.laplace_de_rham(0, state.pressure)
-        laplace_v = self.bridge.laplace_de_rham(0, state.velocity)
+        laplace_u = self.bridge.hodge_laplacian(0, state.displacement)
+        laplace_p = self.bridge.hodge_laplacian(0, state.pressure)
+        laplace_v = self.bridge.hodge_laplacian(0, state.velocity)
         return CompatiblePoroelasticState(
             displacement=state.velocity,
             velocity=-(self.wave_speed**2) * laplace_u + self.coupling * laplace_p,
@@ -448,9 +448,9 @@ class CompatibleThermoelasticDynamics(StrictModule, NonTrainableState):
         state: CompatibleThermoelasticState,
         /,
     ) -> CompatibleThermoelasticState:
-        laplace_u = self.bridge.laplace_de_rham(0, state.displacement)
-        laplace_t = self.bridge.laplace_de_rham(0, state.temperature)
-        laplace_v = self.bridge.laplace_de_rham(0, state.velocity)
+        laplace_u = self.bridge.hodge_laplacian(0, state.displacement)
+        laplace_t = self.bridge.hodge_laplacian(0, state.temperature)
+        laplace_v = self.bridge.hodge_laplacian(0, state.velocity)
         return CompatibleThermoelasticState(
             displacement=state.velocity,
             velocity=-(self.wave_speed**2) * laplace_u + self.expansion * laplace_t,

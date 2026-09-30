@@ -15,7 +15,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._complex import CellSubcomplex, compact_boundary
+from ._complex import CellComplexPair, CellSubcomplex, compact_boundary
 from ._resources import TopologyResourceError, TopologyResourcePolicy
 
 
@@ -35,14 +35,19 @@ class RationalClassBasis(StrictModule, NonTrainableState):
         self,
         degree: int,
         vectors: tuple[tuple[Fraction, ...], ...],
-        complex: CellSubcomplex,
+        complex: CellSubcomplex | CellComplexPair,
         /,
     ) -> None:
         cells = []
         generators = []
         numerators = []
         denominators = []
-        ambient = np.asarray(complex.layout.compact_to_ambient[int(degree)])
+        layout = (
+            complex.layout
+            if isinstance(complex, CellSubcomplex)
+            else complex.quotient_layout
+        )
+        ambient = np.asarray(layout.compact_to_ambient[int(degree)])
         for generator, vector in enumerate(vectors):
             for compact, value in enumerate(vector):
                 if value:
@@ -56,12 +61,16 @@ class RationalClassBasis(StrictModule, NonTrainableState):
         self.denominators = tuple(denominators)
         self.degree = int(degree)
         self.generator_count = len(vectors)
-        self.source_id = complex.subcomplex_id
+        self.source_id = (
+            complex.subcomplex_id
+            if isinstance(complex, CellSubcomplex)
+            else complex.pair_id
+        )
         self.basis_id = canonical_fingerprint(
             {
                 "kind": "rational-class-basis",
                 "degree": int(degree),
-                "source": complex.subcomplex_id,
+                "source": self.source_id,
                 "cells": cells,
                 "generators": generators,
                 "numerators": numerators,
@@ -109,7 +118,9 @@ class RationalHomologyBasisResult(StrictModule, NonTrainableState):
         raise KeyError(f"No rational homology basis exists in degree {degree}.")
 
 
-def _dense_boundary(complex: CellSubcomplex, degree: int, /) -> np.ndarray:
+def _dense_boundary(
+    complex: CellSubcomplex | CellComplexPair, degree: int, /
+) -> np.ndarray:
     boundary = compact_boundary(complex, degree)
     matrix = np.zeros((boundary.row_count, boundary.column_count), dtype=object)
     for row, column, coefficient in zip(
@@ -170,7 +181,7 @@ def _rank(columns: Sequence[tuple[Fraction, ...]]) -> int:
 
 
 def compute_rational_homology_basis(
-    complex: CellSubcomplex,
+    complex: CellSubcomplex | CellComplexPair,
     /,
     *,
     resources: TopologyResourcePolicy | None = None,
@@ -210,7 +221,10 @@ def compute_rational_homology_basis(
                         "Rational class basis exceeds coefficient bit-length policy."
                     )
         bases.append(RationalClassBasis(degree, tuple(representatives), complex))
-    return RationalHomologyBasisResult(tuple(bases), source_id=complex.subcomplex_id)
+    source_id = (
+        complex.subcomplex_id if isinstance(complex, CellSubcomplex) else complex.pair_id
+    )
+    return RationalHomologyBasisResult(tuple(bases), source_id=source_id)
 
 
 __all__ = [

@@ -21,11 +21,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import numpy.typing as npt
-import optax
 from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
+from phydrax.optim._adam import adam
 
 from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -444,7 +444,7 @@ def fit_coordinate_model(
     solver = FunctionalSolver(functions={"velocity": function}, terms=(term,))
     fitted = solver.solve(
         num_iter=steps,
-        optim=optax.adam(learning_rate),
+        optim=adam(learning_rate),
         jit=True,
         keep_best=False,
         log_every=0,

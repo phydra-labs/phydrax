@@ -94,9 +94,20 @@ no multiparameter barcode field. `compute_zigzag_intervals` performs exact
 finite-field type-A interval decomposition for mixed forward/backward maps and
 checks reconstruction of every node dimension and adjacent-map rank.
 
-Cup products require an explicit `CellDiagonalApproximation`; only the
-simplicial Alexander--Whitney convenience may infer one. `CellularSheaf` requires
+Cup products require an explicit `CellDiagonalApproximation`. `CellularSheaf` requires
 every stalk and restriction map. `FilteredChainComplex`/`FilteredBicomplex`
 validate boundary-square/anticommutation before finite
 `SpectralSequenceResult` pages are formed. Convergence and unresolved extension
 evidence remain explicit.
+
+The exterior cutover supplies real canonical builders:
+`alexander_whitney_diagonal(topology, support)` for face-closed simplices and
+`serre_diagonal(cubical)` for product cells. `cup_product` requires both operand
+topology ids and reduces each multiplication mod p before int64 scatter.
+`CellularSheaf` restrictions bind each incidence occurrence, so repeated faces
+on a one-vertex circle do not overwrite one another.
+
+Numerical spectra, cohomology checks and harmonic period frames belong to
+`phydrax.exterior`, with native linalg eigen/solve evidence and exact topology
+generators. Metric pairing never changes the exact combinatorial identity.
+

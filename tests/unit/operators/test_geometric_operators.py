@@ -63,7 +63,7 @@ def test_domain_differential_forms_share_continuous_exterior_calculus() -> None:
 
     @domain.Function("x")
     def scalar(x: Any) -> Any:
-        return x[0] ** 2 + x[1] ** 2
+        return jnp.array([x[0] ** 2 + x[1] ** 2])
 
     form = phx.operators.domain_differential_form(
         scalar,
@@ -81,13 +81,13 @@ def test_domain_differential_forms_share_continuous_exterior_calculus() -> None:
     second_differential = phx.operators.domain_exterior_derivative(differential)
     metric = phx.metrix.RiemannianMetric(lambda q: jnp.eye(2), chart=chart)
     hodge = phx.operators.domain_hodge_star(form, metric)
-    codifferential = phx.operators.domain_codifferential(form, metric)
+    with pytest.raises(ValueError, match="zero|degree|0"):
+        phx.operators.domain_codifferential(form, metric)
     laplacian = phx.operators.domain_hodge_laplacian(form, metric)
     point = jnp.array([0.2, 0.3])
 
     assert jnp.allclose(second_differential.coefficients.func(point), jnp.array([0.0]))
     assert jnp.allclose(hodge.coefficients.func(point), jnp.array([0.13]))
-    assert jnp.allclose(codifferential.coefficients.func(point), jnp.array([0.0]))
     assert jnp.allclose(laplacian.coefficients.func(point), jnp.array([-4.0]))
     mismatched_metric = phx.metrix.RiemannianMetric(
         lambda q: jnp.eye(2),
@@ -105,7 +105,7 @@ def test_domain_signed_codifferential_matches_pointwise_form_calculus() -> None:
 
     @domain.Function("x")
     def scalar(x: Any) -> Any:
-        return -(x[0] ** 2) + jnp.sum(x[1:] ** 2)
+        return jnp.array([-(x[0] ** 2) + jnp.sum(x[1:] ** 2)])
 
     @domain.Function("x")
     def covector_coefficients(x: Any) -> Any:

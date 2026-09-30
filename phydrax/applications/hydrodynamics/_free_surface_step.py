@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax
@@ -154,10 +154,12 @@ class FreeSurfaceALEContinuationState(StrictModule):
         )
 
 
+@final
 class FreeSurfaceALEStageEvidence(StrictModule):
     geometry_valid: Array
     projection_successful: Array
     kinematic_successful: Array
+    hodge_status: Array
     volume_residual: Array
     capillary_dual_residual: Array
     capillary_work_rate: Array
@@ -366,6 +368,7 @@ class PreparedOnePhaseFreeSurfaceALE(StrictModule):
             kinetic_energy=self.plan.density
             * self.surface.kinetic_energy(geometry, hodge.velocity),
             volume=jnp.sum(geometry.cell_volumes),
+            hodge_result=hodge,
             view_id=self.prepared_id,
         )
 
@@ -438,6 +441,8 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
         geometry = None
         stage_residual = jnp.asarray(jnp.inf, dtype=base.eta.dtype)
         wave_result = None
+        hodge_status = jnp.asarray(0, dtype=jnp.int32)
+        hodge_finite = jnp.asarray(True)
 
         for iteration in range(hydro.plan.coupling_iterations):
             geometry = hydro.surface.geometry(
@@ -466,6 +471,15 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
             )
             base_geometry = hydro.surface.geometry(base_time, base.eta, eta_rate, args)
             base_velocity = hydro.surface.inverse_hodge(base_geometry, base.momentum)
+            hodge_status = jnp.where(
+                hodge_status == 0, evaluation_velocity.status, hodge_status
+            )
+            hodge_status = jnp.where(
+                hodge_status == 0, base_velocity.status, hodge_status
+            )
+            hodge_finite = (
+                hodge_finite & evaluation_velocity.finite & base_velocity.finite
+            )
             candidate_velocity = tuple(
                 value + dt * rate
                 for value, rate in zip(
@@ -514,6 +528,9 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
                 boundary_stage,
                 dt,
                 pressure,
+            )
+            hodge_status = jnp.where(
+                hodge_status == 0, projection.hodge_status, hodge_status
             )
             target_flux = hydro.surface.top_volume_flux(end_geometry, projection.velocity)
             wave_eta_source = (
@@ -564,6 +581,9 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
             final_boundary,
             dt,
             pressure,
+        )
+        hodge_status = jnp.where(
+            hodge_status == 0, final_projection.hodge_status, hodge_status
         )
         scalar_rate = hydro._scalar_rate(
             geometry,
@@ -665,6 +685,7 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
         wave_finite = jnp.asarray(True) if wave_result is None else wave_result.finite
         finite = (
             geometry_evidence.finite
+            & hodge_finite
             & final_boundary.finite
             & final_projection.finite
             & kinematic.finite
@@ -690,6 +711,7 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
             & geometry_evidence.valid
             & final_boundary.valid
             & final_projection.successful
+            & (hodge_status == 0)
             & kinematic_success
             & final_capillary.successful
             & wave_valid
@@ -705,6 +727,7 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
             geometry_valid=geometry_evidence.valid,
             projection_successful=final_projection.successful,
             kinematic_successful=kinematic_success,
+            hodge_status=hodge_status,
             volume_residual=volume_residual,
             capillary_dual_residual=final_capillary.dual_residual_norm,
             capillary_work_rate=capillary_work_rate,

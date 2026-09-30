@@ -47,7 +47,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import StructuredCochainBridge
+from ..discretization import AbstractCellDeRhamComplex, StructuredCochainBridge
 from ..discretization.pic._current import (
     ChargeConservingCurrentPlan,
     PICMaxwellCurrentArguments,
@@ -307,7 +307,12 @@ class PreparedPrescribedChargeCurrentSource(StrictModule, NonTrainableState):
         )
 
     def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
-        if prepared.plan.bridge.bridge_id != self.bridge_id:
+        bridge = prepared.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError(
+                "Prescribed-charge sources require a structured cochain bridge."
+            )
+        if bridge.bridge_id != self.bridge_id:
             raise ValueError(
                 "The prescribed-charge source was prepared on a different bridge."
             )
@@ -350,8 +355,12 @@ class PrescribedChargeCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableS
         )
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: MaxwellCochainLayout, /
+        self, bridge: AbstractCellDeRhamComplex, layout: MaxwellCochainLayout, /
     ) -> PreparedPrescribedChargeCurrentSource:
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError(
+                "Prescribed-charge sources require a structured cochain bridge."
+            )
         if bridge.bridge_id != self.current_plan.transfer.bridge.bridge_id:
             raise ValueError("The current plan was prepared on a different bridge.")
         support = _current_support(self.current_plan, self.trajectory, self.step_count)
@@ -461,6 +470,10 @@ class PrescribedChargeMaxwellResult(StrictModule):
 def _free_vertices(prepared: PreparedCompatibleMaxwell, /) -> np.ndarray:
     """Vertices whose incident edges carry no boundary or CPML action."""
     bridge = prepared.plan.bridge
+    if not isinstance(bridge, StructuredCochainBridge):
+        raise TypeError(
+            "Prescribed-charge vertex support requires a structured cochain bridge."
+        )
     affected = np.zeros((prepared.layout.electric_count,), dtype=np.bool_)
     for boundary in prepared.boundaries:
         if boundary.kind != "pmc":
@@ -554,6 +567,8 @@ class PrescribedChargeMaxwellPlan(StrictModule):
         if prepared_maxwell.layout.polarization != "full_3d":
             raise ValueError("Prescribed charges require a full_3d Maxwell layout.")
         bridge = prepared_maxwell.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError("Prescribed-charge runs require a structured cochain bridge.")
         if current_plan.transfer.bridge.bridge_id != bridge.bridge_id:
             raise ValueError(
                 "The current plan and Maxwell runtime use different bridges."
@@ -653,7 +668,7 @@ class PrescribedChargeMaxwellPlan(StrictModule):
     ) -> tuple[_Carry, _StepRecord]:
         index, target = inputs
         maxwell = self.prepared_maxwell
-        bridge = maxwell.plan.bridge
+        bridge = self.current_plan.transfer.bridge
         dt = self.fixed_step.parameters.step_size
         time = self.trajectory.start_time + index * dt
         deposit = _deposit_step(
@@ -668,7 +683,7 @@ class PrescribedChargeMaxwellPlan(StrictModule):
         work = -dt * jnp.real(
             jnp.vdot(
                 0.5 * (carry.electric + electric),
-                bridge.cochain.apply_hodge(maxwell.layout.electric_degree, current),
+                bridge.cochain.hodge_star(maxwell.layout.electric_degree, current),
             )
         )
         charge_scale = self.charge_scale

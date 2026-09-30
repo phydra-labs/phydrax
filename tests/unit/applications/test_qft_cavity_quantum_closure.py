@@ -169,12 +169,10 @@ def test_qft_contracts() -> None:
     native = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=1)
     resource_refused = AdaptiveHcurlCapabilityPlan(mesh, maximum_edges=5)
 
-    assert high_order.evidence.status == int(
-        HcurlCapabilityStatus.UNSUPPORTED_POLYNOMIAL_ORDER
-    )
-    assert not high_order.evidence.assembly_supported
-    with pytest.raises(NotImplementedError, match="lowest-order"):
-        high_order.prepare()
+    assert high_order.evidence.status == int(HcurlCapabilityStatus.SUPPORTED)
+    assert high_order.evidence.assembly_supported
+    high_complex = high_order.prepare().space
+    assert high_complex.hilbert_complex().space(1).size == 20
     assert missing_adaptation.evidence.status == int(
         HcurlCapabilityStatus.ADAPTATION_TRANSACTION_REQUIRED
     )
@@ -186,6 +184,6 @@ def test_qft_contracts() -> None:
     with pytest.raises(NotImplementedError, match="resources"):
         resource_refused.prepare()
     prepared = native.prepare()
-    assert prepared.space.edge_count == 6
+    assert prepared.space.hilbert_complex().space(1).size == 6
     assert prepared.evidence.assembly_supported
     assert not prepared.evidence.adaptation_supported

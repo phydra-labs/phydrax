@@ -173,9 +173,13 @@ def _tetrahedral() -> Any:
         element.default_runtime.coordinates,
         D.SimplicialLocationPolicy(4, 8, 4),
     )
-    hodge = mx.tetrahedral_maxwell_hodge(mesh.coordinates, locator.cells)
+    complex_ = D.FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
     maxwell = mx.UnstructuredMaxwellPlan(
-        hodge.cochain, mx.DiagonalMaxwellConstitutivePlan(), 100.0
+        complex_,
+        mx.DiagonalMaxwellConstitutivePlan(),
+        spectral_upper_bound=100.0,
+        courant_factor=0.9,
+        boundary="relative",
     ).prepare()
     return S.UnstructuredMaxwellPICFieldSolver(
         maxwell, PIC.UnstructuredWhitneyCurrentPlan(locator, maximum_segments=4)
@@ -304,7 +308,7 @@ def test_published_but_refused_protocol_refuses_when_called() -> None:
     solver = _base("cochain-3d")
     record = solver.pic_capabilities.record("relativistic-self-fields")
     assert record.published and not record.admitted
-    charge = jnp.zeros((solver.maxwell.plan.bridge.cochain.cell_counts[0],))
+    charge = jnp.zeros((solver.bridge.cochain.cell_counts[0],))
     with pytest.raises(ValueError, match="grounded"):
         solver.initialize_relativistic_field((charge,), ((0.0, 0.0, 0.5),), 1.0)
     # A grounded bounded box admits the same protocol.
@@ -316,7 +320,7 @@ def test_cochain_huygens_sampling_is_refused_beside_pic_current() -> None:
     solver = _base("cochain-3d")
     record = solver.pic_capabilities.record("huygens-sampling")
     assert record.published and not record.admitted
-    charge = jnp.zeros((solver.maxwell.plan.bridge.cochain.cell_counts[0],))
+    charge = jnp.zeros((solver.bridge.cochain.cell_counts[0],))
     with pytest.raises(ValueError) as refusal:
         solver.huygens_phasors(solver.field_with_charge(charge))
     assert str(refusal.value) == record.basis

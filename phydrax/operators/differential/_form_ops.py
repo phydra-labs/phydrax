@@ -4,23 +4,25 @@
 
 from __future__ import annotations
 
-from math import comb
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, final, Literal, TYPE_CHECKING
 
-import jax.numpy as jnp
+import equinox as eqx
 from jax import Array
 
-import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
 
 from ..._strict import StrictModule
-from ...metrix import (
-    AbstractSemiRiemannianMetric,
-    CoordinateChart,
-    LorentzianMetric,
+from ...exterior import _algebra as algebra
+from ...exterior._basis import exterior_indices
+from ...exterior._form_type import FiberProduct, FormTwist, FormType
+from ...metrix import AbstractSemiRiemannianMetric, CoordinateChart, LorentzianMetric
+from ._domain_ops import _factor_and_dim, _resolve_var
+from ._form_derivative import (
+    _DerivativeOptions,
+    _FormDerivativeProvider,
+    _function_value,
+    _gradient_function,
 )
-from ...metrix._exterior_basis import exterior_indices, wedge_sign
-from ._domain_ops import _factor_and_dim, _resolve_var, grad
 
 
 if TYPE_CHECKING:
@@ -28,15 +30,11 @@ if TYPE_CHECKING:
 
 
 def _positions(deps: tuple[str, ...], function: DomainFunction, /) -> tuple[int, ...]:
-    lookup = {label: position for position, label in enumerate(deps)}
-    return tuple(lookup[label] for label in function.deps)
+    return tuple(deps.index(label) for label in function.deps)
 
 
 def _dependencies(
-    domain_labels: tuple[str, ...],
-    functions: tuple[DomainFunction, ...],
-    var: str,
-    /,
+    domain_labels: tuple[str, ...], functions: tuple[DomainFunction, ...], var: str, /
 ) -> tuple[str, ...]:
     return tuple(
         label
@@ -49,37 +47,34 @@ def _evaluate(
     function: DomainFunction,
     positions: tuple[int, ...],
     args: tuple[Any, ...],
-    degree: int,
-    coefficient_count: int,
+    form_type: FormType,
     /,
     *,
     key: EvalKey,
     kwargs: dict[str, Any],
 ) -> Array:
-    values = jnp.asarray(
-        function.func(
-            *[args[position] for position in positions],
-            key=key,
-            **kwargs,
-        )
+    values = _function_value(
+        function,
+        tuple(args[position] for position in positions),
+        key=key,
+        kwargs=kwargs,
     )
-    if degree == 0 and values.shape[-1:] != (1,):
-        values = values[..., None]
-    if values.shape[-1:] != (coefficient_count,):
+    expected = form_type.value_shape
+    if values.ndim < len(expected) or values.shape[-len(expected) :] != expected:
         raise ValueError(
-            f"Degree-{degree} form coefficients require trailing size {coefficient_count}; got {values.shape}."
+            f"Form coefficients require explicit trailing shape {expected}; got {values.shape}."
         )
     return values
 
 
+@final
 class DomainDifferentialForm(StrictModule):
-    """Differential-form coefficients carried by a labeled DomainFunction."""
+    """A labeled smooth form with coefficients ``(*batch, components, *fiber)``."""
 
     coefficients: DomainFunction
     chart: CoordinateChart
-    var: str
-    degree: int
-    indices: tuple[tuple[int, ...], ...]
+    var: str = eqx.field(static=True)
+    form_type: FormType = eqx.field(static=True)
 
     def __init__(
         self,
@@ -88,17 +83,17 @@ class DomainDifferentialForm(StrictModule):
         *,
         chart: CoordinateChart,
         degree: int,
+        twist: FormTwist = "untwisted",
+        fiber_shape: tuple[int, ...] = (),
         var: str | None = None,
     ) -> None:
         if not isinstance(coefficients, DomainFunction):
             raise TypeError("coefficients must be a DomainFunction.")
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
-        degree_value = int(degree)
-        if degree_value < 0 or degree_value > chart.dimension:
-            raise ValueError(
-                f"Form degree must lie in [0, {chart.dimension}]; got {degree_value}."
-            )
+        form_type = FormType(
+            chart.dimension, degree, twist=twist, fiber_shape=fiber_shape
+        )
         variable = _resolve_var(coefficients, var)
         _, dimension = _factor_and_dim(coefficients, variable)
         if not isinstance(coefficients.domain.factor(variable), AbstractGeometry):
@@ -110,14 +105,30 @@ class DomainDifferentialForm(StrictModule):
         self.coefficients = coefficients
         self.chart = chart
         self.var = variable
-        self.degree = degree_value
-        self.indices = exterior_indices(chart.dimension, degree_value)
+        self.form_type = form_type
+
+    @property
+    def degree(self) -> int:
+        return self.form_type.degree
+
+    @property
+    def twist(self) -> FormTwist:
+        return self.form_type.twist
+
+    @property
+    def fiber_shape(self) -> tuple[int, ...]:
+        return self.form_type.fiber_shape
+
+    @property
+    def indices(self) -> tuple[tuple[int, ...], ...]:
+        return exterior_indices(self.chart.dimension, self.degree)
 
     @property
     def coefficient_count(self) -> int:
-        return comb(self.chart.dimension, self.degree)
+        return self.form_type.component_count
 
 
+@final
 class DomainMaxwellResiduals(StrictModule):
     """Covariant Maxwell field strength and its two form-valued residuals."""
 
@@ -137,85 +148,55 @@ class DomainMaxwellResiduals(StrictModule):
         self.inhomogeneous = inhomogeneous
 
 
-class _DomainWedgeCallable(StrictModule):
+@final
+class _DomainWedgeCallable(StrictModule, _FormDerivativeProvider):
     left: DomainDifferentialForm
     right: DomainDifferentialForm
-    left_positions: tuple[int, ...]
-    right_positions: tuple[int, ...]
-    left_terms: Array
-    right_terms: Array
-    output_terms: Array
-    signs: Array
-    output_count: int
+    left_positions: tuple[int, ...] = eqx.field(static=True)
+    right_positions: tuple[int, ...] = eqx.field(static=True)
+    product: FiberProduct = eqx.field(static=True)
 
     def __init__(
         self,
         left: DomainDifferentialForm,
         right: DomainDifferentialForm,
         deps: tuple[str, ...],
+        product: FiberProduct,
         /,
     ) -> None:
-        output = exterior_indices(left.chart.dimension, left.degree + right.degree)
-        lookup = {index: position for position, index in enumerate(output)}
-        left_terms: list[int] = []
-        right_terms: list[int] = []
-        output_terms: list[int] = []
-        signs: list[int] = []
-        for left_position, left_index in enumerate(left.indices):
-            left_set = set(left_index)
-            for right_position, right_index in enumerate(right.indices):
-                if left_set.isdisjoint(right_index):
-                    left_terms.append(left_position)
-                    right_terms.append(right_position)
-                    output_terms.append(lookup[tuple(sorted(left_index + right_index))])
-                    signs.append(wedge_sign(left_index, right_index))
         self.left = left
         self.right = right
         self.left_positions = _positions(deps, left.coefficients)
         self.right_positions = _positions(deps, right.coefficients)
-        self.left_terms = jnp.asarray(left_terms, dtype=jnp.int32)
-        self.right_terms = jnp.asarray(right_terms, dtype=jnp.int32)
-        self.output_terms = jnp.asarray(output_terms, dtype=jnp.int32)
-        self.signs = jnp.asarray(signs)
-        self.output_count = len(output)
+        self.product = product
 
     def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
-        args_tuple = tuple(args)
         left = _evaluate(
             self.left.coefficients,
             self.left_positions,
-            args_tuple,
-            self.left.degree,
-            self.left.coefficient_count,
+            args,
+            self.left.form_type,
             key=key,
             kwargs=kwargs,
         )
         right = _evaluate(
             self.right.coefficients,
             self.right_positions,
-            args_tuple,
-            self.right.degree,
-            self.right.coefficient_count,
+            args,
+            self.right.form_type,
             key=key,
             kwargs=kwargs,
         )
-        terms = self.signs * left[..., self.left_terms] * right[..., self.right_terms]
-        return (
-            jnp.zeros(terms.shape[:-1] + (self.output_count,), dtype=terms.dtype)
-            .at[..., self.output_terms]
-            .add(terms)
+        return algebra.wedge(
+            left, right, self.left.form_type, self.right.form_type, product=self.product
         )
 
 
-class _DomainExteriorCallable(StrictModule):
-    form: DomainDifferentialForm
+@final
+class _DomainExteriorCallable(StrictModule, _FormDerivativeProvider):
+    form_type: FormType = eqx.field(static=True)
     derivative: DomainFunction
-    derivative_positions: tuple[int, ...]
-    source_terms: Array
-    derivative_axes: Array
-    output_terms: Array
-    signs: Array
-    output_count: int
+    positions: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -224,67 +205,26 @@ class _DomainExteriorCallable(StrictModule):
         deps: tuple[str, ...],
         /,
     ) -> None:
-        output = exterior_indices(form.chart.dimension, form.degree + 1)
-        lookup = {index: position for position, index in enumerate(form.indices)}
-        source_terms: list[int] = []
-        derivative_axes: list[int] = []
-        output_terms: list[int] = []
-        signs: list[int] = []
-        for output_position, output_index in enumerate(output):
-            for position, axis in enumerate(output_index):
-                source_terms.append(
-                    lookup[output_index[:position] + output_index[position + 1 :]]
-                )
-                derivative_axes.append(axis)
-                output_terms.append(output_position)
-                signs.append(-1 if position % 2 else 1)
-        self.form = form
+        self.form_type = form.form_type
         self.derivative = derivative
-        self.derivative_positions = _positions(deps, derivative)
-        self.source_terms = jnp.asarray(source_terms, dtype=jnp.int32)
-        self.derivative_axes = jnp.asarray(derivative_axes, dtype=jnp.int32)
-        self.output_terms = jnp.asarray(output_terms, dtype=jnp.int32)
-        self.signs = jnp.asarray(signs)
-        self.output_count = len(output)
+        self.positions = _positions(deps, derivative)
 
     def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
-        derivative = jnp.asarray(
-            self.derivative.func(
-                *[args[position] for position in self.derivative_positions],
-                key=key,
-                **kwargs,
-            )
+        jacobian = _function_value(
+            self.derivative,
+            tuple(args[position] for position in self.positions),
+            key=key,
+            kwargs=kwargs,
         )
-        if self.form.degree == 0 and derivative.shape[-1:] == (
-            self.form.chart.dimension,
-        ):
-            derivative = derivative[..., None, :]
-        expected = (
-            self.form.coefficient_count,
-            self.form.chart.dimension,
-        )
-        if derivative.shape[-2:] != expected:
-            raise ValueError(
-                f"Form coefficient derivative requires trailing shape {expected}; got {derivative.shape}."
-            )
-        terms = self.signs * derivative[..., self.source_terms, self.derivative_axes]
-        return (
-            jnp.zeros(terms.shape[:-1] + (self.output_count,), dtype=terms.dtype)
-            .at[..., self.output_terms]
-            .add(terms)
-        )
+        return algebra.exterior_derivative_from_jacobian(jacobian, self.form_type)
 
 
-class _DomainInteriorCallable(StrictModule):
+@final
+class _DomainInteriorCallable(StrictModule, _FormDerivativeProvider):
     vector: DomainFunction
     form: DomainDifferentialForm
-    vector_positions: tuple[int, ...]
-    form_positions: tuple[int, ...]
-    vector_terms: Array
-    source_terms: Array
-    output_terms: Array
-    signs: Array
-    output_count: int
+    vector_positions: tuple[int, ...] = eqx.field(static=True)
+    form_positions: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -293,156 +233,173 @@ class _DomainInteriorCallable(StrictModule):
         deps: tuple[str, ...],
         /,
     ) -> None:
-        output = exterior_indices(form.chart.dimension, form.degree - 1)
-        lookup = {index: position for position, index in enumerate(form.indices)}
-        vector_terms: list[int] = []
-        source_terms: list[int] = []
-        output_terms: list[int] = []
-        signs: list[int] = []
-        for output_position, output_index in enumerate(output):
-            output_set = set(output_index)
-            for axis in range(form.chart.dimension):
-                if axis in output_set:
-                    continue
-                source_index = tuple(sorted((axis,) + output_index))
-                vector_terms.append(axis)
-                source_terms.append(lookup[source_index])
-                output_terms.append(output_position)
-                signs.append(-1 if source_index.index(axis) % 2 else 1)
         self.vector = vector
         self.form = form
         self.vector_positions = _positions(deps, vector)
         self.form_positions = _positions(deps, form.coefficients)
-        self.vector_terms = jnp.asarray(vector_terms, dtype=jnp.int32)
-        self.source_terms = jnp.asarray(source_terms, dtype=jnp.int32)
-        self.output_terms = jnp.asarray(output_terms, dtype=jnp.int32)
-        self.signs = jnp.asarray(signs)
-        self.output_count = len(output)
 
     def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
-        vector = jnp.asarray(
-            self.vector.func(
-                *[args[position] for position in self.vector_positions],
-                key=key,
-                **kwargs,
-            )
-        )
-        if vector.shape[-1:] != (self.form.chart.dimension,):
-            raise ValueError("Interior-product field has the wrong trailing dimension.")
-        coefficients = _evaluate(
-            self.form.coefficients,
-            self.form_positions,
-            tuple(args),
-            self.form.degree,
-            self.form.coefficient_count,
+        vector = _function_value(
+            self.vector,
+            tuple(args[position] for position in self.vector_positions),
             key=key,
             kwargs=kwargs,
         )
-        terms = (
-            self.signs
-            * vector[..., self.vector_terms]
-            * coefficients[..., self.source_terms]
+        values = _evaluate(
+            self.form.coefficients,
+            self.form_positions,
+            args,
+            self.form.form_type,
+            key=key,
+            kwargs=kwargs,
         )
-        return (
-            jnp.zeros(terms.shape[:-1] + (self.output_count,), dtype=terms.dtype)
-            .at[..., self.output_terms]
-            .add(terms)
-        )
+        return algebra.interior(vector, values, self.form.form_type)
 
 
-class _DomainHodgeCallable(StrictModule):
+@final
+class _DomainHodgeCallable(StrictModule, _FormDerivativeProvider):
     form: DomainDifferentialForm
     metric: AbstractSemiRiemannianMetric
-    form_positions: tuple[int, ...]
-    coordinate_position: int
-    source_indices: Array
-    output_terms: Array
-    signs: Array
-    output_count: int
-    orientation: int
+    positions: tuple[int, ...] = eqx.field(static=True)
+    coordinate_position: int = eqx.field(static=True)
 
     def __init__(
         self,
         form: DomainDifferentialForm,
         metric: AbstractSemiRiemannianMetric,
         deps: tuple[str, ...],
-        orientation: int,
         /,
     ) -> None:
-        output = exterior_indices(
-            form.chart.dimension, form.chart.dimension - form.degree
-        )
-        output_lookup = {index: position for position, index in enumerate(output)}
-        full = set(range(form.chart.dimension))
-        output_terms: list[int] = []
-        signs: list[int] = []
-        for source in form.indices:
-            complement = tuple(sorted(full.difference(source)))
-            output_terms.append(output_lookup[complement])
-            signs.append(wedge_sign(source, complement))
         self.form = form
         self.metric = metric
-        self.form_positions = _positions(deps, form.coefficients)
+        self.positions = _positions(deps, form.coefficients)
         self.coordinate_position = deps.index(form.var)
-        self.source_indices = jnp.asarray(form.indices, dtype=jnp.int32)
-        self.output_terms = jnp.asarray(output_terms, dtype=jnp.int32)
-        self.signs = jnp.asarray(signs)
-        self.output_count = len(output)
-        self.orientation = int(orientation)
 
     def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
-        coefficients = _evaluate(
+        values = _evaluate(
             self.form.coefficients,
-            self.form_positions,
-            tuple(args),
-            self.form.degree,
-            self.form.coefficient_count,
+            self.positions,
+            args,
+            self.form.form_type,
             key=key,
             kwargs=kwargs,
         )
         coordinates = args[self.coordinate_position]
-        if self.form.degree == 0:
-            paired = coefficients
-        else:
-            inverse = self.metric.inverse(coordinates)
-            rows = self.source_indices[:, None, :, None]
-            columns = self.source_indices[None, :, None, :]
-            induced_inverse = jnp.linalg.det(inverse[..., rows, columns])
-            paired = ein.contract("...ij,...j->...i", induced_inverse, coefficients)
-        values = (
-            self.orientation
-            * self.metric.volume_density(coordinates)[..., None]
-            * self.signs
-            * paired
-        )
-        return (
-            jnp.zeros(
-                values.shape[:-1] + (self.output_count,),
-                dtype=values.dtype,
-            )
-            .at[..., self.output_terms]
-            .set(values)
+        return algebra.hodge_star(
+            values,
+            self.form.form_type,
+            self.metric.inverse(coordinates),
+            self.metric.volume_density(coordinates),
         )
 
 
-class _ZeroFormCallable(StrictModule):
-    def __call__(
-        self, coordinates: Array, /, *, key: EvalKey = None, **kwargs: Any
-    ) -> Array:
-        del key, kwargs
-        return jnp.zeros(coordinates.shape[:-1] + (1,), dtype=coordinates.dtype)
-
-
-class _ScaleCallable(StrictModule):
+@final
+class _ScaleCallable(StrictModule, _FormDerivativeProvider):
     function: DomainFunction
-    scale: float
+    scale: float = eqx.field(static=True)
 
     def __init__(self, function: DomainFunction, scale: float, /) -> None:
         self.function = function
-        self.scale = float(scale)
+        self.scale = scale
 
     def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
-        return self.scale * self.function.func(*args, key=key, **kwargs)
+        return self.scale * _function_value(self.function, args, key=key, kwargs=kwargs)
+
+
+@final
+class _DomainTwistCallable(StrictModule, _FormDerivativeProvider):
+    form: DomainDifferentialForm
+    orientation: int = eqx.field(static=True)
+    twist: FormTwist = eqx.field(static=True)
+
+    def __init__(
+        self, form: DomainDifferentialForm, orientation: int, twist: FormTwist, /
+    ) -> None:
+        if orientation not in (-1, 1):
+            raise ValueError("orientation must be +1 or -1.")
+        self.form = form
+        self.orientation = orientation
+        self.twist = twist
+
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
+        values = _evaluate(
+            self.form.coefficients,
+            tuple(range(len(args))),
+            args,
+            self.form.form_type,
+            key=key,
+            kwargs=kwargs,
+        )
+        if self.twist == "twisted":
+            return algebra.to_twisted(values, self.form.form_type, self.orientation)
+        return algebra.to_untwisted(values, self.form.form_type, self.orientation)
+
+
+@final
+class _DomainPullbackCallable(StrictModule, _FormDerivativeProvider):
+    form: DomainDifferentialForm
+    mapping: DomainFunction
+    mapping_positions: tuple[int, ...] = eqx.field(static=True)
+    form_positions: tuple[int, ...] = eqx.field(static=True)
+    source_var: str = eqx.field(static=True)
+    options: _DerivativeOptions = eqx.field(static=True)
+    coorientation: int | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        form: DomainDifferentialForm,
+        mapping: DomainFunction,
+        deps: tuple[str, ...],
+        source_var: str,
+        options: _DerivativeOptions,
+        coorientation: int | None,
+        /,
+    ) -> None:
+        self.form = form
+        self.mapping = mapping
+        self.mapping_positions = _positions(deps, mapping)
+        self.form_positions = tuple(
+            -1 if label == form.var else deps.index(label)
+            for label in form.coefficients.deps
+        )
+        self.source_var = source_var
+        self.options = options
+        self.coorientation = coorientation
+
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
+        mapping_args = tuple(args[position] for position in self.mapping_positions)
+        target = _function_value(self.mapping, mapping_args, key=key, kwargs=kwargs)
+        if target.shape[-1:] != (self.form.chart.dimension,):
+            raise ValueError("Pullback mapping has the wrong target dimension.")
+        bound = tuple(
+            target if position < 0 else args[position] for position in self.form_positions
+        )
+        values = _evaluate(
+            self.form.coefficients,
+            tuple(range(len(bound))),
+            bound,
+            self.form.form_type,
+            key=key,
+            kwargs=kwargs,
+        )
+        derivative = _gradient_function(self.mapping, self.source_var, self.options)
+        jacobian = _function_value(derivative, mapping_args, key=key, kwargs=kwargs)
+        return algebra.pullback(
+            values, self.form.form_type, jacobian, coorientation=self.coorientation
+        )
+
+
+def _with_coefficients(
+    form: DomainDifferentialForm, coefficients: DomainFunction, form_type: FormType, /
+) -> DomainDifferentialForm:
+    return DomainDifferentialForm(
+        coefficients,
+        chart=form.chart,
+        degree=form_type.degree,
+        twist=form_type.twist,
+        fiber_shape=form_type.fiber_shape,
+        var=form.var,
+    )
 
 
 def domain_differential_form(
@@ -451,44 +408,54 @@ def domain_differential_form(
     *,
     chart: CoordinateChart,
     degree: int,
+    twist: FormTwist = "untwisted",
+    fiber_shape: tuple[int, ...] = (),
     var: str | None = None,
 ) -> DomainDifferentialForm:
-    return DomainDifferentialForm(coefficients, chart=chart, degree=degree, var=var)
+    return DomainDifferentialForm(
+        coefficients,
+        chart=chart,
+        degree=degree,
+        twist=twist,
+        fiber_shape=fiber_shape,
+        var=var,
+    )
+
+
+def _require_same_base(
+    left: DomainDifferentialForm, right: DomainDifferentialForm, /
+) -> None:
+    if (
+        left.coefficients.domain is not right.coefficients.domain
+        or left.var != right.var
+        or not left.chart.compatible_with(right.chart)
+    ):
+        raise ValueError("Domain forms must share one domain, variable, and chart.")
 
 
 def domain_wedge(
     left: DomainDifferentialForm,
     right: DomainDifferentialForm,
     /,
+    *,
+    product: FiberProduct = "scalar",
 ) -> DomainDifferentialForm:
     if not isinstance(left, DomainDifferentialForm) or not isinstance(
         right, DomainDifferentialForm
     ):
         raise TypeError("domain_wedge requires two DomainDifferentialForm instances.")
-    if left.coefficients.domain is not right.coefficients.domain:
-        raise ValueError("domain_wedge currently requires one shared Domain instance.")
-    if left.var != right.var or not left.chart.compatible_with(right.chart):
-        raise ValueError("Domain forms must use the same variable and chart.")
-    degree = left.degree + right.degree
-    if degree > left.chart.dimension:
-        raise ValueError("Wedge-product degree exceeds the chart dimension.")
+    _require_same_base(left, right)
+    output_type = left.form_type.wedge_type(right.form_type, product=product)
     deps = _dependencies(
-        left.coefficients.domain.labels,
-        (left.coefficients, right.coefficients),
-        left.var,
+        left.coefficients.domain.labels, (left.coefficients, right.coefficients), left.var
     )
     coefficients = DomainFunction(
         domain=left.coefficients.domain,
         deps=deps,
-        func=_DomainWedgeCallable(left, right, deps),
+        func=_DomainWedgeCallable(left, right, deps, product),
         metadata=left.coefficients.metadata,
     )
-    return DomainDifferentialForm(
-        coefficients,
-        chart=left.chart,
-        degree=degree,
-        var=left.var,
-    )
+    return _with_coefficients(left, coefficients, output_type)
 
 
 def domain_exterior_derivative(
@@ -496,35 +463,26 @@ def domain_exterior_derivative(
     /,
     *,
     mode: Literal["reverse", "forward"] = "forward",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
 ) -> DomainDifferentialForm:
     if not isinstance(form, DomainDifferentialForm):
         raise TypeError("domain_exterior_derivative requires a DomainDifferentialForm.")
-    if form.degree == form.chart.dimension:
-        raise ValueError("The exterior derivative of a top form is identically zero.")
-    derivative = grad(form.coefficients, var=form.var, mode=mode)
-    deps = _dependencies(
-        form.coefficients.domain.labels,
-        (derivative,),
-        form.var,
+    output_type = form.form_type.exterior_derivative_type()
+    derivative = _gradient_function(
+        form.coefficients, form.var, (mode, backend, "poly", False)
     )
+    deps = _dependencies(form.coefficients.domain.labels, (derivative,), form.var)
     coefficients = DomainFunction(
         domain=form.coefficients.domain,
         deps=deps,
         func=_DomainExteriorCallable(form, derivative, deps),
         metadata=derivative.metadata,
     )
-    return DomainDifferentialForm(
-        coefficients,
-        chart=form.chart,
-        degree=form.degree + 1,
-        var=form.var,
-    )
+    return _with_coefficients(form, coefficients, output_type)
 
 
 def domain_interior_product(
-    vector: DomainFunction,
-    form: DomainDifferentialForm,
-    /,
+    vector: DomainFunction, form: DomainDifferentialForm, /
 ) -> DomainDifferentialForm:
     if not isinstance(vector, DomainFunction):
         raise TypeError("vector must be a DomainFunction.")
@@ -532,52 +490,30 @@ def domain_interior_product(
         raise TypeError("form must be a DomainDifferentialForm.")
     if vector.domain is not form.coefficients.domain:
         raise ValueError("Domain interior product requires one shared Domain instance.")
-    if form.degree == 0:
-        raise ValueError("Interior product of a zero-form is identically zero.")
-    deps = _dependencies(
-        vector.domain.labels,
-        (vector, form.coefficients),
-        form.var,
-    )
+    output_type = form.form_type.interior_type()
+    deps = _dependencies(vector.domain.labels, (vector, form.coefficients), form.var)
     coefficients = DomainFunction(
         domain=vector.domain,
         deps=deps,
         func=_DomainInteriorCallable(vector, form, deps),
         metadata=form.coefficients.metadata,
     )
-    return DomainDifferentialForm(
-        coefficients,
-        chart=form.chart,
-        degree=form.degree - 1,
-        var=form.var,
-    )
+    return _with_coefficients(form, coefficients, output_type)
 
 
 def _add_domain_forms(
-    left: DomainDifferentialForm,
-    right: DomainDifferentialForm,
-    /,
+    left: DomainDifferentialForm, right: DomainDifferentialForm, /
 ) -> DomainDifferentialForm:
-    if left.degree != right.degree:
-        raise ValueError("Only equal-degree domain forms can be added.")
-    if (
-        left.coefficients.domain is not right.coefficients.domain
-        or left.var != right.var
-        or not left.chart.compatible_with(right.chart)
-    ):
-        raise ValueError("Domain forms must share one domain, variable, and chart.")
-    return DomainDifferentialForm(
-        left.coefficients + right.coefficients,
-        chart=left.chart,
-        degree=left.degree,
-        var=left.var,
+    _require_same_base(left, right)
+    if left.form_type.form_type_id != right.form_type.form_type_id:
+        raise ValueError("Only domain forms with identical form types can be added.")
+    return _with_coefficients(
+        left, left.coefficients + right.coefficients, left.form_type
     )
 
 
 def _scale_domain_form(
-    form: DomainDifferentialForm,
-    scale: float,
-    /,
+    form: DomainDifferentialForm, scale: float, /
 ) -> DomainDifferentialForm:
     coefficients = DomainFunction(
         domain=form.coefficients.domain,
@@ -585,64 +521,61 @@ def _scale_domain_form(
         func=_ScaleCallable(form.coefficients, scale),
         metadata=form.coefficients.metadata,
     )
-    return DomainDifferentialForm(
-        coefficients,
-        chart=form.chart,
-        degree=form.degree,
-        var=form.var,
-    )
+    return _with_coefficients(form, coefficients, form.form_type)
 
 
 def domain_lie_derivative(
     vector: DomainFunction,
     form: DomainDifferentialForm,
     /,
+    *,
+    mode: Literal["reverse", "forward"] = "forward",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
 ) -> DomainDifferentialForm:
     if not isinstance(vector, DomainFunction):
         raise TypeError("vector must be a DomainFunction.")
     if not isinstance(form, DomainDifferentialForm):
         raise TypeError("form must be a DomainDifferentialForm.")
     if form.degree == 0:
-        return domain_interior_product(vector, domain_exterior_derivative(form))
-    first = domain_exterior_derivative(domain_interior_product(vector, form))
+        return domain_interior_product(
+            vector, domain_exterior_derivative(form, mode=mode, backend=backend)
+        )
+    first = domain_exterior_derivative(
+        domain_interior_product(vector, form), mode=mode, backend=backend
+    )
     if form.degree == form.chart.dimension:
         return first
-    second = domain_interior_product(vector, domain_exterior_derivative(form))
+    second = domain_interior_product(
+        vector, domain_exterior_derivative(form, mode=mode, backend=backend)
+    )
     return _add_domain_forms(first, second)
 
 
-def domain_hodge_star(
-    form: DomainDifferentialForm,
-    metric: AbstractSemiRiemannianMetric,
-    /,
-    *,
-    orientation: int = 1,
-) -> DomainDifferentialForm:
+def _require_metric(
+    form: DomainDifferentialForm, metric: AbstractSemiRiemannianMetric, /
+) -> None:
     if not isinstance(form, DomainDifferentialForm):
-        raise TypeError("domain_hodge_star requires a DomainDifferentialForm.")
+        raise TypeError("A DomainDifferentialForm is required.")
     if not isinstance(metric, AbstractSemiRiemannianMetric):
-        raise TypeError("domain_hodge_star requires a nondegenerate metric.")
+        raise TypeError("A nondegenerate metric is required.")
     if not form.chart.compatible_with(metric.chart):
         raise ValueError("Domain form and metric charts must match.")
-    if orientation not in (-1, 1):
-        raise ValueError("orientation must be +1 or -1.")
-    deps = _dependencies(
-        form.coefficients.domain.labels,
-        (form.coefficients,),
-        form.var,
-    )
+
+
+def domain_hodge_star(
+    form: DomainDifferentialForm, metric: AbstractSemiRiemannianMetric, /
+) -> DomainDifferentialForm:
+    """Apply the metric-only Hodge star, flipping the orientation-line twist."""
+    _require_metric(form, metric)
+    output_type = form.form_type.hodge_dual()
+    deps = _dependencies(form.coefficients.domain.labels, (form.coefficients,), form.var)
     coefficients = DomainFunction(
         domain=form.coefficients.domain,
         deps=deps,
-        func=_DomainHodgeCallable(form, metric, deps, orientation),
+        func=_DomainHodgeCallable(form, metric, deps),
         metadata=form.coefficients.metadata,
     )
-    return DomainDifferentialForm(
-        coefficients,
-        chart=form.chart,
-        degree=form.chart.dimension - form.degree,
-        var=form.var,
-    )
+    return _with_coefficients(form, coefficients, output_type)
 
 
 def domain_codifferential(
@@ -650,43 +583,16 @@ def domain_codifferential(
     metric: AbstractSemiRiemannianMetric,
     /,
     *,
-    orientation: int = 1,
+    mode: Literal["reverse", "forward"] = "forward",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
 ) -> DomainDifferentialForm:
-    if not isinstance(form, DomainDifferentialForm):
-        raise TypeError("domain_codifferential requires a DomainDifferentialForm.")
-    if not isinstance(metric, AbstractSemiRiemannianMetric):
-        raise TypeError("domain_codifferential requires a nondegenerate metric.")
-    if not form.chart.compatible_with(metric.chart):
-        raise ValueError("Domain form and metric charts must match.")
-    if orientation not in (-1, 1):
-        raise ValueError("orientation must be +1 or -1.")
-    if form.degree == 0:
-        coefficients = DomainFunction(
-            domain=form.coefficients.domain,
-            deps=(form.var,),
-            func=_ZeroFormCallable(),
-            metadata=form.coefficients.metadata,
-        )
-        return DomainDifferentialForm(
-            coefficients, chart=form.chart, degree=0, var=form.var
-        )
-    first = domain_hodge_star(form, metric, orientation=orientation)
-    derivative = domain_exterior_derivative(first)
-    result = domain_hodge_star(derivative, metric, orientation=orientation)
-    exponent = form.chart.dimension * (form.degree + 1) + metric.signature.index + 1
-    sign = -1 if exponent % 2 else 1
-    coefficients = DomainFunction(
-        domain=result.coefficients.domain,
-        deps=result.coefficients.deps,
-        func=_ScaleCallable(result.coefficients, sign),
-        metadata=result.coefficients.metadata,
+    _require_metric(form, metric)
+    sign = algebra.codifferential_sign(form.form_type, metric.signature.index)
+    derivative = domain_exterior_derivative(
+        domain_hodge_star(form, metric), mode=mode, backend=backend
     )
-    return DomainDifferentialForm(
-        coefficients,
-        chart=form.chart,
-        degree=form.degree - 1,
-        var=form.var,
-    )
+    result = domain_hodge_star(derivative, metric)
+    return _scale_domain_form(result, sign)
 
 
 def domain_hodge_laplacian(
@@ -694,31 +600,121 @@ def domain_hodge_laplacian(
     metric: AbstractSemiRiemannianMetric,
     /,
     *,
-    orientation: int = 1,
+    mode: Literal["reverse", "forward"] = "forward",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
 ) -> DomainDifferentialForm:
-    if not isinstance(form, DomainDifferentialForm):
-        raise TypeError("domain_hodge_laplacian requires a DomainDifferentialForm.")
-    if not isinstance(metric, AbstractSemiRiemannianMetric):
-        raise TypeError("domain_hodge_laplacian requires a nondegenerate metric.")
-    if not form.chart.compatible_with(metric.chart):
-        raise ValueError("Domain form and metric charts must match.")
-    if orientation not in (-1, 1):
-        raise ValueError("orientation must be +1 or -1.")
+    _require_metric(form, metric)
     if form.degree == 0:
-        return domain_codifferential(
-            domain_exterior_derivative(form),
-            metric,
-            orientation=orientation,
-        )
-    first = domain_exterior_derivative(
-        domain_codifferential(form, metric, orientation=orientation)
-    )
+        derivative = domain_exterior_derivative(form, mode=mode, backend=backend)
+        return domain_codifferential(derivative, metric, mode=mode, backend=backend)
+    codifferential = domain_codifferential(form, metric, mode=mode, backend=backend)
+    first = domain_exterior_derivative(codifferential, mode=mode, backend=backend)
     if form.degree == form.chart.dimension:
         return first
-    second = domain_codifferential(
-        domain_exterior_derivative(form), metric, orientation=orientation
-    )
+    derivative = domain_exterior_derivative(form, mode=mode, backend=backend)
+    second = domain_codifferential(derivative, metric, mode=mode, backend=backend)
     return _add_domain_forms(first, second)
+
+
+def _convert_twist(
+    form: DomainDifferentialForm, orientation: int, twist: FormTwist, /
+) -> DomainDifferentialForm:
+    if not isinstance(form, DomainDifferentialForm):
+        raise TypeError("A DomainDifferentialForm is required.")
+    if form.twist == twist:
+        raise ValueError(f"Form is already {twist}.")
+    coefficients = DomainFunction(
+        domain=form.coefficients.domain,
+        deps=form.coefficients.deps,
+        func=_DomainTwistCallable(form, orientation, twist),
+        metadata=form.coefficients.metadata,
+    )
+    return _with_coefficients(form, coefficients, form.form_type.with_twist(twist))
+
+
+def domain_to_untwisted(
+    form: DomainDifferentialForm, orientation: int, /
+) -> DomainDifferentialForm:
+    """Trivialize the orientation line with the explicit orientation ±1."""
+    return _convert_twist(form, orientation, "untwisted")
+
+
+def domain_to_twisted(
+    form: DomainDifferentialForm, orientation: int, /
+) -> DomainDifferentialForm:
+    return _convert_twist(form, orientation, "twisted")
+
+
+def domain_pullback_form(
+    form: DomainDifferentialForm,
+    mapping: DomainFunction,
+    /,
+    *,
+    source_chart: CoordinateChart,
+    source_var: str | None = None,
+    coorientation: int | None = None,
+    mode: Literal["reverse", "forward"] = "forward",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
+) -> DomainDifferentialForm:
+    """Pull a form back along a labeled map from its source domain."""
+    if not isinstance(form, DomainDifferentialForm) or not isinstance(
+        mapping, DomainFunction
+    ):
+        raise TypeError(
+            "Pullback requires a DomainDifferentialForm and DomainFunction map."
+        )
+    if not isinstance(source_chart, CoordinateChart):
+        raise TypeError("source_chart must be a CoordinateChart.")
+    var = _resolve_var(mapping, source_var)
+    _, dimension = _factor_and_dim(mapping, var)
+    if not isinstance(mapping.domain.factor(var), AbstractGeometry):
+        raise ValueError("Domain pullbacks require a geometry variable.")
+    if dimension != source_chart.dimension:
+        raise ValueError(
+            "Pullback source chart dimension does not match its domain variable."
+        )
+    if coorientation is not None and coorientation not in (-1, 1):
+        raise ValueError("coorientation must be +1 or -1.")
+    if (
+        form.twist == "twisted"
+        and dimension != form.chart.dimension
+        and coorientation is None
+    ):
+        raise ValueError("A non-square twisted pullback requires a coorientation.")
+    output_type = FormType(
+        dimension, form.degree, twist=form.twist, fiber_shape=form.fiber_shape
+    )
+    other_deps = tuple(label for label in form.coefficients.deps if label != form.var)
+    if any(label not in mapping.domain.labels for label in other_deps):
+        raise ValueError(
+            "Pullback source domain is missing a form coefficient dependency."
+        )
+    deps = tuple(
+        label
+        for label in mapping.domain.labels
+        if label == var or label in mapping.deps or label in other_deps
+    )
+    coefficients = DomainFunction(
+        domain=mapping.domain,
+        deps=deps,
+        func=_DomainPullbackCallable(
+            form,
+            mapping,
+            deps,
+            var,
+            (mode, backend, "poly", False),
+            coorientation,
+        ),
+        metadata=form.coefficients.metadata,
+    )
+    return DomainDifferentialForm(
+        coefficients,
+        chart=source_chart,
+        degree=output_type.degree,
+        twist=output_type.twist,
+        fiber_shape=output_type.fiber_shape,
+        var=var,
+    )
 
 
 def domain_maxwell_residuals(
@@ -728,60 +724,59 @@ def domain_maxwell_residuals(
     *,
     electric_current: DomainDifferentialForm | None = None,
     magnetic_current: DomainDifferentialForm | None = None,
-    orientation: int = 1,
 ) -> DomainMaxwellResiduals:
-    r"""Compose ``dF - M`` and ``delta F + J_flat`` on four-dimensional spacetime."""
+    r"""Compose ``dF - M`` and ``delta F + J_flat`` on four-dimensional spacetime.
+
+    ``F`` and ``M`` are untwisted scalar-fiber forms. ``J_flat`` is the
+    untwisted covector representation of the twisted current three-form.
+    """
     if not isinstance(field_strength, DomainDifferentialForm):
         raise TypeError("domain_maxwell_residuals requires a DomainDifferentialForm.")
-    if field_strength.chart.dimension != 4 or field_strength.degree != 2:
+    expected = FormType(4, 2)
+    if field_strength.form_type.form_type_id != expected.form_type_id:
         raise ValueError(
-            "Maxwell field strength must be a degree-2 form on a four-dimensional chart."
+            "Maxwell field strength must be an untwisted scalar-fiber degree-2 form on a four-dimensional chart."
         )
     if not isinstance(metric, LorentzianMetric):
         raise TypeError("domain_maxwell_residuals requires a LorentzianMetric.")
-    if not field_strength.chart.compatible_with(metric.chart):
-        raise ValueError("Maxwell field strength and metric charts must match.")
-    if electric_current is not None:
-        if not isinstance(electric_current, DomainDifferentialForm):
-            raise TypeError("electric_current must be a DomainDifferentialForm.")
-        if electric_current.degree != 1:
-            raise ValueError("electric_current must be a degree-1 covector form.")
-    if magnetic_current is not None:
-        if not isinstance(magnetic_current, DomainDifferentialForm):
-            raise TypeError("magnetic_current must be a DomainDifferentialForm.")
-        if magnetic_current.degree != 3:
-            raise ValueError("magnetic_current must be a degree-3 form.")
-
+    _require_metric(field_strength, metric)
+    for current, current_type, name in (
+        (electric_current, expected.codifferential_type(), "electric_current"),
+        (magnetic_current, expected.exterior_derivative_type(), "magnetic_current"),
+    ):
+        if current is None:
+            continue
+        if not isinstance(current, DomainDifferentialForm):
+            raise TypeError(f"{name} must be a DomainDifferentialForm.")
+        _require_same_base(field_strength, current)
+        if current.form_type.form_type_id != current_type.form_type_id:
+            raise ValueError(
+                f"{name} must have the matching untwisted scalar-fiber degree-{current_type.degree} form type."
+            )
     homogeneous = domain_exterior_derivative(field_strength)
     if magnetic_current is not None:
         homogeneous = _add_domain_forms(
-            homogeneous,
-            _scale_domain_form(magnetic_current, -1.0),
+            homogeneous, _scale_domain_form(magnetic_current, -1.0)
         )
-    inhomogeneous = domain_codifferential(
-        field_strength,
-        metric,
-        orientation=orientation,
-    )
+    inhomogeneous = domain_codifferential(field_strength, metric)
     if electric_current is not None:
         inhomogeneous = _add_domain_forms(inhomogeneous, electric_current)
-    return DomainMaxwellResiduals(
-        field_strength,
-        homogeneous,
-        inhomogeneous,
-    )
+    return DomainMaxwellResiduals(field_strength, homogeneous, inhomogeneous)
 
 
 __all__ = [
-    "DomainMaxwellResiduals",
     "DomainDifferentialForm",
+    "DomainMaxwellResiduals",
     "domain_codifferential",
     "domain_differential_form",
     "domain_exterior_derivative",
     "domain_hodge_laplacian",
-    "domain_maxwell_residuals",
     "domain_hodge_star",
     "domain_interior_product",
     "domain_lie_derivative",
+    "domain_maxwell_residuals",
+    "domain_pullback_form",
+    "domain_to_twisted",
+    "domain_to_untwisted",
     "domain_wedge",
 ]

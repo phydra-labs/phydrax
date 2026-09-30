@@ -358,6 +358,19 @@ is never accepted as a scalar Cauchy part, and a representation declared for ano
 quantity is refused. The 3-D scalar P1 coordinate space now carries the kernel's
 coefficient dtype and its own space identity, distinct from the DP0 space.
 
+RWG and BC declare `FormValueSpec` for twisted intrinsic degree1 flux embedded
+in ambient dimension3. Their basis/divergence/Gram use the canonical triangle
+form element and generic embedded Piola owner. `BoundaryTraceSpaceCapability`
+has derived `form_type` without changing its capability identity.
+
+`prepare_boundary_form_query(space, points, derivative=(0,0,0), side=...,
+cell_ids=..., tolerance=..., maximum_location_pairs=...)` prepares surface-only
+reconstruction. Off-surface points are refused; a shared-edge vector needs an
+explicit side or averaging. First derivatives are tangential ambient derivatives.
+Prepared query evidence, operator, value port and transpose reach the consumer;
+no volume geometry is invented for a boundary-only space.
+
+
 ## Reference near/far backend
 
 `AbstractLayerBackend` separates backend execution from layer representation.

@@ -265,7 +265,7 @@ def _admissible_pair(
     _require_spectral_target(pair.spectral)
     _require_cochain_source(pair.cochain, pair.spectral)
     _require_same_run(source, target)
-    if pair.cochain.maxwell.plan.bridge.bridge_id != pair.spectral.plan.bridge.bridge_id:
+    if pair.cochain.bridge.bridge_id != pair.spectral.plan.bridge.bridge_id:
         raise ValueError("PIC field handoff requires one shared grid bridge.")
     if [value.prepared_id for value in pair.cochain.transfers] != [
         value.prepared_id for value in pair.spectral.transfers
@@ -283,12 +283,14 @@ def _to_spectral(pair: _HandoffPair, field: Any, /) -> SpectralMaxwellState:
     if not isinstance(field, CompatibleMaxwellState):
         raise TypeError("The cochain PIC field must be CompatibleMaxwellState.")
     maxwell = pair.cochain.maxwell
-    bridge = maxwell.plan.bridge
+    bridge = pair.cochain.bridge
     return SpectralMaxwellState(
         electric=jnp.stack(
             bridge.unpack_edge_circulation(maxwell.electric_field(field)), axis=-1
         ),
-        magnetic=jnp.stack(bridge.unpack_face_flux(field.primary.magnetic_flux), axis=-1),
+        magnetic=jnp.stack(
+            bridge.unpack_face_flux(maxwell.magnetic_flux(field)), axis=-1
+        ),
         charge=bridge.unpack(0, field.primary.charge)[0],
         averaged_electric=None,
         averaged_magnetic=None,
@@ -306,7 +308,7 @@ def _to_cochain(pair: _HandoffPair, field: Any, /) -> CompatibleMaxwellState:
     if not isinstance(field, SpectralMaxwellState):
         raise TypeError("The spectral PIC field must be SpectralMaxwellState.")
     maxwell = pair.cochain.maxwell
-    bridge = maxwell.plan.bridge
+    bridge = pair.cochain.bridge
     constitutive = maxwell.constitutive
     material = constitutive.initialize_state()
     electric, magnetic = field.electric, field.magnetic
@@ -337,7 +339,7 @@ def _convert_field(pair: _HandoffPair, field: Any, /) -> Any:
 
 
 def _convert_charge(pair: _HandoffPair, charge: Array, /) -> Array:
-    bridge = pair.cochain.maxwell.plan.bridge
+    bridge = pair.cochain.bridge
     match pair.route:
         case "cochain-to-spectral":
             return bridge.unpack(0, charge)[0]

@@ -265,8 +265,8 @@ class NonIdealMHDPlan(StrictModule, NonTrainableState):
             dtype=step.dtype,
         )
         candidate_magnetic = magnetic + step * magnetic_rate
-        hodge_before = self.spatial.bridge.cochain.apply_hodge(2, magnetic)
-        hodge_after = self.spatial.bridge.cochain.apply_hodge(2, candidate_magnetic)
+        hodge_before = self.spatial.bridge.cochain.hodge_star(2, magnetic)
+        hodge_after = self.spatial.bridge.cochain.hodge_star(2, candidate_magnetic)
         magnetic_energy_before = 0.5 * jnp.vdot(magnetic, hodge_before).real
         magnetic_energy_after = 0.5 * jnp.vdot(candidate_magnetic, hodge_after).real
         heating_total = jnp.maximum(

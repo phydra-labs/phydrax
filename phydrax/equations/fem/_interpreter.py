@@ -42,25 +42,29 @@ def evaluate_differential_operator(
             raise ValueError("Symmetric gradient requires a prepared gradient.")
         return symmetric_gradient(jet.gradient)
     if operation == "div":
+        if jet.value_spec is not None and jet.value_spec.proxy != "flux":
+            raise ValueError("Divergence requires a flux form value specification.")
         if jet.divergence is not None:
             return jet.divergence
         if jet.gradient is None:
             raise ValueError("Divergence requires a prepared gradient/divergence.")
-        return divergence(jet.gradient)
+        return divergence(jet.gradient, value_spec=jet.value_spec)
     if operation == "curl":
+        if jet.value_spec is not None and jet.value_spec.proxy != "circulation":
+            raise ValueError("Curl requires a circulation form value specification.")
         if jet.curl is not None:
             return jet.curl
         if jet.gradient is None:
             raise ValueError("Curl requires a prepared gradient/curl.")
-        return curl(jet.gradient)
+        return curl(jet.gradient, value_spec=jet.value_spec)
     if operation == "normal-trace":
         if normal is None:
             raise ValueError("Normal trace requires a normal.")
-        return normal_trace(jet.value, normal)
+        return normal_trace(jet.value, normal, value_spec=jet.value_spec)
     if operation == "tangential-trace":
         if normal is None:
             raise ValueError("Tangential trace requires a normal.")
-        return tangential_trace(jet.value, normal)
+        return tangential_trace(jet.value, normal, value_spec=jet.value_spec)
     if operation == "jump":
         if other is None:
             raise ValueError("Jump requires plus and minus field jets.")

@@ -8,20 +8,57 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import combinations
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...sparse import EdgeRelation
+from ...linalg import AbstractVectorSpace, ArraySpace, HilbertComplex
+from ...sparse import EdgeRelation, SparseCoordinateOperator, SparseLinearMap
+from .._cochain_hodge import CochainHodge, DiagonalHodge
 from .._topology import CellComplexTopology, EntitySet, OrientedIncidence
 from ._patches import BlockHierarchyCapacityPlan
 from ._variable import VariablePatchHierarchyTopology
+
+
+def _active_operator(
+    operator: SparseCoordinateOperator | SparseLinearMap,
+    source: AbstractVectorSpace,
+    target: AbstractVectorSpace,
+    /,
+) -> SparseCoordinateOperator:
+    """Remove the unused trailing capacity coordinates from a prepared route."""
+    if not isinstance(source, ArraySpace) or not isinstance(target, ArraySpace):
+        raise TypeError("AMR cochains require one-dimensional array spaces.")
+    relation = operator.relation
+    if not isinstance(relation, EdgeRelation):
+        raise TypeError("AMR active-coordinate routes require an EdgeRelation.")
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    columns = np.asarray(relation.source_indices, dtype=np.int32)[valid]
+    rows = np.asarray(relation.target_indices, dtype=np.int32)[valid]
+    weights = np.asarray(operator.coefficients)[valid]
+    if np.any(columns >= source.size) or np.any(rows >= target.size):
+        raise ValueError("An AMR route leaks into inactive entity coordinates.")
+    return SparseCoordinateOperator(
+        EdgeRelation(columns, rows, source_size=source.size, target_size=target.size),
+        jnp.asarray(weights, dtype=source.dtype),
+        source=source,
+        target=target,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "active-amr-route",
+                "parent": operator.operator_id,
+                "source": source.space_id,
+                "target": target.space_id,
+            }
+        ),
+    )
 
 
 EntityKey = tuple[tuple[int, ...], tuple[int, ...]]
@@ -192,6 +229,7 @@ class VariablePatchEntityBucketView(StrictModule, NonTrainableState):
         )
 
 
+@final
 class VariablePatchEntityComplex(StrictModule, NonTrainableState):
     """One bounded canonical entity complex at one physical AMR level."""
 
@@ -432,6 +470,59 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
                 "views": [view.view_id for view in views],
                 "incidence_capacity": incidence_bounds,
             }
+        )
+
+    def hilbert_complex(
+        self,
+        hodges: Sequence[CochainHodge] | None = None,
+        /,
+        *,
+        dtype: DTypeLike = jnp.float64,
+    ) -> HilbertComplex:
+        """Realize only active entities; padding is not cohomological data."""
+        metrics = (
+            tuple(
+                DiagonalHodge(jnp.ones((size,), dtype=jnp.float64))
+                for size in self.capacity
+            )
+            if hodges is None
+            else tuple(hodges)
+        )
+        if len(metrics) != len(self.capacity):
+            raise ValueError("Entity Hodges must cover every cochain degree.")
+        spaces: list[ArraySpace] = []
+        for degree, metric in enumerate(metrics):
+            if metric.size != self.capacity[degree]:
+                raise ValueError("Entity Hodge size must match its storage capacity.")
+            mask = np.asarray(self.complex.entities(degree).active_mask, dtype=np.bool_)
+            space, _ = metric.restrict(mask).make_space(
+                space_id=canonical_fingerprint(
+                    {
+                        "kind": "active-patch-entity-space",
+                        "complex": self.complex_id,
+                        "degree": degree,
+                        "active_mask": mask,
+                        "dtype": jnp.dtype(dtype).str,
+                    }
+                ),
+                dtype=dtype,
+            )
+            spaces.append(space)
+        differentials = tuple(
+            _active_operator(incidence.exterior_derivative(), spaces[k], spaces[k + 1])
+            for k, incidence in enumerate(self.complex.incidences)
+        )
+        return HilbertComplex(
+            tuple(spaces),
+            differentials,
+            complex_id=canonical_fingerprint(
+                {
+                    "kind": "patch-entity-hilbert-complex",
+                    "topology": self.complex_id,
+                    "spaces": [space.space_id for space in spaces],
+                    "pairings": [space.pairing.pairing_id for space in spaces],
+                }
+            ),
         )
 
     def view(

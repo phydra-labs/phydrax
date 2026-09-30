@@ -57,6 +57,7 @@ from phydrax.discretization import (
     UniformCellAxisSpec,
 )
 from phydrax.discretization.amr import FluxRegister
+from phydrax.exterior import FormType
 from phydrax.lifecycle import CheckpointManifest, ProcessCheckpointPublication
 from phydrax.lifecycle._repository import (
     HPCFilesystemProfile,
@@ -792,4 +793,53 @@ def test_grmhd_coupled_restart_retains_ct_budgets_and_failure_counters(
                 geometry_id="grid",
                 topology_epoch=0,
             ),
+        )
+
+
+@pytest.mark.parametrize("degree", [0, 2], ids=["scalar", "magnetic-flux"])
+def test_distributed_cochain_keeps_scientific_identity_and_component_sharding(
+    degree: int,
+) -> None:
+    bridge = _bridge(4)
+    distribution = NumericalRelativityDistributedPlan(
+        "grmhd",
+        (4, 4, 4),
+        (1, 1, 1),
+        halo_width=1,
+        periodic=(True, True, True),
+        grid_id=bridge.grid.topology.topology_id,
+    ).prepare(jax.devices()[:1])
+    values = jnp.arange(bridge.cochain.cell_counts[degree], dtype=jnp.float64)
+    form_type = FormType(3, degree, twist="untwisted")
+    state = distribution.shard_cochain(bridge, form_type, values)
+    assert state.form_type.form_type_id == form_type.form_type_id
+    assert state.realization_id == bridge.cochain.realization_id
+    assert state.distribution_id == distribution.prepared_id
+    np.testing.assert_array_equal(bridge.pack(degree, state.components), values)
+    for component, sharding in zip(
+        state.components,
+        distribution.cochain_component_shardings(bridge, degree),
+        strict=True,
+    ):
+        assert component.sharding == sharding
+    twisted = distribution.shard_cochain(bridge, form_type.with_twist("twisted"), values)
+    assert twisted.layout_id != state.layout_id
+    assert twisted.realization_id == state.realization_id
+
+
+def test_distributed_cochain_refuses_incompatible_scientific_dimension() -> None:
+    bridge = _bridge(4)
+    distribution = NumericalRelativityDistributedPlan(
+        "grmhd",
+        (4, 4, 4),
+        (1, 1, 1),
+        halo_width=1,
+        periodic=(True, True, True),
+        grid_id=bridge.grid.topology.topology_id,
+    ).prepare(jax.devices()[:1])
+    with pytest.raises(ValueError, match="Scientific form type"):
+        distribution.shard_cochain(
+            bridge,
+            FormType(2, 1),
+            jnp.zeros((bridge.cochain.cell_counts[1],), dtype=jnp.float64),
         )

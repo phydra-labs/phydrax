@@ -99,3 +99,20 @@ def test_clifford_geometry_scenario_2() -> None:
         representation.to_o3(transformed),
         o3.transform(representation.to_o3(values), reflection),
     )
+
+
+@pytest.mark.parametrize("grades", [(0, 1, 2, 3), (1, 2)])
+def test_clifford_outermorphism_reflects_complete_grade_support(
+    grades: tuple[int, ...],
+) -> None:
+    algebra = cl.CliffordAlgebraSpec((1, 1, 1))
+    layout = cl.CliffordBladeLayout.grades_layout(algebra, grades)
+    action = cl.MetricIsometryAction(algebra, jnp.diag(jnp.asarray([-1.0, 1.0, 1.0])))
+    plan = cl.CliffordOutermorphismPlan(action, layout)
+    if grades == (0, 1, 2, 3):
+        values = jnp.arange(1.0, 9.0)
+        expected = jnp.asarray([1.0, -2.0, 3.0, 4.0, -5.0, -6.0, 7.0, -8.0])
+    else:
+        values = jnp.arange(1.0, 7.0)
+        expected = jnp.asarray([-1.0, 2.0, 3.0, -4.0, -5.0, 6.0])
+    assert jnp.array_equal(plan(values), expected)

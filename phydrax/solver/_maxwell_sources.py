@@ -18,7 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import StructuredCochainBridge
+from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
 
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ class AbstractMaxwellSourcePlan(StrictModule):
 
     @abc.abstractmethod
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: Any, /
+        self, bridge: AbstractCellDeRhamComplex, layout: Any, /
     ) -> PreparedMaxwellSourceContract:
         raise NotImplementedError
 
@@ -280,7 +280,7 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
         )
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: Any, /
+        self, bridge: AbstractCellDeRhamComplex, layout: Any, /
     ) -> PreparedMaxwellSource:
         if layout.layout_id == "":
             raise ValueError("Maxwell source layout identity must be nonempty.")
@@ -377,7 +377,7 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
         self.source_id = identifier
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: Any, /
+        self, bridge: AbstractCellDeRhamComplex, layout: Any, /
     ) -> PreparedMaxwellSource:
         del bridge
         return PreparedMaxwellSource(

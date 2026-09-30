@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Literal, Protocol
+from typing import Any, final, Literal, Protocol
 
 import equinox as eqx
 import jax
@@ -36,6 +36,17 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge, tetrahedral_connectivity
+from ..discretization._simplicial_locator import (
+    PreparedSimplicialCellLocator,
+    SimplicialLocationPolicy,
+)
+from ..discretization.fem import FiniteElementDeRhamComplex
+from ..discretization.fem._cell_map import PreparedFiniteElementCellMap
+from ..discretization.fem._simplicial_whitney_chains import (
+    SimplicialWhitneyKernel,
+    whitney_basis,
+)
+from ..exterior import form_to_vector, FormType, FormValueSpec
 from ..sparse import EdgeRelation, SparseLinearMap
 from ..typing import Complex128, Dim, Float64, Int32
 from ._maxwell import (
@@ -52,11 +63,8 @@ from ._maxwell_observers import (
 )
 from ._maxwell_sources import PreparedMaxwellSource
 from ._maxwell_unstructured import (
-    _barycentric_gradients,
-    _LOCAL_EDGES,
-    _LOCAL_FACES,
+    PreparedFiniteElementMaxwellConstitutive,
     PreparedUnstructuredMaxwell,
-    TetrahedralMaxwellHodge,
 )
 from ._pic_current_source import PreparedPICMaxwellCurrentSource
 
@@ -158,6 +166,7 @@ class MaxwellHuygensSampler(Protocol):
     def surface_phasors(self, state: Any, /) -> HuygensSurfacePhasors: ...
 
 
+@final
 class _SurfaceGeometry(StrictModule, NonTrainableState):
     """Host-prepared quadrature and sparse tangential-field gathers."""
 
@@ -170,6 +179,7 @@ class _SurfaceGeometry(StrictModule, NonTrainableState):
     electric_indices: Array
     magnetic_indices: Array
     geometry_id: str = eqx.field(static=True)
+    material_cells: Array | None = None
 
 
 def _require_huygens_acquisition(
@@ -224,6 +234,7 @@ def _surface_material(
     /,
     *,
     owner: str = "Huygens surface",
+    cell_indices: np.ndarray | None = None,
 ) -> None:
     """Refuse constitutive laws that are not the declared medium on ``owner``'s
     entities (a Huygens surface or an antenna sheet)."""
@@ -241,9 +252,39 @@ def _surface_material(
                     f"{owner} entities carry nonzero conductivity; the "
                     "exterior must be lossless."
                 )
+        case PreparedFiniteElementMaxwellConstitutive() as material:
+            if cell_indices is None:
+                raise ValueError(
+                    "FE Huygens material validation requires adjacent cell identities."
+                )
+            epsilon = np.asarray(material.permittivity)
+            inverse_mu = np.asarray(material.inverse_permeability)
+            surface_epsilon = epsilon if epsilon.ndim == 0 else epsilon[cell_indices]
+            surface_inverse_mu = (
+                inverse_mu if inverse_mu.ndim == 0 else inverse_mu[cell_indices]
+            )
+            epsilon_target = (
+                permittivity * np.eye(3, dtype=np.float64)
+                if surface_epsilon.ndim == 3
+                else permittivity
+            )
+            inverse_mu_target = (
+                np.eye(3, dtype=np.float64) / permeability
+                if surface_inverse_mu.ndim == 3
+                else 1.0 / permeability
+            )
+            if not np.allclose(
+                surface_epsilon, epsilon_target, rtol=1e-12, atol=0.0
+            ) or not np.allclose(
+                surface_inverse_mu, inverse_mu_target, rtol=1e-12, atol=0.0
+            ):
+                raise ValueError(
+                    f"{owner} cells do not carry the declared homogeneous exterior permittivity/permeability."
+                )
+            return
         case _:
             raise ValueError(
-                f"{owner}s require a diagonal or lossless conductive "
+                f"{owner}s require a lossless diagonal, conductive, or FE Gram "
                 f"constitutive law; got {type(prepared_constitutive).__name__}."
             )
     if not np.allclose(
@@ -582,7 +623,10 @@ class PreparedMaxwellHuygensBox(AbstractPreparedMaxwellObserver):
         return self.geometry.measures.shape[0]
 
     def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
-        if prepared.plan.bridge.bridge_id != self.bridge_id:
+        bridge = prepared.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError("Huygens boxes require a structured cochain bridge.")
+        if bridge.bridge_id != self.bridge_id:
             raise ValueError("Huygens box was built on a different cochain bridge.")
         electric_indices = np.asarray(self.geometry.electric_indices)
         magnetic_indices = np.asarray(self.geometry.magnetic_indices)
@@ -646,180 +690,185 @@ class PreparedMaxwellHuygensBox(AbstractPreparedMaxwellObserver):
         return _phasors(self.geometry, self.acquisition, self.exterior, state)
 
 
+def _surface_whitney_tables(
+    complex_: FiniteElementDeRhamComplex, /
+) -> tuple[Array, tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    """Bind the canonical affine gradients and oriented global Whitney routes."""
+    kernels = tuple(
+        SimplicialWhitneyKernel(
+            complex_,
+            PreparedSimplicialCellLocator(
+                PreparedFiniteElementCellMap(complex_.discretization, block_index),
+                complex_.mesh.coordinates,
+                SimplicialLocationPolicy(1, 1, 1),
+            ),
+        )
+        for block_index in range(len(complex_.mesh.blocks))
+    )
+    gradients = jnp.concatenate([kernel.locator.affine_gradients() for kernel in kernels])
+    entities = tuple(
+        np.concatenate(
+            [np.asarray(kernel.cell_routes[degree].indices) for kernel in kernels]
+        )
+        for degree in (1, 2)
+    )
+    signs = tuple(
+        np.concatenate(
+            [np.asarray(kernel.cell_routes[degree].signs) for kernel in kernels]
+        )
+        for degree in (1, 2)
+    )
+    return gradients, entities, signs
+
+
+def _surface_cell_routes(
+    barycentric: Array,
+    gradients: Array,
+    entities: tuple[np.ndarray, ...],
+    signs: tuple[np.ndarray, ...],
+    projector: np.ndarray,
+    flux_spec: FormValueSpec,
+    surface_index: int,
+    /,
+) -> tuple[list[tuple[int, int, float]], ...]:
+    edge_values = whitney_basis(barycentric, gradients, 1)
+    face_values = form_to_vector(whitney_basis(barycentric, gradients, 2), flux_spec)
+    routes: tuple[list[tuple[int, int, float]], ...] = ([], [])
+    for slot, values in enumerate((edge_values, face_values)):
+        tangential = np.asarray(values) @ projector
+        for local_index, global_index in enumerate(entities[slot]):
+            for component in range(3):
+                routes[slot].append(
+                    (
+                        int(global_index),
+                        3 * surface_index + component,
+                        0.5
+                        * signs[slot][local_index]
+                        * float(tangential[local_index, component]),
+                    )
+                )
+    return routes
+
+
 def _surface_geometry_from_faces(
-    hodge: TetrahedralMaxwellHodge,
+    complex_: FiniteElementDeRhamComplex,
     faces: np.ndarray,
     /,
 ) -> _SurfaceGeometry:
-    points = np.asarray(hodge.vertices, dtype=np.float64)
-    cells = np.asarray(hodge.tetrahedra, dtype=np.int32)
+    points = np.asarray(complex_.mesh.coordinates, dtype=np.float64)
+    cells = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int32) for block in complex_.mesh.blocks]
+    )
     connectivity = tetrahedral_connectivity(cells, points.shape[0])
-    mesh_edges = np.asarray(connectivity.edges)
     mesh_faces = np.asarray(connectivity.faces)
-    cell_faces = np.asarray(connectivity.cell_faces)
     face_cell_counts = np.asarray(connectivity.face_cell_counts)
-    if (
-        mesh_edges.shape[0] != hodge.cochain.cell_counts[1]
-        or mesh_faces.shape[0] != hodge.cochain.cell_counts[2]
-    ):
-        raise ValueError("Tetrahedral Hodge does not match its recorded mesh.")
-    edge_lookup = {
-        (int(edge[0]), int(edge[1])): index for index, edge in enumerate(mesh_edges)
-    }
     face_lookup = {
-        (int(face[0]), int(face[1]), int(face[2])): index
+        tuple(int(vertex) for vertex in face): index
         for index, face in enumerate(mesh_faces)
     }
     face_cells: dict[int, list[int]] = {}
-    for cell_index in range(cells.shape[0]):
-        for face in cell_faces[cell_index]:
+    for cell_index, row in enumerate(np.asarray(connectivity.cell_faces)):
+        for face in row:
             face_cells.setdefault(int(face), []).append(cell_index)
-    directed: dict[tuple[int, int], int] = {}
+    directed: set[tuple[int, int]] = set()
     for face in faces:
         for start, end in ((0, 1), (1, 2), (2, 0)):
             key = (int(face[start]), int(face[end]))
             if key in directed:
                 raise ValueError(
-                    "Huygens face set is not consistently oriented: a directed "
-                    "edge appears twice."
+                    "Huygens face set is not consistently oriented: a directed edge appears twice."
                 )
-            directed[key] = 1
-    for start, end in directed:
-        if (end, start) not in directed:
-            raise ValueError("Huygens face set is not closed.")
+            directed.add(key)
+    if any((end, start) not in directed for start, end in directed):
+        raise ValueError("Huygens face set is not closed.")
+    gradients, entities, signs = _surface_whitney_tables(complex_)
+    flux_spec = FormValueSpec(FormType(3, 2, twist="untwisted"), proxy="flux")
     positions: list[np.ndarray] = []
     normals: list[np.ndarray] = []
     measures: list[float] = []
-    electric_routes: list[tuple[int, int, float]] = []
-    magnetic_routes: list[tuple[int, int, float]] = []
-    inverse_permeability = hodge.inverse_permeability
-    for cell_index_on_surface, face in enumerate(faces):
-        triple = (int(face[0]), int(face[1]), int(face[2]))
-        canonical = tuple(sorted(triple))
+    routes: tuple[list[tuple[int, int, float]], ...] = ([], [])
+    material_cells: set[int] = set()
+    for surface_index, face in enumerate(faces):
+        canonical = tuple(sorted(int(vertex) for vertex in face))
         if canonical not in face_lookup:
             raise ValueError(
                 "Huygens face set contains a triangle that is not a mesh face."
             )
-        global_face = face_lookup[(canonical[0], canonical[1], canonical[2])]
+        global_face = face_lookup[canonical]
         if face_cell_counts[global_face] != 2:
             raise ValueError(
                 "Huygens surfaces must lie strictly inside the tetrahedral mesh."
             )
-        corners = points[np.asarray(triple)]
+        material_cells.update(face_cells[global_face])
+        corners = points[face]
         cross = np.cross(corners[1] - corners[0], corners[2] - corners[0])
         area = 0.5 * float(np.linalg.norm(cross))
         normal = cross / (2.0 * area)
-        centroid = np.mean(corners, axis=0)
-        positions.append(centroid)
+        positions.append(np.mean(corners, axis=0))
         normals.append(normal)
         measures.append(area)
-        projector = np.eye(3) - np.outer(normal, normal)
+        projector = np.eye(3, dtype=np.float64) - np.outer(normal, normal)
         for cell_index in face_cells[global_face]:
-            tetrahedron = tuple(int(value) for value in cells[cell_index])
-            local_points = points[np.asarray(tetrahedron)]
-            gradient, _ = _barycentric_gradients(local_points)
-            barycentric = np.asarray(
-                [1.0 / 3.0 if vertex in triple else 0.0 for vertex in tetrahedron]
+            barycentric = jnp.asarray(
+                [1.0 / 3.0 if vertex in face else 0.0 for vertex in cells[cell_index]],
+                dtype=jnp.float64,
             )
-            for local_i, local_j in _LOCAL_EDGES:
-                pair = (tetrahedron[local_i], tetrahedron[local_j])
-                edge_key = (min(pair), max(pair))
-                edge_sign = 1.0 if pair == edge_key else -1.0
-                form = (
-                    barycentric[local_i] * gradient[local_j]
-                    - barycentric[local_j] * gradient[local_i]
-                )
-                tangential = projector @ form
-                for component in range(3):
-                    electric_routes.append(
-                        (
-                            edge_lookup[edge_key],
-                            3 * cell_index_on_surface + component,
-                            0.5 * edge_sign * float(tangential[component]),
-                        )
-                    )
-            for local_i, local_j, local_k in _LOCAL_FACES:
-                oriented = (
-                    tetrahedron[local_i],
-                    tetrahedron[local_j],
-                    tetrahedron[local_k],
-                )
-                inversions = sum(
-                    oriented[a] > oriented[b] for a in range(3) for b in range(a + 1, 3)
-                )
-                # The Whitney 2-form of the ordered face has unit flux through its
-                # right-hand normal independent of the cell orientation; the
-                # global face cochain is oriented by the sorted vertex triple.
-                face_sign = -1.0 if inversions % 2 else 1.0
-                form = 2.0 * (
-                    barycentric[local_i] * np.cross(gradient[local_j], gradient[local_k])
-                    + barycentric[local_j]
-                    * np.cross(gradient[local_k], gradient[local_i])
-                    + barycentric[local_k]
-                    * np.cross(gradient[local_i], gradient[local_j])
-                )
-                tangential = projector @ form
-                sorted_face = tuple(sorted(oriented))
-                for component in range(3):
-                    magnetic_routes.append(
-                        (
-                            face_lookup[(sorted_face[0], sorted_face[1], sorted_face[2])],
-                            3 * cell_index_on_surface + component,
-                            0.5
-                            * inverse_permeability
-                            * face_sign
-                            * float(tangential[component]),
-                        )
-                    )
+            local_routes = _surface_cell_routes(
+                barycentric,
+                gradients[cell_index],
+                tuple(row[cell_index] for row in entities),
+                tuple(row[cell_index] for row in signs),
+                projector,
+                flux_spec,
+                surface_index,
+            )
+            routes[0].extend(local_routes[0])
+            routes[1].extend(local_routes[1])
     geometry_id = canonical_fingerprint(
         {
             "kind": "maxwell-huygens-surface-geometry",
-            "hodge": hodge.hodge_id,
+            "complex": complex_.realization_id,
             "faces": array_tree_fingerprint(faces),
         }
     )
-    electric_source = np.asarray([route[0] for route in electric_routes], dtype=np.int32)
-    magnetic_source = np.asarray([route[0] for route in magnetic_routes], dtype=np.int32)
+    source = tuple(
+        np.asarray([route[0] for route in values], dtype=np.int32) for values in routes
+    )
+    gather = tuple(
+        _gather_map(
+            source[slot],
+            np.asarray([route[1] for route in values], dtype=np.int32),
+            np.asarray([route[2] for route in values], dtype=np.float64),
+            source_size=complex_.cell_counts[slot + 1],
+            target_count=faces.shape[0],
+            operator_id=f"{geometry_id}:{slot + 1}",
+        )
+        for slot, values in enumerate(routes)
+    )
     return _SurfaceGeometry(
         positions=jnp.asarray(np.stack(positions)),
         normals=jnp.asarray(np.stack(normals)),
-        measures=jnp.asarray(np.asarray(measures)),
+        measures=jnp.asarray(measures),
         patches=jnp.zeros((faces.shape[0],), dtype=jnp.int32),
-        electric_gather=_gather_map(
-            electric_source,
-            np.asarray([route[1] for route in electric_routes], dtype=np.int32),
-            np.asarray([route[2] for route in electric_routes]),
-            source_size=hodge.cochain.cell_counts[1],
-            target_count=faces.shape[0],
-            operator_id=f"{geometry_id}:electric",
-        ),
-        magnetic_gather=_gather_map(
-            magnetic_source,
-            np.asarray([route[1] for route in magnetic_routes], dtype=np.int32),
-            np.asarray([route[2] for route in magnetic_routes]),
-            source_size=hodge.cochain.cell_counts[2],
-            target_count=faces.shape[0],
-            operator_id=f"{geometry_id}:magnetic",
-        ),
-        electric_indices=jnp.asarray(np.unique(electric_source)),
-        magnetic_indices=jnp.asarray(np.unique(magnetic_source)),
+        electric_gather=gather[0],
+        magnetic_gather=gather[1],
+        electric_indices=jnp.asarray(np.unique(source[0])),
+        magnetic_indices=jnp.asarray(np.unique(source[1])),
         geometry_id=geometry_id,
+        material_cells=jnp.asarray(sorted(material_cells), dtype=jnp.int32),
     )
 
 
+@final
 class MaxwellHuygensSurfacePlan(StrictModule):
-    """Closed oriented face set of a tetrahedral mesh with Whitney reconstruction.
+    """Closed tetrahedral face surface reconstructing physical E and H.
 
-    ``faces`` are vertex triples of interior mesh faces whose right-hand normal
-    points toward the exterior; every directed edge must be matched by its
-    reverse so the surface is closed and consistently oriented. Tangential ``E``
-    is reconstructed from Whitney edge elements and tangential ``H`` from Whitney
-    face elements, each averaged over the two cells sharing the face and scaled
-    by the Hodge ``inverse_permeability`` so that ``update`` accepts the
-    prepared runtime's ``electric_field``/``magnetic_field`` cochains directly.
+    Metric pairings carry geometry only. The prepared runtime supplies its
+    material-weighted magnetic field, so reconstruction never multiplies a
+    material coefficient stored in a Hodge.
     """
 
-    hodge: TetrahedralMaxwellHodge
+    complex: FiniteElementDeRhamComplex
     faces: Array
     acquisition: MaxwellSpectralAcquisition
     exterior: HomogeneousMaxwellExterior
@@ -827,54 +876,69 @@ class MaxwellHuygensSurfacePlan(StrictModule):
 
     def __init__(
         self,
-        hodge: TetrahedralMaxwellHodge,
+        complex: FiniteElementDeRhamComplex,
         faces: ArrayLike,
         acquisition: MaxwellSpectralAcquisition,
         exterior: HomogeneousMaxwellExterior,
         /,
     ) -> None:
-        if not isinstance(hodge, TetrahedralMaxwellHodge):
-            raise TypeError("hodge must be a TetrahedralMaxwellHodge.")
+        if not isinstance(complex, FiniteElementDeRhamComplex):
+            raise TypeError("complex must be a FiniteElementDeRhamComplex.")
+        if (
+            complex.dimension != 3
+            or complex.family != "trimmed"
+            or complex.order != 1
+            or any(block.cell_kind != "tetrahedron" for block in complex.mesh.blocks)
+        ):
+            raise ValueError(
+                "Whitney Huygens sampling requires a trimmed order-one tetrahedral complex."
+            )
         faces_ = np.asarray(faces)
         if faces_.ndim != 2 or faces_.shape[1] != 3 or faces_.shape[0] == 0:
             raise ValueError("faces must have shape (faces, 3) with at least one face.")
         if not np.issubdtype(faces_.dtype, np.integer):
             raise TypeError("faces must be integer vertex triples.")
-        self.hodge = hodge
-        self.faces = jnp.asarray(faces_.astype(np.int32))
-        self.acquisition = _require_huygens_acquisition(acquisition)
-        self.exterior = _require_exterior(exterior)
-        self.plan_id = canonical_fingerprint(
+        acquisition_ = _require_huygens_acquisition(acquisition)
+        exterior_ = _require_exterior(exterior)
+        identifier = canonical_fingerprint(
             {
                 "kind": "maxwell-huygens-surface-plan",
-                "hodge": hodge.hodge_id,
+                "complex": complex.realization_id,
                 "faces": array_tree_fingerprint(faces_),
-                "acquisition": self.acquisition.acquisition_id,
-                "exterior": self.exterior.exterior_id,
+                "acquisition": acquisition_.acquisition_id,
+                "exterior": exterior_.exterior_id,
             }
         )
+        self.complex = complex
+        self.faces = jnp.asarray(faces_, dtype=jnp.int32)
+        self.acquisition = acquisition_
+        self.exterior = exterior_
+        self.plan_id = identifier
 
     def prepare(
         self, runtime: PreparedUnstructuredMaxwell, /
     ) -> PreparedMaxwellHuygensSurface:
         if not isinstance(runtime, PreparedUnstructuredMaxwell):
             raise TypeError("runtime must be a PreparedUnstructuredMaxwell.")
-        if runtime.plan.cochain.prepared_id != self.hodge.cochain.prepared_id:
-            raise ValueError("Huygens surface Hodge does not match the runtime cochain.")
-        geometry = _surface_geometry_from_faces(self.hodge, np.asarray(self.faces))
-        electric_indices = np.asarray(geometry.electric_indices)
-        magnetic_indices = np.asarray(geometry.magnetic_indices)
-        # The runtime's constitutive factors compose with the Hodge factors.
+        if runtime.plan.cochain.realization_id != self.complex.realization_id:
+            raise ValueError(
+                "Huygens surface complex does not match the runtime complex."
+            )
+        geometry = _surface_geometry_from_faces(self.complex, np.asarray(self.faces))
         _surface_material(
             runtime.constitutive,
-            electric_indices,
-            magnetic_indices,
-            self.exterior.permittivity / self.hodge.permittivity,
-            self.exterior.permeability * self.hodge.inverse_permeability,
+            np.asarray(geometry.electric_indices),
+            np.asarray(geometry.magnetic_indices),
+            self.exterior.permittivity,
+            self.exterior.permeability,
+            cell_indices=None
+            if geometry.material_cells is None
+            else np.asarray(geometry.material_cells),
         )
         return PreparedMaxwellHuygensSurface(self, geometry)
 
 
+@final
 class PreparedMaxwellHuygensSurface(StrictModule):
     """Prepared tetrahedral Huygens surface; implements `MaxwellHuygensSampler`."""
 

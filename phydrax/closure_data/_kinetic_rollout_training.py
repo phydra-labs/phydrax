@@ -17,6 +17,8 @@ import numpy as np
 import optax
 from jax import Array
 
+from phydrax.optim._adam import adam
+
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import AbstractArrayModel, model_structure_recipe
@@ -259,7 +261,7 @@ class KineticRolloutTrainingPlan(StrictModule):
         )
 
     def optimizer(self, /) -> optax.GradientTransformation:
-        return optax.adam(self.learning_rate)
+        return adam(self.learning_rate)
 
     def scan_arguments(self, horizon: int, /) -> dict[str, Any]:
         horizon_ = _positive_integer(horizon, "horizon")

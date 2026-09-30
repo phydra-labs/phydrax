@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,10 +19,18 @@ from phydrax import ein
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....discretization import CellMesh, TetrahedralConnectivity, TetrahedralNedelecSpace
-from ._frequency_domain import ConductiveEMMaterial, FrequencyDomainEMSurvey
+from ....discretization import CellMesh, TetrahedralConnectivity
+from ....discretization.fem._de_rham import FiniteElementDeRhamComplex
+from ....linalg._complexes import coordinate_space
+from ._frequency_domain import (
+    _hx_preconditioner,
+    _material_stiffness,
+    ConductiveEMMaterial,
+    FrequencyDomainEMSurvey,
+)
 
 
+@final
 class TimeDomainEMState(StrictModule):
     electric: Array
     time_s: Array
@@ -29,6 +38,7 @@ class TimeDomainEMState(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+@final
 class TimeDomainEMResult(StrictModule):
     observations: Array
     final_state: TimeDomainEMState
@@ -37,6 +47,7 @@ class TimeDomainEMResult(StrictModule):
     successful: Array
 
 
+@final
 class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     """Backward-Euler quasistatic electric diffusion on tetrahedral H(curl).
 
@@ -45,7 +56,7 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     differentiation is a separate source model and is never inferred here.
     """
 
-    space: TetrahedralNedelecSpace
+    complex: FiniteElementDeRhamComplex
     survey: FrequencyDomainEMSurvey
     free_edges: Array
     reduced_space: la.ArraySpace
@@ -53,12 +64,12 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
-        space = TetrahedralNedelecSpace(mesh)
+        complex = FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
         if not isinstance(survey, FrequencyDomainEMSurvey):
             raise TypeError(
                 "Time-domain EM requires frequency-compatible source/receiver rows."
             )
-        if survey.electric_current_functionals.shape[1] != space.edge_count:
+        if survey.electric_current_functionals.shape[1] != complex.cell_counts[1]:
             raise ValueError("Time-domain EM survey does not match H(curl) edges.")
         connectivity = mesh.connectivity
         if not isinstance(connectivity, TetrahedralConnectivity):
@@ -69,9 +80,11 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
         free = np.flatnonzero(~boundary)
         if free.size == 0:
             raise ValueError("Time-domain EM mesh has no interior H(curl) edges.")
-        self.space, self.survey = space, survey
+        self.complex, self.survey = complex, survey
         self.free_edges = jnp.asarray(free, dtype=jnp.int32)
-        self.reduced_space = la.ArraySpace((free.size,), dtype=jnp.float64)
+        self.reduced_space = coordinate_space(
+            complex.hilbert_complex(boundary="relative").space(1)
+        )
         self.policy = la.LinearSolvePolicy(
             la.ConjugateGradient(),
             tolerance=la.TolerancePolicy(relative=1e-8, absolute=1e-11, max_steps=2000),
@@ -80,7 +93,7 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "implicit-time-domain-em",
-                "space": space.space_id,
+                "complex": complex.realization_id,
                 "survey": survey.survey_id,
             }
         )
@@ -90,7 +103,7 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
             jnp.zeros(
                 (
                     self.survey.electric_current_functionals.shape[0],
-                    self.space.edge_count,
+                    self.complex.cell_counts[1],
                 )
             ),
             jnp.asarray(0.0),
@@ -101,37 +114,38 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     def _operators(
         self, material: ConductiveEMMaterial, dt: Array
     ) -> tuple[
-        la.FunctionLinearOperator,
+        la.AbstractLinearOperator,
         Callable[[ArrayLike], Array],
         Callable[[ArrayLike], Array],
     ]:
+        mass_operator = self.complex.constitutive_operator(1, material.conductivity_S_m)
+        stiffness_operator = _material_stiffness(
+            self.complex, material.inverse_permeability_m_H
+        )
+
         def mass(field: ArrayLike) -> Array:
-            return self.space.mass_action(field, material.conductivity_S_m)
+            return mass_operator.mv(field)
 
         def stiffness(field: ArrayLike) -> Array:
-            return self.space.curl_curl_action(field, material.inverse_permeability_m_H)
+            return stiffness_operator.mv(field)
 
-        def action(reduced: Array) -> Array:
-            full = (
-                jnp.zeros((self.space.edge_count,), dtype=reduced.dtype)
-                .at[self.free_edges]
-                .set(reduced)
-            )
-            return (mass(full) / dt + stiffness(full))[self.free_edges]
-
-        operator = la.FunctionLinearOperator(
-            action,
-            source=self.reduced_space,
-            target=self.reduced_space,
-            properties=la.OperatorProperties(
+        relative_mass = self.complex.constitutive_operator(
+            1, material.conductivity_S_m, boundary="relative"
+        )
+        relative_stiffness = _material_stiffness(
+            self.complex, material.inverse_permeability_m_H, boundary="relative"
+        )
+        operator = (1.0 / dt) * relative_mass + relative_stiffness
+        operator = eqx.tree_at(
+            lambda value: value.properties,
+            operator,
+            la.OperatorProperties(
                 self_adjoint=True,
                 positive_definite=True,
-                evidence={
-                    "self_adjoint": "construction",
-                    "positive_definite": "construction",
-                },
+                evidence={"positive_definite": "construction"},
             ),
         )
+        operator = la.assemble_sparse(operator)
         return operator, mass, stiffness
 
     def step(
@@ -154,9 +168,15 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
             ~jnp.isfinite(dt) | (dt <= 0) | jnp.any(~jnp.isfinite(amplitudes)),
             "Time-domain EM timestep must be positive and sources finite.",
         )
-        if material.conductivity_S_m.shape[0] != self.space.cell_count:
+        if material.conductivity_S_m.shape[0] != self.complex.cell_counts[3]:
             raise ValueError("Time-domain EM material does not match mesh cells.")
         operator, mass, _ = self._operators(material, dt)
+        inverse = _hx_preconditioner(self.complex, operator)
+        policy = eqx.tree_at(
+            lambda value: value.preconditioning,
+            self.policy,
+            la.PreconditioningPolicy(inverse),
+        )
         fields, residuals, energies, successes = [], [], [], []
         for source, previous, amplitude in zip(
             self.survey.electric_current_functionals,
@@ -166,10 +186,10 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
         ):
             rhs_full = mass(previous) / dt + amplitude * source
             result = la.solve(
-                la.LinearSystem(operator), rhs_full[self.free_edges], policy=self.policy
+                la.LinearSystem(operator), rhs_full[self.free_edges], policy=policy
             )
             field = (
-                jnp.zeros((self.space.edge_count,), dtype=result.value.dtype)
+                jnp.zeros((self.complex.cell_counts[1],), dtype=result.value.dtype)
                 .at[self.free_edges]
                 .set(result.value)
             )

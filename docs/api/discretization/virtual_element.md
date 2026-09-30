@@ -24,6 +24,14 @@
 
 ::: phydrax.discretization.VirtualElementSpec
 
+`VirtualElementSpec` requires `value_spec=FormValueSpec(...)`; `value_shape` and
+form semantics are derived. Planar H(div) is twisted degree1 flux and H(curl) is
+untwisted degree1 circulation. Scalar H1/L2 fields remain untwisted zero-forms,
+not top-degree density. Reconstruction ports declare the same value spec.
+This is form typing of existing VEM families, not a VEM de Rham complex or a
+claim of three-dimensional vector families.
+
+
 ---
 
 ::: phydrax.discretization.conforming_h1_virtual_element

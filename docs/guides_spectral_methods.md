@@ -7,6 +7,22 @@ sampling theorems to a round-sphere support; neither path invents element topolo
 Local high-order tensor elements, mapped geometry, CG/DG coupling, and DGSEM
 live in the finite-element compiler; see [Spectral elements](guides_spectral_elements.md).
 
+## Spectral exterior complexes
+
+`FourierDeRhamComplex(space, nyquist_policy="zero-self-conjugate")` exposes
+compact admissible modal coordinates with Hermitian Parseval pairing. The policy
+must be supplied explicitly; forbidden/self-conjugate odd modes are excluded.
+`SphericalDeRhamComplex(space)` composes the spherical owner with independent real
+harmonics and normalized poloidal/toroidal modes, radius² pairing and Betti
+(1, 0, 1). Both expose `hilbert_complex(boundary="absolute")` and refuse relative
+boundary on their closed/periodic realization.
+
+Discrete `hodge_star` is a Riesz action to dual cochains; `metric_star` is the
+separate smooth complement rotation. Modal component axes remain explicit.
+These protocol views do not invent cell topology or replace spectral kernels.
+See [exterior complexes](api/exterior/complexes.md).
+
+
 ## Spaces and representations
 
 A basis plan owns mathematical modes. Preparing a tensor plan binds those modes to

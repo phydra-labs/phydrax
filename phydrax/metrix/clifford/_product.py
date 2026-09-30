@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from math import prod
 from operator import index
 from typing import Any, Literal, TypeAlias
 
@@ -17,6 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._basis import bitmap_axes, wedge_sign
 from ...typing import parse
 from ._blades import CliffordBladeLayout
 from ._reports import CliffordProductEvidence
@@ -53,14 +55,14 @@ def basis_blade_product(
         or right_value >= maximum_bitmap
     ):
         raise ValueError("Basis-blade bitmaps must lie in the Clifford algebra.")
-    left_axes = tuple(
-        axis for axis in range(algebra.dimension) if left_value & (1 << axis)
+    left_axes = bitmap_axes(left_value, algebra.dimension)
+    right_axes = bitmap_axes(right_value, algebra.dimension)
+    coefficient = prod(
+        wedge_sign((left,), (right,))
+        for left in left_axes
+        for right in right_axes
+        if left != right
     )
-    right_axes = tuple(
-        axis for axis in range(algebra.dimension) if right_value & (1 << axis)
-    )
-    inversions = sum(left > right for left in left_axes for right in right_axes)
-    coefficient = -1 if inversions % 2 else 1
     repeated = left_value & right_value
     for axis in range(algebra.dimension):
         if repeated & (1 << axis):

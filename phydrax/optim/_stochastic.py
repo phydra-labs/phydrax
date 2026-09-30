@@ -25,6 +25,7 @@ from .._tree_math import (
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
 from ..typing import parse, PRNGKey
+from ._adam import adam
 from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
@@ -707,7 +708,7 @@ class StochasticAdam(AbstractStochasticMethod):
         parameters = _validate_real_inexact_tree(initial_parameters, name="parameters")
         if problem.bounds is not None:
             parameters = problem.bounds.project(parameters)
-        optimizer = optax.adam(
+        optimizer = adam(
             self.learning_rate,
             b1=self.beta1,
             b2=self.beta2,

@@ -31,6 +31,24 @@ Phydrax provides complementary Maxwell substrates.
 
 ::: phydrax.solver.maxwell.PreparedCompatibleMaxwell
 
+`MaxwellCochainLayout` accepts any `AbstractDeRhamComplex` and records scientific
+role types: E/B are untwisted, H/D/J/charge are twisted dual roles even when
+stored through their primal inverse-star layout. `CompatibleMaxwellPlan` accepts
+cell realizations; CPML still explicitly requires a structured bridge.
+`PreparedCompatibleMaxwell.magnetic_flux(state)` returns constrained raw B for
+PIC's Lorentz force, not the constitutive H field. Metric and material operators
+remain separate.
+
+Linear Maxwell materials on real metric cochain spaces admit both real and
+native-complex fields and charges. The prepared runtime extends real magnetic
+incidence componentwise with `linalg.apply_real_map_componentwise`; it does not
+change the native paired-space dtype or discard imaginary charge. Both components
+participate in conservation constraints, and complex projection preserves the
+status and work of the real and imaginary native solves. For compiled constitutive
+frequency responses, pass the response as a dynamic PyTree to a plain JIT helper
+(see [the compatible Maxwell guide](../../guides_compatible_maxwell.md#cochain-roles)).
+
+
 ---
 
 ::: phydrax.solver.maxwell.CompatibleMaxwellRefreshSpec
@@ -602,3 +620,66 @@ difference and the truncation bound). The one-sided spectral energy per cell is
 ---
 
 ::: phydrax.solver.maxwell.fourier_modal.qualify_local_isotropic_medium
+
+## Sparse finite-element Maxwell
+
+`UnstructuredMaxwellPlan(complex, constitutive, /, *, spectral_upper_bound=None,
+courant_factor, boundary="absolute")` uses `FiniteElementDeRhamComplex` and
+separate `FiniteElementMaxwellConstitutivePlan` weighted coordinate Grams.
+Automatic CFL preparation applies native Lanczos to M1⁻¹K1 in the M1 Hilbert
+pairing, a faithful Riesz realization of the generalized (K1,M1) pencil—not a
+Euclidean self-adjoint relabeling. A guaranteed trace upper certificate bounds
+the spectrum; a largest Ritz value alone is not an upper bound.
+Repeated stepping reuses native device solve preparation.
+`PreparedUnstructuredMaxwell.mesh_quality` retains canonical meshing
+`CellQualityEvaluation` for FE geometry; a meshless abstract cochain has no
+fabricated quality report. The trace bound uses linear coordinate workspace,
+not a constant-byte claim. Cell/tensor material solves retain native solve
+evidence and explicit failure checks.
+
+Unstructured conducting PIC requires `boundary="relative"`; its Gauss correction
+uses the restricted metric inverse, never a masked full inverse. Whitney-2
+reconstruction gathers physical B without per-cell least squares.
+
+::: phydrax.solver.maxwell.UnstructuredMaxwellPlan
+
+::: phydrax.solver.maxwell.FiniteElementMaxwellConstitutivePlan
+
+## Matching and nonmatching Maxwell FEM–BEM
+
+`prepare_matching_maxwell_fem_bem_3d(complex, interior_operator, /, *,
+wavenumber, wave_impedance=1, boundary_policy=None, policy=None,
+residual_tolerance=1e-5)` automatically assembles the lowest-order trimmed
+tetrahedral n×E RWG trace, BC dual conormal and genuine BC EFIE boundary matrix.
+Its prepared artifact retains `rwg_trace`, `dual_trace`, `dual_conormal` and the
+physical `magnetic_conormal`, both block residuals and solver/geometry evidence.
+The upper block includes i k η Qᴴ G_BC⁻¹(G_BC/2 + K_BC), with the actual outgoing
+MFIE kernel and half jump; it is not Qᴴ alone. The BC Gram inverse uses native
+prepared PCG with failure propagated to outer status. Coordinate adjoint, finite
+quadrature envelope and boundary evidence remain explicit.
+
+`prepare_maxwell_fem_bem_3d(interior_operator, boundary, mortar, /, *, policy=None,
+residual_tolerance=1e-5)` consumes an explicitly typed volume/boundary mortar;
+`volume_complex` and `boundary_space` identities are required by its owner.
+The upper block uses magnetic conormal adjoint and the lower block weak trace.
+
+Caller-built periodic bounded-image boundary coupling remains supported with
+its finite-envelope evidence; it is not automatic periodic matching or
+infinite-lattice certification. A supplied periodic block alone is not a claim
+of automatic physical trace/conormal construction.
+
+::: phydrax.solver.prepare_matching_maxwell_fem_bem_3d
+
+::: phydrax.solver.prepare_maxwell_fem_bem_3d
+
+## Hodge–Laplace and cavity recipes
+
+::: phydrax.solver.HodgeLaplacePlan
+
+::: phydrax.solver.maxwell_cavity_modes
+
+`maxwell_cavity_modes` uses resource-bounded eager native full `DenseEigh`
+admission and selects positive/kernel-complement modes. It retains actual dense
+provenance, status, iterations/matvecs, per-mode convergence, effective count and
+conservative full-spectrum orthogonality evidence. It does not run a redundant
+LOBPCG stage or silently fall back from a failed iterative solve.

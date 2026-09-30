@@ -1,43 +1,40 @@
-#
-# Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
+"""Chart-callable smooth forms over the canonical exterior kernel."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from math import comb
+from typing import final
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..exterior import _algebra
+from ..exterior._basis import exterior_indices
+from ..exterior._form_type import FiberProduct, FormTwist, FormType
 from ._chart import CoordinateChart
-from ._exterior_basis import exterior_indices, wedge_sign
 from ._map import DifferentiableMap
 from ._metric import AbstractSemiRiemannianMetric
 from ._utils import _pointwise_array
 
 
-def _require_same_chart(
-    left: CoordinateChart,
-    right: CoordinateChart,
-    /,
-) -> None:
+def _require_same_chart(left: CoordinateChart, right: CoordinateChart, /) -> None:
     if not left.compatible_with(right):
         raise ValueError(
             f"Differential-form charts do not match: {left.name!r} and {right.name!r}."
         )
 
 
+@final
 class DifferentialForm(StrictModule):
-    """A coordinate differential form stored on increasing multi-indices."""
+    """Coefficients have shape ``(*batch,C(n,k),*fiber)`` at every degree."""
 
     coefficient_function: Callable[[Array], Array]
     chart: CoordinateChart
-    degree: int
-    indices: tuple[tuple[int, ...], ...]
+    form_type: FormType = eqx.field(static=True)
 
     def __init__(
         self,
@@ -46,226 +43,136 @@ class DifferentialForm(StrictModule):
         *,
         chart: CoordinateChart,
         degree: int,
+        twist: FormTwist = "untwisted",
+        fiber_shape: tuple[int, ...] = (),
     ) -> None:
-        degree_value = int(degree)
         if not callable(coefficients):
             raise TypeError("Differential-form coefficients must be callable.")
         if not isinstance(chart, CoordinateChart):
             raise TypeError("Differential-form chart must be a CoordinateChart.")
-        if degree_value < 0 or degree_value > chart.dimension:
-            raise ValueError(
-                f"Form degree must lie in [0, {chart.dimension}]; got {degree_value}."
-            )
+        form_type = FormType(
+            chart.dimension, degree, twist=twist, fiber_shape=fiber_shape
+        )
         self.coefficient_function = coefficients
         self.chart = chart
-        self.degree = degree_value
-        self.indices = exterior_indices(chart.dimension, degree_value)
+        self.form_type = form_type
+
+    @property
+    def degree(self) -> int:
+        return self.form_type.degree
+
+    @property
+    def twist(self) -> FormTwist:
+        return self.form_type.twist
+
+    @property
+    def fiber_shape(self) -> tuple[int, ...]:
+        return self.form_type.fiber_shape
+
+    @property
+    def indices(self) -> tuple[tuple[int, ...], ...]:
+        return exterior_indices(self.chart.dimension, self.degree)
 
     @property
     def coefficient_count(self) -> int:
-        return comb(self.chart.dimension, self.degree)
+        return self.form_type.component_count
 
     def _coefficients_point(self, coordinates: Array, /) -> Array:
         values = jnp.asarray(self.coefficient_function(coordinates))
-        if self.degree == 0 and values.shape == ():
-            values = values[None]
-        expected = (self.coefficient_count,)
-        if values.shape != expected:
+        if values.shape != self.form_type.value_shape:
             raise ValueError(
-                f"Degree-{self.degree} form coefficients must have shape {expected}; got {values.shape}."
+                f"Degree-{self.degree} form coefficients require shape {self.form_type.value_shape}; got {values.shape}."
             )
         return values
 
     def __call__(self, coordinates: ArrayLike, /) -> Array:
         return _pointwise_array(
-            self._coefficients_point,
-            coordinates,
-            self.chart.dimension,
+            self._coefficients_point, coordinates, self.chart.dimension
         )
 
 
+@final
 class _WedgeCoefficient(StrictModule):
     left: DifferentialForm
     right: DifferentialForm
-    left_terms: tuple[int, ...]
-    right_terms: tuple[int, ...]
-    output_terms: tuple[int, ...]
-    signs: tuple[int, ...]
-    output_count: int
+    product: FiberProduct = eqx.field(static=True)
 
-    def __init__(self, left: DifferentialForm, right: DifferentialForm, /) -> None:
-        output_indices = exterior_indices(
-            left.chart.dimension, left.degree + right.degree
-        )
-        output_lookup = {index: position for position, index in enumerate(output_indices)}
-        left_terms: list[int] = []
-        right_terms: list[int] = []
-        result_terms: list[int] = []
-        signs: list[int] = []
-        for left_position, left_index in enumerate(left.indices):
-            left_set = set(left_index)
-            for right_position, right_index in enumerate(right.indices):
-                if left_set.isdisjoint(right_index):
-                    left_terms.append(left_position)
-                    right_terms.append(right_position)
-                    result_terms.append(
-                        output_lookup[tuple(sorted(left_index + right_index))]
-                    )
-                    signs.append(wedge_sign(left_index, right_index))
-        self.left = left
-        self.right = right
-        self.left_terms = tuple(left_terms)
-        self.right_terms = tuple(right_terms)
-        self.output_terms = tuple(result_terms)
-        self.signs = tuple(signs)
-        self.output_count = len(output_indices)
+    def __init__(
+        self, left: DifferentialForm, right: DifferentialForm, product: FiberProduct, /
+    ) -> None:
+        self.left, self.right, self.product = left, right, product
 
     def __call__(self, coordinates: Array, /) -> Array:
-        left = self.left._coefficients_point(coordinates)
-        right = self.right._coefficients_point(coordinates)
-        left_terms = jnp.asarray(self.left_terms, dtype=jnp.int32)
-        right_terms = jnp.asarray(self.right_terms, dtype=jnp.int32)
-        output_terms = jnp.asarray(self.output_terms, dtype=jnp.int32)
-        signs = jnp.asarray(self.signs, dtype=left.dtype)
-        terms = signs * left[left_terms] * right[right_terms]
-        return (
-            jnp.zeros((self.output_count,), dtype=terms.dtype).at[output_terms].add(terms)
+        return _algebra.wedge(
+            self.left._coefficients_point(coordinates),
+            self.right._coefficients_point(coordinates),
+            self.left.form_type,
+            self.right.form_type,
+            product=self.product,
         )
 
 
+@final
 class _ExteriorDerivativeCoefficient(StrictModule):
     form: DifferentialForm
-    source_terms: tuple[int, ...]
-    derivative_axes: tuple[int, ...]
-    output_terms: tuple[int, ...]
-    signs: tuple[int, ...]
-    output_count: int
 
     def __init__(self, form: DifferentialForm, /) -> None:
-        output_indices = exterior_indices(form.chart.dimension, form.degree + 1)
-        source_lookup = {index: position for position, index in enumerate(form.indices)}
-        source_terms: list[int] = []
-        derivative_axes: list[int] = []
-        result_terms: list[int] = []
-        signs: list[int] = []
-        for output_position, output_index in enumerate(output_indices):
-            for position, axis in enumerate(output_index):
-                source_index = output_index[:position] + output_index[position + 1 :]
-                source_terms.append(source_lookup[source_index])
-                derivative_axes.append(axis)
-                result_terms.append(output_position)
-                signs.append(-1 if position % 2 else 1)
         self.form = form
-        self.source_terms = tuple(source_terms)
-        self.derivative_axes = tuple(derivative_axes)
-        self.output_terms = tuple(result_terms)
-        self.signs = tuple(signs)
-        self.output_count = len(output_indices)
 
     def __call__(self, coordinates: Array, /) -> Array:
-        derivative = jax.jacfwd(self.form._coefficients_point)(coordinates)
-        source_terms = jnp.asarray(self.source_terms, dtype=jnp.int32)
-        derivative_axes = jnp.asarray(self.derivative_axes, dtype=jnp.int32)
-        output_terms = jnp.asarray(self.output_terms, dtype=jnp.int32)
-        signs = jnp.asarray(self.signs, dtype=derivative.dtype)
-        terms = signs * derivative[source_terms, derivative_axes]
-        return (
-            jnp.zeros((self.output_count,), dtype=terms.dtype).at[output_terms].add(terms)
+        return _algebra.exterior_derivative_from_jacobian(
+            jax.jacfwd(self.form._coefficients_point)(coordinates), self.form.form_type
         )
 
 
+@final
 class _PullbackFormCoefficient(StrictModule):
     form: DifferentialForm
     map: DifferentiableMap
-    target_indices: tuple[tuple[int, ...], ...]
-    source_indices: tuple[tuple[int, ...], ...]
-
-    def __init__(self, form: DifferentialForm, map: DifferentiableMap, /) -> None:
-        self.form = form
-        self.map = map
-        self.target_indices = form.indices
-        self.source_indices = exterior_indices(map.source.dimension, form.degree)
-
-    def __call__(self, coordinates: Array, /) -> Array:
-        target_coordinates = self.map.map_function(coordinates)
-        coefficients = self.form._coefficients_point(target_coordinates)
-        if self.form.degree == 0:
-            return coefficients
-        jacobian = self.map.jacobian(coordinates)
-        target_indices = jnp.asarray(self.target_indices, dtype=jnp.int32)
-        source_indices = jnp.asarray(self.source_indices, dtype=jnp.int32)
-        rows = target_indices[:, None, :, None]
-        columns = source_indices[None, :, None, :]
-        minors = jacobian[rows, columns]
-        determinants = jnp.linalg.det(minors)
-        return jnp.sum(coefficients[:, None] * determinants, axis=0)
-
-
-class _InteriorProductCoefficient(StrictModule):
-    vector_field: Callable[[Array], Array]
-    form: DifferentialForm
-    vector_terms: tuple[int, ...]
-    source_terms: tuple[int, ...]
-    output_terms: tuple[int, ...]
-    signs: tuple[int, ...]
-    output_count: int
+    coorientation: int | None = eqx.field(static=True)
 
     def __init__(
-        self,
-        vector_field: Callable[[Array], Array],
-        form: DifferentialForm,
-        /,
+        self, form: DifferentialForm, map: DifferentiableMap, coorientation: int | None, /
     ) -> None:
-        output_indices = exterior_indices(form.chart.dimension, form.degree - 1)
-        source_lookup = {index: position for position, index in enumerate(form.indices)}
-        vector_terms: list[int] = []
-        source_terms: list[int] = []
-        result_terms: list[int] = []
-        signs: list[int] = []
-        for output_position, output_index in enumerate(output_indices):
-            output_set = set(output_index)
-            for axis in range(form.chart.dimension):
-                if axis in output_set:
-                    continue
-                source_index = tuple(sorted((axis,) + output_index))
-                insertion_position = source_index.index(axis)
-                vector_terms.append(axis)
-                source_terms.append(source_lookup[source_index])
-                result_terms.append(output_position)
-                signs.append(-1 if insertion_position % 2 else 1)
-        self.vector_field = vector_field
-        self.form = form
-        self.vector_terms = tuple(vector_terms)
-        self.source_terms = tuple(source_terms)
-        self.output_terms = tuple(result_terms)
-        self.signs = tuple(signs)
-        self.output_count = len(output_indices)
+        self.form, self.map, self.coorientation = form, map, coorientation
 
     def __call__(self, coordinates: Array, /) -> Array:
-        vector = jnp.asarray(self.vector_field(coordinates))
-        expected = (self.form.chart.dimension,)
-        if vector.shape != expected:
-            raise ValueError(
-                f"Interior-product vector field must have shape {expected}; got {vector.shape}."
-            )
-        coefficients = self.form._coefficients_point(coordinates)
-        vector_terms = jnp.asarray(self.vector_terms, dtype=jnp.int32)
-        source_terms = jnp.asarray(self.source_terms, dtype=jnp.int32)
-        output_terms = jnp.asarray(self.output_terms, dtype=jnp.int32)
-        signs = jnp.asarray(self.signs, dtype=coefficients.dtype)
-        terms = signs * vector[vector_terms] * coefficients[source_terms]
-        return (
-            jnp.zeros((self.output_count,), dtype=terms.dtype).at[output_terms].add(terms)
+        return _algebra.pullback(
+            self.form._coefficients_point(self.map.map_function(coordinates)),
+            self.form.form_type,
+            self.map.jacobian(coordinates),
+            coorientation=self.coorientation,
         )
 
 
+@final
+class _InteriorProductCoefficient(StrictModule):
+    vector_field: Callable[[Array], Array]
+    form: DifferentialForm
+
+    def __init__(
+        self, vector_field: Callable[[Array], Array], form: DifferentialForm, /
+    ) -> None:
+        self.vector_field, self.form = vector_field, form
+
+    def __call__(self, coordinates: Array, /) -> Array:
+        vector = jnp.asarray(self.vector_field(coordinates))
+        if vector.shape != (self.form.chart.dimension,):
+            raise ValueError(
+                "Interior vector field shape does not match chart dimension."
+            )
+        return _algebra.interior(
+            vector, self.form._coefficients_point(coordinates), self.form.form_type
+        )
+
+
+@final
 class _SumFormCoefficient(StrictModule):
     left: DifferentialForm
     right: DifferentialForm
 
     def __init__(self, left: DifferentialForm, right: DifferentialForm, /) -> None:
-        self.left = left
-        self.right = right
+        self.left, self.right = left, right
 
     def __call__(self, coordinates: Array, /) -> Array:
         return self.left._coefficients_point(
@@ -273,250 +180,213 @@ class _SumFormCoefficient(StrictModule):
         ) + self.right._coefficients_point(coordinates)
 
 
+@final
 class _ScaledFormCoefficient(StrictModule):
     form: DifferentialForm
-    scale: float
+    scale: int = eqx.field(static=True)
 
-    def __init__(self, form: DifferentialForm, scale: float, /) -> None:
-        self.form = form
-        self.scale = float(scale)
+    def __init__(self, form: DifferentialForm, scale: int, /) -> None:
+        self.form, self.scale = form, scale
 
     def __call__(self, coordinates: Array, /) -> Array:
         return self.scale * self.form._coefficients_point(coordinates)
 
 
+@final
+class _TwistCoefficient(StrictModule):
+    form: DifferentialForm
+    orientation: int = eqx.field(static=True)
+
+    def __init__(self, form: DifferentialForm, orientation: int, /) -> None:
+        self.form, self.orientation = form, orientation
+
+    def __call__(self, coordinates: Array, /) -> Array:
+        values = self.form._coefficients_point(coordinates)
+        match self.form.twist:
+            case "untwisted":
+                return _algebra.to_twisted(values, self.form.form_type, self.orientation)
+            case "twisted":
+                return _algebra.to_untwisted(
+                    values, self.form.form_type, self.orientation
+                )
+
+
+@final
 class _HodgeStarCoefficient(StrictModule):
     form: DifferentialForm
     metric: AbstractSemiRiemannianMetric
-    source_indices: tuple[tuple[int, ...], ...]
-    output_indices: tuple[tuple[int, ...], ...]
-    output_terms: tuple[int, ...]
-    signs: tuple[int, ...]
-    orientation: int
 
     def __init__(
-        self,
-        form: DifferentialForm,
-        metric: AbstractSemiRiemannianMetric,
-        orientation: int,
-        /,
+        self, form: DifferentialForm, metric: AbstractSemiRiemannianMetric, /
     ) -> None:
-        source = form.indices
-        output = exterior_indices(
-            form.chart.dimension, form.chart.dimension - form.degree
-        )
-        output_lookup = {index: position for position, index in enumerate(output)}
-        complements: list[tuple[int, ...]] = []
-        output_terms: list[int] = []
-        signs: list[int] = []
-        full = set(range(form.chart.dimension))
-        for source_index in source:
-            complement = tuple(sorted(full.difference(source_index)))
-            complements.append(complement)
-            output_terms.append(output_lookup[complement])
-            signs.append(wedge_sign(source_index, complement))
-        self.form = form
-        self.metric = metric
-        self.source_indices = source
-        self.output_indices = output
-        self.output_terms = tuple(output_terms)
-        self.signs = tuple(signs)
-        self.orientation = int(orientation)
+        self.form, self.metric = form, metric
 
     def __call__(self, coordinates: Array, /) -> Array:
-        coefficients = self.form._coefficients_point(coordinates)
-        source_indices = jnp.asarray(self.source_indices, dtype=jnp.int32)
-        if self.form.degree == 0:
-            paired = coefficients
-        else:
-            inverse = self.metric.inverse(coordinates)
-            rows = source_indices[:, None, :, None]
-            columns = source_indices[None, :, None, :]
-            induced_inverse = jnp.linalg.det(inverse[rows, columns])
-            paired = induced_inverse @ coefficients
-        signs = jnp.asarray(self.signs, dtype=coefficients.dtype)
-        output_terms = jnp.asarray(self.output_terms, dtype=jnp.int32)
-        values = (
-            self.orientation * self.metric.volume_density(coordinates) * signs * paired
-        )
-        return (
-            jnp.zeros((len(self.output_indices),), dtype=values.dtype)
-            .at[output_terms]
-            .set(values)
+        return _algebra.hodge_star(
+            self.form._coefficients_point(coordinates),
+            self.form.form_type,
+            self.metric.inverse(coordinates),
+            self.metric.volume_density(coordinates),
         )
 
 
-def wedge(left: DifferentialForm, right: DifferentialForm, /) -> DifferentialForm:
-    """Return the graded-antisymmetric wedge product."""
-    if not isinstance(left, DifferentialForm) or not isinstance(right, DifferentialForm):
-        raise TypeError("wedge requires two DifferentialForm instances.")
-    _require_same_chart(left.chart, right.chart)
-    degree = left.degree + right.degree
-    if degree > left.chart.dimension:
-        raise ValueError("Wedge-product degree exceeds the chart dimension.")
+def _form(
+    coefficients: Callable[[Array], Array], chart: CoordinateChart, form_type: FormType, /
+) -> DifferentialForm:
     return DifferentialForm(
-        _WedgeCoefficient(left, right),
-        chart=left.chart,
-        degree=degree,
+        coefficients,
+        chart=chart,
+        degree=form_type.degree,
+        twist=form_type.twist,
+        fiber_shape=form_type.fiber_shape,
     )
 
 
+def wedge(
+    left: DifferentialForm,
+    right: DifferentialForm,
+    /,
+    *,
+    product: FiberProduct = "scalar",
+) -> DifferentialForm:
+    if not isinstance(left, DifferentialForm) or not isinstance(right, DifferentialForm):
+        raise TypeError("wedge requires two DifferentialForm instances.")
+    _require_same_chart(left.chart, right.chart)
+    form_type = left.form_type.wedge_type(right.form_type, product=product)
+    return _form(_WedgeCoefficient(left, right, product), left.chart, form_type)
+
+
 def exterior_derivative(form: DifferentialForm, /) -> DifferentialForm:
-    """Return the metric-independent exterior derivative ``d form``."""
     if not isinstance(form, DifferentialForm):
         raise TypeError("exterior_derivative requires a DifferentialForm.")
-    if form.degree == form.chart.dimension:
-        raise ValueError("The exterior derivative of a top form is identically zero.")
-    return DifferentialForm(
+    return _form(
         _ExteriorDerivativeCoefficient(form),
-        chart=form.chart,
-        degree=form.degree + 1,
+        form.chart,
+        form.form_type.exterior_derivative_type(),
     )
 
 
 def pullback_form(
-    form: DifferentialForm,
-    map: DifferentiableMap,
-    /,
+    form: DifferentialForm, map: DifferentiableMap, /, *, coorientation: int | None = None
 ) -> DifferentialForm:
-    """Pull a form through a differentiable map using Jacobian minors."""
-    if not isinstance(form, DifferentialForm):
-        raise TypeError("pullback_form requires a DifferentialForm.")
-    if not isinstance(map, DifferentiableMap):
-        raise TypeError("pullback_form requires a DifferentiableMap.")
-    if not map.target.compatible_with(form.chart):
-        raise ValueError("Differentiable-map target chart must match the form chart.")
-    if form.degree > map.source.dimension:
-        raise ValueError("Form degree exceeds the source chart dimension.")
-    return DifferentialForm(
-        _PullbackFormCoefficient(form, map),
-        chart=map.source,
-        degree=form.degree,
+    if not isinstance(form, DifferentialForm) or not isinstance(map, DifferentiableMap):
+        raise TypeError("pullback_form requires a form and a DifferentiableMap.")
+    _require_same_chart(map.target, form.chart)
+    if form.twist == "twisted" and map.source.dimension != map.target.dimension:
+        _algebra._coorientation(coorientation)
+    form_type = FormType(
+        map.source.dimension, form.degree, twist=form.twist, fiber_shape=form.fiber_shape
+    )
+    return _form(
+        _PullbackFormCoefficient(form, map, coorientation), map.source, form_type
     )
 
 
 def interior_product(
-    vector_field: Callable[[Array], Array],
-    form: DifferentialForm,
-    /,
+    vector_field: Callable[[Array], Array], form: DifferentialForm, /
 ) -> DifferentialForm:
-    """Contract a vector field into the first slot of a positive-degree form."""
-    if not callable(vector_field):
-        raise TypeError("vector_field must be callable.")
-    if not isinstance(form, DifferentialForm):
-        raise TypeError("interior_product requires a DifferentialForm.")
-    if form.degree == 0:
-        raise ValueError("Interior product of a zero-form is identically zero.")
-    return DifferentialForm(
+    if not callable(vector_field) or not isinstance(form, DifferentialForm):
+        raise TypeError(
+            "Interior product requires a callable vector and a DifferentialForm."
+        )
+    return _form(
         _InteriorProductCoefficient(vector_field, form),
-        chart=form.chart,
-        degree=form.degree - 1,
+        form.chart,
+        form.form_type.interior_type(),
     )
 
 
 def _add_forms(left: DifferentialForm, right: DifferentialForm, /) -> DifferentialForm:
     _require_same_chart(left.chart, right.chart)
-    if left.degree != right.degree:
-        raise ValueError("Only equal-degree forms can be added.")
-    return DifferentialForm(
-        _SumFormCoefficient(left, right),
-        chart=left.chart,
-        degree=left.degree,
-    )
+    if left.form_type.form_type_id != right.form_type.form_type_id:
+        raise ValueError("Only forms with identical scientific types can be added.")
+    return _form(_SumFormCoefficient(left, right), left.chart, left.form_type)
 
 
 def lie_derivative(
-    vector_field: Callable[[Array], Array],
-    form: DifferentialForm,
-    /,
+    vector_field: Callable[[Array], Array], form: DifferentialForm, /
 ) -> DifferentialForm:
-    """Return Cartan's ``L_X form = d i_X form + i_X d form``."""
+    if not callable(vector_field) or not isinstance(form, DifferentialForm):
+        raise TypeError(
+            "Lie derivative requires a callable vector and a DifferentialForm."
+        )
     if form.degree == 0:
         return interior_product(vector_field, exterior_derivative(form))
     first = exterior_derivative(interior_product(vector_field, form))
     if form.degree == form.chart.dimension:
         return first
-    second = interior_product(vector_field, exterior_derivative(form))
-    return _add_forms(first, second)
+    return _add_forms(first, interior_product(vector_field, exterior_derivative(form)))
 
 
 def hodge_star(
-    form: DifferentialForm,
-    metric: AbstractSemiRiemannianMetric,
-    /,
-    *,
-    orientation: int = 1,
+    form: DifferentialForm, metric: AbstractSemiRiemannianMetric, /
 ) -> DifferentialForm:
-    """Return the Hodge dual for a nondegenerate metric and orientation."""
-    if not isinstance(form, DifferentialForm):
-        raise TypeError("hodge_star requires a DifferentialForm.")
-    if not isinstance(metric, AbstractSemiRiemannianMetric):
-        raise TypeError("hodge_star requires a nondegenerate metric.")
+    """Orientation-free Hodge star; tensor with the orientation line."""
+    if not isinstance(form, DifferentialForm) or not isinstance(
+        metric, AbstractSemiRiemannianMetric
+    ):
+        raise TypeError(
+            "hodge_star requires a DifferentialForm and a nondegenerate metric."
+        )
     _require_same_chart(form.chart, metric.chart)
-    if orientation not in (-1, 1):
-        raise ValueError("orientation must be +1 or -1.")
-    return DifferentialForm(
-        _HodgeStarCoefficient(form, metric, orientation),
-        chart=form.chart,
-        degree=form.chart.dimension - form.degree,
+    return _form(
+        _HodgeStarCoefficient(form, metric), form.chart, form.form_type.hodge_dual()
     )
 
 
 def codifferential(
-    form: DifferentialForm,
-    metric: AbstractSemiRiemannianMetric,
-    /,
-    *,
-    orientation: int = 1,
+    form: DifferentialForm, metric: AbstractSemiRiemannianMetric, /
 ) -> DifferentialForm:
-    """Return the metric codifferential under the declared orientation."""
-    if not isinstance(form, DifferentialForm):
-        raise TypeError("codifferential requires a DifferentialForm.")
-    if not isinstance(metric, AbstractSemiRiemannianMetric):
-        raise TypeError("codifferential requires a nondegenerate metric.")
-    _require_same_chart(form.chart, metric.chart)
-    if orientation not in (-1, 1):
-        raise ValueError("orientation must be +1 or -1.")
-    if form.degree == 0:
-        return DifferentialForm(
-            lambda coordinates: jnp.zeros((1,), dtype=coordinates.dtype),
-            chart=form.chart,
-            degree=0,
+    """Metric adjoint delta, preserving twist and refusing degree zero."""
+    if not isinstance(form, DifferentialForm) or not isinstance(
+        metric, AbstractSemiRiemannianMetric
+    ):
+        raise TypeError(
+            "codifferential requires a DifferentialForm and a nondegenerate metric."
         )
-    first = hodge_star(form, metric, orientation=orientation)
-    derivative = exterior_derivative(first)
-    result = hodge_star(derivative, metric, orientation=orientation)
-    exponent = form.chart.dimension * (form.degree + 1) + metric.signature.index + 1
-    sign = -1 if exponent % 2 else 1
-    return DifferentialForm(
-        _ScaledFormCoefficient(result, sign),
-        chart=form.chart,
-        degree=form.degree - 1,
-    )
+    _require_same_chart(form.chart, metric.chart)
+    form_type = form.form_type.codifferential_type()
+    result = hodge_star(exterior_derivative(hodge_star(form, metric)), metric)
+    sign = _algebra.codifferential_sign(form.form_type, metric.signature.index)
+    return _form(_ScaledFormCoefficient(result, sign), form.chart, form_type)
 
 
 def hodge_laplacian(
-    form: DifferentialForm,
-    metric: AbstractSemiRiemannianMetric,
-    /,
-    *,
-    orientation: int = 1,
+    form: DifferentialForm, metric: AbstractSemiRiemannianMetric, /
 ) -> DifferentialForm:
-    """Return ``d δ form + δ d form`` for a nondegenerate metric."""
-    if not isinstance(form, DifferentialForm):
-        raise TypeError("hodge_laplacian requires a DifferentialForm.")
-    if not isinstance(metric, AbstractSemiRiemannianMetric):
-        raise TypeError("hodge_laplacian requires a nondegenerate metric.")
+    if not isinstance(form, DifferentialForm) or not isinstance(
+        metric, AbstractSemiRiemannianMetric
+    ):
+        raise TypeError("hodge_laplacian requires a form and a nondegenerate metric.")
     _require_same_chart(form.chart, metric.chart)
-    if orientation not in (-1, 1):
-        raise ValueError("orientation must be +1 or -1.")
     if form.degree == 0:
-        return codifferential(exterior_derivative(form), metric, orientation=orientation)
-    first = exterior_derivative(codifferential(form, metric, orientation=orientation))
+        return codifferential(exterior_derivative(form), metric)
+    first = exterior_derivative(codifferential(form, metric))
     if form.degree == form.chart.dimension:
         return first
-    second = codifferential(exterior_derivative(form), metric, orientation=orientation)
-    return _add_forms(first, second)
+    return _add_forms(first, codifferential(exterior_derivative(form), metric))
+
+
+def to_untwisted(form: DifferentialForm, orientation: int, /) -> DifferentialForm:
+    if not isinstance(form, DifferentialForm):
+        raise TypeError("to_untwisted requires a DifferentialForm.")
+    if form.twist != "twisted":
+        raise ValueError("to_untwisted requires a twisted form.")
+    sign = _algebra._coorientation(orientation)
+    return _form(
+        _TwistCoefficient(form, sign), form.chart, form.form_type.with_twist("untwisted")
+    )
+
+
+def to_twisted(form: DifferentialForm, orientation: int, /) -> DifferentialForm:
+    if not isinstance(form, DifferentialForm):
+        raise TypeError("to_twisted requires a DifferentialForm.")
+    if form.twist != "untwisted":
+        raise ValueError("to_twisted requires an untwisted form.")
+    sign = _algebra._coorientation(orientation)
+    return _form(
+        _TwistCoefficient(form, sign), form.chart, form.form_type.with_twist("twisted")
+    )
 
 
 __all__ = [
@@ -528,5 +398,7 @@ __all__ = [
     "interior_product",
     "lie_derivative",
     "pullback_form",
+    "to_untwisted",
+    "to_twisted",
     "wedge",
 ]

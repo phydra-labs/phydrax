@@ -15,6 +15,9 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_complex import simplicial_cell_complex
+from ..discretization._topology import CellComplexTopology
+from ..sparse._linear import SparseLinearMap
 
 
 class ChargedGaugeState(StrictModule):
@@ -35,7 +38,11 @@ class ChargedGaugeEvidence(StrictModule):
 class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
     edges: Array
     edge_lengths: Array
-    face_edge_incidence: Array
+    topology: CellComplexTopology
+    face_derivative: SparseLinearMap
+    edge_orientations: Array
+    face_orientations: Array
+    vertex_count: int = eqx.field(static=True)
     coupling: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -64,17 +71,27 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
             or coupling_ == 0.0
         ):
             raise ValueError("Charged gauge mesh or coupling is invalid.")
-        incidence = np.zeros((faces_.shape[0], edges_.shape[0]), dtype=np.float64)
-        lookup = {
-            tuple(int(value) for value in edge): index
-            for index, edge in enumerate(edges_.tolist())
-        }
-        for face_index, face_values in enumerate(faces_.tolist()):
-            face = tuple(int(value) for value in face_values)
-            for first, second in zip(face, face[1:] + face[:1], strict=True):
-                canonical = tuple(sorted((first, second)))
-                edge_index = lookup[canonical]
-                incidence[face_index, edge_index] = 1.0 if first < second else -1.0
+        if (
+            np.any(edges_ < 0)
+            or np.any(edges_ >= vertices_.shape[0])
+            or np.any(faces_ < 0)
+            or np.any(faces_ >= vertices_.shape[0])
+        ):
+            raise ValueError("Charged gauge connectivity indexes outside the vertex set.")
+        topology = simplicial_cell_complex(
+            (
+                np.arange(vertices_.shape[0], dtype=np.int32)[:, None],
+                np.sort(edges_, axis=1),
+                np.sort(faces_, axis=1),
+            )
+        )
+        edge_signs = np.where(edges_[:, 0] < edges_[:, 1], 1, -1)
+        inversions = (
+            (faces_[:, 0] > faces_[:, 1]).astype(np.int32)
+            + (faces_[:, 0] > faces_[:, 2]).astype(np.int32)
+            + (faces_[:, 1] > faces_[:, 2]).astype(np.int32)
+        )
+        face_signs = np.where(inversions % 2 == 0, 1, -1)
         lengths = np.linalg.norm(
             vertices_[edges_[:, 1]] - vertices_[edges_[:, 0]], axis=-1
         )
@@ -82,7 +99,11 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
             raise ValueError("Charged gauge edges must have positive length.")
         self.edges = jnp.asarray(edges_)
         self.edge_lengths = jnp.asarray(lengths)
-        self.face_edge_incidence = jnp.asarray(incidence)
+        self.topology = topology
+        self.face_derivative = topology.incidences[1].exterior_derivative()
+        self.edge_orientations = jnp.asarray(edge_signs, dtype=jnp.int32)
+        self.face_orientations = jnp.asarray(face_signs, dtype=jnp.int32)
+        self.vertex_count = vertices_.shape[0]
         self.coupling = coupling_
         self.plan_id = canonical_fingerprint(
             {
@@ -99,8 +120,9 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
     ) -> ChargedGaugeState:
         scalar_ = jnp.asarray(scalar)
         potential = jnp.asarray(vector_potential, dtype=jnp.real(scalar_).dtype)
-        vertex_count = int(jnp.max(self.edges)) + 1
-        if scalar_.shape != (vertex_count,) or potential.shape != (self.edges.shape[0],):
+        if scalar_.shape != (self.vertex_count,) or potential.shape != (
+            self.edges.shape[0],
+        ):
             raise ValueError("Charged scalar or vector-potential shape is invalid.")
         if not jnp.iscomplexobj(scalar_):
             raise TypeError("Charged scalar field must be complex-valued.")
@@ -117,7 +139,9 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
         return (link * state.scalar[second] - state.scalar[first]) / self.edge_lengths
 
     def curvature(self, state: ChargedGaugeState, /) -> Array:
-        return self.face_edge_incidence @ state.vector_potential
+        return self.face_orientations * self.face_derivative.mv(
+            self.edge_orientations * state.vector_potential
+        )
 
     def transform(
         self, state: ChargedGaugeState, parameter: ArrayLike, /

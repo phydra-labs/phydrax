@@ -6,6 +6,7 @@
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
 from . import polynomial as polynomial
+from ._adam import adam
 from ._anchored_target import (
     AnchoredResponseModel,
     AnchoredTargetMethod,
@@ -543,6 +544,7 @@ from ._variable_projection import (
 
 
 __all__ = [
+    "adam",
     "polynomial",
     "AbstractConvexCone",
     "AbstractMixedIntegerMethod",

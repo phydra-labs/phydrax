@@ -44,6 +44,7 @@ from ._assembly import (
     SparseAssemblyPlan,
     SparseAssemblyPolicy,
 )
+from ._auxiliary_space import hiptmair_xu_preconditioner_builder
 from ._binding import LinearSolveTemplate
 from ._block_preconditioning import (
     BlockFactorizationForm,
@@ -58,6 +59,33 @@ from ._certificates import (
     SpectralInterval,
     StabilityLowerBound,
 )
+from ._complexes import (
+    codifferential,
+    complex_map_evidence,
+    complex_nilpotency_evidence,
+    ComplexMap,
+    ComplexMapEvidence,
+    ComplexNilpotencyEvidence,
+    coordinate_operator,
+    coordinate_space,
+    harmonic_subspace,
+    HarmonicSubspace,
+    HarmonicSubspacePolicy,
+    HilbertComplex,
+    hodge_decomposition,
+    hodge_laplacian,
+    hodge_laplacian_form,
+    HodgeDecomposition,
+    HodgeDecompositionPolicy,
+    HodgeLaplacianOperator,
+    HodgeLaplacianPart,
+    mass_form,
+    mixed_hodge_laplacian,
+    prepare_hodge_decomposition,
+    PreparedHodgeDecomposition,
+    stiffness_form,
+)
+from ._compound import compound_matrix
 from ._constraint_operators import (
     ConstraintFactorizationKind,
     ConstraintOperatorEvidence,
@@ -149,7 +177,6 @@ from ._factorizations import (
     refresh_factorization,
 )
 from ._geophysical_preconditioners import (
-    hcurl_auxiliary_space_preconditioner,
     porous_cpr_preconditioner,
     shifted_helmholtz_preconditioner,
 )
@@ -714,6 +741,32 @@ from .krylov import (
 
 
 __all__ = [
+    "compound_matrix",
+    "ComplexMap",
+    "ComplexMapEvidence",
+    "ComplexNilpotencyEvidence",
+    "HarmonicSubspace",
+    "HarmonicSubspacePolicy",
+    "HilbertComplex",
+    "HodgeDecomposition",
+    "HodgeDecompositionPolicy",
+    "HodgeLaplacianOperator",
+    "HodgeLaplacianPart",
+    "PreparedHodgeDecomposition",
+    "codifferential",
+    "complex_map_evidence",
+    "complex_nilpotency_evidence",
+    "coordinate_operator",
+    "coordinate_space",
+    "harmonic_subspace",
+    "hodge_decomposition",
+    "hodge_laplacian",
+    "hodge_laplacian_form",
+    "mass_form",
+    "mixed_hodge_laplacian",
+    "prepare_hodge_decomposition",
+    "stiffness_form",
+    "hiptmair_xu_preconditioner_builder",
     "LocalBlockFactorization",
     "LocalBlockFactorizationKind",
     "LocalBlockSolveResult",
@@ -1308,7 +1361,6 @@ __all__ = [
     "factorization_inertia",
     "verify_dense_properties",
     "prepare_real_coordinate_tree",
-    "hcurl_auxiliary_space_preconditioner",
     "porous_cpr_preconditioner",
     "shifted_helmholtz_preconditioner",
 ]

@@ -20,6 +20,34 @@ A one-cell-thick three-dimensional grid is neither the implementation nor the
 qualification oracle for a reduced model. Material tensors that couple retained and
 suppressed components fail during preparation.
 
+Storage degree is not the scientific dual degree. `MaxwellCochainLayout`
+declares E/B untwisted and H/D/J/charge twisted roles explicitly. A cell
+realization supplies `hilbert_complex(boundary=...)`; material coefficients
+remain separate from its metric-only Hodge pairing. CPML requires the structured
+bridge. PIC uses `magnetic_flux(state)` to gather constrained physical B, not H.
+
+Real metric cochain spaces admit native-complex E/D/B/H and charge for linear
+Maxwell materials, including compiled cell and structured-stencil steps. Real
+incidence and metric maps act separately on real and imaginary components through
+the native linear-algebra extension; their paired spaces and real material
+coefficients are not relabeled or cast to fictitious complex coefficients.
+Constitutive H remains B/μ, Gauss and magnetic closedness include both components,
+and a projected complex magnetic constraint retains both real solves' status and
+iteration evidence. Nonlinear materials retain their own field-admission rules.
+
+For JIT frequency-response evaluation, pass the prepared response as a dynamic
+PyTree argument to a plain compiled function, rather than compiling its bound
+method (which would require hashing the array-bearing module):
+
+```python
+@jax.jit
+def frequency_fields(response, electric, flux):
+    return response.electric_displacement(electric), response.magnetic_field(flux)
+
+displacement, magnetic = frequency_fields(material.frequency_response(omega), electric, flux)
+```
+
+
 ## Magnetic closedness
 
 Pure Faraday forcing preserves the magnetic Gauss law because the next exterior
@@ -133,9 +161,11 @@ surface-cell centers. Tangential `E` is the mean of the two bounding edge circul
 per unit length, and tangential `H` the mean of the four face fluxes that straddle the
 surface plane, per unit area; both are gathered through prepared
 `phydrax.sparse.SparseLinearMap` operators. On tetrahedral meshes
-`MaxwellHuygensSurfacePlan(hodge, faces, acquisition, exterior)` takes a closed,
-consistently oriented set of interior faces and reconstructs the tangential fields with
-Whitney edge and face elements averaged over the two adjacent cells.
+`MaxwellHuygensSurfacePlan(complex, faces, acquisition, exterior)` takes a
+lowest-order trimmed tetrahedral `FiniteElementDeRhamComplex` and a closed,
+consistently oriented interior face set. Whitney reconstruction averages the two
+adjacent cells; H comes from the runtime constitutive field, never permeability
+hidden in a metric Hodge.
 
 `MaxwellFarFieldPlan(directions, reference_axis, exterior)` forms the equivalent
 currents `J = n̂ × H̃` and `M = −n̂ × Ẽ`, their radiation vectors `N` and `L`, and
@@ -344,3 +374,17 @@ closedness, harmonic periods, energy/power balance, TEz/TMz analytic and invaria
 convergence, CPML reflection over frequency/angle/polarization/corners, paired-source
 directionality and power, and directional derivatives for every advertised control.
 Finite output alone is characterization, not validation.
+
+## Finite-element and FEM–BEM routes
+
+Sparse FE Maxwell binds a `FiniteElementDeRhamComplex` to separate weighted
+constitutive forms through `UnstructuredMaxwellPlan`. Conducting unstructured PIC
+sets `boundary="relative"` explicitly and retains restricted-inverse Gauss
+correction, facet-split current and Whitney-2 physical magnetic gather.
+
+`prepare_matching_maxwell_fem_bem_3d` constructs actual lowest-order
+tetrahedral n×E trace, BC dual conormal and boundary operators. The nonmatching
+route retains scientific volume/boundary mortar identities and both block
+residuals. Caller-built periodic bounded-image coupling is a separate envelope,
+not automatic periodic/infinite-lattice matching. See
+[Maxwell APIs](api/solver/maxwell.md#matching-and-nonmatching-maxwell-fembem).

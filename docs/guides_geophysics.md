@@ -133,11 +133,11 @@ coefficients are not silently folded into wavespeed.
 
 ## Electromagnetics
 
-`TetrahedralNedelecSpace` supplies oriented lowest-order edge degrees of freedom,
-covariant Piola mapping, mass and curl–curl actions, and discrete grad–curl–div exact
-sequence checks. `FrequencyDomainEMPlan` uses the conductive exp(-i omega t)
-convention and removes PEC boundary edges. Primary–secondary forcing is exactly the
-background/operator difference applied to a background solution.
+`FiniteElementDeRhamComplex` supplies oriented circulation degrees of freedom,
+covariant mapping and exact sparse d. Metric Hodges are separate from conductive
+constitutive coordinate forms. `FrequencyDomainEMPlan` uses the exp(−iωt)
+convention and the relative PEC boundary. Primary–secondary forcing is exactly
+the background/operator difference applied to a background solution.
 
 `ImplicitTimeDomainEMPlan` advances quasistatic conductive diffusion. Full-wave GPR
 instead wraps the compatible-Maxwell displacement-current solver, requires passive

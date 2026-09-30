@@ -198,7 +198,7 @@ def test_neumann_charge_balance_recovers_quadratic_potential_and_gauge() -> None
     bridge = phx.discretization.StructuredCochainBridge(grid)
     # ty: ignore[not-subscriptable]
     coordinate = bridge.cochain.coordinates[0][:, 0]
-    volumes = bridge.cochain.hodge_stars[0]
+    volumes = bridge.cochain.hodge_diagonal(0)
     # phi=x^2: rho=-2; outward grad(phi)=2 on the right boundary.
     source = jnp.zeros_like(coordinate).at[-1].set(2.0 / volumes[-1])
     boundary = phx.solver.CochainElectrostaticBoundaryPlan.neumann(bridge, source)

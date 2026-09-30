@@ -14,6 +14,14 @@ cell volume × state rate = -oriented integrated face flux + volume source
 Internal face contributions therefore cancel exactly. Grid geometry, physical systems,
 numerical methods, boundaries, and time integration remain separate objects.
 
+`PreparedMACOperators.hilbert_complex_slice()` exposes native face/cell spaces
+and divergence D with inactive wall faces excluded; its Hilbert adjoint is −G.
+This is a view over the existing MAC pairing and kernels, not a replacement
+finite-volume time step or a claim that collocated SBP is a de Rham complex.
+Mapped free-surface face pairings use the kinetic-energy Hessian Riesz owner;
+native inverse-Hodge status reaches projection and stage evidence.
+
+
 ## Scalar conservation law
 
 ```python

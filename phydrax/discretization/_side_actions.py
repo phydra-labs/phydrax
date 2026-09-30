@@ -36,6 +36,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, positive_integer
+from ..exterior._form_type import FormType, FormValueSpec
 from ..linalg import (
     AbstractLinearOperator,
     AbstractPairing,
@@ -51,7 +52,12 @@ from ..linalg import (
 )
 from ..typing import ConvertibleToArray, parse
 from ._integration_domain import IntegrationDomain
-from ._reference_cell import FacetShape
+from ._reference_cell import (
+    _NamedFacetShape,
+    FacetShape,
+    reference_cell_topology,
+    ReferenceCellTopology,
+)
 from ._views import FieldTraceSide
 
 
@@ -129,9 +135,57 @@ class FacetTraceRule(StrictModule, NonTrainableState):
         weights = np.asarray(data.weights, dtype=np.float64)
         return 0.5 * (nodes + 1.0), 0.5 * weights
 
+    def _descriptor_reference(
+        self, shape: ReferenceCellTopology, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        from .._polynomial._cubature import simplex_rule_data, tensor_product_rule_data
+
+        if shape != reference_cell_topology(shape.name):
+            raise ValueError("Facet reference topology must be canonical.")
+        dimension = shape.dimension
+        if dimension == 0:
+            return np.zeros((1, 0), dtype=np.float64), np.ones((1,), dtype=np.float64)
+        if shape.name.startswith("simplex:") or shape.name in (
+            "interval",
+            "triangle",
+            "tetrahedron",
+        ):
+            if self.family != "gauss-legendre":
+                raise ValueError("Simplex facets use collapsed Gauss-Legendre rules.")
+            degree = 2 * self.points - dimension
+            if degree < 0:
+                raise ValueError(
+                    "Facet points are insufficient to integrate the simplex measure."
+                )
+            rule = simplex_rule_data(dimension, degree)
+        elif shape.name.startswith("tensor:") or shape.name in (
+            "quadrilateral",
+            "hexahedron",
+        ):
+            match self.family:
+                case "gauss-legendre":
+                    rule = tensor_product_rule_data(
+                        dimension, self.points, family="gauss"
+                    )
+                case "gauss-lobatto-legendre":
+                    rule = tensor_product_rule_data(
+                        dimension, self.points, family="lobatto"
+                    )
+                case _:
+                    assert_never(self.family)
+        else:
+            raise ValueError(
+                "Facet quadrature requires a simplex or tensor reference topology."
+            )
+        return np.asarray(rule.points, dtype=np.float64), np.asarray(
+            rule.weights, dtype=np.float64
+        )
+
     def reference(self, shape: FacetShape, /) -> tuple[np.ndarray, np.ndarray]:
         """Return host `(parameters, weights)` on the unit reference facet."""
-        shape = parse(shape, FacetShape, "shape")
+        if isinstance(shape, ReferenceCellTopology):
+            return self._descriptor_reference(shape)
+        shape = parse(shape, _NamedFacetShape, "shape")
         match shape:
             case "point":
                 return np.zeros((1, 0), dtype=np.float64), np.ones((1,), np.float64)
@@ -160,7 +214,39 @@ class FacetTraceRule(StrictModule, NonTrainableState):
 
     def exact_degree(self, shape: FacetShape, /) -> int | None:
         """Total polynomial degree integrated exactly (`None` for point facets)."""
-        shape = parse(shape, FacetShape, "shape")
+        if isinstance(shape, ReferenceCellTopology):
+            if shape != reference_cell_topology(shape.name):
+                raise ValueError("Facet reference topology must be canonical.")
+            if shape.dimension == 0:
+                return None
+            if shape.name.startswith("simplex:") or shape.name in (
+                "interval",
+                "triangle",
+                "tetrahedron",
+            ):
+                if self.family != "gauss-legendre":
+                    raise ValueError("Simplex facets use collapsed Gauss-Legendre rules.")
+                degree = 2 * self.points - shape.dimension
+                if degree < 0:
+                    raise ValueError(
+                        "Facet points are insufficient to integrate the simplex measure."
+                    )
+                return degree
+            if shape.name.startswith("tensor:") or shape.name in (
+                "quadrilateral",
+                "hexahedron",
+            ):
+                match self.family:
+                    case "gauss-legendre":
+                        return 2 * self.points - 1
+                    case "gauss-lobatto-legendre":
+                        return 2 * self.points - 3
+                    case _:
+                        assert_never(self.family)
+            raise ValueError(
+                "Facet quadrature requires a simplex or tensor reference topology."
+            )
+        shape = parse(shape, _NamedFacetShape, "shape")
         match shape:
             case "point":
                 return None
@@ -509,6 +595,7 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
     weights: Array
     normals: Array
     support_rows: Array
+    form: FormValueSpec | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -521,6 +608,7 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
         weights: ConvertibleToArray,
         normals: ConvertibleToArray,
         support_rows: ConvertibleToArray,
+        form: FormValueSpec | None = None,
     ) -> None:
         if not isinstance(descriptor, SideActionDescriptor):
             raise TypeError("descriptor must be a SideActionDescriptor.")
@@ -549,6 +637,11 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
         weights_ = np.asarray(weights)
         normals_ = np.asarray(normals)
         output = route.output_shape
+        if form is not None:
+            if not isinstance(form, FormValueSpec):
+                raise TypeError("form must be FormValueSpec or None.")
+            if form.value_shape != output[2:]:
+                raise ValueError("The trace form proxy must match the route value shape.")
         if sites_.ndim != 3 or sites_.shape[:2] != output[:2]:
             raise ValueError(
                 "Sites must have shape (facets, sites_per_facet, dimension)."
@@ -574,10 +667,16 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
         self.weights = jnp.asarray(weights_)
         self.normals = jnp.asarray(normals_)
         self.support_rows = jnp.asarray(rows)
+        self.form = form
 
     @property
     def value_shape(self) -> tuple[int, ...]:
         return self.route.output_shape[2:]
+
+    @property
+    def form_type(self) -> FormType | None:
+        """Declared intrinsic form semantics, absent for non-form traces."""
+        return None if self.form is None else self.form.form_type
 
     @property
     def row_shape(self) -> tuple[int, ...]:
@@ -599,7 +698,15 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
 
     @property
     def action_id(self) -> str:
-        return self.descriptor.descriptor_id
+        if self.form is None:
+            return self.descriptor.descriptor_id
+        return canonical_fingerprint(
+            {
+                "kind": "form-side-trace-action",
+                "descriptor": self.descriptor.descriptor_id,
+                "form": self.form.value_spec_id,
+            }
+        )
 
     def require_revision(self, revision_id: str, /) -> None:
         """Refuse a geometry realization other than the prepared one."""

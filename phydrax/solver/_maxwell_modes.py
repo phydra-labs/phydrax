@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import StructuredCochainBridge
+from ..discretization import AbstractCellDeRhamComplex
 from ..linalg import ArraySpace, DenseLinearOperator, eigen as eigen_linalg, FailurePolicy
 from ._maxwell_observers import ModeAmplitudeObserverPlan
 from ._maxwell_sources import (
@@ -774,7 +774,7 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
         )
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: MaxwellCochainLayout, /
+        self, bridge: AbstractCellDeRhamComplex, layout: MaxwellCochainLayout, /
     ) -> PreparedMaxwellSource:
         return self.paired.prepare(bridge, layout)
 

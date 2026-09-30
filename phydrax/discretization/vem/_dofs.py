@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._form_type import FormValueSpec
 from ...sparse import RowRelation
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
@@ -29,6 +30,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
     relations: tuple[RowRelation, ...]
     orientations: tuple[Array, ...]
     family: str = eqx.field(static=True)
+    value_spec: FormValueSpec = eqx.field(static=True)
     vertex_dof_count: int = eqx.field(static=True)
     edge_dof_count: int = eqx.field(static=True)
     cell_dof_count: int = eqx.field(static=True)
@@ -45,6 +47,8 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             )
         if not isinstance(element, VirtualElementSpec):
             raise TypeError("element must be VirtualElementSpec.")
+        if element.form_type.dimension != mesh.topological_dimension:
+            raise ValueError("Virtual-element form dimension must match the mesh.")
         connectivity = mesh.connectivity
         topology_vertex_count = mesh.coordinates.shape[0]
         edge_count = connectivity.edges.shape[0]
@@ -133,6 +137,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         self.relations = tuple(relations)
         self.orientations = tuple(block_orientations)
         self.family = element.family
+        self.value_spec = element.value_spec
         self.vertex_dof_count = vertex_dof_count
         self.edge_dof_count = edge_dof_count
         self.cell_dof_count = cell_dof_count

@@ -35,6 +35,7 @@ from ._constraints import (
     FiniteElementLinearConstraint,
     periodic_constraint,
 )
+from ._de_rham import FiniteElementDeRhamComplex
 from ._distributed import (
     CostAwareFiniteElementPartition,
     distributed_finite_element_mortar_plan,
@@ -64,6 +65,8 @@ from ._fast_diagonalization import (
     TensorFastDiagonalizationBuilder,
     TensorFastDiagonalizationPreconditioner,
 )
+from ._form_elements import DofLabel, form_element, FormBasis, FormElementFamily
+from ._form_reconstruction import FormFieldReconstructionKernel
 from ._generic import (
     assemble_masked_finite_element,
     constrain_masked_dofs,
@@ -204,7 +207,6 @@ from ._multigrid import (
     PTransferRole,
     quadrilateral_p_transfer,
 )
-from ._nedelec_tetrahedron import TetrahedralNedelecSpace
 from ._p_multigrid import (
     finite_element_p_multigrid_plan,
     FiniteElementPMultigridPlan,
@@ -238,10 +240,11 @@ from ._recovery import (
 )
 from ._reference import (
     discontinuous_element,
+    ElementConformity,
+    ElementContinuity,
+    ElementMapping,
     FiniteElementSpec,
     lagrange_element,
-    nedelec_element,
-    raviart_thomas_element,
 )
 from ._reference_operator import (
     FiniteElementFacetReference,
@@ -267,13 +270,10 @@ from ._sbp import (
     MetricFacePair,
     TensorGLLSBPPlan,
 )
-from ._simplex_hdiv import tetrahedral_bdm_element, tetrahedral_rt_element
+from ._simplicial_whitney_chains import SimplicialWhitneyKernel
 from ._spectral_hp_completion import (
     AnisotropicHPattern,
     compact_hp_forest,
-    CompatibleAuxiliaryMultigrid,
-    CompatibleMortarPlan,
-    CompatibleTraceConstraint,
     ConservativeMovingInterfaceTransfer,
     GeometryOrderAdaptation,
     HybridMortarPlan,
@@ -284,12 +284,6 @@ from ._spectral_hp_completion import (
     physical_mass_projection,
     refine_anisotropic_hp_cells,
     resize_hp_forest,
-    tensor_hcurl_family,
-    tensor_hdiv_family,
-    TensorCompatibleFamily,
-    TensorDeRhamComplex,
-    TensorDeRhamTransferPlan,
-    TensorPiolaMap,
     UnfittedAggregationPlan,
 )
 from ._spectral_hp_io import (
@@ -318,12 +312,19 @@ from ._topology_transfer import (
 
 
 __all__ = [
+    "DofLabel",
+    "ElementConformity",
+    "ElementContinuity",
+    "ElementMapping",
+    "FiniteElementDeRhamComplex",
+    "FormBasis",
+    "FormElementFamily",
+    "FormFieldReconstructionKernel",
+    "SimplicialWhitneyKernel",
+    "form_element",
     "AnisotropicHPattern",
     "AttachmentActionReactionCertificate",
     "AttachmentRankEvidence",
-    "CompatibleAuxiliaryMultigrid",
-    "CompatibleMortarPlan",
-    "CompatibleTraceConstraint",
     "ConservativeMovingInterfaceTransfer",
     "CostAwareFiniteElementPartition",
     "DistributedFiniteElementConstraint",
@@ -471,16 +472,11 @@ __all__ = [
     "RigidDeformableKKTPayload",
     "SimplexNodalFamily",
     "SumFactorizationPlan",
-    "TensorCompatibleFamily",
-    "TensorDeRhamComplex",
-    "TensorDeRhamTransferPlan",
     "TensorFastDiagonalizationBuilder",
     "TensorFastDiagonalizationPreconditioner",
     "TensorGLLSBPPlan",
     "TensorOrder",
-    "TensorPiolaMap",
     "TensorProductTabulation",
-    "TetrahedralNedelecSpace",
     "UnfittedAggregationPlan",
     "affine_dof_constraint",
     "assemble_masked_finite_element",
@@ -522,7 +518,6 @@ __all__ = [
     "lower_distributed_finite_element_phases",
     "maximum_mark",
     "mixed_inf_sup_diagnostic",
-    "nedelec_element",
     "one_ring_patch_plan",
     "partition_cells_cost_aware",
     "periodic_constraint",
@@ -541,7 +536,6 @@ __all__ = [
     "prism_axial_refinement_template",
     "pyramid_transition_refinement_template",
     "quadrilateral_p_transfer",
-    "raviart_thomas_element",
     "read_exodus_high_order_arrays",
     "read_finite_element_mesh",
     "recover_gradient",
@@ -556,12 +550,8 @@ __all__ = [
     "serial_finite_element_mortar_plan",
     "smoothing",
     "tensor_bisection_template",
-    "tensor_hcurl_family",
-    "tensor_hdiv_family",
     "tensor_modal_decay_estimate",
     "tensor_trace_interpolation",
-    "tetrahedral_bdm_element",
-    "tetrahedral_rt_element",
     "triangle_red_refinement_template",
     "vertex_interpolation_transfer",
     "write_adaptive_vtk",

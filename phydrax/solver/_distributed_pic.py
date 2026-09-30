@@ -54,7 +54,8 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
+from math import prod
+from typing import Any, assert_never, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -281,6 +282,7 @@ def _require_planes(values: _Planes, counts: tuple[int, ...], /) -> _Planes:
     return values
 
 
+@final
 class _CochainLayout(_AbstractPlaneLayout):
     solver: CochainMaxwellPICFieldSolver
     counts: tuple[int, ...] = eqx.field(static=True)
@@ -290,7 +292,7 @@ class _CochainLayout(_AbstractPlaneLayout):
 
     def __init__(self, solver: CochainMaxwellPICFieldSolver, /) -> None:
         counts, lower, spacing, periodic = [], [], [], []
-        for axis in solver.maxwell.plan.bridge.grid.structured_axes:
+        for axis in solver.bridge.grid.structured_axes:
             widths = np.asarray(axis.interval_widths)
             if not np.allclose(widths, widths[0], rtol=1.0e-12, atol=0.0):
                 raise ValueError("Distributed PIC requires uniform grid axes.")
@@ -305,11 +307,27 @@ class _CochainLayout(_AbstractPlaneLayout):
         self.periodic = tuple(periodic)
 
     def _unpack(self, degree: int, value: Array, /) -> _Planes:
-        bridge = self.solver.maxwell.plan.bridge
-        return _require_planes(tuple(bridge.unpack(degree, value)), self.counts)
+        kernel = self.solver.transfers[0].kernel
+        shapes = kernel.component_shapes[degree]
+        offsets = kernel.dof_offsets[degree]
+        expected = sum(prod(shape) for shape in shapes)
+        if value.shape != (expected,):
+            raise ValueError("Distributed cochain values do not match kernel DOFs.")
+        return _require_planes(
+            tuple(
+                value[offset : offset + prod(shape)].reshape(shape)
+                for shape, offset in zip(shapes, offsets, strict=True)
+            ),
+            self.counts,
+        )
 
     def _pack(self, degree: int, planes: _Planes, /) -> Array:
-        return self.solver.maxwell.plan.bridge.pack(degree, planes)
+        shapes = self.solver.transfers[0].kernel.component_shapes[degree]
+        if len(planes) != len(shapes) or any(
+            plane.shape != shape for plane, shape in zip(planes, shapes, strict=True)
+        ):
+            raise ValueError("Distributed cochain planes do not match kernel DOFs.")
+        return jnp.concatenate(tuple(plane.reshape(-1) for plane in planes))
 
     def charge_planes(self, value: Array, /) -> _Planes:
         return self._unpack(0, value)

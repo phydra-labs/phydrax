@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
@@ -34,6 +36,7 @@ class PICParticleResponseResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+@final
 class PICParticleResponsePlan(StrictModule, NonTrainableState):
     """Matrix-free ECSIM gather/rotate/scatter response."""
 
@@ -105,20 +108,11 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
         values = jnp.asarray(vector, dtype=state.rotated_velocity.dtype)
         if values.shape != state.rotated_velocity.shape:
             raise ValueError("Particle response vector must have shape (capacity,3).")
-        components = []
-        successful = jnp.asarray(True)
-        for axis, (transfer, route) in enumerate(
-            zip(self.transfer.electric, state.routes.electric, strict=True)
-        ):
-            deposited = transfer.deposit_content(
-                route, jnp.where(state.active, values[:, axis], 0.0)
-            )
-            components.append(deposited.density)
-            successful = successful & deposited.successful
-        # The plan admits only three-dimensional bridges, so there are three components.
-        current = self.transfer.bridge.pack_edge_circulation(
-            (components[0], components[1], components[2])
+        load = state.routes.electric.deposit(
+            jnp.where(state.active[:, None], values, 0.0)
         )
+        current = self.transfer.bridge.cochain.inverse_hodge_star(1, load)
+        successful = jnp.all(state.routes.electric.successful)
         finite = jnp.all(jnp.isfinite(current))
         return PICParticleResponseResult(
             current, finite, successful & finite, self.plan_id

@@ -54,6 +54,19 @@ def _rebuild(machine: Any, mesh: Any, **overrides: Any) -> Any:
     return PlanarMachine(mesh, machine.cell_regions, machine.regions, **arguments)
 
 
+def test_planar_curl_maps_circulation_gradient_to_physical_flux() -> None:
+    from phydrax.applications.electrical_machines._magnetostatic import _geometry
+
+    machine = _small_machine(remanence=0.0)
+    parameters = jnp.asarray((machine.reference_radius, 1.0, 1.0))
+    points, _, _, curls = _geometry(machine, parameters, jnp.asarray(0.0))
+    potential = 2.0 * points[:, 0] + 3.0 * points[:, 1]
+    local = potential[machine.discretization.mesh.blocks[0].vertices]
+    magnetic = jnp.sum(curls * local[..., None], axis=1)
+    expected = np.broadcast_to(np.asarray((3.0, -2.0)), magnetic.shape)
+    np.testing.assert_allclose(magnetic, expected, rtol=1e-12, atol=1e-12)
+
+
 def test_electrical_machine_design_scenario_1() -> None:
     machine = _small_machine()
     currents = jnp.asarray((-5.0, 2.0))

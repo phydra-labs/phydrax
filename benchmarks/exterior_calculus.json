@@ -1,0 +1,209 @@
+{
+  "capability": "platform.exterior-calculus",
+  "cases": [
+    {
+      "absolute_tolerance": 1e-10,
+      "active_mode_count": 49,
+      "active_ordering_matches_oracle": true,
+      "boundary": "absolute",
+      "cold_end_to_end_seconds": 1.714122458,
+      "compilation": {
+        "compilation_seconds": 0.03494775,
+        "lowering_seconds": 0.011990083
+      },
+      "compilation_id": "f70c8e36d6876acf8264f1abfbd30ffbf8cfa93254d200e329091c0f882cad76",
+      "compiler": {
+        "argument_bytes": 4320,
+        "bytes_accessed": 11392,
+        "estimated_device_memory_bytes": 7472,
+        "flops": 2307,
+        "generated_code_bytes": 0,
+        "output_bytes": 1584,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 1568,
+        "unavailable_reason": null
+      },
+      "degree_coordinate_counts": [
+        49,
+        98,
+        49
+      ],
+      "errors": {
+        "initial_screened_absolute_error": 2.482534153247273e-16,
+        "nilpotency_absolute_error": 0.0,
+        "updated_screened_absolute_error": 4.440892098500626e-16
+      },
+      "first_execution_seconds": 0.000375583,
+      "ir_lowering_seconds": 0.004085916,
+      "logical_input_bytes": 3144,
+      "logical_output_bytes": 1568,
+      "modal_capacity": 64,
+      "modal_shape": [
+        8,
+        8
+      ],
+      "nyquist_policy": "zero-self-conjugate",
+      "passed": true,
+      "prepared_reuse": {
+        "count": 2,
+        "max_seconds": 0.000118666,
+        "mean_seconds": 0.000102291,
+        "median_seconds": 0.000102291,
+        "min_seconds": 8.5916e-05,
+        "samples_seconds": [
+          0.000118666,
+          8.5916e-05
+        ],
+        "std_seconds": 1.6375000000000005e-05
+      },
+      "prepared_reuse_changes_inputs": true,
+      "realization_id": "c9176f47aba8b865828dac4d59790f292d1e2353428d289fd4ddeccb25415d2a",
+      "realization_preparation_seconds": 1.661417291,
+      "retained_plan_array_bytes": 3144,
+      "retained_realization_array_bytes": 13990,
+      "retained_union_array_bytes": 14782,
+      "updated_output_maximum_change": 1.639026540358636
+    },
+    {
+      "absolute_tolerance": 1e-10,
+      "active_mode_count": 225,
+      "active_ordering_matches_oracle": true,
+      "boundary": "absolute",
+      "cold_end_to_end_seconds": 1.539337541,
+      "compilation": {
+        "compilation_seconds": 0.031194167,
+        "lowering_seconds": 0.01203475
+      },
+      "compilation_id": "77685574fff83ad3d9e43b81d21333fd338e649ecf41842a070f6e65f7da2d62",
+      "compiler": {
+        "argument_bytes": 19808,
+        "bytes_accessed": 52224,
+        "estimated_device_memory_bytes": 34224,
+        "flops": 10579,
+        "generated_code_bytes": 0,
+        "output_bytes": 7216,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 7200,
+        "unavailable_reason": null
+      },
+      "degree_coordinate_counts": [
+        225,
+        450,
+        225
+      ],
+      "errors": {
+        "initial_screened_absolute_error": 4.47545209131181e-16,
+        "nilpotency_absolute_error": 4.965068306494546e-16,
+        "updated_screened_absolute_error": 1.7763568394002505e-15
+      },
+      "first_execution_seconds": 0.00042425,
+      "ir_lowering_seconds": 0.004402167,
+      "logical_input_bytes": 14408,
+      "logical_output_bytes": 7200,
+      "modal_capacity": 256,
+      "modal_shape": [
+        16,
+        16
+      ],
+      "nyquist_policy": "zero-self-conjugate",
+      "passed": true,
+      "prepared_reuse": {
+        "count": 2,
+        "max_seconds": 0.000180209,
+        "mean_seconds": 0.00016222950000000002,
+        "median_seconds": 0.00016222950000000002,
+        "min_seconds": 0.00014425,
+        "samples_seconds": [
+          0.00014425,
+          0.000180209
+        ],
+        "std_seconds": 1.7979499999999993e-05
+      },
+      "prepared_reuse_changes_inputs": true,
+      "realization_id": "9d2061e3c9e08030530c6499629e2c8879362fcad31718c6528744ee83f96305",
+      "realization_preparation_seconds": 1.490028084,
+      "retained_plan_array_bytes": 14408,
+      "retained_realization_array_bytes": 53382,
+      "retained_union_array_bytes": 56990,
+      "updated_output_maximum_change": 7.566812274663618
+    }
+  ],
+  "cold_scope": "realization preparation, IR lowering, executable lowering/compilation, first synchronized execution",
+  "controlling_capacity": "two-dimensional Fourier modal shape",
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "passed": true,
+  "prepared_scope": "same executable and numerical plan, changing coefficient arguments",
+  "repeats": 2,
+  "retained_memory_scope": "unique logical array payloads; excludes Python metadata and allocator overhead",
+  "sizes": [
+    8,
+    16
+  ]
+}

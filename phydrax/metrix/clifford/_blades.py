@@ -12,7 +12,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._exterior_basis import axes_bitmap, bitmap_axes, exterior_indices
+from ...exterior._basis import axes_bitmap, bitmap_axes, exterior_indices
 from ._spec import CliffordAlgebraSpec
 
 

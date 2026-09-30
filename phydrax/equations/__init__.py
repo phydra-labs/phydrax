@@ -209,6 +209,11 @@ from ._entropy_pair import (
     ideal_gas_euler_entropy_pair,
     validate_convex_entropy_pair,
 )
+from ._exterior_compile import (
+    compile_exterior_pde,
+    CompiledExteriorPDE,
+    ExteriorPDERealization,
+)
 from ._favre_les import (
     FavreLESFieldContract,
     FavreLESInputEvidence,
@@ -298,6 +303,7 @@ from ._force_free import (
     ForceFreeProjectionResult,
     GRForceFreeSystem,
 )
+from ._form_compile import PDEFormGeometry, PDEFormTrace
 from ._gas_dynamics import (
     FavreLESCoupledRate,
     HomogeneousMixtureCompressibleNavierStokesSystem,
@@ -1530,6 +1536,11 @@ __all__ = [
     "PDERepresentation",
     "PolyharmonicAlmansiBasis",
     "PDEValueType",
+    "PDEFormGeometry",
+    "PDEFormTrace",
+    "CompiledExteriorPDE",
+    "ExteriorPDERealization",
+    "compile_exterior_pde",
     "PDE_OPERATOR_VOCABULARY",
     "PDE_TOKEN_ATTRIBUTES",
     "PDE_TOKEN_KINDS",

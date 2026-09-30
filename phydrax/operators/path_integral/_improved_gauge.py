@@ -22,9 +22,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._oriented_path import (
     CellBoundaryPathPlan,
+    ordered_path_transport,
     OrientedEdgePathPlan,
 )
-from ...graph._matrix_gauge import MatrixGaugeLinkSpace, path_holonomy
+from ...graph._matrix_gauge import MatrixGaugeLinkSpace
 from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 from ._lattice_action import (
     AbstractLatticeEuclideanAction,
@@ -193,7 +194,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
         traces = tuple(
             jnp.real(
                 jnp.trace(
-                    path_holonomy(self.link_space, values, term.paths),
+                    ordered_path_transport(term.paths, values),
                     axis1=-2,
                     axis2=-1,
                 )

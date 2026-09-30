@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.core as jcore
 import jax.numpy as jnp
@@ -13,6 +13,10 @@ import numpy as np
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
+
+
+if TYPE_CHECKING:
+    from ._cochain_execution import CochainGraphBinding
 
 
 _MISSING = object()
@@ -91,6 +95,8 @@ class GraphIR(StrictModule, NonTrainableState):
     - `n_edge[g]`: number of edges in graph g
     - `senders[k]`, `receivers[k]`: absolute node indices for edge k
     - node/edge/global features may be arbitrary pytrees with matching leading axes
+    - `cochain_bindings`: typed native cochain preparation and graph placement;
+      node/edge features describe execution coordinates, not a second calculus
     """
 
     nodes: Any
@@ -103,6 +109,7 @@ class GraphIR(StrictModule, NonTrainableState):
     node_mask: jnp.ndarray | None
     edge_mask: jnp.ndarray | None
     graph_mask: jnp.ndarray | None
+    cochain_bindings: tuple[CochainGraphBinding, ...]
 
     def __init__(
         self,
@@ -117,6 +124,7 @@ class GraphIR(StrictModule, NonTrainableState):
         node_mask: Any | None = None,
         edge_mask: Any | None = None,
         graph_mask: Any | None = None,
+        cochain_bindings: tuple[CochainGraphBinding, ...] = (),
         validate: bool = True,
     ) -> None:
         self.nodes = nodes
@@ -137,6 +145,7 @@ class GraphIR(StrictModule, NonTrainableState):
         self.graph_mask = (
             None if graph_mask is None else jnp.asarray(graph_mask, dtype=jnp.bool_)
         )
+        self.cochain_bindings = cochain_bindings
         if validate:
             self.validate()
 
@@ -301,6 +310,25 @@ class GraphIR(StrictModule, NonTrainableState):
                 )
         if self.graph_mask is not None and self.graph_mask.ndim != 1:
             raise ValueError("`graph_mask` must be rank-1.")
+        if self.cochain_bindings:
+            from ._cochain_execution import CochainGraphBinding
+
+            if not isinstance(self.cochain_bindings, tuple) or any(
+                not isinstance(binding, CochainGraphBinding)
+                for binding in self.cochain_bindings
+            ):
+                raise TypeError("cochain_bindings must contain prepared native bindings.")
+            graph_indices = tuple(
+                binding.graph_index for binding in self.cochain_bindings
+            )
+            if len(set(graph_indices)) != len(graph_indices):
+                raise ValueError("Each graph may have only one native cochain binding.")
+            for binding in self.cochain_bindings:
+                if not 0 <= binding.graph_index < self.num_graphs:
+                    raise ValueError("Native cochain graph placement is out of range.")
+                end = binding.node_offset + sum(binding.discretization.cell_counts)
+                if node_size is None or not 0 <= binding.node_offset <= end <= node_size:
+                    raise ValueError("Native cochain node placement is out of range.")
 
         if _contains_tracer((self.n_node, self.n_edge, self.senders, self.receivers)):
             if strict and self.senders is not None and edge_size is not None:
@@ -314,6 +342,15 @@ class GraphIR(StrictModule, NonTrainableState):
 
         n_node_np = np.asarray(self.n_node)
         n_edge_np = np.asarray(self.n_edge)
+        if self.cochain_bindings:
+            node_starts = np.cumsum(np.concatenate(([0], n_node_np[:-1])))
+            for binding in self.cochain_bindings:
+                if binding.node_offset != int(node_starts[binding.graph_index]) or sum(
+                    binding.discretization.cell_counts
+                ) != int(n_node_np[binding.graph_index]):
+                    raise ValueError(
+                        "Graph coordinates do not match native cochain placement."
+                    )
         if np.any(n_node_np < 0):
             raise ValueError("`n_node` must be non-negative.")
         if np.any(n_edge_np < 0):
@@ -386,6 +423,7 @@ class GraphIR(StrictModule, NonTrainableState):
         node_mask: Any = _MISSING,
         edge_mask: Any = _MISSING,
         graph_mask: Any = _MISSING,
+        cochain_bindings: Any = _MISSING,
         validate: bool = False,
     ) -> "GraphIR":
         return GraphIR(
@@ -399,10 +437,17 @@ class GraphIR(StrictModule, NonTrainableState):
             node_mask=self.node_mask if node_mask is _MISSING else node_mask,
             edge_mask=self.edge_mask if edge_mask is _MISSING else edge_mask,
             graph_mask=self.graph_mask if graph_mask is _MISSING else graph_mask,
+            cochain_bindings=(
+                self.cochain_bindings
+                if cochain_bindings is _MISSING
+                else cochain_bindings
+            ),
             validate=validate,
         )
 
     def as_jraph_tuple(self) -> Any:
+        if self.cochain_bindings:
+            raise ValueError("jraph tuples cannot preserve native cochain preparation.")
         if importlib.util.find_spec("jraph") is None:
             raise ImportError(
                 "jraph is required for `phydrax.graph.GraphIR.as_jraph_tuple`; install it with `pip install jraph`."
@@ -483,6 +528,16 @@ def batch_graphs(graphs: Sequence[GraphIR], /, *, validate: bool = True) -> Grap
         )
     )
 
+    bindings = []
+    node_offset = 0
+    graph_offset = 0
+    for graph in graphs:
+        bindings.extend(
+            binding.shifted(node_offset, graph_offset)
+            for binding in graph.cochain_bindings
+        )
+        node_offset += _leaf_leading_size(graph.nodes) or graph.num_nodes
+        graph_offset += graph.num_graphs
     offsets = [0]
     running = 0
     for g in graphs[:-1]:
@@ -515,6 +570,7 @@ def batch_graphs(graphs: Sequence[GraphIR], /, *, validate: bool = True) -> Grap
         node_mask=node_mask,
         edge_mask=edge_mask,
         graph_mask=graph_mask,
+        cochain_bindings=tuple(bindings),
         validate=validate,
     )
 
@@ -578,6 +634,11 @@ def unbatch_graph(graph: GraphIR, /, *, validate: bool = True) -> tuple[GraphIR,
             node_mask=node_mask_splits[i],
             edge_mask=edge_mask_splits[i],
             graph_mask=graph_mask_splits[i],
+            cochain_bindings=tuple(
+                binding.shifted(-int(jnp.sum(graph.n_node[:i])), -i)
+                for binding in graph.cochain_bindings
+                if binding.graph_index == i
+            ),
             validate=validate,
         )
         out.append(g)

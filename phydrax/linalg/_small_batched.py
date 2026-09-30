@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -70,12 +71,13 @@ def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
     """Factor scaled 4-by-4 batches with deterministic partial pivoting."""
     factors = matrix
     batch_shape = matrix.shape[:-2]
+    identity = jnp.broadcast_to(jnp.eye(4, dtype=matrix.dtype), matrix.shape)
     permutation = jnp.broadcast_to(
-        jnp.eye(4, dtype=matrix.dtype),
+        identity,
         batch_shape + (4, 4),
     )
     parity = jnp.ones(batch_shape, dtype=matrix.real.dtype)
-    row_indices = jnp.arange(4)
+    row_indices = jnp.arange(4, dtype=jnp.int32)
     for column in range(3):
         pivot = column + jnp.argmax(
             jnp.abs(factors[..., column:, column]),
@@ -88,7 +90,7 @@ def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
         )
         pivot_row = jax.nn.one_hot(pivot, 4, dtype=matrix.dtype)
         swap = (
-            jnp.eye(4, dtype=matrix.dtype)
+            identity
             - column_row[..., :, None] * column_row[..., None, :]
             - pivot_row[..., :, None] * pivot_row[..., None, :]
             + column_row[..., :, None] * pivot_row[..., None, :]
@@ -100,10 +102,10 @@ def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
         pivot_value = factors[..., column, column]
         safe_pivot = jnp.where(jnp.abs(pivot_value) > 0.0, pivot_value, 1.0)
         multipliers = factors[..., :, column] / safe_pivot[..., None]
-        active_rows = row_indices > column
+        active_rows = jnp.broadcast_to(row_indices > column, batch_shape + (4,))
         multipliers = jnp.where(active_rows, multipliers, 0.0)
         update = multipliers[..., :, None] * factors[..., None, column, :]
-        active_trailing = active_rows[:, None] & (row_indices[None, :] > column)
+        active_trailing = active_rows[..., :, None] & active_rows[..., None, :]
         factors = factors - jnp.where(active_trailing, update, 0.0)
         factors = factors.at[..., :, column].set(
             jnp.where(active_rows, multipliers, factors[..., :, column])
@@ -223,6 +225,8 @@ def solve_small_linear(
     if not jnp.issubdtype(matrix_.dtype, jnp.inexact):
         matrix_ = matrix_.astype("float64")
     right = jnp.asarray(right_hand_side)
+    dtype = np.result_type(matrix_.dtype, right.dtype)
+    matrix_, right = matrix_.astype(dtype), right.astype(dtype)
     dimension = plan.dimension
     if matrix_.shape[-2:] != (dimension, dimension):
         raise ValueError("Small matrix shape does not match the plan dimension.")
@@ -233,7 +237,8 @@ def solve_small_linear(
         raise ValueError("Small linear right-hand side shape is incompatible.")
     scale = jnp.max(jnp.abs(matrix_), axis=(-2, -1))
     safe_scale = jnp.where(scale > 0.0, scale, 1.0)
-    scaled_matrix = matrix_ / safe_scale[..., None, None]
+    field_scale = safe_scale.astype(matrix_.dtype)
+    scaled_matrix = matrix_ / field_scale[..., None, None]
     if dimension == 4:
         factors, permutation, scaled_determinant = _lu_factor_four(scaled_matrix)
         identity = jnp.broadcast_to(
@@ -244,17 +249,17 @@ def solve_small_linear(
         value = _lu_solve_four(
             factors,
             permutation,
-            right / safe_scale[..., None, None],
+            right / field_scale[..., None, None],
         )
     else:
         scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension)
         value = contract(
             "...ij,...jk->...ik",
-            scaled_inverse / safe_scale[..., None, None],
+            scaled_inverse / field_scale[..., None, None],
             right,
         )
-    inverse = scaled_inverse / safe_scale[..., None, None]
-    determinant = scaled_determinant * safe_scale**dimension
+    inverse = scaled_inverse / field_scale[..., None, None]
+    determinant = scaled_determinant * field_scale**dimension
     dtype_tolerance = float(dimension) * jnp.finfo(matrix_.real.dtype).eps
     singular_tolerance = jnp.maximum(
         jnp.asarray(plan.singular_tolerance, dtype=matrix_.real.dtype),
@@ -268,7 +273,7 @@ def solve_small_linear(
             _lu_solve_four(
                 factors,
                 permutation,
-                residual / safe_scale[..., None, None],
+                residual / field_scale[..., None, None],
             )
             if dimension == 4
             else contract("...ij,...jk->...ik", inverse, residual)

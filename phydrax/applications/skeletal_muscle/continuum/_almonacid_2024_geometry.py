@@ -28,6 +28,7 @@ from ....discretization.fem import (
     FiniteElementSpec,
     lagrange_element,
 )
+from ....exterior import FormType, FormValueSpec
 
 
 def _monomials(points: Array) -> tuple[Array, Array]:
@@ -49,7 +50,8 @@ def _dgpm1() -> FiniteElementSpec:
         1,
         np.zeros((4, 3)),
         (((),) * 8, ((),) * 12, ((),) * 6, ((0, 1, 2, 3),)),
-        conformity="L2",
+        value_spec=FormValueSpec(FormType(3, 0, twist="untwisted"), proxy="scalar"),
+        continuity="discontinuous",
         representation="modal_coefficient",
         tabulator=_monomials,
         tabulator_id="total-degree-one:1-x-y-z:unit-hexahedron",

@@ -112,7 +112,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
         for block_index, block in enumerate(discretization.mesh.blocks):
             element = discretization.elements[field_index][block_index]
             dof_map = discretization.dof_maps[field_index]
-            if element.conformity != "L2" or dof_map.association != "cell":
+            if element.continuity != "discontinuous" or dof_map.association != "cell":
                 raise ValueError(
                     "Discontinuous mass inversion requires a cell-local L2 field."
                 )

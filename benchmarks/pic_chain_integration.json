@@ -1,0 +1,841 @@
+{
+  "cases": {
+    "cubical_cubic": [
+      {
+        "cold_execution_seconds": 2.786904416,
+        "compilation": {
+          "compilation_seconds": 1.185867292,
+          "lowering_seconds": 0.51866325
+        },
+        "compiler": {
+          "argument_bytes": 1312,
+          "bytes_accessed": 455282,
+          "flops": 184151,
+          "generated_code_bytes": 0,
+          "output_bytes": 1868,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 93496,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 4
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.000266917,
+          "mean_seconds": 0.000190271,
+          "median_seconds": 0.000190271,
+          "min_seconds": 0.000113625,
+          "samples_seconds": [
+            0.000266917,
+            0.000113625
+          ],
+          "std_seconds": 7.664599999999998e-05
+        },
+        "memory": {
+          "particle_input_bytes": 1312,
+          "prepared_chain_bytes": 9992,
+          "prepared_kernel_bytes": 68128
+        },
+        "physics": {
+          "maximum_constant_field_error": 1.6653345369377348e-16,
+          "maximum_continuity_defect": 2.0008188763567455e-15,
+          "maximum_phase_error": 1.6258348159242626e-16,
+          "phase_work_duality_error": 6.546139416680338e-17,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 1.1102230246251565e-16
+        },
+        "preparation_seconds": 0.05159925,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.0310635,
+            "lowering_seconds": 0.00598975
+          },
+          "compiler": {
+            "argument_bytes": 1184,
+            "bytes_accessed": 49632,
+            "flops": 4604,
+            "generated_code_bytes": 0,
+            "output_bytes": 1200,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 12288,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 6.2417e-05,
+            "mean_seconds": 5.1042e-05,
+            "median_seconds": 5.1042e-05,
+            "min_seconds": 3.9667e-05,
+            "samples_seconds": [
+              6.2417e-05,
+              3.9667e-05
+            ],
+            "std_seconds": 1.1374999999999999e-05
+          },
+          "query_preparation_seconds": 0.192218041
+        }
+      },
+      {
+        "cold_execution_seconds": 2.716788625,
+        "compilation": {
+          "compilation_seconds": 1.291292125,
+          "lowering_seconds": 0.505492917
+        },
+        "compiler": {
+          "argument_bytes": 1792,
+          "bytes_accessed": 1741478,
+          "flops": 734207,
+          "generated_code_bytes": 0,
+          "output_bytes": 1976,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 360632,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 16
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.000289125,
+          "mean_seconds": 0.0002410205,
+          "median_seconds": 0.0002410205,
+          "min_seconds": 0.000192916,
+          "samples_seconds": [
+            0.000289125,
+            0.000192916
+          ],
+          "std_seconds": 4.810449999999999e-05
+        },
+        "memory": {
+          "particle_input_bytes": 1792,
+          "prepared_chain_bytes": 39968,
+          "prepared_kernel_bytes": 68128
+        },
+        "physics": {
+          "maximum_constant_field_error": 2.220446049250313e-16,
+          "maximum_continuity_defect": 4.718447854656915e-15,
+          "maximum_phase_error": 2.8609792490763985e-16,
+          "phase_work_duality_error": 2.2887833992611187e-16,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 0.0
+        },
+        "preparation_seconds": 0.054170125,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.03321775,
+            "lowering_seconds": 0.007720708
+          },
+          "compiler": {
+            "argument_bytes": 1280,
+            "bytes_accessed": 184608,
+            "flops": 18416,
+            "generated_code_bytes": 0,
+            "output_bytes": 1296,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 49152,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 6.4833e-05,
+            "mean_seconds": 4.46245e-05,
+            "median_seconds": 4.46245e-05,
+            "min_seconds": 2.4416e-05,
+            "samples_seconds": [
+              6.4833e-05,
+              2.4416e-05
+            ],
+            "std_seconds": 2.0208499999999995e-05
+          },
+          "query_preparation_seconds": 0.206219417
+        }
+      }
+    ],
+    "cubical_linear": [
+      {
+        "cold_execution_seconds": 2.797780167,
+        "compilation": {
+          "compilation_seconds": 0.293073417,
+          "lowering_seconds": 0.113594584
+        },
+        "compiler": {
+          "argument_bytes": 1312,
+          "bytes_accessed": 73172,
+          "flops": 20711,
+          "generated_code_bytes": 0,
+          "output_bytes": 1868,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 8568,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 4
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.000157625,
+          "mean_seconds": 0.0001556875,
+          "median_seconds": 0.0001556875,
+          "min_seconds": 0.00015375,
+          "samples_seconds": [
+            0.000157625,
+            0.00015375
+          ],
+          "std_seconds": 1.9374999999999997e-06
+        },
+        "memory": {
+          "particle_input_bytes": 1312,
+          "prepared_chain_bytes": 1672,
+          "prepared_kernel_bytes": 68128
+        },
+        "physics": {
+          "maximum_constant_field_error": 8.326672684688674e-17,
+          "maximum_continuity_defect": 1.1102230246251565e-15,
+          "maximum_phase_error": 7.244417918960238e-17,
+          "phase_work_duality_error": 5.928593550334434e-17,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 1.1102230246251565e-16
+        },
+        "preparation_seconds": 4.645904541,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.026529334,
+            "lowering_seconds": 0.363948417
+          },
+          "compiler": {
+            "argument_bytes": 1184,
+            "bytes_accessed": 10064,
+            "flops": 764,
+            "generated_code_bytes": 0,
+            "output_bytes": 1200,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 1024,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 2.4042e-05,
+            "mean_seconds": 2.13545e-05,
+            "median_seconds": 2.13545e-05,
+            "min_seconds": 1.8667e-05,
+            "samples_seconds": [
+              2.4042e-05,
+              1.8667e-05
+            ],
+            "std_seconds": 2.687500000000001e-06
+          },
+          "query_preparation_seconds": 0.118918209
+        }
+      },
+      {
+        "cold_execution_seconds": 2.777180042,
+        "compilation": {
+          "compilation_seconds": 0.312499,
+          "lowering_seconds": 0.112991375
+        },
+        "compiler": {
+          "argument_bytes": 1792,
+          "bytes_accessed": 205928,
+          "flops": 80423,
+          "generated_code_bytes": 0,
+          "output_bytes": 1976,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 25784,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 16
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.000225792,
+          "mean_seconds": 0.0001609585,
+          "median_seconds": 0.0001609585,
+          "min_seconds": 9.6125e-05,
+          "samples_seconds": [
+            0.000225792,
+            9.6125e-05
+          ],
+          "std_seconds": 6.483349999999999e-05
+        },
+        "memory": {
+          "particle_input_bytes": 1792,
+          "prepared_chain_bytes": 6688,
+          "prepared_kernel_bytes": 68128
+        },
+        "physics": {
+          "maximum_constant_field_error": 8.326672684688674e-17,
+          "maximum_continuity_defect": 3.4416913763379853e-15,
+          "maximum_phase_error": 8.777083671441753e-17,
+          "phase_work_duality_error": 4.47545209131181e-16,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 8.881784197001252e-16
+        },
+        "preparation_seconds": 0.053672084,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.026337208,
+            "lowering_seconds": 0.005646125
+          },
+          "compiler": {
+            "argument_bytes": 1280,
+            "bytes_accessed": 26384,
+            "flops": 3056,
+            "generated_code_bytes": 0,
+            "output_bytes": 1296,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 4096,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 7.2334e-05,
+            "mean_seconds": 6.53755e-05,
+            "median_seconds": 6.53755e-05,
+            "min_seconds": 5.8417e-05,
+            "samples_seconds": [
+              7.2334e-05,
+              5.8417e-05
+            ],
+            "std_seconds": 6.958500000000001e-06
+          },
+          "query_preparation_seconds": 0.125890042
+        }
+      }
+    ],
+    "simplicial": [
+      {
+        "cold_execution_seconds": 5.460998958,
+        "compilation": {
+          "compilation_seconds": 0.633215209,
+          "lowering_seconds": 0.751298917
+        },
+        "compiler": {
+          "argument_bytes": 200,
+          "bytes_accessed": 113434,
+          "flops": 23361,
+          "generated_code_bytes": 0,
+          "output_bytes": 140,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 11960,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 4
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.000552625,
+          "mean_seconds": 0.0003923335,
+          "median_seconds": 0.0003923335,
+          "min_seconds": 0.000232042,
+          "samples_seconds": [
+            0.000232042,
+            0.000552625
+          ],
+          "std_seconds": 0.00016029149999999997
+        },
+        "memory": {
+          "particle_input_bytes": 200,
+          "prepared_chain_bytes": 1256,
+          "prepared_kernel_bytes": 951
+        },
+        "physics": {
+          "maximum_constant_field_error": 5.551115123125783e-17,
+          "maximum_continuity_defect": 5.551115123125783e-16,
+          "maximum_phase_error": 2.8609792490763984e-17,
+          "phase_work_duality_error": 5.721958498152797e-17,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 0.0
+        },
+        "preparation_seconds": 2.663001292,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.02614075,
+            "lowering_seconds": 0.006008875
+          },
+          "compiler": {
+            "argument_bytes": 72,
+            "bytes_accessed": 4272,
+            "flops": 572,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 768,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 2.4666e-05,
+            "mean_seconds": 2.1458e-05,
+            "median_seconds": 2.1458e-05,
+            "min_seconds": 1.825e-05,
+            "samples_seconds": [
+              2.4666e-05,
+              1.825e-05
+            ],
+            "std_seconds": 3.2080000000000005e-06
+          },
+          "query_preparation_seconds": 0.744851208
+        }
+      },
+      {
+        "cold_execution_seconds": 6.5195045,
+        "compilation": {
+          "compilation_seconds": 0.774569416,
+          "lowering_seconds": 0.325909667
+        },
+        "compiler": {
+          "argument_bytes": 680,
+          "bytes_accessed": 430078,
+          "flops": 90573,
+          "generated_code_bytes": 0,
+          "output_bytes": 248,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 36152,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 16
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.000414042,
+          "mean_seconds": 0.0004026875,
+          "median_seconds": 0.0004026875,
+          "min_seconds": 0.000391333,
+          "samples_seconds": [
+            0.000414042,
+            0.000391333
+          ],
+          "std_seconds": 1.1354499999999994e-05
+        },
+        "memory": {
+          "particle_input_bytes": 680,
+          "prepared_chain_bytes": 5024,
+          "prepared_kernel_bytes": 951
+        },
+        "physics": {
+          "maximum_constant_field_error": 5.551115123125783e-17,
+          "maximum_continuity_defect": 1.7763568394002505e-15,
+          "maximum_phase_error": 5.003707553108402e-17,
+          "phase_work_duality_error": 5.551115123125783e-17,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 4.440892098500626e-16
+        },
+        "preparation_seconds": 0.02661625,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.026552959,
+            "lowering_seconds": 0.006116792
+          },
+          "compiler": {
+            "argument_bytes": 168,
+            "bytes_accessed": 16560,
+            "flops": 2288,
+            "generated_code_bytes": 0,
+            "output_bytes": 184,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 3072,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 0.000123333,
+            "mean_seconds": 9.51665e-05,
+            "median_seconds": 9.51665e-05,
+            "min_seconds": 6.7e-05,
+            "samples_seconds": [
+              0.000123333,
+              6.7e-05
+            ],
+            "std_seconds": 2.8166499999999995e-05
+          },
+          "query_preparation_seconds": 0.844655875
+        }
+      }
+    ],
+    "simplicial_4d": [
+      {
+        "cold_execution_seconds": 6.568506583,
+        "compilation": {
+          "compilation_seconds": 1.513459167,
+          "lowering_seconds": 0.731602375
+        },
+        "compiler": {
+          "argument_bytes": 400,
+          "bytes_accessed": 1258375,
+          "flops": 250556,
+          "generated_code_bytes": 0,
+          "output_bytes": 228,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 46992,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 4
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.00220875,
+          "mean_seconds": 0.0021623750000000002,
+          "median_seconds": 0.0021623750000000002,
+          "min_seconds": 0.002116,
+          "samples_seconds": [
+            0.002116,
+            0.00220875
+          ],
+          "std_seconds": 4.637500000000019e-05
+        },
+        "memory": {
+          "particle_input_bytes": 400,
+          "prepared_chain_bytes": 4168,
+          "prepared_kernel_bytes": 5117
+        },
+        "physics": {
+          "maximum_constant_field_error": 2.7755575615628914e-17,
+          "maximum_continuity_defect": 3.885780586188048e-16,
+          "maximum_phase_error": 1.3877787807814457e-17,
+          "phase_work_duality_error": 1.3877787807814457e-17,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 0.0
+        },
+        "preparation_seconds": 5.152515583,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.035068333,
+            "lowering_seconds": 0.006447791
+          },
+          "compiler": {
+            "argument_bytes": 144,
+            "bytes_accessed": 19296,
+            "flops": 1980,
+            "generated_code_bytes": 0,
+            "output_bytes": 160,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 5120,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 7.4e-05,
+            "mean_seconds": 6.7e-05,
+            "median_seconds": 6.7e-05,
+            "min_seconds": 6e-05,
+            "samples_seconds": [
+              7.4e-05,
+              6e-05
+            ],
+            "std_seconds": 6.999999999999997e-06
+          },
+          "query_preparation_seconds": 1.805995959
+        }
+      },
+      {
+        "cold_execution_seconds": 6.158139083,
+        "compilation": {
+          "compilation_seconds": 1.545967709,
+          "lowering_seconds": 0.700443167
+        },
+        "compiler": {
+          "argument_bytes": 1264,
+          "bytes_accessed": 4854619,
+          "flops": 972896,
+          "generated_code_bytes": 0,
+          "output_bytes": 336,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 159056,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 16
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.004571666,
+          "mean_seconds": 0.0045621870000000005,
+          "median_seconds": 0.0045621870000000005,
+          "min_seconds": 0.004552708,
+          "samples_seconds": [
+            0.004571666,
+            0.004552708
+          ],
+          "std_seconds": 9.479000000000171e-06
+        },
+        "memory": {
+          "particle_input_bytes": 1264,
+          "prepared_chain_bytes": 16672,
+          "prepared_kernel_bytes": 5117
+        },
+        "physics": {
+          "maximum_constant_field_error": 5.551115123125783e-17,
+          "maximum_continuity_defect": 1.7763568394002505e-15,
+          "maximum_phase_error": 8.441528768080323e-17,
+          "phase_work_duality_error": 3.1401849173675503e-16,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 0.0
+        },
+        "preparation_seconds": 0.137571125,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.038125916,
+            "lowering_seconds": 0.005861833
+          },
+          "compiler": {
+            "argument_bytes": 240,
+            "bytes_accessed": 75744,
+            "flops": 7920,
+            "generated_code_bytes": 0,
+            "output_bytes": 256,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 20480,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 5.6833e-05,
+            "mean_seconds": 5.58335e-05,
+            "median_seconds": 5.58335e-05,
+            "min_seconds": 5.4834e-05,
+            "samples_seconds": [
+              5.6833e-05,
+              5.4834e-05
+            ],
+            "std_seconds": 9.995000000000029e-07
+          },
+          "query_preparation_seconds": 1.355013833
+        }
+      }
+    ],
+    "simplicial_5d": [
+      {
+        "cold_execution_seconds": 7.882495292,
+        "compilation": {
+          "compilation_seconds": 1.21814725,
+          "lowering_seconds": 1.989477333
+        },
+        "compiler": {
+          "argument_bytes": 512,
+          "bytes_accessed": 783108,
+          "flops": 233970,
+          "generated_code_bytes": 0,
+          "output_bytes": 284,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 37872,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 4
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.001646375,
+          "mean_seconds": 0.0016310625000000001,
+          "median_seconds": 0.0016310625000000001,
+          "min_seconds": 0.00161575,
+          "samples_seconds": [
+            0.00161575,
+            0.001646375
+          ],
+          "std_seconds": 1.5312500000000027e-05
+        },
+        "memory": {
+          "particle_input_bytes": 512,
+          "prepared_chain_bytes": 6248,
+          "prepared_kernel_bytes": 9948
+        },
+        "physics": {
+          "maximum_constant_field_error": 5.551115123125783e-17,
+          "maximum_continuity_defect": 2.220446049250313e-16,
+          "maximum_phase_error": 9.020562075079397e-17,
+          "phase_work_duality_error": 1.3877787807814457e-17,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 1.1102230246251565e-16
+        },
+        "preparation_seconds": 6.019517792,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.034899417,
+            "lowering_seconds": 0.006500417
+          },
+          "compiler": {
+            "argument_bytes": 192,
+            "bytes_accessed": 28832,
+            "flops": 2908,
+            "generated_code_bytes": 0,
+            "output_bytes": 208,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 7680,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 6.6083e-05,
+            "mean_seconds": 5.7687e-05,
+            "median_seconds": 5.7687e-05,
+            "min_seconds": 4.9291e-05,
+            "samples_seconds": [
+              6.6083e-05,
+              4.9291e-05
+            ],
+            "std_seconds": 8.395999999999999e-06
+          },
+          "query_preparation_seconds": 2.066742291
+        }
+      },
+      {
+        "cold_execution_seconds": 8.199350333,
+        "compilation": {
+          "compilation_seconds": 1.317003958,
+          "lowering_seconds": 2.051542166
+        },
+        "compiler": {
+          "argument_bytes": 1568,
+          "bytes_accessed": 2998704,
+          "flops": 911682,
+          "generated_code_bytes": 0,
+          "output_bytes": 392,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 123376,
+          "unavailable_reason": null
+        },
+        "configuration": {
+          "maximum_segments": 8,
+          "particles": 16
+        },
+        "execution": {
+          "count": 2,
+          "max_seconds": 0.00382975,
+          "mean_seconds": 0.003631708,
+          "median_seconds": 0.003631708,
+          "min_seconds": 0.003433666,
+          "samples_seconds": [
+            0.00382975,
+            0.003433666
+          ],
+          "std_seconds": 0.00019804199999999984
+        },
+        "memory": {
+          "particle_input_bytes": 1568,
+          "prepared_chain_bytes": 24992,
+          "prepared_kernel_bytes": 9948
+        },
+        "physics": {
+          "maximum_constant_field_error": 5.551115123125783e-17,
+          "maximum_continuity_defect": 1.1102230246251565e-15,
+          "maximum_phase_error": 9.020562075079397e-17,
+          "phase_work_duality_error": 2.7755575615628914e-16,
+          "slot_order_invariant": true,
+          "successful": true,
+          "work_duality_error": 4.440892098500626e-16
+        },
+        "preparation_seconds": 0.482341541,
+        "prepared_reuse": {
+          "compilation": {
+            "compilation_seconds": 0.054496625,
+            "lowering_seconds": 0.014531542
+          },
+          "compiler": {
+            "argument_bytes": 288,
+            "bytes_accessed": 113312,
+            "flops": 11632,
+            "generated_code_bytes": 0,
+            "output_bytes": 304,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 30720,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 0.000134208,
+            "mean_seconds": 9.1479e-05,
+            "median_seconds": 9.1479e-05,
+            "min_seconds": 4.875e-05,
+            "samples_seconds": [
+              0.000134208,
+              4.875e-05
+            ],
+            "std_seconds": 4.2729000000000004e-05
+          },
+          "query_preparation_seconds": 3.273511583
+        }
+      }
+    ]
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "684ffb67552edec614e7ed76c4ca362c09651de3de430feb71cd74712be1612c",
+    "evidence_schema": {
+      "fields": [
+        "cold_execution_seconds",
+        "compilation",
+        "compiler",
+        "configuration",
+        "execution",
+        "memory",
+        "physics",
+        "preparation_seconds",
+        "prepared_reuse"
+      ],
+      "signature": "e514e2c27062c1545e9c87a4105c5346aab8a1ed64ae5bf353ef415adb08e2cb"
+    },
+    "fingerprint": "6626d6259cd830cbf6a062c5ec43a3a108c6fb1a2c8242a071b17eb4ad3ffa64",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2"
+  },
+  "kind": "pic-chain-integration-capacity-campaign"
+}

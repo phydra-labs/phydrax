@@ -20,9 +20,11 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import PeriodicCell
 from ....discretization.bem import RWGSurfaceCurrentSpace3D
+from ....discretization.bem._rwg import rwg_gram_entries
 from ....linalg import DenseLinearOperator, OperatorProperties
 from ....typing import parse
 from ._maxwell3d import MaxwellEFIEPolicy3D, prepare_maxwell_efie_3d
+from ._maxwell_magnetic3d import central_magnetic_matrix
 
 
 PeriodicMaxwellFormulation3D: TypeAlias = Literal["efie", "mfie", "cfie"]
@@ -121,6 +123,7 @@ def _smooth_image_matrix(
     surface = space.surface
     centroids = np.asarray(surface.face_centroids, dtype=np.float64)
     areas = np.asarray(surface.face_areas, dtype=np.float64)
+    normals = np.asarray(surface.face_normals, dtype=np.float64)
     basis = np.asarray(space.centroid_basis)
     face_edges = np.asarray(surface.face_edges, dtype=np.int32)
     edge_count = space.size
@@ -148,7 +151,7 @@ def _smooth_image_matrix(
                             test @ dyadic @ trial
                         )
                         magnetic[edge_target, edge_source] += scale * np.dot(
-                            test, np.cross(gradient, trial)
+                            test, np.cross(normals[target], np.cross(gradient, trial))
                         )
     return matrix, magnetic
 
@@ -208,18 +211,17 @@ def prepare_periodic_maxwell_boundary_3d(
     )
     electric = np.asarray(free.operator.matrix) + electric_correction
     mass = np.zeros_like(electric)
-    surface = current_space.surface
-    basis = np.asarray(current_space.centroid_basis)
-    for face in range(surface.face_count):
-        edges = np.asarray(surface.face_edges[face])
-        mass[np.ix_(edges, edges)] += float(surface.face_areas[face]) * (
-            basis[face] @ basis[face].T
-        )
-    magnetic = 0.5 * mass + magnetic_correction
+    rows, columns, gram_values = rwg_gram_entries(current_space.surface)
+    np.add.at(mass, (rows, columns), gram_values)
+    magnetic = (
+        0.5 * mass + central_magnetic_matrix(current_space, k) + magnetic_correction
+    )
     matrix = electric if formulation == "efie" else magnetic
     if formulation == "cfie":
         alpha = selected.cfie_electric_weight
         matrix = alpha * electric + (1.0 - alpha) * float(wave_impedance) * magnetic
+    if np.any(~np.isfinite(matrix)):
+        raise ValueError("Periodic Maxwell boundary action must be finite.")
     resident = int(
         matrix.nbytes + electric_correction.nbytes + magnetic_correction.nbytes
     )

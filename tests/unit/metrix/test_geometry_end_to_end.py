@@ -129,7 +129,7 @@ def test_geometry_end_to_end_scenario_2() -> None:
     chart = phx.metrix.CoordinateChart("complex-plane", ("x0", "x1", "y0", "y1"))
     convention = phx.metrix.ComplexCoordinateConvention(chart)
     scalar = phx.metrix.BigradedForm(
-        lambda point: jnp.prod(convention.to_complex(point)),
+        lambda point: jnp.reshape(jnp.prod(convention.to_complex(point)), (1,)),
         convention=convention,
         bidegree=(0, 0),
     )

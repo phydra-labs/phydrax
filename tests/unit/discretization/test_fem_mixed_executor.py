@@ -23,7 +23,10 @@ def test_fem_mixed_executor_scenario_1() -> None:
         mesh,
         (
             phx.discretization.FiniteElementFieldSpec(
-                "q", phx.discretization.raviart_thomas_element("triangle")
+                "q",
+                phx.discretization.form_element(
+                    "triangle", 1, 1, twist="twisted", proxy="flux"
+                ),
             ),
             phx.discretization.FiniteElementFieldSpec(
                 "p", phx.discretization.discontinuous_element("triangle", 0)

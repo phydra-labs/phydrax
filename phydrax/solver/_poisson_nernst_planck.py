@@ -148,7 +148,7 @@ class PoissonNernstPlanckPlan(StrictModule, NonTrainableState):
             dimensionless_electrochemical - ideal_chemical,
             dimensionless_electrochemical_potential=dimensionless_electrochemical,
         )
-        weights = self.electrostatic.bridge.cochain.hodge_stars[0].astype(
+        weights = self.electrostatic.bridge.cochain.hodge_diagonal(0).astype(
             concentration.dtype
         )
         chemical_energy = jnp.sum(weights * local.chemical_free_energy_density)

@@ -94,6 +94,13 @@ Most workflows are composing a few primitives:
   interventions and abductive counterfactuals; PC-Stable, conservative FCI, and
   bounded GES retain equivalence-class evidence. See the
   [causal inference guide](docs/guides_causal_inference.md).
+- **Exterior calculus**: explicit degree, twist, and proxy identity; one exterior-algebra
+  kernel shared by chart and domain-function forms; paired Hilbert complexes, metric
+  Hodges, commuting maps, and Hodge decomposition. Cell, finite-element, spline,
+  Fourier, spherical, and AMR realizations reuse their native owners. Prepared Whitney
+  chain queries preserve charge continuity and gather/deposit duality; form-aware PDE
+  lowering retains scientific types, boundary conditions, native status, and evidence.
+  See the [exterior-calculus guide](docs/guides_exterior_calculus.md).
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,

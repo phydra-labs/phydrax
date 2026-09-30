@@ -57,7 +57,9 @@ parameterization, and degenerate-metric duals are intentionally absent.
 `CliffordMetricBridge` connects one constant, nondegenerate orthogonal frame to a
 `CoordinateChart`. It raises a homogeneous covariant form into Clifford coefficients and
 lowers one Clifford grade back into a `DifferentialForm`. Both paths use the same
-exterior-basis index and sign implementation as the existing form calculus.
+canonical `phydrax.exterior` lexicographic basis and signs. Embedding accepts
+scalar-fiber untwisted forms only; convert twisted forms explicitly with
+`phydrax.metrix.to_untwisted(form, orientation)` before embedding.
 
 ```python
 chart = phx.metrix.CoordinateChart("plane", ("x", "y"))

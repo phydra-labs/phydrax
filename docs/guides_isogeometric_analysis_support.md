@@ -96,3 +96,11 @@ It never signs evidence and never marks `iga.tensor` released.
 complete, passing manifests. Release status belongs to the qualification
 registry and requires separately produced `ReleaseGateEvidence`; editing JSON or
 running the profile producer cannot create it.
+
+## Exterior realization boundary
+
+The public `SplineDeRhamComplex` exposes compatible form spaces, exact sparse
+degree maps, Gram pairings and `ComplexMap` traces/transfers. It is distinct from
+the scalar/vector-H1 release tuples in the table above; no newly available form
+API implicitly inherits a release, backend or distributed qualification.
+See [the public spline complex](api/discretization/isogeometric.md#public-spline-de-rham-complex).

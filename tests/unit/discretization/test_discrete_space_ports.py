@@ -12,9 +12,11 @@ from phydrax.discretization import (
     BlockDofLayout,
     DiscreteFieldSpace,
     EntityDofLayout,
+    FieldConformity,
     ModalDofLayout,
     TensorDofLayout,
 )
+from phydrax.exterior._form_type import FormType
 from phydrax.linalg import ArraySpace, DualSpace
 
 
@@ -108,3 +110,121 @@ def test_discrete_space_ports_scenario_2() -> None:
     assert port.port_id != _field("u", TensorDofLayout(("k",), (3,))).value_port().port_id
     with pytest.raises(ValueError, match="'empty'"):
         _field("empty", EntityDofLayout("cells", 0, 0)).value_port()
+
+
+def test_undeclared_form_preserves_historical_field_space_identity() -> None:
+    field = DiscreteFieldSpace(
+        "u",
+        "mesh",
+        TensorDofLayout(("node",), (3,), layout_id="nodes"),
+        ArraySpace((3,), space_id="nodal"),
+        representation="point_value",
+    )
+    assert field.form_type is None
+    assert field.field_space_id == (
+        "29804d67a326eff8059256b23334061e025ed27c614a0fff9bf2a35d77d41b95"
+    )
+
+
+def test_field_space_identity_distinguishes_declared_form_types() -> None:
+    layout = TensorDofLayout(("node",), (3,), layout_id="nodes")
+    space = ArraySpace((3,), space_id="nodal")
+    plain = DiscreteFieldSpace("u", "mesh", layout, space, representation="cochain")
+    scalar = DiscreteFieldSpace(
+        "u", "mesh", layout, space, representation="cochain", form_type=FormType(3, 0)
+    )
+    twisted = DiscreteFieldSpace(
+        "u",
+        "mesh",
+        layout,
+        space,
+        representation="cochain",
+        form_type=FormType(3, 0, twist="twisted"),
+    )
+    assert scalar.form_type is not None
+    assert scalar.form_type.form_type_id == FormType(3, 0).form_type_id
+    assert len({plain.field_space_id, scalar.field_space_id, twisted.field_space_id}) == 3
+
+
+def test_field_space_form_persistence_preserves_binding_identity() -> None:
+    form = FormType(2, 1, twist="twisted", fiber_shape=(2,), ambient_dimension=3)
+    payload = form.to_dict()
+    assert payload == {
+        "dimension": 2,
+        "degree": 1,
+        "twist": "twisted",
+        "fiber_shape": [2],
+        "ambient_dimension": 3,
+    }
+    layout = TensorDofLayout(("node",), (3,), layout_id="nodes")
+    space = ArraySpace((3,), space_id="nodal")
+    original = DiscreteFieldSpace(
+        "u", "mesh", layout, space, representation="cochain", form_type=form
+    )
+    restored = DiscreteFieldSpace(
+        "u",
+        "mesh",
+        layout,
+        space,
+        representation="cochain",
+        form_type=FormType.from_dict(payload),
+    )
+    assert restored.field_space_id == original.field_space_id
+
+
+def test_field_space_refuses_obsolete_cochain_conformity() -> None:
+    with pytest.raises(ValueError, match="conformity"):
+        DiscreteFieldSpace(
+            "u",
+            "mesh",
+            TensorDofLayout(("node",), (3,)),
+            ArraySpace((3,)),
+            representation="cochain",
+            conformity="cochain",  # ty: ignore[invalid-argument-type]
+        )
+
+
+@pytest.mark.parametrize("conformity", ("H1", "Hcurl", "Hdiv"))
+def test_declared_form_degree_refuses_incompatible_vector_proxy_conformity(
+    conformity: FieldConformity,
+) -> None:
+    form_type = FormType(4, 2, twist="untwisted")
+    with pytest.raises(ValueError, match="form degree"):
+        DiscreteFieldSpace(
+            "two-form",
+            "four-dimensional-support",
+            EntityDofLayout("two-cells", 2, 2),
+            ArraySpace((2,), space_id="two-form-coefficients"),
+            representation="basis_coefficient",
+            conformity=conformity,
+            form_type=form_type,
+        )
+
+
+def test_generic_form_conformity_requires_declared_form_type() -> None:
+    with pytest.raises(ValueError, match="HLambda.*form_type"):
+        DiscreteFieldSpace(
+            "two-form",
+            "mesh",
+            TensorDofLayout(("coefficient",), (6,)),
+            ArraySpace((6,)),
+            representation="basis_coefficient",
+            conformity="HLambda",
+        )
+
+
+@pytest.mark.parametrize("degree", (0, 2, 4))
+def test_generic_form_conformity_retains_declared_degree_identity(degree: int) -> None:
+    form = FormType(4, degree)
+    field = DiscreteFieldSpace(
+        "form",
+        "mesh",
+        TensorDofLayout(("coefficient",), (6,)),
+        ArraySpace((6,)),
+        representation="basis_coefficient",
+        conformity="HLambda",
+        form_type=form,
+    )
+    assert field.conformity == "HLambda"
+    assert field.form_type is not None
+    assert field.form_type.form_type_id == form.form_type_id

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import final, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,17 +17,18 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver._mac_ale import MACALEStageGeometry
 from ._boundary import FreeSurfaceBoundaryStage
-from ._free_surface_ale import PreparedGraphSurfaceALE
+from ._free_surface_ale import MappedHodgeSolveResult, PreparedGraphSurfaceALE
 
 
 FaceTuple = tuple[Array, ...]
-_CGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 def _tuple_add(left: FaceTuple, scale: Array | float, right: FaceTuple, /) -> FaceTuple:
     return tuple(a + scale * b for a, b in zip(left, right, strict=True))
 
 
+@final
 class FreeSurfaceProjectionResult(StrictModule):
     momentum: FaceTuple
     velocity: FaceTuple
@@ -38,6 +39,9 @@ class FreeSurfaceProjectionResult(StrictModule):
     pressure_residual: Array
     pressure_residual_norm: Array
     hodge_residual_norm: Array
+    tentative_hodge: MappedHodgeSolveResult
+    corrected_hodge: MappedHodgeSolveResult
+    hodge_status: Array
     iterations: Array
     converged: Array
     finite: Array
@@ -158,12 +162,16 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         if pressure.shape != rhs.shape:
             raise ValueError("Pressure-head guess shape is invalid.")
 
-        def action(value: Array) -> Array:
+        def action(value: Array) -> tuple[Array, MappedHodgeSolveResult]:
             gradient = self._gradient_covector(geometry, value, mask)
             inverse = self.surface.inverse_hodge(geometry, gradient, free_mask=mask)
-            return geometry.divergence(inverse.velocity)
+            return geometry.divergence(inverse.velocity), inverse
 
-        residual = rhs - action(pressure)
+        initial_image, initial_hodge = action(pressure)
+        residual = rhs - initial_image
+        hodge_status = jnp.where(
+            tentative.successful, initial_hodge.status, tentative.status
+        )
         direction = residual
         norm = jnp.sum(geometry.cell_volumes * residual**2)
         threshold = self.tolerance**2 * jnp.maximum(norm, 1.0)
@@ -171,10 +179,15 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         failed = jnp.asarray(False)
 
         def body(_: Array, state: _CGCarry) -> _CGCarry:
-            value, residual_, direction_, norm_, active_, failed_ = state
-            image = action(direction_)
+            value, residual_, direction_, norm_, active_, failed_, status_ = state
+            image, inverse = action(direction_)
             denominator = jnp.sum(geometry.cell_volumes * direction_ * image)
-            valid = active_ & jnp.isfinite(denominator) & (denominator > 0.0)
+            valid = (
+                active_
+                & inverse.successful
+                & jnp.isfinite(denominator)
+                & (denominator > 0.0)
+            )
             alpha = jnp.where(valid, norm_ / denominator, 0.0)
             next_value = value + alpha * direction_
             next_residual = residual_ - alpha * image
@@ -188,13 +201,14 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 next_norm,
                 running,
                 failed_ | (active_ & ~valid),
+                jnp.where(status_ == 0, inverse.status, status_),
             )
 
-        pressure, residual, _, norm, active, failed = jax.lax.fori_loop(
+        pressure, residual, _, norm, active, failed, hodge_status = jax.lax.fori_loop(
             0,
             self.maximum_iterations,
             body,
-            (pressure, residual, direction, norm, active, failed),
+            (pressure, residual, direction, norm, active, failed, hodge_status),
         )
         gradient = self._gradient_covector(geometry, pressure, mask)
         corrected_homogeneous = _tuple_add(homogeneous_momentum, -dt, gradient)
@@ -211,7 +225,10 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         )
         corrected_momentum = _tuple_add(corrected_homogeneous, 1.0, lifting_momentum)
         divergence_after = geometry.divergence(corrected_velocity)
-        pressure_residual = action(pressure) - rhs
+        final_image, final_hodge = action(pressure)
+        pressure_residual = final_image - rhs
+        hodge_status = jnp.where(hodge_status == 0, corrected_free.status, hodge_status)
+        hodge_status = jnp.where(hodge_status == 0, final_hodge.status, hodge_status)
         residual_norm = jnp.sqrt(jnp.sum(geometry.cell_volumes * pressure_residual**2))
         divergence_norm = jnp.sqrt(jnp.sum(geometry.cell_volumes * divergence_after**2))
         rhs_norm = jnp.sqrt(jnp.sum(geometry.cell_volumes * rhs**2))
@@ -225,6 +242,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         converged = (
             ~active
             & ~failed
+            & (hodge_status == 0)
             & finite
             & (divergence_norm <= self.tolerance * jnp.maximum(rhs_norm, 1.0))
         )
@@ -240,6 +258,9 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             hodge_residual_norm=jnp.maximum(
                 tentative.residual_norm, corrected_free.residual_norm
             ),
+            tentative_hodge=tentative,
+            corrected_hodge=corrected_free,
+            hodge_status=hodge_status,
             iterations=jnp.asarray(self.maximum_iterations, dtype=jnp.int32),
             converged=converged,
             finite=finite,

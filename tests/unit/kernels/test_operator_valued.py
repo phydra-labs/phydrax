@@ -9,8 +9,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
+from phydrax.exterior import FormType
+from phydrax.kernels import ProjectedDifferentialFormKernel
 
 
 def _points() -> Any:
@@ -107,3 +110,71 @@ def test_kernel_functional_terms_require_exact_integer_derivative_orders() -> No
             ((True,),),
             jnp.ones((1, 1, 1, 1)),
         )
+
+
+def test_projected_form_identity_distinguishes_scientific_and_derivative_contracts() -> (
+    None
+):
+    scalar = _scalar_kernel()
+
+    def projector(point: Array) -> Array:
+        return jnp.eye(point.shape[0], dtype=point.dtype)
+
+    types = (
+        FormType(2, 1),
+        FormType(2, 1, ambient_dimension=3),
+        FormType(2, 1, twist="twisted"),
+        FormType(3, 1),
+    )
+    kernels = [
+        ProjectedDifferentialFormKernel(
+            scalar,
+            projector,
+            form_type,
+            projector_id="identity",
+            projector_derivative_order=order,
+        )
+        for form_type in types
+        for order in (None, 0, 2)
+    ]
+    assert len({kernel.kernel_id for kernel in kernels}) == len(kernels)
+    repeated = ProjectedDifferentialFormKernel(
+        scalar, projector, FormType(2, 1), projector_id="identity"
+    )
+    assert repeated.kernel_id == kernels[0].kernel_id
+    assert kernels[1].max_derivative_order == 0
+    assert kernels[2].max_derivative_order == 2
+
+
+def test_sphere_two_form_covariance_matches_oriented_area_oracle() -> None:
+    scalar = _scalar_kernel()
+    kernel = phx.kernels.sphere_differential_form_kernel(scalar, 2)
+    assert (
+        kernel.form_type.form_type_id == FormType(2, 2, ambient_dimension=3).form_type_id
+    )
+
+    def area(point: Array) -> Array:
+        # Lexicographic (xy, xz, yz) coefficients of contraction with volume.
+        return jnp.stack((point[2], -point[1], point[0]))
+
+    for left in _points():
+        for right in _points():
+            left_area, right_area = area(left), area(right)
+            expected = (
+                scalar.pairwise(left, right)
+                * jnp.vdot(left_area, right_area)
+                * jnp.outer(left_area, right_area)
+            )
+            np.testing.assert_allclose(kernel.block(left, right), expected, atol=1e-10)
+
+
+def test_zero_form_kernel_retains_explicit_scalar_component() -> None:
+    scalar = _scalar_kernel()
+    kernel = phx.kernels.sphere_differential_form_kernel(scalar, 0)
+    assert kernel.output_dimension == 1
+    points = _points()
+    np.testing.assert_allclose(
+        kernel.blocks(points, points)[..., 0, 0], scalar.matrix(points, points)
+    )
+    with pytest.raises(ValueError):
+        phx.kernels.sphere_differential_form_kernel(scalar, 3)

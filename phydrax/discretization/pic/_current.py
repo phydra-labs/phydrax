@@ -4,49 +4,29 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-import phydrax.ein as ein
-
 from ..._fingerprint import canonical_fingerprint
-from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
-from ..splatting._assignment import _basis_and_derivative
 from ._binning import PICCellBinningPlan
 from ._transfer import PreparedPICParticleCochainTransfer
 from ._types import PICCurrentDepositResult
 
 
-def _flat_index(indices: tuple[Array, Array, Array], shape: tuple[int, ...], /) -> Array:
-    return (indices[0] * shape[1] + indices[1]) * shape[2] + indices[2]
-
-
-def _linear_factor(start: Array, end: Array, bit: int, /) -> tuple[Array, Array]:
-    delta = end - start
-    return (start, delta) if bit else (1.0 - start, -delta)
-
-
-def _integrated_product(
-    first: tuple[Array, Array], second: tuple[Array, Array], /
-) -> Array:
-    a, b = first
-    c, d = second
-    return a * c + 0.5 * (a * d + b * c) + (b * d) / 3.0
-
-
+@final
 class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
     """Physical tail-to-head spline-Whitney current with ``rho_dot - delta(J) = 0``.
 
-    The shape order is the transfer's ``shape_order``: order one integrates the
-    lowest-order Whitney forms in closed form; orders two and three integrate
-    the spline-Whitney path integrals exactly (`_spline_whitney_flux`).
+    The shape order is the transfer's ``shape_order``. All orders use the
+    owning cubical kernel's exact polynomial moments on knot-split segments.
 
     Nonperiodic axes clip every path at the closed domain box: a path whose
     head leaves the box ends at its exit point, where its charge is deposited,
@@ -76,17 +56,10 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         if transfer.bridge.dimension != 3:
             raise ValueError("Charge-conserving current currently requires a 3-D bridge.")
         axes = transfer.bridge.grid.structured_axes
-        widths = tuple(np.asarray(axis.interval_widths) for axis in axes)
-        if any(
-            not np.allclose(value, value[0], rtol=1e-12, atol=1e-14) for value in widths
-        ):
-            raise ValueError("Charge-conserving current currently requires uniform axes.")
         segments = int(maximum_segments_per_particle)
         tolerance_ = float(tolerance)
-        if segments != 4:
-            raise ValueError(
-                "maximum_segments_per_particle must be four for one-cell-per-axis paths."
-            )
+        if segments < 1:
+            raise ValueError("maximum_segments_per_particle must be positive.")
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("tolerance must be positive and finite.")
         periodic = (
@@ -114,261 +87,23 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _segments(
-        self, start: Array, end: Array, shift: float, /
-    ) -> tuple[Array, Array, Array, Array, Array]:
-        """Split paths at the knot lattice ``shift + ℤ`` of every axis.
-
-        Returns per-segment local coordinates inside the knot cell
-        ``cell + shift`` (normalized grid units), the unwrapped cell, validity,
-        and per-particle overflow of the one-cell-per-axis path bound.
-        """
-        axes = self.transfer.bridge.grid.structured_axes
-        lower = jnp.asarray([axis.bounds[0] for axis in axes], dtype=start.dtype)
-        spacing = jnp.asarray(
-            [axis.interval_widths[0] for axis in axes], dtype=start.dtype
+    def _flux(
+        self, start: Array, end: Array, charges: Array, active: Array, dt: Array, /
+    ) -> tuple[Array, Array, Array, Array]:
+        query = self.transfer.kernel.integrate_segments(
+            start, end, maximum_segments=self.maximum_segments_per_particle
         )
-        q0 = (start - lower) / spacing - shift
-        q1 = (end - lower) / spacing - shift
-        delta = q1 - q0
-        epsilon = 32.0 * jnp.finfo(start.dtype).eps
-        direction = jnp.sign(delta)
-        q0_side = q0 + epsilon * direction
-        start_cell = jnp.floor(q0_side)
-        boundary = jnp.where(delta > 0.0, start_cell + 1.0, start_cell)
-        safe_delta = jnp.where(jnp.abs(delta) > epsilon, delta, 1.0)
-        crossing = (boundary - q0) / safe_delta
-        valid_crossing = (
-            (jnp.abs(delta) > epsilon) & (crossing > epsilon) & (crossing < 1.0 - epsilon)
-        )
-        crossing = jnp.where(valid_crossing, crossing, 1.0)
-        times = jnp.sort(
-            jnp.concatenate(
-                (
-                    jnp.zeros((start.shape[0], 1), dtype=start.dtype),
-                    crossing,
-                    jnp.ones((start.shape[0], 1), dtype=start.dtype),
+        route_valid = query.valid & active[:, None]
+        counts = jnp.sum(
+            jnp.any(
+                route_valid.reshape(
+                    (start.shape[0], self.maximum_segments_per_particle, -1)
                 ),
-                axis=1,
+                axis=-1,
             ),
             axis=1,
-        )
-        segment_start = times[:, :-1]
-        segment_end = times[:, 1:]
-        valid = segment_end - segment_start > epsilon
-        midpoint_t = 0.5 * (segment_start + segment_end)
-        midpoint = q0[:, None, :] + midpoint_t[..., None] * delta[:, None, :]
-        cell_unwrapped = jnp.floor(midpoint + epsilon * direction[:, None, :]).astype(
-            jnp.int32
-        )
-        # A closed nonperiodic box assigns its upper face to the last cell, so
-        # paths on that face keep every lowest-order index inside the grid.
-        last_cell = jnp.asarray(
-            [axis.interval_centers.size - 1 for axis in axes], dtype=jnp.int32
-        )
-        cell_unwrapped = jnp.where(
-            jnp.asarray(self.periodic),
-            cell_unwrapped,
-            jnp.clip(cell_unwrapped, 0, last_cell),
-        )
-        local_start = (
-            q0[:, None, :] + segment_start[..., None] * delta[:, None, :] - cell_unwrapped
-        )
-        local_end = (
-            q0[:, None, :] + segment_end[..., None] * delta[:, None, :] - cell_unwrapped
-        )
-        overflow = jnp.any(jnp.abs(delta) > 1.0 + epsilon, axis=-1)
-        return local_start, local_end, cell_unwrapped, valid, overflow
-
-    def _whitney_flux(
-        self, start: Array, end: Array, charges: Array, active: Array, dt: Array, /
-    ) -> tuple[Array, Array, Array, Array]:
-        """Lowest-order Whitney flux content by closed-form segment integrals."""
-        local_start, local_end, cell, segment_valid, particle_overflow = self._segments(
-            start, end, 0.0
-        )
-        segment_valid = segment_valid & active[:, None]
-        counts = jnp.sum(segment_valid, axis=1, dtype=jnp.int32)
-        overflow = jnp.any(particle_overflow & active) | jnp.any(
-            counts > self.maximum_segments_per_particle
-        )
-        bridge = self.transfer.bridge
-        shapes = bridge.orientation_shapes[1]
-        offsets = bridge.orientation_offsets[1]
-        interval_counts = jnp.asarray(
-            [axis.interval_centers.size for axis in bridge.grid.structured_axes],
             dtype=jnp.int32,
         )
-        point_counts = jnp.asarray(
-            [axis.point_coordinates.size for axis in bridge.grid.structured_axes],
-            dtype=jnp.int32,
-        )
-        contribution_indices = []
-        contribution_values = []
-        contribution_valid = []
-        for axis in range(3):
-            transverse = tuple(value for value in range(3) if value != axis)
-            for first_bit in (0, 1):
-                for second_bit in (0, 1):
-                    first_factor = _linear_factor(
-                        local_start[..., transverse[0]],
-                        local_end[..., transverse[0]],
-                        first_bit,
-                    )
-                    second_factor = _linear_factor(
-                        local_start[..., transverse[1]],
-                        local_end[..., transverse[1]],
-                        second_bit,
-                    )
-                    integral = (
-                        local_end[..., axis] - local_start[..., axis]
-                    ) * _integrated_product(first_factor, second_factor)
-                    index_components = []
-                    for coordinate_axis in range(3):
-                        if coordinate_axis == axis:
-                            index_components.append(
-                                jnp.mod(
-                                    cell[..., coordinate_axis],
-                                    interval_counts[coordinate_axis],
-                                )
-                            )
-                        else:
-                            bit = (
-                                first_bit
-                                if coordinate_axis == transverse[0]
-                                else second_bit
-                            )
-                            index_components.append(
-                                jnp.mod(
-                                    cell[..., coordinate_axis] + bit,
-                                    point_counts[coordinate_axis],
-                                )
-                            )
-                    flat = offsets[axis] + _flat_index(
-                        (index_components[0], index_components[1], index_components[2]),
-                        shapes[axis],
-                    )
-                    contribution_indices.append(flat)
-                    contribution_values.append(charges[:, None] * integral / dt)
-                    contribution_valid.append(segment_valid)
-        indices = jnp.stack(tuple(contribution_indices), axis=-1).reshape((-1,))
-        values = jnp.stack(tuple(contribution_values), axis=-1).reshape((-1,))
-        valid = jnp.stack(tuple(contribution_valid), axis=-1).reshape((-1,))
-        flux_content = jnp.zeros((bridge.cochain.cell_counts[1],), dtype=start.dtype)
-
-        def scatter(index: Array, carry: Array) -> Array:
-            return carry.at[indices[index]].add(
-                jnp.where(valid[index], values[index], 0.0)
-            )
-
-        flux_content = jax.lax.fori_loop(0, indices.size, scatter, flux_content)
-        return flux_content, counts, overflow, jnp.asarray(True)
-
-    def _spline_whitney_flux(
-        self, start: Array, end: Array, charges: Array, active: Array, dt: Array, /
-    ) -> tuple[Array, Array, Array, Array]:
-        """Order-``p`` spline-Whitney flux content by exact segment quadrature.
-
-        Along a straight path the edge current of axis ``a`` is
-        ``q/Δt ∫ N^{p-1}(q_a − e − ½) N^p(q_b − j) N^p(q_c − k) dq_a``. Splitting
-        each path at the common knot lattice of those splines (integers for odd
-        ``p``, half-integers for even ``p``) leaves polynomial integrands of
-        degree ``3p − 1`` in the path parameter, integrated exactly by
-        ``⌈3p/2⌉``-point Gauss–Legendre. ``dN^p(x − i)/dx = N^{p-1}(x − i + ½) −
-        N^{p-1}(x − i − ½)`` then makes the discrete continuity with the
-        degree-``p`` vertex charge exact to roundoff. Contributions reduce in
-        canonical cell-binned particle order, so the current is invariant to
-        particle slot order.
-        """
-        order = self.transfer.plan.shape_order
-        shift = 0.5 * ((order - 1) % 2)
-        local_start, local_end, cell, segment_valid, particle_overflow = self._segments(
-            start, end, shift
-        )
-        segment_valid = segment_valid & active[:, None]
-        counts = jnp.sum(segment_valid, axis=1, dtype=jnp.int32)
-        overflow = jnp.any(particle_overflow & active) | jnp.any(
-            counts > self.maximum_segments_per_particle
-        )
-        dtype = start.dtype
-        origin = shift + cell.astype(dtype)
-        q_start = origin + local_start
-        q_end = origin + local_end
-        delta = q_end - q_start
-        midpoint = 0.5 * (q_start + q_end)
-        rule = gauss_legendre_data((3 * order + 1) // 2)
-        nodes = (0.5 * (rule.nodes + 1.0)).astype(dtype)
-        weights = (0.5 * rule.weights).astype(dtype)
-        points = q_start[..., None, :] + nodes[:, None] * delta[..., None, :]
-
-        def axis_shape(axis: int, degree: int, offset: float) -> tuple[Array, Array]:
-            # Nodes base..base+degree carry the piece containing the segment.
-            base = jnp.floor(midpoint[..., axis] - offset - 0.5 * (degree - 1))
-            node = base[..., None] + jnp.arange(degree + 1, dtype=dtype)
-            local = (points[..., axis] - offset)[..., None] - node[..., None, :]
-            value, _ = _basis_and_derivative(degree, local)
-            return node.astype(jnp.int32), value
-
-        bridge = self.transfer.bridge
-        shapes = bridge.orientation_shapes[1]
-        offsets = bridge.orientation_offsets[1]
-        axes = bridge.grid.structured_axes
-        indices = []
-        values = []
-        valid = []
-        truncated = jnp.asarray(False)
-
-        def wrap(index: Array, axis: int, count: int) -> tuple[Array, Array]:
-            if self.periodic[axis]:
-                return index % count, jnp.ones(index.shape, dtype=jnp.bool_)
-            return jnp.clip(index, 0, count - 1), (index >= 0) & (index < count)
-
-        for axis in range(3):
-            first, second = tuple(value for value in range(3) if value != axis)
-            along_index, along = axis_shape(axis, order - 1, 0.5)
-            first_index, first_value = axis_shape(first, order, 0.0)
-            second_index, second_value = axis_shape(second, order, 0.0)
-            integral = delta[..., axis, None, None, None] * ein.contract(
-                "g,nsgi,nsgj,nsgk->nsijk", weights, along, first_value, second_value
-            )
-            along_wrapped, along_inside = wrap(
-                along_index[..., :, None, None], axis, axes[axis].interval_centers.size
-            )
-            first_wrapped, first_inside = wrap(
-                first_index[..., None, :, None], first, axes[first].point_coordinates.size
-            )
-            second_wrapped, second_inside = wrap(
-                second_index[..., None, None, :],
-                second,
-                axes[second].point_coordinates.size,
-            )
-            grids = {axis: along_wrapped, first: first_wrapped, second: second_wrapped}
-            flat = offsets[axis] + _flat_index(
-                (grids[0], grids[1], grids[2]), shapes[axis]
-            )
-            inside = jnp.broadcast_to(
-                along_inside & first_inside & second_inside, integral.shape
-            )
-            contributing = segment_valid[..., None, None, None] & (integral != 0.0)
-            truncated = truncated | jnp.any(contributing & ~inside)
-            indices.append(
-                jnp.broadcast_to(flat, integral.shape).reshape((start.shape[0], -1))
-            )
-            values.append(
-                (charges[:, None, None, None, None] * integral / dt).reshape(
-                    (start.shape[0], -1)
-                )
-            )
-            valid.append(
-                (
-                    jnp.broadcast_to(segment_valid[..., None, None, None], integral.shape)
-                    & inside
-                ).reshape((start.shape[0], -1))
-            )
-        route_indices = jnp.concatenate(indices, axis=1)
-        route_values = jnp.concatenate(values, axis=1)
-        route_valid = jnp.concatenate(valid, axis=1)
-        routes = route_indices.shape[1]
         bins = self.binning.bin(
             start,
             active,
@@ -379,19 +114,26 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             ),
         )
         relation = EdgeRelation(
-            jnp.arange(route_indices.size, dtype=jnp.int32),
-            route_indices.reshape((-1,)),
-            source_size=route_indices.size,
-            target_size=bridge.cochain.cell_counts[1],
+            jnp.arange(query.indices.size, dtype=jnp.int32),
+            query.indices.reshape((-1,)),
+            source_size=query.indices.size,
+            target_size=query.dof_count,
             valid=route_valid.reshape((-1,)),
         )
         execution = RelationExecutionPlan().prepare(
-            relation, stable_route_ids=canonical_row_route_ids(bins.order, routes)
+            relation,
+            stable_route_ids=canonical_row_route_ids(bins.order, query.indices.shape[1]),
         )
+        values = (query.coefficients * charges[:, None] / dt).reshape((-1,))
         flux_content, evidence = execution.reduce(
-            route_values.reshape((-1,)), accumulation="fast", output="dense"
+            values, accumulation="fast", output="dense"
         )
-        return flux_content, counts, overflow, evidence.successful & ~truncated
+        return (
+            flux_content,
+            counts,
+            jnp.any(query.overflow & active),
+            evidence.successful & jnp.all(query.successful | ~active),
+        )
 
     def _clip_to_domain(
         self, start: Array, end: Array, active: Array, /
@@ -466,13 +208,11 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         end_routes = self.transfer.build(deposited_end, active_mask=active_mask)
         start_charge = self.transfer.deposit_macrocharge(start_routes, charges)
         end_charge = self.transfer.deposit_macrocharge(end_routes, charges)
-        flux_content, counts, overflow, reduced = (
-            self._whitney_flux(start, deposited_end, charges, active, dt)
-            if self.transfer.plan.shape_order == 1
-            else self._spline_whitney_flux(start, deposited_end, charges, active, dt)
+        flux_content, counts, overflow, reduced = self._flux(
+            start, deposited_end, charges, active, dt
         )
         bridge = self.transfer.bridge
-        current = bridge.cochain.solve_hodge(1, flux_content)
+        current = bridge.cochain.inverse_hodge_star(1, flux_content)
         continuity = (
             end_charge.cochain - start_charge.cochain
         ) / dt - bridge.codifferential(1, current)
@@ -520,6 +260,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         )
 
 
+@final
 class PICMaxwellCurrentArguments(StrictModule):
     particle_current: Array
     external_arguments: object

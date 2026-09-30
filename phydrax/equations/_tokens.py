@@ -55,6 +55,13 @@ PDE_OPERATOR_VOCABULARY = (
     "curl",
     "laplacian",
     "integral",
+    "exterior_derivative",
+    "codifferential",
+    "hodge_star",
+    "wedge",
+    "interior_product",
+    "lie_derivative",
+    "trace",
 )
 PDE_TOKEN_ATTRIBUTES = (
     "none",
@@ -93,6 +100,21 @@ PDE_TOKEN_ATTRIBUTES = (
     "order",
     "axis",
     "nondimensionalization",
+    "form_absent",
+    "form_dimension",
+    "form_degree",
+    "form_twist_untwisted",
+    "form_twist_twisted",
+    "form_fiber_rank",
+    "form_fiber_extent",
+    "form_ambient_dimension",
+    "form_proxy_scalar",
+    "form_proxy_circulation",
+    "form_proxy_flux",
+    "form_proxy_density",
+    "form_proxy_components",
+    "product_scalar",
+    "product_matrix",
 )
 _KIND_INDEX = {name: index for index, name in enumerate(PDE_TOKEN_KINDS)}
 _OPERATOR_INDEX = {name: index for index, name in enumerate(PDE_OPERATOR_VOCABULARY)}
@@ -276,6 +298,12 @@ def tokenize_pde_ir(
                 depth=depth + 1,
                 scalar=float(expression["axis"]),
             )
+        if expression["op"] == "wedge":
+            append_attribute(
+                f"product_{expression['product']}",
+                parent=index,
+                depth=depth + 1,
+            )
         commutative = expression["op"] in ("add", "multiply")
         for argument_slot, argument in enumerate(expression.get("args", ())):
             append_expression(
@@ -330,6 +358,36 @@ def tokenize_pde_ir(
             parent=root,
             depth=1,
         )
+        if field.form is None:
+            append_attribute("form_absent", parent=root, depth=1)
+        else:
+            form_type = field.form.form_type
+            append_attribute(
+                "form_dimension", parent=root, depth=1, scalar=form_type.dimension
+            )
+            append_attribute("form_degree", parent=root, depth=1, scalar=form_type.degree)
+            append_attribute(f"form_twist_{form_type.twist}", parent=root, depth=1)
+            append_attribute(
+                "form_fiber_rank",
+                parent=root,
+                depth=1,
+                scalar=len(form_type.fiber_shape),
+            )
+            for slot, extent in enumerate(form_type.fiber_shape):
+                append_attribute(
+                    "form_fiber_extent",
+                    parent=root,
+                    depth=1,
+                    scalar=extent,
+                    slot=slot,
+                )
+            append_attribute(
+                "form_ambient_dimension",
+                parent=root,
+                depth=1,
+                scalar=form_type.ambient_dimension,
+            )
+            append_attribute(f"form_proxy_{field.form.proxy}", parent=root, depth=1)
         for slot, coordinate in enumerate(field.coordinates):
             append_attribute(
                 "coordinate_dependency",

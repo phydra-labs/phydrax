@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -111,8 +112,9 @@ class MaternSpectralMultiplier(AbstractSpectralMultiplier):
         return "matern"
 
 
+@final
 class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
-    """Finite Laplacian spectral covariance over integer entity identifiers."""
+    """Finite Laplacian covariance over explicit integer coefficient identifiers."""
 
     eigenbasis: SpectralDecomposition
     multiplier: AbstractSpectralMultiplier
@@ -167,32 +169,36 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
             )
         return jnp.exp(0.5 * log_weights)
 
-    def _entity_indices(self, points: ArrayLike, /) -> Array:
+    def _coefficient_indices(self, points: ArrayLike, /) -> Array:
         design = _as_points(points, name="points")
         if design.shape[1] != 1:
-            raise ValueError("Spectral entity inputs must have one coordinate.")
-        entity_ids = design[:, 0]
+            raise ValueError("Spectral coefficient inputs must have one coordinate.")
+        coefficient_ids = design[:, 0]
         lower = self.eigenbasis.index_offset
-        upper = lower + self.eigenbasis.entity_count
-        entity_ids = eqx.error_if(
-            entity_ids,
-            jnp.any(~jnp.isfinite(entity_ids))
-            | jnp.any(entity_ids != jnp.floor(entity_ids))
-            | jnp.any(entity_ids < lower)
-            | jnp.any(entity_ids >= upper),
-            "Spectral entity IDs must be finite in-range integers.",
+        upper = lower + self.eigenbasis.num_points
+        coefficient_ids = eqx.error_if(
+            coefficient_ids,
+            jnp.any(~jnp.isfinite(coefficient_ids))
+            | jnp.any(coefficient_ids != jnp.floor(coefficient_ids))
+            | jnp.any(coefficient_ids < lower)
+            | jnp.any(coefficient_ids >= upper),
+            "Spectral coefficient IDs must be finite in-range integers.",
         )
-        return entity_ids.astype(jnp.int32) - lower
+        return coefficient_ids.astype(jnp.int32) - lower
 
     def features(self, points: ArrayLike, /) -> Array:
-        indices = self._entity_indices(points)
-        return self.eigenbasis.eigenfunctions[indices] * self._sqrt_weights()
+        indices = self._coefficient_indices(points)
+        eigenfunctions = self.eigenbasis.eigenfunctions[indices]
+        weights = jnp.asarray(self._sqrt_weights(), dtype=eigenfunctions.dtype)
+        return eigenfunctions * weights[None, :]
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         left_point = _as_point(left, name="left")
         right_point = _as_point(right, name="right")
         if left_point.shape != (1,) or right_point.shape != (1,):
-            raise ValueError("pairwise requires one spectral entity ID per argument.")
+            raise ValueError(
+                "pairwise requires one spectral coefficient ID per argument."
+            )
         left_feature = self.features(left_point)[0]
         right_feature = self.features(right_point)[0]
         return jnp.dot(left_feature, right_feature)

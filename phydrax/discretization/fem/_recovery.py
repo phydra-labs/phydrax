@@ -112,9 +112,9 @@ def _validate_lagrange(elements: tuple[FiniteElementSpec, ...], /) -> tuple[str,
         raise ValueError("Recovery requires one simplex kind and degree on every block.")
     kind, degree = next(iter(kinds))
     if (kind, degree) not in _SAMPLE_POINTS or any(
-        element.conformity != "H1"
-        or element.mapping != "identity"
-        or element.value_shape != ()
+        element.continuity != "conforming"
+        or element.value_spec.form_type.degree != 0
+        or element.value_spec.proxy != "scalar"
         or any(entity for entities in element.entity_dofs[2:] for entity in entities)
         for element in elements
     ):
@@ -628,8 +628,8 @@ def dual_weighted_residual_indicators(
     if any(
         base_degree < 1
         or base_degree >= element.degree
-        or element.mapping != "identity"
-        or element.value_shape != ()
+        or element.value_spec.form_type.degree != 0
+        or element.value_spec.proxy != "scalar"
         for element in elements
     ):
         raise ValueError("The enriched field must be scalar Lagrange above base_degree.")

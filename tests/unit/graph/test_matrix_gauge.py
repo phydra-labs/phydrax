@@ -70,8 +70,10 @@ def test_matrix_gauge_scenario_1() -> None:
         boundary.paths.orientations[:, : length - 1],
         path_names=("open",),
     )
-    original_open = phx.graph.path_holonomy(space, links, open_paths)[0]
-    transformed_open = phx.graph.path_holonomy(space, transformed, open_paths)[0]
+    original_open = phx.discretization.ordered_path_transport(open_paths, links)[0]
+    transformed_open = phx.discretization.ordered_path_transport(open_paths, transformed)[
+        0
+    ]
     expected = space.group.compose(
         space.group.compose(
             vertices[open_paths.start_vertices[0]],
@@ -88,8 +90,8 @@ def test_matrix_gauge_scenario_1() -> None:
         phx.metrix.SpecialUnitaryGroup(2),
     )
     links = _su2_links(space)
-    forward_value = phx.graph.path_holonomy(space, links, boundary.paths)
-    reverse_value = phx.graph.path_holonomy(space, links, reverse)
+    forward_value = phx.discretization.ordered_path_transport(boundary.paths, links)
+    reverse_value = phx.discretization.ordered_path_transport(reverse, links)
 
     assert jnp.allclose(reverse_value, space.group.inverse(forward_value), atol=1e-10)
 
@@ -121,7 +123,7 @@ def test_matrix_gauge_scenario_2() -> None:
         phx.metrix.SpecialUnitaryGroup(2),
     )
     links = _su2_links(space)
-    ordered = phx.graph.path_holonomy(space, links, boundary)[0]
+    ordered = phx.discretization.ordered_path_transport(boundary, links)[0]
     edge_order = boundary.edge_indices[:, ::-1]
     sign_order = boundary.orientations[:, ::-1]
     reordered = jnp.eye(2, dtype=links.dtype)

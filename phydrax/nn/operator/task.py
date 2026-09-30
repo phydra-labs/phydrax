@@ -18,6 +18,7 @@ from ...graph._operator_topology import OperatorTopologySite
 from ...typing import parse
 from ...units import DimensionSignature
 from .capabilities import (
+    _native_cochain_pairing_admission,
     OperatorGeometryKind,
     OperatorProblemSpec,
     OperatorQuadraturePolicy,
@@ -382,27 +383,26 @@ class OperatorTask(StrictModule):
     ) -> None:
         task_fields = {field.name: field for field in fields}
         query_lookup = {query.name: query for query in queries}
-        representation_map = {
-            "scalar": "scalar",
-            "pseudoscalar": "pseudoscalar",
-            "vector": "vector",
-            "tensor": "tensor",
-        }
         for pde_field in pde.fields:
             if pde_field.name not in task_fields:
                 raise ValueError(
                     f"PDE field {pde_field.name!r} is absent from the operator task."
                 )
             field = task_fields[pde_field.name]
+            expected_form_type = (
+                None if pde_field.form is None else pde_field.form.form_type
+            )
+            if (None if field.form_type is None else field.form_type.form_type_id) != (
+                None if expected_form_type is None else expected_form_type.form_type_id
+            ):
+                raise ValueError(
+                    f"PDE field {pde_field.name!r} form identity disagrees with the task."
+                )
             if field.channel_count != pde_field.components:
                 raise ValueError(
                     f"PDE field {pde_field.name!r} component count disagrees with the task."
                 )
-            expected_representation = representation_map.get(pde_field.representation)
-            if (
-                expected_representation is None
-                or field.representation != expected_representation
-            ):
+            if field.representation != pde_field.representation:
                 raise ValueError(
                     f"PDE field {pde_field.name!r} representation disagrees with the task."
                 )
@@ -563,6 +563,13 @@ class OperatorTask(StrictModule):
             ):
                 raise ValueError(
                     f"Query {query_spec.name!r} requires physical quadrature weights."
+                )
+            if (
+                query_spec.quadrature == "native_pairing_required"
+                and _native_cochain_pairing_admission(samples) is False
+            ):
+                raise ValueError(
+                    f"Query {query_spec.name!r} requires an admitted native cochain pairing."
                 )
             if query_spec.fixed_geometry is True and samples.geometry_case_shape:
                 raise ValueError(

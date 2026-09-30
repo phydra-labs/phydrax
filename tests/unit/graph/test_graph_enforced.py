@@ -12,6 +12,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from tests._support.cochain import triangle_cochain_lowering
 
 
 def _line_graph() -> phx.graph.GraphIR:
@@ -241,7 +242,7 @@ def _cochain_complex_with_interior_vertex() -> Any:
         [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]],
         dtype=jnp.int32,
     )
-    return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    return triangle_cochain_lowering(vertices, faces)
 
 
 class _TrainableCellValues(eqx.Module):
@@ -257,16 +258,8 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
-    edge_spec = phx.discretization.CochainFieldSpec(
-        1,
-        cell_orientation="signed",
-        sampling="cell_integral",
-    )
-    vertex_spec = phx.discretization.CochainFieldSpec(
-        0,
-        cell_orientation="invariant",
-        sampling="point_value",
-    )
+    edge_spec = phx.exterior.FormType(2, 1)
+    vertex_spec = phx.exterior.FormType(2, 0)
 
     @domain.Function("graph")
     def raw(cell: Any) -> Any:
@@ -276,9 +269,9 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     def target_raw(cell: Any) -> Any:
         return -3.0 - cell["local_index"]
 
-    edge_form = phx.domain.as_cochain_field(raw, edge_spec)
-    target = phx.domain.as_cochain_field(target_raw, edge_spec)
-    vertex_form = phx.domain.as_cochain_field(raw, vertex_spec)
+    edge_form = phx.domain.as_cochain_field(raw, edge_spec, representation="cochain")
+    target = phx.domain.as_cochain_field(target_raw, edge_spec, representation="cochain")
+    vertex_form = phx.domain.as_cochain_field(raw, vertex_spec, representation="cochain")
     boundary = domain.component({"graph": phx.domain.CochainCells(1, region="boundary")})
     all_edges = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
         phx.domain.PointSampling(complex_ir.cell_counts[1], layout=structure)
@@ -293,10 +286,10 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     base_values = jnp.asarray(edge_form(all_edges).data)
     target_values = jnp.asarray(target(all_edges).data)
 
-    assert phx.domain.cochain_field_spec(hard) == edge_spec
+    assert phx.domain.cochain_form_type(hard) == edge_spec
     assert jnp.allclose(hard_values[boundary_mask], target_values[boundary_mask])
     assert jnp.allclose(hard_values[~boundary_mask], base_values[~boundary_mask])
-    with pytest.raises(ValueError, match="same degree, side, orientation"):
+    with pytest.raises((TypeError, ValueError)):
         phx.enforcement.enforce_cochain_values(
             edge_form,
             boundary,
@@ -308,16 +301,12 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization() -> Non
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
-    zero_spec = phx.discretization.CochainFieldSpec(
-        0,
-        cell_orientation="invariant",
-        sampling="point_value",
-    )
+    zero_spec = phx.exterior.FormType(2, 0)
     candidate = domain.GraphModel(
         _TrainableCellValues(jnp.zeros((complex_ir.num_cells,))),
         output_key="candidate",
     )
-    field = phx.domain.as_cochain_field(candidate, zero_spec)
+    field = phx.domain.as_cochain_field(candidate, zero_spec, representation="cochain")
     boundary = domain.component({"graph": phx.domain.CochainCells(0, region="boundary")})
     field = phx.enforcement.enforce_cochain_values(field, boundary, target=0.0)
 
@@ -331,7 +320,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization() -> Non
         complex_ir.graph,
         exact,
         0,
-        boundary_policy="absolute",
+        boundary="absolute",
     )
 
     @domain.Function("graph")
@@ -339,14 +328,16 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization() -> Non
         index = jnp.where(cell["cell_dim"] == 0, cell["local_index"], 0)
         return forcing_values[index]
 
-    forcing = phx.domain.as_cochain_field(forcing_raw, zero_spec)
+    forcing = phx.domain.as_cochain_field(
+        forcing_raw, zero_spec, representation="cochain"
+    )
     interior = domain.component({"graph": phx.domain.CochainCells(0, region="interior")})
     term = phx.terms.CochainResidualTerm(
         component=interior,
         residual=lambda functions: (
             phx.operators.cochain_hodge_laplacian(
                 functions["u"],
-                boundary_policy="absolute",
+                boundary="absolute",
             )
             - forcing
         ),

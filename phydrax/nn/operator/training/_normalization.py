@@ -636,7 +636,6 @@ def fit_operator_normalization(
         if any(axis != inferred_axis for axis in channel_axes[1:]):
             raise ValueError(f"Input {name!r} channel layouts are inconsistent.")
         source_field = source_fields.get(name)
-        source_cochain = None if source_field is None else source_field.cochain
         input_values[name] = _fit_arrays(
             arrays,
             masks,
@@ -644,7 +643,13 @@ def fit_operator_normalization(
             epsilon=epsilon,
             weights=None if weighting == "uniform" else weights,
             center=not (
-                source_cochain is not None and source_cochain.cell_orientation == "signed"
+                source_field is not None
+                and source_field.representation == "cochain"
+                and source_field.form_type is not None
+                and (
+                    source_field.form_type.degree > 0
+                    or source_field.form_type.twist == "twisted"
+                )
             ),
         )
         if normalize_coordinates:
@@ -726,7 +731,6 @@ def fit_operator_normalization(
             ]
         )
         target_field = target_fields.get(canonical_name)
-        target_cochain = None if target_field is None else target_field.cochain
         target_normalizers[canonical_name] = _fit_arrays(
             [field.values for field in target_batches],
             masks,
@@ -737,7 +741,13 @@ def fit_operator_normalization(
             epsilon=epsilon,
             weights=weights,
             center=not (
-                target_cochain is not None and target_cochain.cell_orientation == "signed"
+                target_field is not None
+                and target_field.representation == "cochain"
+                and target_field.form_type is not None
+                and (
+                    target_field.form_type.degree > 0
+                    or target_field.form_type.twist == "twisted"
+                )
             ),
         )
 

@@ -5,9 +5,12 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import opt_einsum as oe
+import pytest
 
 import phydrax as phx
 from phydrax.linalg import ArraySpace, DiagonalPairing
@@ -138,12 +141,23 @@ def test_sparse_substrate_scenario_2() -> None:
             [0.0, 1.0],
         ]
     )
-    incidence = phx.graph.CochainIncidence.from_dense(1, boundary)
+    incidence = phx.discretization.OrientedIncidence(
+        1,
+        phx.discretization.EntitySet("vertices", 0, jnp.arange(3, dtype=jnp.int32)),
+        phx.discretization.EntitySet("edges", 1, jnp.arange(2, dtype=jnp.int32)),
+        phx.sparse.EdgeRelation(
+            jnp.asarray([0, 1, 1, 2], dtype=jnp.int32),
+            jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
+            source_size=3,
+            target_size=2,
+        ),
+        jnp.asarray([-1.0, 1.0, -1.0, 1.0]),
+    )
     lower = jnp.asarray([2.0, 3.0, 5.0])
     upper = jnp.asarray([7.0, 11.0])
 
-    derivative_action = incidence.exterior_derivative_map()
-    boundary_action = incidence.boundary_map()
+    derivative_action = incidence.exterior_derivative()
+    boundary_action = incidence.boundary()
 
     assert jnp.allclose(derivative_action(lower), boundary.T @ lower)
     assert jnp.allclose(boundary_action(upper), boundary @ upper)
@@ -472,3 +486,70 @@ def test_relation_execution_masks_padding_and_reports_target_capacity_status() -
     assert not bool(evidence.successful)
     assert int(evidence.active_targets) == 2
     assert jnp.array_equal(refused, jnp.zeros((2,)))
+
+
+def test_eager_edge_metadata_preserves_active_bounds_and_masked_routes() -> None:
+    sources = jnp.asarray([0, 2, 3], dtype=jnp.int32)
+    targets = jnp.asarray([0, 1, 1], dtype=jnp.int32)
+    relation = phx.sparse.EdgeRelation(
+        sources,
+        targets,
+        source_size=3,
+        target_size=2,
+        valid=jnp.asarray([True, True, False]),
+    )
+    action = phx.sparse.SparseLinearMap(relation, jnp.ones(3, dtype=jnp.float64))
+    np.testing.assert_allclose(action.mv(jnp.asarray([1.0, 2.0, 3.0])), [1.0, 3.0])
+    with pytest.raises(ValueError):
+        phx.sparse.EdgeRelation(sources, targets, source_size=3, target_size=2)
+
+
+def test_traced_edge_indices_preserve_runtime_bounds_refusal() -> None:
+    def action(indices: jax.Array) -> jax.Array:
+        relation = phx.sparse.EdgeRelation(
+            indices,
+            jnp.asarray([0, 1], dtype=jnp.int32),
+            source_size=3,
+            target_size=2,
+        )
+        operator = phx.sparse.SparseLinearMap(
+            relation,
+            jnp.asarray([2.0, 3.0], dtype=jnp.float64),
+            operator_id="traced-route-bounds",
+        )
+        return operator.mv(jnp.asarray([1.0, 2.0, 3.0]))
+
+    compiled = eqx.filter_jit(action)
+    np.testing.assert_allclose(compiled(jnp.asarray([0, 2], dtype=jnp.int32)), [2.0, 9.0])
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        compiled(jnp.asarray([0, 3], dtype=jnp.int32)).block_until_ready()
+
+
+def test_compile_time_sparse_pattern_admission_preserves_metric_action() -> None:
+    metric = np.asarray(
+        [[2.0, 0.5, 0.7], [0.5, 3.0, 1.0], [0.7, 1.0, 4.0]],
+        dtype=np.float64,
+    )
+    rows, columns = np.triu_indices(3)
+    mirror = rows != columns
+    sources = np.concatenate((columns, rows[mirror])).astype(np.int32)
+    targets = np.concatenate((rows, columns[mirror])).astype(np.int32)
+    coefficients = np.concatenate(
+        (metric[rows, columns], metric[rows[mirror], columns[mirror]])
+    )
+
+    def action(vector: jax.Array) -> jax.Array:
+        with jax.ensure_compile_time_eval():
+            relation = phx.sparse.EdgeRelation(
+                sources,
+                targets,
+                source_size=3,
+                target_size=3,
+            )
+            operator = phx.sparse.SparseLinearMap(relation, coefficients)
+        return operator.mv(vector)
+
+    vector = jnp.asarray([0.3, -0.7, 1.4])
+    np.testing.assert_allclose(
+        jax.jit(action)(vector), metric @ np.asarray(vector), atol=1e-13
+    )

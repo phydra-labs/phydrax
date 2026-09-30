@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
+from phydrax.exterior import form_to_vector, FormType, FormValueSpec, vector_to_form
 from phydrax.linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -158,7 +159,10 @@ def _geometry(
         jnp.asarray((0.5,)),
     )
     gradients = geometry.physical_gradients[:, 0]
-    curls = jnp.stack((gradients[:, :, 1], -gradients[:, :, 0]), axis=-1)
+    # dAz is a circulation 1-form; the magnetic field is its planar flux proxy.
+    form_type = FormType(2, 1, twist="untwisted")
+    circulation = vector_to_form(gradients, FormValueSpec(form_type, proxy="circulation"))
+    curls = form_to_vector(circulation, FormValueSpec(form_type, proxy="flux"))
     return points, geometry.measure, gradients, curls
 
 

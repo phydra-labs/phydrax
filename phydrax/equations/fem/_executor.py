@@ -22,6 +22,7 @@ from ...discretization._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
+from ...discretization._cell_mesh import SimplicialConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
@@ -2063,7 +2064,8 @@ def _facet_point_permutations(
     | PolygonalConnectivity
     | TetrahedralConnectivity
     | HexahedralConnectivity
-    | PolyhedralConnectivity,
+    | PolyhedralConnectivity
+    | SimplicialConnectivity,
     workset: CompiledWorkset,
     cells: Array,
     local_facet: int,
@@ -2487,7 +2489,7 @@ def _sipg_facet_residual(
     if dof_map.association != "cell":
         raise ValueError("SIPG requires a discontinuous cell-local field.")
     element = discretization.elements[field_index][0]
-    if element.conformity != "L2":
+    if element.continuity != "discontinuous" or element.value_spec.form_type.degree != 0:
         raise ValueError("SIPG requires an L2-conforming discontinuous element.")
     block = discretization.mesh.blocks[0]
     rule = _interval_rule() if not action.rules else action.rules[0][1]

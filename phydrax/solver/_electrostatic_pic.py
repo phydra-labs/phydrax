@@ -126,10 +126,10 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             raise ValueError("maximum_displacement_fraction must be positive and finite.")
         n0 = field.bridge.cochain.cell_counts[0]
         background = (
-            jnp.zeros((n0,), dtype=field.bridge.cochain.hodge_stars[0].dtype)
+            jnp.zeros((n0,), dtype=field.bridge.cochain.hodge_diagonal(0).dtype)
             if background_charge is None
             else jnp.asarray(
-                background_charge, dtype=field.bridge.cochain.hodge_stars[0].dtype
+                background_charge, dtype=field.bridge.cochain.hodge_diagonal(0).dtype
             )
         )
         if background.shape != (n0,):
@@ -470,7 +470,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         continuity_defect = (
             jnp.abs(
                 jnp.sum(
-                    self.field.bridge.cochain.hodge_stars[0] * (charge - state.charge)
+                    self.field.bridge.cochain.hodge_diagonal(0) * (charge - state.charge)
                 )
             )
             / dt

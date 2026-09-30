@@ -7,9 +7,16 @@ from __future__ import annotations
 import heapq
 import math
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
-from ..discretization import LaplacianEigenbasisReport, SpectralDecomposition
+from ..discretization._spectral import (
+    _eigenspace_groups,
+    LaplacianEigenbasisReport,
+    SpectralDecomposition,
+)
+from ..linalg import coordinate_operator, KroneckerLinearOperator
 
 
 def _laplacian_report(basis: SpectralDecomposition, /) -> LaplacianEigenbasisReport:
@@ -138,8 +145,10 @@ def product_laplacian_eigenbasis(
     entity_count = math.prod(entity_shapes)
     flat_entities = np.arange(entity_count)
     selected_modes = mode_indices[:requested]
-    functions = np.ones((entity_count, requested), dtype=np.float64)
-    measure = np.ones((entity_count,), dtype=np.float64)
+    dtype = np.result_type(*(np.asarray(factor.synthesis).dtype for factor in resolved))
+    functions = np.ones((entity_count, requested), dtype=dtype)
+    diagonal_metric = all(factor.quadrature_weights is not None for factor in resolved)
+    measure = np.ones((entity_count,), dtype=np.float64) if diagonal_metric else None
     active = np.ones((entity_count,), dtype=np.bool_)
     entity_stride = entity_count
     for factor_index, factor in enumerate(resolved):
@@ -150,14 +159,29 @@ def product_laplacian_eigenbasis(
             factor_entities[:, None],
             selected_modes[None, :, factor_index],
         ]
-        measure *= np.asarray(factor.probability_measure)[factor_entities]
+        if measure is not None:
+            measure *= np.asarray(factor.probability_measure)[factor_entities]
         active &= np.asarray(factor.active_mask)[factor_entities]
     functions[~active] = 0.0
     exact = requested == available_modes and all(
         _laplacian_report(factor).exact for factor in resolved
     )
     source_id = "product:" + "|".join(factor.decomposition_id for factor in resolved)
-    gram = functions.T @ (measure[:, None] * functions)
+    metric = None
+    if measure is None:
+        metric = coordinate_operator(
+            KroneckerLinearOperator(
+                tuple(factor.analysis_metric for factor in resolved),
+                operator_id=f"{source_id}:analysis-metric",
+            )
+        )
+        weighted = np.asarray(
+            jax.vmap(metric.mv, in_axes=1, out_axes=1)(jnp.asarray(functions))
+        )
+    else:
+        weighted = measure[:, None] * functions
+    analysis = weighted.conj().T
+    gram = functions.conj().T @ weighted
     residual = float(np.max(np.abs(gram - np.eye(requested))))
     report = LaplacianEigenbasisReport(
         method_id="best-first-product-sum",
@@ -174,9 +198,14 @@ def product_laplacian_eigenbasis(
         orthonormality_residual=residual,
     )
     return SpectralDecomposition(
-        summed_values[:requested],
-        functions,
-        measure,
+        eigenvalues=summed_values[:requested],
+        synthesis=functions,
+        analysis=analysis,
+        group_ids=_eigenspace_groups(
+            summed_values[:requested], float(degeneracy_tolerance)
+        ),
+        quadrature_weights=measure,
+        analysis_metric=metric,
         spectral_dimension=sum(_spectral_dimension(factor) for factor in resolved),
         decomposition_id=f"{source_id}:rank={requested}:exact={int(exact)}",
         active_mask=active,

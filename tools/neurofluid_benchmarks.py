@@ -100,7 +100,9 @@ def conservative_transfer(count: int, repeats: int) -> dict[str, float | int]:
 
 
 def hdiv_tabulation(repeats: int) -> dict[str, float | int]:
-    element = phx.discretization.tetrahedral_bdm_element(2)
+    element = phx.discretization.fem.form_element(
+        "tetrahedron", 2, 2, family="full", twist="twisted", proxy="flux"
+    )
     points = jnp.asarray(((0.1, 0.2, 0.3), (0.25, 0.25, 0.25)))
     if element.tabulator is None:
         raise RuntimeError("BDM benchmark requires its native reference tabulator.")

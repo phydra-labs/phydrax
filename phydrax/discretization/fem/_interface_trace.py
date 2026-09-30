@@ -282,9 +282,9 @@ def prepare_matching_scalar_interface_trace_3d(
             element.cell_kind != "tetrahedron"
             or element.family != "Lagrange"
             or element.degree != 1
-            or element.conformity != "H1"
-            or element.mapping != "identity"
-            or element.value_shape
+            or element.continuity != "conforming"
+            or element.value_spec.form_type.degree != 0
+            or element.value_spec.proxy != "scalar"
             for element in elements
         )
         or dof_map.association != "vertex"
@@ -308,9 +308,9 @@ def prepare_matching_scalar_interface_trace_3d(
         or coordinate_element.cell_kind != "tetrahedron"
         or coordinate_element.family != "Lagrange"
         or coordinate_element.degree != 1
-        or coordinate_element.conformity != "H1"
-        or coordinate_element.mapping != "identity"
-        or coordinate_element.value_shape
+        or coordinate_element.continuity != "conforming"
+        or coordinate_element.value_spec.form_type.degree != 0
+        or coordinate_element.value_spec.proxy != "scalar"
         or coordinate_dofs.shape != cells.shape
         or not np.array_equal(coordinate_dofs, cells)
     ):

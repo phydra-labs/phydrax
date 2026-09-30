@@ -13,9 +13,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 
 import phydrax as phx
+from phydrax.optim import adam
 from phydrax.solver._functional_objective import evaluate_prepared_objective
 
 
@@ -179,7 +179,7 @@ def _training_plan(strategy: str) -> Any:
 
 def _optimizer(name: str) -> Any:
     if name == "adam":
-        return optax.adam(1e-3)
+        return adam(1e-3)
     if name == "kfac":
         return phx.optim.kfac(damping=1e-2, factor_update_period=10)
     if name == "soap":

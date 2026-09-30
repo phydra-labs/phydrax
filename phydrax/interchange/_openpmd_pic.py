@@ -150,7 +150,7 @@ class _MeshGrid:
 
 def _cochain_grid(solver: CochainMaxwellPICFieldSolver, /) -> _MeshGrid:
     spacing, offset, shape = [], [], []
-    for axis in solver.maxwell.plan.bridge.grid.structured_axes:
+    for axis in solver.bridge.grid.structured_axes:
         points = np.asarray(axis.point_coordinates, dtype=np.float64)
         widths = np.asarray(axis.interval_widths, dtype=np.float64)
         centers = np.asarray(axis.interval_centers, dtype=np.float64)
@@ -165,9 +165,9 @@ def _cochain_grid(solver: CochainMaxwellPICFieldSolver, /) -> _MeshGrid:
         spacing.append(float(widths[0]))
         offset.append(float(points[0]))
         shape.append(points.size)
-    # Whitney edge (E, J), face (B), and vertex (rho) degrees of freedom.
-    edge = ((0.5, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.5))
-    face = ((0.0, 0.5, 0.5), (0.5, 0.0, 0.5), (0.5, 0.5, 0.0))
+    kernel = solver.transfers[0].kernel
+    edge = kernel.entity_offsets(1, proxy="circulation")
+    face = kernel.entity_offsets(2, proxy="flux")
     return _MeshGrid(
         solver,
         None,
@@ -175,7 +175,7 @@ def _cochain_grid(solver: CochainMaxwellPICFieldSolver, /) -> _MeshGrid:
         tuple(spacing),
         tuple(offset),
         tuple(shape),
-        {"E": edge, "B": face, "J": edge, "rho": ((0.0, 0.0, 0.0),)},
+        {"E": edge, "B": face, "J": edge, "rho": kernel.entity_offsets(0)},
     )
 
 
@@ -316,10 +316,10 @@ def _field_components(
 ) -> dict[OpenPMDFieldRecordName, tuple[Any, ...]]:
     cochain = layout.grid.cochain
     if cochain is not None:
-        bridge = cochain.maxwell.plan.bridge
+        bridge = cochain.bridge
         return {
             "E": bridge.unpack_edge_circulation(cochain.maxwell.electric_field(value)),
-            "B": bridge.unpack_face_flux(value.primary.magnetic_flux),
+            "B": bridge.unpack_face_flux(cochain.maxwell.magnetic_flux(value)),
             "rho": bridge.unpack(0, value.primary.charge),
         }
     return {
@@ -332,7 +332,7 @@ def _field_components(
 def _current_components(layout: OpenPMDPICLayout, current: Any, /) -> tuple[Any, ...]:
     cochain = layout.grid.cochain
     if cochain is not None:
-        return cochain.maxwell.plan.bridge.unpack_edge_circulation(current)
+        return cochain.bridge.unpack_edge_circulation(current)
     return tuple(current)
 
 
@@ -1013,7 +1013,7 @@ def _field_state(layout: OpenPMDPICLayout, meshes: OpenPMDMeshIteration, /) -> A
     grid = layout.grid
     if grid.cochain is not None:
         maxwell = grid.cochain.maxwell
-        bridge = maxwell.plan.bridge
+        bridge = grid.cochain.bridge
         material = maxwell.constitutive.initialize_state()
         return maxwell.pack(
             maxwell.constitutive.electric_displacement(

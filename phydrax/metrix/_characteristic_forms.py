@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from itertools import combinations
 from math import factorial
 
 import equinox as eqx
@@ -15,92 +14,11 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax import ein
-
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-
-
-def _exterior_indices(dimension: int, degree: int, /) -> tuple[tuple[int, ...], ...]:
-    return tuple(combinations(range(dimension), degree))
-
-
-def _permutation_sign(values: tuple[int, ...], /) -> int:
-    inversions = sum(
-        values[left] > values[right]
-        for left in range(len(values))
-        for right in range(left + 1, len(values))
-    )
-    return -1 if inversions % 2 else 1
-
-
-def matrix_form_wedge(
-    left: ArrayLike,
-    left_degree: int,
-    right: ArrayLike,
-    right_degree: int,
-    coordinate_dimension: int,
-    /,
-) -> Array:
-    """Wedge matrix-valued forms in ordered exterior bases with matrix product."""
-    dimension = int(coordinate_dimension)
-    first_degree = int(left_degree)
-    second_degree = int(right_degree)
-    if (
-        dimension < 1
-        or not 0 <= first_degree <= dimension
-        or not 0 <= second_degree <= dimension
-    ):
-        raise ValueError("Matrix-form dimension/degrees are invalid.")
-    if first_degree + second_degree > dimension:
-        raise ValueError("Matrix-form wedge degree exceeds coordinate dimension.")
-    first = jnp.asarray(left)
-    second = jnp.asarray(right, dtype=first.dtype)
-    first_indices = _exterior_indices(dimension, first_degree)
-    second_indices = _exterior_indices(dimension, second_degree)
-    output_indices = _exterior_indices(dimension, first_degree + second_degree)
-    if (
-        first.ndim < 3
-        or second.ndim < 3
-        or first.shape[-3] != len(first_indices)
-        or second.shape[-3] != len(second_indices)
-        or first.shape[-2] != first.shape[-1]
-        or second.shape[-2:] != first.shape[-2:]
-        or first.shape[:-3] != second.shape[:-3]
-    ):
-        raise ValueError("Matrix-valued form coefficient shapes are incompatible.")
-    output_lookup = {axes: index for index, axes in enumerate(output_indices)}
-    left_routes = []
-    right_routes = []
-    output_routes = []
-    signs = []
-    for left_index, left_axes in enumerate(first_indices):
-        for right_index, right_axes in enumerate(second_indices):
-            if set(left_axes) & set(right_axes):
-                continue
-            concatenated = left_axes + right_axes
-            output_axes = tuple(sorted(concatenated))
-            left_routes.append(left_index)
-            right_routes.append(right_index)
-            output_routes.append(output_lookup[output_axes])
-            signs.append(_permutation_sign(concatenated))
-    if not output_indices:
-        raise RuntimeError("Exterior basis construction unexpectedly produced no output.")
-    output = jnp.zeros(
-        first.shape[:-3] + (len(output_indices),) + first.shape[-2:],
-        dtype=jnp.result_type(first, second),
-    )
-    if left_routes:
-        products = ein.contract(
-            "...rij,...rjk->...rik",
-            first[..., jnp.asarray(left_routes), :, :],
-            second[..., jnp.asarray(right_routes), :, :],
-        )
-        products = products * jnp.asarray(signs, dtype=products.dtype).reshape(
-            (1,) * (products.ndim - 3) + (len(signs), 1, 1)
-        )
-        output = output.at[..., jnp.asarray(output_routes), :, :].add(products)
-    return output
+from ..exterior._algebra import wedge
+from ..exterior._basis import exterior_indices
+from ..exterior._form_type import FormType
 
 
 class ChernCharacterForm(StrictModule):
@@ -132,7 +50,7 @@ def chern_character_form(
     dimension = int(coordinate_dimension)
     k = int(order)
     source = str(source_id)
-    curvature_components = len(_exterior_indices(dimension, 2))
+    curvature_components = len(exterior_indices(dimension, 2))
     if k < 1 or 2 * k > dimension:
         raise ValueError("Chern-character order must be positive and fit the dimension.")
     if (
@@ -146,7 +64,14 @@ def chern_character_form(
     power = values
     degree = 2
     for _ in range(1, k):
-        power = matrix_form_wedge(power, degree, values, 2, dimension)
+        fiber_shape = values.shape[-2:]
+        power = wedge(
+            power,
+            values,
+            FormType(dimension, degree, fiber_shape=fiber_shape),
+            FormType(dimension, 2, fiber_shape=fiber_shape),
+            product="matrix",
+        )
         degree += 2
     traced = jnp.trace(power, axis1=-2, axis2=-1)
     coefficient = (1.0j / (2.0 * np.pi)) ** k / float(factorial(k))
@@ -245,5 +170,4 @@ __all__ = [
     "ChernCharacterForm",
     "chern_character_form",
     "integrate_top_characteristic_form",
-    "matrix_form_wedge",
 ]

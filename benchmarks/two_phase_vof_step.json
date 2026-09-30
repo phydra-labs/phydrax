@@ -1,8 +1,8 @@
 {
   "identity": {
-    "fingerprint": "db6cd9b5777e31b7222e8162fb0f137241b25cb334e396667e96e3ca6ec45644",
-    "source_build_fingerprint": "fe7f6864df9a5f4c8d71bffeb57398177d5ca87b2d7ca2680df20ac21279ccf6",
-    "benchmark_driver_fingerprint": "dcb16a84db56d187eaaa12338b3d9bee548bf17e52787d7c0ace673ceee83b12",
+    "fingerprint": "dc695f0c6be5db9e116781b5bf5a0e7e296f1b54a10cd5b817d7ceb4626ee55e",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2",
+    "benchmark_driver_fingerprint": "6aeed5911ae071bc044eba701be0652dc6bd3738d089df7963ff6490010a6d5a",
     "evidence_schema": {
       "fields": [
         "advective_courant",
@@ -39,7 +39,7 @@
     }
   },
   "environment": {
-    "fingerprint": "a1a5e77b7b1385da748b2e97e07defc9e2bba34ea11dd40142a8f619ac64e536",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
     "python_version": "3.12.8",
     "phydrax_version": "0.2.2",
     "platform": "macOS-15.7.2-arm64-arm-64bit",
@@ -49,7 +49,7 @@
     "numpy_version": "2.5.3",
     "jaxlib_version": "0.11.2",
     "default_float_dtype": "float64",
-    "package_fingerprint": "de9d16613d4896b9603205091d1d4a57fa7eda328dc1437a7ca770d3f83f0533",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
     "jax": {
       "version": "0.11.2",
       "backend": "cpu",
@@ -62,12 +62,12 @@
       ]
     },
     "performance_environment": {
-      "OMP_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
       "NPROC": null,
       "MKL_NUM_THREADS": null,
-      "VECLIB_MAXIMUM_THREADS": "1",
-      "XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1",
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
       "JAX_PLATFORMS": null,
       "JAX_PLATFORM_NAME": null,
       "XLA_PYTHON_CLIENT_PREALLOCATE": null,
@@ -103,21 +103,21 @@
       "mixed_cells": 12,
       "cells_per_radius": 2.0,
       "step_size": 0.19721826351931268,
-      "preparation_seconds": 8.452304042,
+      "preparation_seconds": 4.829032834,
       "compilation": {
-        "lowering_seconds": 4.272331,
-        "compilation_seconds": 6.46577525
+        "lowering_seconds": 2.12309075,
+        "compilation_seconds": 2.840336041
       },
       "execution": {
         "count": 1,
         "samples_seconds": [
-          0.012084333
+          0.004335667
         ],
-        "min_seconds": 0.012084333,
-        "median_seconds": 0.012084333,
-        "mean_seconds": 0.012084333,
+        "min_seconds": 0.004335667,
+        "median_seconds": 0.004335667,
+        "mean_seconds": 0.004335667,
         "std_seconds": 0.0,
-        "max_seconds": 0.012084333
+        "max_seconds": 0.004335667
       },
       "first_step_successful": true,
       "continuation_types_stable": true,

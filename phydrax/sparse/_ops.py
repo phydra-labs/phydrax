@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any, Literal, TypeAlias
 
 import jax
@@ -12,6 +13,7 @@ import jax.tree_util as jtu
 from jax import Array
 from jax.typing import ArrayLike
 
+from .. import ein
 from ..typing import parse
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 
@@ -364,8 +366,109 @@ def linear_adjoint_apply(
     )
 
 
+def _block_coefficient_array(
+    relation: SparseRelation,
+    coefficients: ArrayLike,
+    /,
+) -> Array:
+    """Validate explicit route-major matrix fibers, never scalar batches."""
+    weights = jnp.asarray(coefficients)
+    route_ndim = len(relation.route_shape)
+    if (
+        weights.ndim != route_ndim + 2
+        or weights.shape[:route_ndim] != relation.route_shape
+        or min(weights.shape[-2:]) < 1
+    ):
+        raise ValueError(
+            "Block coefficients must have shape "
+            f"{relation.route_shape} + (target_fiber, source_fiber), "
+            f"with positive fiber sizes; got {weights.shape}."
+        )
+    if not jnp.issubdtype(weights.dtype, jnp.inexact):
+        weights = weights.astype(jnp.float64)
+    return mask_routes(relation, weights)
+
+
+def block_linear_apply(
+    relation: SparseRelation,
+    coefficients: ArrayLike,
+    values: ArrayLike,
+    /,
+) -> Array:
+    """Apply route matrices to values shaped ``(*input_shape, r_s, *payload)``.
+
+    Coefficients have shape ``(*route_shape, r_t, r_s)``. Repeated routes
+    accumulate; invalid routes, including nonfinite padding, are inert.
+    This explicit matrix-fiber operation does not reinterpret scalar batches.
+    """
+    weights = _block_coefficient_array(relation, coefficients)
+    array = jnp.asarray(values)
+    payload = _require_prefix(
+        "Block source values", array, relation.input_shape + (weights.shape[-1],)
+    )
+    gathered = gather_routes(relation, array)
+    route_count = relation.valid.size
+    # Flatten only route and independent payload axes; preserve both fiber axes.
+    messages = ein.contract(
+        "roi,rip->rop",
+        weights.reshape((route_count,) + weights.shape[-2:]),
+        gathered.reshape((route_count, weights.shape[-1], prod(payload))),
+    )
+    return route_reduce(
+        relation, messages.reshape(relation.route_shape + (weights.shape[-2],) + payload)
+    )
+
+
+def _block_linear_reverse_apply(
+    relation: SparseRelation,
+    coefficients: ArrayLike,
+    values: ArrayLike,
+    /,
+    *,
+    conjugate: bool,
+) -> Array:
+    weights = _block_coefficient_array(relation, coefficients)
+    array = jnp.asarray(values)
+    payload = _require_prefix(
+        "Block target values", array, relation.output_shape + (weights.shape[-2],)
+    )
+    reversed_weights = jnp.swapaxes(weights, -2, -1)
+    if conjugate:
+        reversed_weights = jnp.conj(reversed_weights)
+    edge = relation if isinstance(relation, EdgeRelation) else relation.as_edge_relation()
+    sources = block_linear_apply(
+        edge.transpose(),
+        reversed_weights.reshape(edge.route_shape + reversed_weights.shape[-2:]),
+        array.reshape((edge.target_size, weights.shape[-2]) + payload),
+    )
+    return sources.reshape(relation.input_shape + (weights.shape[-1],) + payload)
+
+
+def block_linear_transpose_apply(
+    relation: SparseRelation,
+    coefficients: ArrayLike,
+    values: ArrayLike,
+    /,
+) -> Array:
+    """Apply the algebraic transpose, transposing but not conjugating fibers."""
+    return _block_linear_reverse_apply(relation, coefficients, values, conjugate=False)
+
+
+def block_linear_adjoint_apply(
+    relation: SparseRelation,
+    coefficients: ArrayLike,
+    values: ArrayLike,
+    /,
+) -> Array:
+    """Apply the Euclidean conjugate transpose of route matrix fibers."""
+    return _block_linear_reverse_apply(relation, coefficients, values, conjugate=True)
+
+
 __all__ = [
     "RouteReduction",
+    "block_linear_adjoint_apply",
+    "block_linear_apply",
+    "block_linear_transpose_apply",
     "gather_routes",
     "linear_adjoint_apply",
     "linear_apply",

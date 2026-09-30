@@ -17,66 +17,11 @@ from ._operators import AbstractLinearOperator, FunctionLinearOperator
 from ._policies import FailurePolicy, GMRES, LinearSolvePolicy, TolerancePolicy
 from ._preconditioners import AbstractPreconditioner, OperatorPreconditioner
 from ._problems import LinearSystem
-from ._properties import OperatorProperties
 from ._runtime import solve
 
 
 def _sum(left: PyTree[Array], right: PyTree[Array]) -> PyTree[Array]:
     return jax.tree.map(lambda a, b: a + b, left, right)
-
-
-def hcurl_auxiliary_space_preconditioner(
-    edge_inverse: AbstractPreconditioner,
-    gradient: AbstractLinearOperator,
-    scalar_inverse: AbstractPreconditioner,
-    /,
-) -> OperatorPreconditioner:
-    """Additive edge smoother plus scalar-gradient auxiliary correction."""
-    if not isinstance(edge_inverse, AbstractPreconditioner) or not isinstance(
-        scalar_inverse, AbstractPreconditioner
-    ):
-        raise TypeError("H(curl) auxiliary actions must be prepared preconditioners.")
-    if not isinstance(gradient, AbstractLinearOperator):
-        raise TypeError("H(curl) gradient must be a native linear operator.")
-    if not gradient.target.compatible(
-        edge_inverse.space
-    ) or not gradient.source.compatible(scalar_inverse.space):
-        raise ValueError("H(curl) edge/scalar spaces and gradient do not compose.")
-
-    def action(residual: PyTree[Any]) -> PyTree[Array]:
-        edge = edge_inverse.apply(residual)
-        scalar_residual = gradient.adjoint_mv(residual)
-        scalar = scalar_inverse.apply(scalar_residual)
-        return _sum(edge, gradient.mv(scalar))
-
-    positive = (
-        edge_inverse.properties.positive_definite
-        and scalar_inverse.properties.positive_definite
-    )
-    operator = FunctionLinearOperator(
-        action,
-        source=edge_inverse.space,
-        target=edge_inverse.space,
-        properties=OperatorProperties(
-            self_adjoint=positive,
-            positive_definite=positive,
-            evidence={
-                "self_adjoint": "transformed",
-                "positive_definite": "transformed",
-            }
-            if positive
-            else {},
-        ),
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "hcurl-auxiliary-space-inverse",
-                "edge": edge_inverse.preconditioner_id,
-                "gradient": gradient.operator_id,
-                "scalar": scalar_inverse.preconditioner_id,
-            }
-        ),
-    )
-    return OperatorPreconditioner(operator, positive_definite=positive)
 
 
 def shifted_helmholtz_preconditioner(
@@ -211,7 +156,6 @@ def porous_cpr_preconditioner(
 
 
 __all__ = [
-    "hcurl_auxiliary_space_preconditioner",
     "porous_cpr_preconditioner",
     "shifted_helmholtz_preconditioner",
 ]

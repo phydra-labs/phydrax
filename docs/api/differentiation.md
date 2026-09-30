@@ -211,6 +211,13 @@ through an explicit `PortMapping`; names, shapes, and order never establish
 identity. `resolve_port_mapping` compares declared semantics strictly and
 records every aspect a side left undeclared in `PortBindingEvidence`.
 
+`ValuePort(..., form=FormValueSpec(...))` binds canonical form/proxy semantics.
+Its `event_shape` must equal the declared spec's `value_shape`. Variance is
+derived: neutral for scalar/density, covariant for circulation/components and
+contravariant for flux. Passing independent `variance` with `form` is refused,
+and port identity includes form metadata only when it is declared.
+
+
 ::: phydrax.ValuePort
     options:
       show_root_heading: true

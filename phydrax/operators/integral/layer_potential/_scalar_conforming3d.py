@@ -18,13 +18,13 @@ import phydrax.ein as ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ...._validation import canonical_identifier
 from ....discretization._boundary_trace_space import (
     boundary_geometry_revision,
     BoundaryTraceSpaceCapability,
     CauchyTraceCapability,
-    diagonal_gram_trace_space,
-    sparse_gram_trace_space,
 )
+from ....discretization._gram import diagonal_gram_space, sparse_gram_space
 from ....geometry import MeshRegion
 from ....linalg import (
     AbstractLinearOperator,
@@ -65,7 +65,7 @@ class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
     spaces_id: str = eqx.field(static=True)
 
     def cauchy_trace_capability(
-        self, /, *, gram_tolerance: float = 1.0e-13
+        self, /, *, gram_tolerance: float = 1.0e-13, numeric_revision: str | None = None
     ) -> CauchyTraceCapability:
         """Publish the P1 Dirichlet / DP0 Neumann Cauchy data with area pairings.
 
@@ -78,9 +78,11 @@ class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
         component outward, whatever winding was declared.
         """
         cells = np.asarray(self.faces, dtype=np.int32)
-        areas = np.asarray(self.face_areas, dtype=np.float64)
-        stencil = (areas / 12.0)[:, None, None] * (1.0 + np.eye(3))[None, :, :]
-        dirichlet_gram, dirichlet_mass = sparse_gram_trace_space(
+        areas = self.face_areas
+        stencil = (areas / 12.0)[:, None, None] * (1.0 + jnp.eye(3, dtype=areas.dtype))[
+            None, :, :
+        ]
+        dirichlet_gram, dirichlet_mass = sparse_gram_space(
             np.repeat(cells, 3, axis=1).reshape((-1,)),
             np.tile(cells, (1, 3)).reshape((-1,)),
             stencil.reshape((-1,)),
@@ -94,7 +96,7 @@ class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
             ),
             gram_tolerance=gram_tolerance,
         )
-        neumann_gram, neumann_mass = diagonal_gram_trace_space(
+        neumann_gram, neumann_mass = diagonal_gram_space(
             areas,
             dtype=self.neumann_space.dtype,
             space_id=canonical_fingerprint(
@@ -108,7 +110,7 @@ class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
                 source_size=self.vertex_count,
                 target_size=self.face_count,
             ),
-            jnp.asarray(np.repeat(areas / 3.0, 3), dtype=jnp.float64),
+            jnp.repeat(areas / 3.0, 3),
             source=self.dirichlet_space,
             target=DualSpace(self.neumann_space),
             operator_id=f"{self.spaces_id}:cauchy-duality",
@@ -116,7 +118,11 @@ class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
                 self.dirichlet_space.dtype, self.neumann_space.dtype
             ),
         )
-        revision = boundary_geometry_revision(self.vertices, cells)
+        revision = (
+            boundary_geometry_revision(self.vertices, cells)
+            if numeric_revision is None
+            else canonical_identifier(numeric_revision, "numeric_revision")
+        )
         return CauchyTraceCapability(
             BoundaryTraceSpaceCapability(
                 owner_id=self.spaces_id,

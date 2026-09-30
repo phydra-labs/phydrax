@@ -53,16 +53,17 @@ is not supplied by callers.
 
 ## Compatible tensor spaces
 
-`TensorDeRhamComplex` constructs the exact algebraic sequence
+Compatible tensor elements use `form_element(..., family="tensor-trimmed")`
+and `FiniteElementDeRhamComplex`, the same exterior/linalg contracts as simplex
+elements. Degree-space maps come from `hilbert_complex(boundary=...)`.
 
 ```text
-H1 → H(curl) → H(div) → L2
+H1 → H(curl) → H(div) → top-degree density
 ```
 
-with explicit gradient, curl, and divergence matrices. `TensorPiolaMap` provides
-covariant and contravariant physical mappings. `TensorDeRhamTransferPlan`,
-`CompatibleTraceConstraint`, `CompatibleMortarPlan`, and
-`CompatibleAuxiliaryMultigrid` retain commuting and trace roles across p changes.
+`FormValueSpec` distinguishes circulation and flux in 2-D instead of silently
+rotating one into the other. Covariant/contravariant/density maps belong to
+`phydrax.exterior.map_reference_values`; transfers use `ComplexMap` evidence.
 
 ## Simplex and hybrid references
 

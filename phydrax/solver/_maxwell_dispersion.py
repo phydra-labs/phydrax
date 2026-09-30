@@ -116,7 +116,10 @@ class _LocalType(StrictModule, NonTrainableState):
 
 def _uniform_spacing(prepared: PreparedCompatibleMaxwell, /) -> np.ndarray:
     spacing = []
-    for axis in prepared.plan.bridge.grid.structured_axes:
+    bridge = prepared.plan.bridge
+    if not isinstance(bridge, StructuredCochainBridge):
+        raise TypeError("Dispersion audit requires a structured cochain bridge.")
+    for axis in bridge.grid.structured_axes:
         widths = np.asarray(axis.interval_widths)
         if not np.allclose(widths, widths[0], rtol=1e-12, atol=0.0):
             raise ValueError("Dispersion audit requires uniform structured axes.")
@@ -169,6 +172,8 @@ class CompatibleMaxwellDispersionAudit(StrictModule):
         if not np.isfinite(dt) or dt <= 0.0:
             raise ValueError("Dispersion audit step_size must be finite and positive.")
         bridge = prepared.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError("Dispersion audit requires a structured cochain bridge.")
         spacing = _uniform_spacing(prepared)
         cells = tuple(axis.interval_centers.size for axis in bridge.grid.structured_axes)
         if len(region.lower) != bridge.dimension:
@@ -376,6 +381,8 @@ class CompatibleMaxwellDispersionAudit(StrictModule):
         if amplitude.shape != (self.local_dimension,):
             raise ValueError("amplitudes must have one entry per local type.")
         bridge = self.prepared.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError("Bloch states require a structured cochain bridge.")
         layout = self.prepared.layout
         material_state = self.prepared.constitutive.initialize_state()
         leaves = [
@@ -422,6 +429,8 @@ def _refuse_absorber_overlap(
     if pml is None:
         return
     bridge = prepared.plan.bridge
+    if not isinstance(bridge, StructuredCochainBridge):
+        raise TypeError("CPML overlap requires a structured cochain bridge.")
     layout = prepared.layout
     lower = np.asarray(region.lower)
     upper = np.asarray(region.upper)
@@ -821,6 +830,10 @@ class CherenkovRegimePlan(StrictModule):
     def _continuum_tensors(self, omega: Array, /) -> tuple[Array, Array]:
         prepared = self.audit.prepared
         bridge = prepared.plan.bridge
+        if not isinstance(bridge, StructuredCochainBridge):
+            raise TypeError(
+                "Continuum tensor audit requires a structured cochain bridge."
+            )
         response = prepared.constitutive.frequency_response(omega)
         reference = self.audit.reference_cell
         columns_e, columns_h = [], []

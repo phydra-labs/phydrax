@@ -10,8 +10,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
+from phydrax.discretization import AxisEntityKind
 
 
 D = phx.discretization
@@ -364,9 +366,13 @@ def _tetrahedral_solver() -> Any:
         element.default_runtime.coordinates,
         D.SimplicialLocationPolicy(4, 8, 4),
     )
-    hodge = phx.solver.maxwell.tetrahedral_maxwell_hodge(mesh.coordinates, locator.cells)
+    complex_ = D.FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
     maxwell = phx.solver.maxwell.UnstructuredMaxwellPlan(
-        hodge.cochain, phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(), 100.0
+        complex_,
+        phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
+        spectral_upper_bound=100.0,
+        courant_factor=0.9,
+        boundary="relative",
     ).prepare()
     return phx.solver.UnstructuredMaxwellPICFieldSolver(
         maxwell, PIC.UnstructuredWhitneyCurrentPlan(locator, maximum_segments=4)
@@ -562,3 +568,128 @@ def test_non_conserving_deposit_is_rejected_for_continuity() -> None:
         result.accepted_state.species[0].particles.position,
         _initial_state(pic, dt).species[0].particles.position,
     )
+
+
+def _magnetic_gather_solver(*, dispersive: bool) -> Any:
+    grid = D.TensorGridPlan(
+        tuple(D.UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
+        axis_names=("x", "y", "z"),
+    ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
+    bridge = D.StructuredCochainBridge(grid)
+    support = D.ParticleSetPlan(
+        jnp.arange(2, dtype=jnp.int32),
+        jnp.ones((2,), dtype=jnp.float64),
+        ambient_dimension=3,
+    ).prepare()
+    charged = D.ChargedParticlePlan(jnp.ones((2,), dtype=jnp.float64), "probe").prepare(
+        support
+    )
+    transfer = PIC.PICParticleCochainTransferPlan(bridge).prepare(charged)
+    mx = phx.solver.maxwell
+    material = (
+        mx.LorentzDrudeMaxwellConstitutivePlan(
+            magnetic_poles=mx.MaxwellLorentzPoles([1.0], [0.2], [0.7]),
+            permeability_infinity=2.0,
+        )
+        if dispersive
+        else mx.DiagonalMaxwellConstitutivePlan(permeability=2.0)
+    )
+    maxwell = phx.solver.CompatibleMaxwellPlan(
+        bridge,
+        constitutive=material,
+        sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
+    ).prepare()
+    return phx.solver.CochainMaxwellPICFieldSolver(
+        maxwell,
+        phx.solver.CochainElectrostaticPlan(
+            bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+        ),
+        (transfer,),
+        (PIC.ChargeConservingCurrentPlan(transfer),),
+    )
+
+
+def test_cochain_mu_not_one_lorentz_force_uses_physical_magnetic_flux() -> None:
+    solver = _magnetic_gather_solver(dispersive=False)
+    bridge = solver.bridge
+    magnetic_vector = np.asarray([0.4, -0.3, 1.1], dtype=np.float64)
+    flux = bridge.pack_face_flux(
+        tuple(jnp.full((4, 4, 4), value) for value in magnetic_vector)
+    )
+    field = solver.maxwell.initialize(magnetic_flux=flux)
+    position = jnp.asarray([[0.13, 0.29, 0.41], [0.82, 0.73, 0.69]])
+    active = jnp.ones((2,), dtype=jnp.bool_)
+    electric, magnetic, support = solver.gather_fields(0, position, active, field)
+    np.testing.assert_array_equal(support, True)
+    np.testing.assert_allclose(
+        magnetic, np.broadcast_to(magnetic_vector, (2, 3)), atol=1e-13
+    )
+    proper = jnp.asarray([[0.3, 0.4, 0.2], [-0.2, 0.1, 0.35]])
+    charge = jnp.asarray([0.7, -0.9])
+    dt = 1.0e-6
+    push = PIC.RelativisticPushPlan(PIC.PIC_CODE_RELATIVITY, method="boris")
+    result = push.push(proper, electric, magnetic, charge, active, dt)
+    velocity = (
+        np.asarray(proper)
+        / np.sqrt(1.0 + np.sum(np.asarray(proper) ** 2, axis=1))[:, None]
+    )
+    force = np.asarray(charge)[:, None] * np.cross(velocity, magnetic_vector)
+    np.testing.assert_allclose(
+        (np.asarray(result.proper_velocity) - np.asarray(proper)) / dt,
+        force,
+        rtol=2e-6,
+        atol=2e-7,
+    )
+
+
+def test_passive_magnetic_dispersion_gathers_total_flux_not_demagnetized_h() -> None:
+    solver = _magnetic_gather_solver(dispersive=True)
+    bridge = solver.bridge
+    magnetic_vector = np.asarray([0.4, -0.3, 1.1], dtype=np.float64)
+    flux = bridge.pack_face_flux(
+        tuple(jnp.full((4, 4, 4), value) for value in magnetic_vector)
+    )
+    field = solver.maxwell.initialize(magnetic_flux=flux)
+    # B = μ∞ H + M: choose M = B so H is identically zero while B is nonzero.
+    field = eqx.tree_at(
+        lambda value: value.auxiliary.material.magnetization,
+        field,
+        flux[None, :],
+    )
+    np.testing.assert_array_equal(solver.maxwell.magnetic_field(field), 0.0)
+    position = jnp.asarray([[0.13, 0.29, 0.41], [0.82, 0.73, 0.69]])
+    active = jnp.ones((2,), dtype=jnp.bool_)
+    _, magnetic, support = solver.gather_fields(0, position, active, field)
+    np.testing.assert_array_equal(support, True)
+    np.testing.assert_allclose(
+        magnetic, np.broadcast_to(magnetic_vector, (2, 3)), atol=1e-13
+    )
+
+    def double(
+        values: Array,
+        location: tuple[AxisEntityKind, ...],
+        parity: tuple[int, ...],
+    ) -> Array:
+        del location, parity
+        return 2.0 * values
+
+    mapped = solver.map_tensors("field", field, double)
+    _, mapped_magnetic, mapped_support = solver.gather_fields(0, position, active, mapped)
+    np.testing.assert_array_equal(mapped_support, True)
+    np.testing.assert_allclose(mapped_magnetic, 2.0 * magnetic, atol=1e-13)
+    np.testing.assert_array_equal(
+        mapped.auxiliary.material.magnetization,
+        field.auxiliary.material.magnetization,
+    )
+
+
+def test_cochain_pic_refuses_a_nonstructured_maxwell_realization() -> None:
+    solver = _magnetic_gather_solver(dispersive=False)
+    maxwell = phx.solver.CompatibleMaxwellPlan(
+        solver.bridge.cochain,
+        sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
+    ).prepare()
+    with pytest.raises(TypeError, match="StructuredCochainBridge realization"):
+        phx.solver.CochainMaxwellPICFieldSolver(
+            maxwell, solver.electrostatic, solver.transfers, solver.currents
+        )

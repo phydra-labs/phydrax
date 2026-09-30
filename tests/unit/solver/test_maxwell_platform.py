@@ -9,18 +9,65 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
+from phydrax.discretization._cell_de_rham import AbstractCellDeRhamComplex
+from phydrax.solver._maxwell import (
+    AbstractMaxwellFrequencyResponse,
+    CompatibleMaxwellState,
+    PreparedCompatibleMaxwell,
+)
 from phydrax.solver._maxwell_frequency import FrequencyMaxwellSolveResult
 
 
-def _bridge(shape: Any) -> Any:
+def _bridge(shape: tuple[int, ...]) -> phx.discretization.StructuredCochainBridge:
     dimension = len(shape)
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
         axis_names=tuple("xyz"[:dimension]),
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
     return phx.discretization.StructuredCochainBridge(grid)
+
+
+@jax.jit
+def _compiled_leapfrog(
+    runtime: PreparedCompatibleMaxwell,
+    state: CompatibleMaxwellState,
+    step_size: Array,
+) -> CompatibleMaxwellState:
+    return runtime.leapfrog_step(0.0, state, step_size)
+
+
+@jax.jit
+def _compiled_frequency_response(
+    response: AbstractMaxwellFrequencyResponse, electric: Array, flux: Array
+) -> tuple[Array, Array]:
+    return response.electric_displacement(electric), response.magnetic_field(flux)
+
+
+def _incidence_matrix(cochain: AbstractCellDeRhamComplex, degree: int) -> np.ndarray:
+    incidence = cochain.topology.incidences[degree]
+    relation = incidence.relation
+    valid = np.asarray(relation.valid)
+    matrix = np.zeros(
+        (cochain.cell_counts[degree + 1], cochain.cell_counts[degree]),
+        dtype=np.float64,
+    )
+    np.add.at(
+        matrix,
+        (
+            np.asarray(relation.target_indices)[valid],
+            np.asarray(relation.source_indices)[valid],
+        ),
+        np.asarray(incidence.signs)[valid],
+    )
+    return matrix
+
+
+def _unit_source_envelope(time: Array, args: object) -> Array:
+    del args
+    return jnp.ones_like(time)
 
 
 def test_maxwell_platform_scenario_1() -> None:
@@ -47,9 +94,14 @@ def test_maxwell_platform_scenario_1() -> None:
         bridge,
         magnetic_constraint=phx.solver.maxwell.MaxwellMagneticConstraintPolicy("project"),
     ).prepare()
-    assert runtime.magnetic_incidence.sparse_storage().nnz > 0
-    assert (
-        runtime.magnetic_constraint_solver.problem.operator is runtime.magnetic_incidence
+    flux = jnp.cos(jnp.arange(runtime.layout.magnetic_count, dtype=jnp.float64))
+    projected = runtime.pack(
+        jnp.zeros((runtime.layout.electric_count,), dtype=jnp.float64), flux
+    )
+    np.testing.assert_allclose(
+        bridge.exterior_derivative(2, projected.primary.magnetic_flux),
+        0.0,
+        atol=1e-10,
     )
     elided = phx.solver.CompatibleMaxwellPlan(
         bridge,
@@ -118,7 +170,8 @@ def test_maxwell_platform_scenario_2() -> None:
     unstructured = phx.solver.maxwell.UnstructuredMaxwellPlan(
         bridge.cochain,
         phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
-        1000.0,
+        spectral_upper_bound=1000.0,
+        courant_factor=0.9,
     ).prepare()
     stepped = unstructured.step(
         0.0,
@@ -223,7 +276,8 @@ def test_maxwell_platform_scenario_3() -> None:
             electric_conductivity=0.2,
             magnetic_conductivity=0.0,
         ),
-        1000.0,
+        spectral_upper_bound=1000.0,
+        courant_factor=0.9,
     )
 
     with pytest.raises(ValueError, match="instantaneous lossless"):
@@ -254,7 +308,7 @@ def test_maxwell_platform_scenario_3() -> None:
         -1j * 0.4 * 0.2 * field,
         atol=1e-13,
     )
-    electric_star = bridge.cochain.hodge_metric(runtime.layout.electric_degree)
+    electric_star = bridge.cochain.hodge_diagonal(runtime.layout.electric_degree)
     ledger = conductive_frequency.power_ledger(field, conductive_frequency.mv(field))
     np.testing.assert_allclose(
         ledger.electric_material,
@@ -592,3 +646,351 @@ def test_source_envelope_identity_requires_declared_ids_for_opaque_callables() -
     refresh(plain_runtime, plan(_cosine_envelope))
     with pytest.raises(ValueError, match="executable step signature"):
         refresh(plain_runtime, cosine)
+
+
+@pytest.mark.parametrize("complex_fields", [False, True], ids=["real", "complex"])
+@pytest.mark.parametrize("structured_bridge", [False, True], ids=["cell", "stencil"])
+def test_generic_cell_maxwell_preserves_gauss_and_closedness(
+    complex_fields: bool, structured_bridge: bool
+) -> None:
+    bridge = _bridge((2, 2, 2))
+    cochain = bridge.cochain
+    electric = jnp.sin(jnp.arange(cochain.cell_counts[1], dtype=jnp.float64))
+    current = jnp.cos(jnp.arange(cochain.cell_counts[1], dtype=jnp.float64))
+    if complex_fields:
+        electric = electric.astype(jnp.complex128) * (1.0 + 0.5j)
+        current = current.astype(jnp.complex128) * (0.3 - 0.7j)
+    runtime = phx.solver.CompatibleMaxwellPlan(
+        bridge if structured_bridge else cochain,
+        constitutive=phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
+            permittivity=2.0, permeability=3.0
+        ),
+        sources=(
+            phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
+                jnp.arange(cochain.cell_counts[1], dtype=jnp.int32),
+                current,
+                envelope=_unit_source_envelope,
+            ),
+        ),
+    ).prepare()
+    flux = cochain.exterior_derivative(1, electric, boundary="absolute")
+    displacement = 2.0 * electric
+    charge = -cochain.codifferential(1, displacement, boundary="absolute")
+    state = runtime.pack(displacement, flux, charge)
+    expected_energy = 0.5 * jnp.real(
+        jnp.vdot(electric, cochain.hodge_diagonal(1) * displacement)
+        + jnp.vdot(flux / 3.0, cochain.hodge_diagonal(2) * flux)
+    )
+    np.testing.assert_allclose(runtime.energy(state), expected_energy, rtol=1e-13)
+    dt = 0.1 * runtime.stable_dt
+    stepped = _compiled_leapfrog(runtime, state, dt)
+    gradient = _incidence_matrix(cochain, 0)
+    curl = _incidence_matrix(cochain, 1)
+    weights = tuple(np.asarray(cochain.hodge_diagonal(k)) for k in range(3))
+    magnetic_half = np.asarray(flux) - 0.5 * float(dt) * (curl @ np.asarray(electric))
+    expected_displacement = np.asarray(displacement) + float(dt) * (
+        curl.T @ (weights[2] * magnetic_half / 3.0) / weights[1] - np.asarray(current)
+    )
+    expected_flux = magnetic_half - 0.5 * float(dt) * (
+        curl @ (expected_displacement / 2.0)
+    )
+    expected_charge = np.asarray(charge) + float(dt) * (
+        gradient.T @ (weights[1] * np.asarray(current)) / weights[0]
+    )
+    np.testing.assert_allclose(
+        stepped.primary.electric_displacement, expected_displacement, atol=1e-12
+    )
+    np.testing.assert_allclose(stepped.primary.magnetic_flux, expected_flux, atol=1e-12)
+    np.testing.assert_allclose(stepped.primary.charge, expected_charge, atol=1e-12)
+    assert stepped.primary.electric_displacement.dtype == electric.dtype
+    assert stepped.primary.magnetic_flux.dtype == electric.dtype
+    assert stepped.primary.charge.dtype == electric.dtype
+    np.testing.assert_allclose(runtime.magnetic_constraint(stepped), 0.0, atol=1e-12)
+    np.testing.assert_allclose(runtime.electric_constraint(stepped), 0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        cochain.exterior_derivative(
+            2, stepped.primary.magnetic_flux, boundary="absolute"
+        ),
+        0.0,
+        atol=1e-12,
+    )
+    assert runtime.layout.electric_form_type == phx.exterior.FormType(3, 1)
+    assert runtime.layout.displacement_form_type == phx.exterior.FormType(
+        3, 2, twist="twisted"
+    )
+    assert runtime.layout.magnetic_form_type == phx.exterior.FormType(3, 2)
+    assert runtime.layout.magnetic_field_form_type == phx.exterior.FormType(
+        3, 1, twist="twisted"
+    )
+
+
+def test_generic_cell_maxwell_refuses_structured_cpml() -> None:
+    cochain = _bridge((2, 2, 2)).cochain
+    with pytest.raises(ValueError, match="CPML requires"):
+        phx.solver.CompatibleMaxwellPlan(
+            cochain, pml=phx.solver.maxwell.MaxwellCPMLPlan(1)
+        ).prepare()
+
+
+def _whitney_tetrahedron() -> phx.discretization.FiniteElementDeRhamComplex:
+    coordinates = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    mesh = phx.discretization.CellMesh(
+        coordinates,
+        (
+            phx.discretization.CellBlock(
+                "tetrahedra", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+            ),
+        ),
+    )
+    return phx.discretization.FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
+
+
+def test_whitney_top_mass_returns_constant_density() -> None:
+    complex_ = _whitney_tetrahedron()
+    # The degree-three DOF is integrated content, not point density.
+    volume = 1.0 / 6.0
+    density = 2.75
+    np.testing.assert_allclose(
+        complex_.hodge_star(3, jnp.asarray((volume * density,))),
+        (density,),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_unstructured_automatic_cfl_bounds_closed_form_whitney_pencil() -> None:
+    complex_ = _whitney_tetrahedron()
+    gradients = np.asarray(
+        ((-1.0, -1.0, -1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    edges = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    moments = (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64)) / 120.0
+    mass = np.asarray(
+        [
+            [
+                moments[i, a] * gradients[j] @ gradients[b]
+                - moments[i, b] * gradients[j] @ gradients[a]
+                - moments[j, a] * gradients[i] @ gradients[b]
+                + moments[j, b] * gradients[i] @ gradients[a]
+                for a, b in edges
+            ]
+            for i, j in edges
+        ]
+    )
+    curls = np.asarray([2.0 * np.cross(gradients[i], gradients[j]) for i, j in edges])
+    stiffness = curls @ curls.T / 6.0
+    factor = np.linalg.cholesky(mass)
+    left = np.linalg.solve(factor, stiffness)
+    symmetric = np.linalg.solve(factor, left.T).T
+    exact_largest = np.linalg.eigvalsh(symmetric)[-1]
+    runtime = phx.solver.maxwell.UnstructuredMaxwellPlan(
+        complex_,
+        phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
+        courant_factor=0.9,
+    ).prepare()
+    assert 0.0 < float(runtime.stable_dt) <= 1.8 / np.sqrt(exact_largest)
+    state = runtime.initialize()
+    current = jnp.linspace(-0.2, 0.3, complex_.cell_counts[1], dtype=jnp.float64)
+    stepped = jax.jit(
+        lambda carry: runtime.step(
+            0.0, carry, 0.1 * runtime.stable_dt, electric_current=current
+        )
+    )(state)
+    np.testing.assert_allclose(runtime.constraints(stepped)[0], 0.0, atol=1e-10)
+    np.testing.assert_allclose(runtime.constraints(stepped)[1], 0.0, atol=1e-10)
+
+
+def test_fe_anisotropic_material_maps_physical_fields_without_metric_weighting() -> None:
+    complex_ = _whitney_tetrahedron()
+    points = np.asarray(complex_.mesh.coordinates)
+    connectivity = phx.discretization.tetrahedral_connectivity(
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32), 4
+    )
+    edges = np.asarray(connectivity.edges)
+    faces = np.asarray(connectivity.faces)
+    tangents = points[edges[:, 1]] - points[edges[:, 0]]
+    area_vectors = 0.5 * np.cross(
+        points[faces[:, 1]] - points[faces[:, 0]],
+        points[faces[:, 2]] - points[faces[:, 0]],
+    )
+    epsilon = np.diag(np.asarray((2.0, 3.0, 4.0)))
+    inverse_mu = np.diag(np.asarray((0.5, 0.25, 0.125)))
+    electric_vector = np.asarray((0.3, -0.7, 1.1))
+    magnetic_vector = np.asarray((-0.4, 0.9, 0.25))
+    electric = jnp.asarray(tangents @ electric_vector)
+    magnetic_flux = jnp.asarray(area_vectors @ magnetic_vector)
+    material = phx.solver.maxwell.FiniteElementMaxwellConstitutivePlan(
+        permittivity=epsilon, inverse_permeability=inverse_mu
+    ).prepare(complex_, phx.solver.maxwell.MaxwellCochainLayout(complex_))
+    displacement = material.electric_displacement(electric, None)
+    magnetic = material.magnetic_field(magnetic_flux, None)
+    np.testing.assert_allclose(
+        displacement, tangents @ (epsilon @ electric_vector), rtol=1e-9, atol=1e-10
+    )
+    np.testing.assert_allclose(
+        magnetic, area_vectors @ (inverse_mu @ magnetic_vector), rtol=1e-9, atol=1e-10
+    )
+    np.testing.assert_allclose(
+        material.electric_field(displacement, None), electric, rtol=1e-9, atol=1e-10
+    )
+    np.testing.assert_allclose(
+        material.magnetic_flux(magnetic, None), magnetic_flux, rtol=1e-9, atol=1e-10
+    )
+    hilbert = complex_.hilbert_complex()
+    # ∫ E·εE/2 + B·μ⁻¹B/2 over the unit tetrahedron.
+    expected_energy = (
+        electric_vector @ epsilon @ electric_vector
+        + magnetic_vector @ inverse_mu @ magnetic_vector
+    ) / 12.0
+    np.testing.assert_allclose(
+        material.energy(
+            displacement, magnetic_flux, None, hilbert.space(1), hilbert.space(2)
+        ),
+        expected_energy,
+        rtol=1e-9,
+        atol=1e-10,
+    )
+
+
+def test_cochain_halo_sends_only_incidence_crossings() -> None:
+    topology = phx.discretization.simplicial_cell_complex(
+        (
+            np.asarray(((0,), (1,), (2,)), dtype=np.int32),
+            np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32),
+            np.asarray(((0, 1, 2),), dtype=np.int32),
+        )
+    )
+    cochain = phx.discretization.CochainDiscretization(
+        topology,
+        tuple(
+            phx.discretization.DiagonalHodge(np.ones(count, dtype=np.float64))
+            for count in (3, 3, 1)
+        ),
+    )
+    owners = (
+        np.asarray((0, 1, 0), dtype=np.int32),
+        np.asarray((0, 0, 1), dtype=np.int32),
+        np.asarray((0,), dtype=np.int32),
+    )
+    partition = phx.discretization.CochainPartition(owners, 2)
+    exchange = phx.discretization.CochainHaloExchange(cochain, partition, 0)
+    values = jnp.asarray((10.0, 20.0, 30.0))
+    target_partitions, payload = exchange.payload(values)
+    messages = sorted(
+        zip(
+            np.asarray(target_partitions).tolist(),
+            np.asarray(payload).tolist(),
+            strict=True,
+        )
+    )
+    # Vertex 1 is needed by edge 01 on owner 0; vertex 2 by edge 12 on owner 1.
+    assert messages == [(0, 20.0), (1, 30.0)]
+    with pytest.raises(ValueError, match="every cell coordinate"):
+        malformed = phx.discretization.CochainPartition((owners[0][:-1], *owners[1:]), 2)
+        phx.discretization.CochainHaloExchange(cochain, malformed, 0)
+
+
+def test_fe_material_frequency_response_preserves_complex_polarization() -> None:
+    complex_ = _whitney_tetrahedron()
+    epsilon = np.diag(np.asarray((2.0, 3.0, 4.0)))
+    mu = np.diag(np.asarray((3.0, 5.0, 7.0)))
+    material = phx.solver.maxwell.FiniteElementMaxwellConstitutivePlan(
+        permittivity=epsilon, inverse_permeability=np.linalg.inv(mu)
+    ).prepare(complex_, phx.solver.maxwell.MaxwellCochainLayout(complex_))
+    response = material.frequency_response(2.0)
+    connectivity = phx.discretization.tetrahedral_connectivity(
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32), 4
+    )
+    points = np.asarray(complex_.mesh.coordinates)
+    edges = np.asarray(connectivity.edges)
+    tangents = points[edges[:, 1]] - points[edges[:, 0]]
+    vector = np.asarray((0.3 + 0.2j, -0.7 + 0.9j, 1.1 - 0.4j), dtype=np.complex128)
+    electric = jnp.asarray(tangents @ vector)
+    expected = tangents @ (epsilon @ vector)
+    faces = np.asarray(connectivity.faces)
+    areas = 0.5 * np.cross(
+        points[faces[:, 1]] - points[faces[:, 0]],
+        points[faces[:, 2]] - points[faces[:, 0]],
+    )
+    magnetic_vector = np.asarray((0.6 - 0.8j, -0.2 + 0.4j, 0.7 + 0.1j))
+    flux = jnp.asarray(areas @ magnetic_vector)
+    displacement, magnetic = _compiled_frequency_response(response, electric, flux)
+    np.testing.assert_allclose(displacement, expected, rtol=1e-9, atol=1e-10)
+    np.testing.assert_allclose(
+        magnetic, areas @ np.linalg.solve(mu, magnetic_vector), rtol=1e-9, atol=1e-10
+    )
+    assert displacement.dtype == jnp.complex128
+    assert magnetic.dtype == jnp.complex128
+
+
+def test_compiled_dispersive_frequency_response_matches_complex_transfer_functions() -> (
+    None
+):
+    bridge = _bridge((2, 2, 2))
+    layout = phx.solver.maxwell.MaxwellCochainLayout(bridge)
+    material = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
+        phx.solver.maxwell.MaxwellLorentzPoles([1.2, 0.0], [0.4, 0.6], [0.9, 0.5]),
+        permittivity_infinity=2.0,
+        permeability_infinity=3.0,
+        magnetic_poles=phx.solver.maxwell.MaxwellLorentzPoles(
+            [1.5, 0.0], [0.2, 0.3], [0.4, 0.7]
+        ),
+    ).prepare(bridge.cochain, layout)
+    omega = 1.1
+    electric = jnp.sin(
+        jnp.arange(layout.electric_count, dtype=jnp.float64)
+    ) + 1j * jnp.cos(jnp.arange(layout.electric_count, dtype=jnp.float64))
+    flux = jnp.cos(jnp.arange(layout.magnetic_count, dtype=jnp.float64)) - 0.5j * jnp.sin(
+        jnp.arange(layout.magnetic_count, dtype=jnp.float64)
+    )
+    displacement, magnetic = _compiled_frequency_response(
+        material.frequency_response(omega), electric, flux
+    )
+    epsilon = (
+        2.0
+        + 0.9 / (1.2**2 - omega**2 - 0.4j * omega)
+        + 0.5 / (-(omega**2) - 0.6j * omega)
+    )
+    mu = (
+        3.0
+        + 0.4 / (1.5**2 - omega**2 - 0.2j * omega)
+        + 0.7 / (-(omega**2) - 0.3j * omega)
+    )
+    np.testing.assert_allclose(displacement, epsilon * electric, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(magnetic, flux / mu, rtol=1e-12, atol=1e-12)
+
+
+def test_complex_whitney_curl_and_metric_adjoint_duality() -> None:
+    complex_ = _whitney_tetrahedron()
+    points = np.asarray(complex_.mesh.coordinates)
+    connectivity = phx.discretization.tetrahedral_connectivity(
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32), 4
+    )
+    edges = np.asarray(connectivity.edges)
+    faces = np.asarray(connectivity.faces)
+    midpoints = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
+    tangents = points[edges[:, 1]] - points[edges[:, 0]]
+    amplitude = 1.0 + 0.3j
+    # E = amplitude * (-y/2, x/2, 0) has constant curl amplitude * e_z.
+    electric = jnp.asarray(
+        amplitude
+        * 0.5
+        * (-midpoints[:, 1] * tangents[:, 0] + midpoints[:, 0] * tangents[:, 1])
+    )
+    areas = 0.5 * np.cross(
+        points[faces[:, 1]] - points[faces[:, 0]],
+        points[faces[:, 2]] - points[faces[:, 0]],
+    )
+    curl = jax.jit(lambda value: complex_.exterior_derivative(1, value))(electric)
+    np.testing.assert_allclose(curl, amplitude * areas[:, 2], atol=1e-12)
+    magnetic = jnp.asarray((0.2 + 0.1j, -0.4 + 0.3j, 0.7 - 0.2j, 0.5 + 0.8j))
+    adjoint = complex_.codifferential(2, magnetic)
+    np.testing.assert_allclose(
+        jnp.vdot(curl, complex_.hodge_star(2, magnetic)),
+        jnp.vdot(electric, complex_.hodge_star(1, adjoint)),
+        rtol=1e-9,
+        atol=1e-10,
+    )

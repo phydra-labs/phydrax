@@ -91,7 +91,6 @@ from ._characteristic_forms import (
     chern_character_form,
     ChernCharacterForm,
     integrate_top_characteristic_form,
-    matrix_form_wedge,
 )
 from ._chart import ChartTransition, CoordinateChart
 from ._chern import ChernConnection, HolomorphicBundleFrame, HolomorphicBundleTransition
@@ -165,6 +164,8 @@ from ._forms import (
     interior_product,
     lie_derivative,
     pullback_form,
+    to_twisted,
+    to_untwisted,
     wedge,
 )
 from ._gauge_renormalization import (
@@ -439,7 +440,6 @@ __all__ = [
     "ChernCharacterForm",
     "chern_character_form",
     "integrate_top_characteristic_form",
-    "matrix_form_wedge",
     "AtlasCandidate",
     "AtlasConstructionCertificate",
     "AtlasConstructionPolicy",
@@ -658,6 +658,8 @@ __all__ = [
     "interior_product",
     "lie_derivative",
     "pullback_form",
+    "to_twisted",
+    "to_untwisted",
     "wedge",
     "AbstractLieGroup",
     "LieGroupStateGeometry",

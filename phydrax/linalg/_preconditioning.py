@@ -310,7 +310,7 @@ class JacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
     ) -> PreconditionerProperties:
         _validate_setup_operator(setup_operator)
         positive = setup_operator.properties.certifies(
-            "positive_definite"
+            "positive_semidefinite"
         ) and _has_diagonal_pairing(setup_operator.source)
         claims = {
             "linear": True,
@@ -373,6 +373,16 @@ class JacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             materialization=materialization,
         )
         properties = self.properties_for(setup_operator)
+        if properties.certifies("positive_definite"):
+            # A PSD setup can be singular while its Jacobi diagonal is strictly
+            # positive. Zero coordinates are refused, never regularized.
+            diagonal = eqx.error_if(
+                diagonal,
+                jnp.any(~jnp.isfinite(diagonal))
+                | jnp.any(jnp.real(diagonal) <= 0)
+                | jnp.any(jnp.imag(diagonal) != 0),
+                "A positive Jacobi correction requires a strictly positive real diagonal.",
+            )
         return DiagonalPreconditioner(
             diagonal / self.relaxation,
             space=setup_operator.source,

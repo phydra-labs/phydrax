@@ -913,20 +913,17 @@ other cell degree.
         [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]],
         dtype=jnp.int32,
     )
-    complex_ir = phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    topology = phx.discretization.polygonal_cell_complex(faces, None, len(vertices))
+    hodges = phx.discretization.simplicial_dual_hodges(
+        topology, vertices, dual="barycentric"
+    )
+    realization = phx.discretization.CochainDiscretization(topology, hodges)
+    complex_ir = phx.graph.CochainComplexIR(realization)
     domain = phx.domain.GraphDomain(complex_ir.graph)
     layout = phx.domain.SampleLayout((("graph",),))
 
-    zero_form = phx.discretization.CochainFieldSpec(
-        0,
-        cell_orientation="invariant",
-        sampling="point_value",
-    )
-    one_form = phx.discretization.CochainFieldSpec(
-        1,
-        cell_orientation="signed",
-        sampling="cell_integral",
-    )
+    zero_form = phx.exterior.FormType(2, 0, twist="untwisted")
+    one_form = phx.exterior.FormType(2, 1, twist="untwisted")
 
 
     @domain.Function("graph")
@@ -944,9 +941,9 @@ other cell degree.
         return jnp.ones_like(cell["primal_measure"])
 
 
-    pressure = phx.domain.as_cochain_field(raw_pressure, zero_form)
-    flux = phx.domain.as_cochain_field(raw_flux, one_form)
-    source = phx.domain.as_cochain_field(raw_source, zero_form)
+    pressure = phx.domain.as_cochain_field(raw_pressure, zero_form, representation="cochain")
+    flux = phx.domain.as_cochain_field(raw_flux, one_form, representation="cochain")
+    source = phx.domain.as_cochain_field(raw_source, zero_form, representation="cochain")
 
     boundary_vertices = domain.component(
         {"graph": phx.domain.CochainCells(0, region="boundary")}
@@ -964,13 +961,13 @@ other cell degree.
             graph,
             fields["pressure"],
             0,
-            boundary_policy="absolute",
+            boundary="absolute",
         )
         flux_divergence = phx.graph.cochain_codifferential(
             graph,
             fields["flux"],
             1,
-            boundary_policy="absolute",
+            boundary="absolute",
         )
         return {
             "constitutive": fields["flux"] + pressure_gradient,

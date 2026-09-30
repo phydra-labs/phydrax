@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
+from scipy.special import roots_jacobi
 
 from phydrax.ein import contract
 
@@ -40,14 +41,11 @@ def _radau_coefficients(
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
 ]:
-    degree = stage_count - 1
-    p_degree = np.zeros((degree + 1,))
-    p_next = np.zeros((degree + 2,))
-    p_degree[-1] = 1.0
-    p_next[-1] = 1.0
-    roots = np.polynomial.legendre.legroots(np.pad(p_degree, (0, 1)) + p_next)
-    nodes = np.concatenate(([-1.0], np.sort(roots[np.abs(roots + 1.0) > 1.0e-12])))
-    nodes = 0.5 * (nodes + 1.0)
+    # P_n + P_(n-1) has the endpoint -1 and the real Jacobi (0, 1) roots.
+    # Use the orthogonal-polynomial provider rather than a general companion
+    # eigensolve, whose dtype may be complex even for these real roots.
+    interior, _ = roots_jacobi(stage_count - 1, 0.0, 1.0)
+    nodes = 0.5 * (np.concatenate(([-1.0], interior)) + 1.0)
     velocity_matrix = np.zeros((stage_count, stage_count))
     position_matrix = np.zeros_like(velocity_matrix)
     final_velocity = np.zeros((stage_count,))

@@ -122,3 +122,18 @@ def test_mac_contracts() -> None:
     assert second.converged
     assert jnp.linalg.norm(first.divergence_after) < 1e-7
     np.testing.assert_allclose(second.velocity[0], first.velocity[0], atol=2e-7)
+
+
+@pytest.mark.parametrize("periodic", [False, True])
+def test_mac_partial_complex_adjoint_is_negative_gradient(periodic: bool) -> None:
+    _, operators = _prepared(7, periodic=periodic)
+    complex_ = operators.hilbert_complex_slice()
+    differential = complex_.differential(0)
+    pressure = jnp.sin(jnp.arange(7, dtype=jnp.float64))
+    adjoint = differential.adjoint_mv(pressure)
+    expected = operators.gradient(pressure)
+    np.testing.assert_allclose(adjoint[0], -expected[0], atol=1e-13)
+    velocity = (jnp.cos(jnp.arange(expected[0].size, dtype=jnp.float64)),)
+    left = operators.pressure_space.inner(differential.mv(velocity), pressure)
+    right = operators.velocity_space.inner(velocity, adjoint)
+    np.testing.assert_allclose(left, right, atol=1e-13)

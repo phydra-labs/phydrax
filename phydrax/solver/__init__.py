@@ -1058,7 +1058,7 @@ from ._guided_elastic_modes import (
     PreparedGuidedElasticModes,
     solve_guided_elastic_modes,
 )
-from ._harmonic_constraints import HarmonicConstraint, preserve_magnetic_periods
+from ._harmonic_constraints import HarmonicConstraint, HarmonicConstraintPolicy
 from ._helmholtz import (
     ExteriorHelmholtzDirichletResult2D,
     solve_exterior_helmholtz_dirichlet_2d,
@@ -2742,10 +2742,12 @@ _FACADE_EXPORT_MODULES = (
     "._elasticity_boundary",
     "._fem_bem_scalar",
     "._fem_bem_vector",
+    "._hodge_laplace",
     "._hydrodynamic_response",
     "._impurity",
     "._lifting_complete",
     "._maxwell_boundary",
+    "._maxwell_unstructured",
     "._panel_complete",
     "._panels3d_complete",
     "._periodic_vector_boundary",
@@ -2811,6 +2813,13 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "HodgeLaplaceFormulation",
+    "HodgeLaplacePlan",
+    "HodgeLaplaceResult",
+    "MaxwellCavityMaterials",
+    "maxwell_cavity_modes",
+    "FiniteElementMaxwellConstitutivePlan",
+    "PreparedFiniteElementMaxwellConstitutive",
     *_deterministic_ensemble_all,
     *_variable_sector_vmc_all,
     *_impurity_all,
@@ -2862,7 +2871,7 @@ __all__ = [
     "ConstrainedMHDState",
     "ConstrainedMHDStepResult",
     "HarmonicConstraint",
-    "preserve_magnetic_periods",
+    "HarmonicConstraintPolicy",
     "CalabiYauCampaign",
     "CalabiYauCheckpointRegistry",
     "calabi_yau_candidate_profiles",

@@ -18,6 +18,18 @@ def _single_triangle() -> phx.graph.SimplicialComplexGraph:
     )
 
 
+def _metric_graph(bundle: phx.graph.SimplicialComplexGraph) -> phx.graph.GraphIR:
+    realization = phx.discretization.CochainDiscretization(
+        bundle.topology,
+        tuple(
+            phx.discretization.DiagonalHodge(jnp.ones((entities.count,)))
+            for entities in bundle.topology.entity_sets
+        ),
+    )
+    graph = phx.graph.CochainComplexIR(realization).graph
+    return graph.replace(nodes={**bundle.graph.nodes, **graph.nodes}, validate=False)
+
+
 def test_graph_simplicial_scenario_1() -> None:
     bundle = _single_triangle()
     graph = bundle.graph
@@ -28,16 +40,15 @@ def test_graph_simplicial_scenario_1() -> None:
         graph.nodes["type"],
         jnp.array([0, 0, 0, 1, 1, 1, 2], dtype=jnp.int32),
     )
-    assert jnp.allclose(bundle.edge_vertices, jnp.array([[0, 1], [0, 2], [1, 2]]))
-    assert jnp.allclose(bundle.face_edges, jnp.array([[0, 2, 1]], dtype=jnp.int32))
-    assert jnp.allclose(bundle.face_edge_signs, jnp.array([[1.0, 1.0, -1.0]]))
-    assert jnp.allclose(
-        graph.edges["type"],
-        jnp.array(
-            [0, 0, 0, 0, 0, 0, 2, 2, 2, 1, 1, 1, 1, 1, 1, 3, 3, 3],
-            dtype=jnp.int32,
-        ),
-    )
+    edge_identities = [tuple(map(int, edge)) for edge in bundle.edge_vertices.tolist()]
+    assert set(edge_identities) == {(0, 1), (0, 2), (1, 2)}
+    oriented_boundary = {
+        edge_identities[int(edge)]: float(sign)
+        for edge, sign in zip(
+            bundle.face_edges[0].tolist(), bundle.face_edge_signs[0].tolist(), strict=True
+        )
+    }
+    assert oriented_boundary == {(0, 1): 1.0, (1, 2): 1.0, (0, 2): -1.0}
     bundle = _single_triangle()
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
     structure = phx.domain.SampleLayout((("graph",),))
@@ -53,35 +64,34 @@ def test_graph_simplicial_scenario_1() -> None:
         vertex_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0])
     )
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.zeros((3,)))
-    assert jnp.allclose(
-        jnp.asarray(incidence_batch["graph"]["incidence_sign"].data),
-        jnp.array([1.0, 1.0, -1.0]),
-    )
+    assert sorted(
+        map(float, incidence_batch["graph"]["incidence_sign"].data.tolist())
+    ) == [-1.0, 1.0, 1.0]
     # ty: ignore[unresolved-attribute]
     assert vertices.mass.value == 3.0
-    graph = _single_triangle().graph
+    graph = _metric_graph(_single_triangle())
     graph = graph.replace(nodes={**graph.nodes, "u": jnp.ones((7,))}, validate=False)
 
-    out = phx.graph.SimplicialHodgeLaplacian(0, input_key="u", output_key="lap_u")(graph)
+    out = phx.graph.CochainHodgeLaplacian(0, input_key="u", output_key="lap_u")(graph)
 
     assert jnp.allclose(out.nodes["lap_u"], jnp.zeros((7,)))
-    graph = _single_triangle().graph
+    graph = _metric_graph(_single_triangle())
     u = jnp.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     graph = graph.replace(nodes={**graph.nodes, "u": u}, validate=False)
 
-    out = phx.graph.SimplicialHodgeLaplacian(0, input_key="u", output_key="lap_u")(graph)
+    out = phx.graph.CochainHodgeLaplacian(0, input_key="u", output_key="lap_u")(graph)
 
     assert jnp.allclose(
         out.nodes["lap_u"],
         jnp.array([-1.0, 2.0, -1.0, 0.0, 0.0, 0.0, 0.0]),
     )
-    graph = _single_triangle().graph
+    graph = _metric_graph(_single_triangle())
     alpha = jnp.array([0.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0])
     graph = graph.replace(nodes={**graph.nodes, "alpha": alpha}, validate=False)
 
-    out = phx.graph.SimplicialHodgeLaplacian(
-        1, input_key="alpha", output_key="lap_alpha"
-    )(graph)
+    out = phx.graph.CochainHodgeLaplacian(1, input_key="alpha", output_key="lap_alpha")(
+        graph
+    )
 
     assert jnp.allclose(
         out.nodes["lap_alpha"],
@@ -89,9 +99,9 @@ def test_graph_simplicial_scenario_1() -> None:
     )
 
 
-def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints() -> None:
+def test_hodge_laplacian_integrates_with_graph_model_and_constraints() -> None:
     bundle = _single_triangle()
-    domain = phx.domain.GraphDomain(bundle.graph)
+    domain = phx.domain.GraphDomain(_metric_graph(bundle))
     vertices = domain.component({"graph": bundle.vertex_cells_component()})
     structure = phx.domain.SampleLayout((("graph",),))
     table = jnp.array([0.0, 1.0, 0.0])
@@ -102,7 +112,7 @@ def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints(
 
     def residual(f: Any) -> Any:
         return domain.GraphModel(
-            phx.graph.SimplicialHodgeLaplacian(0, input_key="u", output_key="lap_u"),
+            phx.graph.CochainHodgeLaplacian(0, input_key="u", output_key="lap_u"),
             input_fn=f,
             input_key="u",
             output_key="lap_u",

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,11 +22,15 @@ from ...discretization import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
     PressureGaugePolicy,
-    tetrahedral_bdm_element,
 )
 from ...discretization._cell_complex import TetrahedralConnectivity
-from ...discretization.fem import FiniteElementDiscretization, FiniteElementSpec
+from ...discretization.fem import (
+    FiniteElementDiscretization,
+    FiniteElementSpec,
+    form_element,
+)
 from ...ein import contract
+from ...exterior import map_reference_values
 from ...linalg import AbstractVectorSpace, BlockSpace, OperatorProperties
 from ...sparse import EdgeRelation, SparseLinearMap
 from .._finite_element_variational import (
@@ -302,30 +307,29 @@ class PreparedHDivStokes(StrictModule):
 def _physical_basis(
     element: FiniteElementSpec,
     cell_points: np.ndarray,
-    local_face: int,
+    reference_face: tuple[int, ...],
     orientation: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    face = _REFERENCE_VERTICES[np.asarray(_REFERENCE_FACES[local_face])]
+    face = _REFERENCE_VERTICES[np.asarray(reference_face, dtype=np.int32)]
     reference_points = _TRIANGLE_BARYCENTRIC @ face
     reference_values, reference_gradients = element.tabulate(reference_points)
     jacobian = (cell_points[1:] - cell_points[0]).T
     determinant = float(np.linalg.det(jacobian))
     if determinant <= 0.0:
         raise ValueError("H(div) Stokes requires positively oriented tetrahedra.")
-    inverse = np.linalg.inv(jacobian)
-    values = contract("ab,qkb->qka", jacobian, np.asarray(reference_values)) / determinant
-    gradients = (
-        contract(
-            "ab,qkbd,dc->qkac",
-            jacobian,
-            np.asarray(reference_gradients),
-            inverse,
-        )
-        / determinant
+    values = np.asarray(
+        map_reference_values(reference_values, element.value_spec, jacobian)
     )
-    values *= orientation[None, :, None]
-    gradients *= orientation[None, :, None, None]
+    mapped_derivatives = map_reference_values(
+        jnp.moveaxis(reference_gradients, -1, 0), element.value_spec, jacobian
+    )
+    mapped = np.asarray(jnp.moveaxis(mapped_derivatives, 0, -1))
+    gradients = np.linalg.solve(jacobian.T, mapped.reshape((-1, 3)).T).T.reshape(
+        mapped.shape
+    )
+    values = np.asarray(contract("qka,kj->qja", values, orientation))
+    gradients = np.asarray(contract("qkab,kj->qjab", gradients, orientation))
     return values, gradients
 
 
@@ -387,11 +391,14 @@ def _tangential_nitsche_entries(
             normal = -normal
         projector = identity - np.outer(normal, normal)
         owner_routes = np.asarray(dof_map.cell_dofs[0][owner], dtype=np.int32)
-        owner_orientation = np.asarray(dof_map.orientations[0][owner])
+        owner_orientation = np.asarray(dof_map.cell_transforms[0][owner])
         owner_values, owner_gradients = _physical_basis(
             element,
             coordinates[cells[owner]],
-            owner_local,
+            tuple(
+                int(np.flatnonzero(cells[owner] == vertex)[0])
+                for vertex in face_vertices[face]
+            ),
             owner_orientation,
         )
         owner_jump = contract("ab,qkb->qka", projector, owner_values)
@@ -403,11 +410,14 @@ def _tangential_nitsche_entries(
         if len(adjacent) == 2:
             neighbor, neighbor_local = adjacent[1]
             neighbor_routes = np.asarray(dof_map.cell_dofs[0][neighbor], dtype=np.int32)
-            neighbor_orientation = np.asarray(dof_map.orientations[0][neighbor])
+            neighbor_orientation = np.asarray(dof_map.cell_transforms[0][neighbor])
             neighbor_values, neighbor_gradients = _physical_basis(
                 element,
                 coordinates[cells[neighbor]],
-                neighbor_local,
+                tuple(
+                    int(np.flatnonzero(cells[neighbor] == vertex)[0])
+                    for vertex in face_vertices[face]
+                ),
                 neighbor_orientation,
             )
             neighbor_jump = -contract("ab,qkb->qka", projector, neighbor_values)
@@ -457,6 +467,67 @@ def _tangential_nitsche_entries(
     )
 
 
+def _boundary_flux_rows(
+    discretization: FiniteElementDiscretization,
+    faces: tuple[int, ...],
+    /,
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Integrate outward normal traces in canonical gathered coordinates."""
+    mesh = discretization.mesh
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity):
+        raise ValueError("Normal-flow traces require tetrahedral connectivity.")
+    velocity_map = discretization.dof_maps[0]
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
+    if cells.ndim != 2 or cells.shape[1] != 4:
+        raise ValueError("Normal-flow traces require tetrahedral cell vertex rows.")
+    points = np.asarray(mesh.coordinates)
+    element = discretization.elements[0][0]
+    face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
+    reference_faces = tuple(frozenset(face) for face in element.entity_vertices[2])
+    incidents: dict[frozenset[int], list[int]] = {}
+    for cell in range(cells.shape[0]):
+        for reference_face in _REFERENCE_FACES:
+            key = frozenset(int(cells[cell, vertex]) for vertex in reference_face)
+            incidents.setdefault(key, []).append(cell)
+    rows: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for face in faces:
+        key = frozenset(int(vertex) for vertex in face_vertices[face])
+        adjacent = incidents[key]
+        if len(adjacent) != 1:
+            raise RuntimeError("Exterior normal-flow face must have one incident cell.")
+        cell = adjacent[0]
+        facet_points = points[face_vertices[face]]
+        area_vector = 0.5 * np.cross(
+            facet_points[1] - facet_points[0], facet_points[2] - facet_points[0]
+        )
+        outward = np.mean(facet_points, axis=0) - np.mean(points[cells[cell]], axis=0)
+        if np.dot(area_vector, outward) < 0.0:
+            area_vector = -area_vector
+        frame = tuple(
+            int(np.flatnonzero(cells[cell] == vertex)[0])
+            for vertex in face_vertices[face]
+        )
+        local_face = reference_faces.index(frozenset(frame))
+        local_dofs = np.asarray(element.entity_dofs[2][local_face], dtype=np.int32)
+        transform = np.asarray(velocity_map.cell_transforms[0][cell])
+        active = np.flatnonzero(np.any(transform[local_dofs] != 0.0, axis=0))
+        basis, _ = _physical_basis(
+            element,
+            points[cells[cell]],
+            frame,
+            transform[:, active],
+        )
+        flux_weights = np.asarray(
+            contract("q,qkd,d->k", 2.0 * _TRIANGLE_WEIGHTS, basis, area_vector)
+        )
+        rows[face] = (
+            np.asarray(velocity_map.cell_dofs[0][cell], dtype=np.int32)[active],
+            flux_weights,
+        )
+    return rows
+
+
 def _normal_boundary_operators(
     discretization: FiniteElementDiscretization,
     boundaries: tuple[HDivNormalBoundaryCondition, ...],
@@ -498,43 +569,20 @@ def _normal_boundary_operators(
         raise ValueError("Normal-boundary face selections must not overlap.")
 
     velocity_map = discretization.dof_maps[0]
-    face_width = velocity_map.entity_dofs_per_entity[2]
-    if face_width != 6:
-        raise RuntimeError(
-            "Normal-flow constraints require tetrahedral BDM2 face moments."
-        )
     velocity_size = velocity_map.global_dof_count
-    outward_sign_by_face = {}
-    for _, face, _, _ in records:
-        if face in outward_sign_by_face:
-            continue
-        start = face * face_width
-        stop = start + face_width
-        selected_signs = []
-        for routes, orientations in zip(
-            velocity_map.cell_dofs,
-            velocity_map.orientations,
-            strict=True,
-        ):
-            routes_ = np.asarray(routes)
-            orientations_ = np.asarray(orientations)
-            selected_signs.extend(
-                orientations_[(routes_ >= start) & (routes_ < stop)].tolist()
-            )
-        signs = np.asarray(selected_signs)
-        if signs.shape != (face_width,) or np.unique(signs).size != 1:
-            raise RuntimeError("Boundary-face H(div) orientation is inconsistent.")
-        outward_sign_by_face[face] = float(signs[0])
-
+    flux_rows = _boundary_flux_rows(
+        discretization, tuple(record[1] for record in records)
+    )
     resistance_sources = []
     resistance_targets = []
     resistance_coefficients = []
     for _, face, condition, local in records:
-        dofs = face * face_width + np.arange(face_width, dtype=np.int32)
-        resistance_sources.append(np.tile(dofs, face_width))
-        resistance_targets.append(np.repeat(dofs, face_width))
+        dofs, flux_weights = flux_rows[face]
+        resistance_sources.append(np.tile(dofs, dofs.size))
+        resistance_targets.append(np.repeat(dofs, dofs.size))
         resistance_coefficients.append(
-            jnp.broadcast_to(condition.resistance[local], (face_width * face_width,))
+            condition.resistance[local]
+            * jnp.asarray(np.outer(flux_weights, flux_weights).reshape((-1,)))
         )
     resistance_source = (
         np.concatenate(tuple(resistance_sources))
@@ -579,16 +627,20 @@ def _normal_boundary_operators(
             constrained.append(record)
             constrained_targets_.append(prescribed[record[3]])
     flux_source = (
+        np.concatenate(tuple(flux_rows[face][0] for _, face, _, _ in constrained))
+        if constrained
+        else np.empty((0,), dtype=np.int32)
+    )
+    flux_target = (
         np.concatenate(
             tuple(
-                face * face_width + np.arange(face_width, dtype=np.int32)
-                for _, face, _, _ in constrained
+                np.full(flux_rows[face][0].size, index, dtype=np.int32)
+                for index, (_, face, _, _) in enumerate(constrained)
             )
         )
         if constrained
         else np.empty((0,), dtype=np.int32)
     )
-    flux_target = np.repeat(np.arange(len(constrained), dtype=np.int32), face_width)
     flux_relation = EdgeRelation(
         flux_source,
         flux_target,
@@ -597,12 +649,7 @@ def _normal_boundary_operators(
     )
     flux_coefficients = (
         jnp.asarray(
-            np.concatenate(
-                tuple(
-                    np.full((face_width,), outward_sign_by_face[face])
-                    for _, face, _, _ in constrained
-                )
-            ),
+            np.concatenate(tuple(flux_rows[face][1] for _, face, _, _ in constrained)),
             dtype=resistance_values.dtype,
         )
         if constrained
@@ -630,6 +677,7 @@ def _normal_boundary_operators(
     )
 
 
+@final
 class HDivStokesPlan(StrictModule):
     mesh: CellMesh
     gauge: PressureGaugePolicy
@@ -680,7 +728,9 @@ class HDivStokesPlan(StrictModule):
                 "kind": "hdiv-stokes-plan",
                 "mesh": mesh.mesh_id,
                 "gauge": gauge.gauge_id,
-                "velocity_element": tetrahedral_bdm_element(2).element_id,
+                "velocity_element": form_element(
+                    "tetrahedron", 2, 2, family="full", twist="twisted", proxy="flux"
+                ).element_id,
                 "pressure_element": discontinuous_element("tetrahedron", 1).element_id,
                 "viscosity": array_tree_fingerprint(np.asarray(viscosity_)),
                 "penalty": penalty_.hex(),
@@ -689,7 +739,9 @@ class HDivStokesPlan(StrictModule):
         )
 
     def prepare(self) -> PreparedHDivStokes:
-        velocity = tetrahedral_bdm_element(2)
+        velocity = form_element(
+            "tetrahedron", 2, 2, family="full", twist="twisted", proxy="flux"
+        )
         pressure = discontinuous_element("tetrahedron", 1)
         discretization = FiniteElementPlan(
             self.mesh,
@@ -765,8 +817,11 @@ class HDivStokesPlan(StrictModule):
         resistance_nonnegative = jnp.all(normal_resistance.coefficients >= 0.0)
         constraints_finite = jnp.all(jnp.isfinite(normal_flux_target))
         evidence = HDivStokesEvidence(
-            jnp.asarray(velocity.conformity == "Hdiv"),
-            jnp.asarray(pressure.conformity == "L2"),
+            jnp.asarray(
+                velocity.continuity == "conforming"
+                and velocity.value_spec.proxy == "flux"
+            ),
+            jnp.asarray(pressure.continuity == "discontinuous"),
             jnp.asarray(self.gauge.mode != "none"),
             symmetry,
             jnp.all(jnp.isfinite(self.viscosity)),

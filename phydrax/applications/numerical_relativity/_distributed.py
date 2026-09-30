@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -36,6 +36,7 @@ from ...discretization.finite_volume import (
     FiniteVolumeDecompositionPlan,
     PreparedFiniteVolumeDecomposition,
 )
+from ...exterior._form_type import FormType
 from ...typing import parse
 
 
@@ -134,13 +135,52 @@ class NumericalRelativityOwnership(StrictModule, NonTrainableState):
         )
 
 
+@final
 class DistributedCochainState(StrictModule):
     """An oriented cochain whose fixed components retain named shardings."""
 
     components: tuple[Array, ...]
-    degree: int = eqx.field(static=True)
-    bridge_id: str = eqx.field(static=True)
+    form_type: FormType = eqx.field(static=True)
+    realization_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
+    distribution_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        components: tuple[Array, ...],
+        form_type: FormType,
+        realization_id: str,
+        /,
+        *,
+        layout_id: str,
+        distribution_id: str,
+    ) -> None:
+        if not isinstance(form_type, FormType):
+            raise TypeError("form_type must be a FormType.")
+        if form_type.fiber_shape or form_type.dimension != form_type.ambient_dimension:
+            raise ValueError(
+                "Distributed structured cochains require intrinsic scalar forms."
+            )
+        if len(components) != form_type.component_count:
+            raise ValueError("Distributed cochain components do not match the form type.")
+        if any(
+            not isinstance(component, Array)
+            or component.ndim != form_type.dimension
+            or not isinstance(component.sharding, NamedSharding)
+            for component in components
+        ):
+            raise ValueError(
+                "Distributed cochain components require named grid shardings."
+            )
+        if not realization_id or not layout_id or not distribution_id:
+            raise ValueError(
+                "Distributed cochains require realization, layout, and distribution identities."
+            )
+        self.components = components
+        self.form_type = form_type
+        self.realization_id = realization_id
+        self.layout_id = layout_id
+        self.distribution_id = distribution_id
 
 
 class NumericalRelativityDistributedPlan(StrictModule, NonTrainableState):
@@ -325,7 +365,7 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
     def shard_cochain(
         self,
         bridge: StructuredCochainBridge,
-        degree: int,
+        form_type: FormType,
         packed_values: ArrayLike,
         /,
     ) -> DistributedCochainState:
@@ -335,7 +375,17 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
             raise TypeError("bridge must be a StructuredCochainBridge.")
         if tuple(bridge.grid.shape) != self.plan.decomposition.global_shape:
             raise ValueError("Cochain bridge and distributed NR grid shapes differ.")
-        degree_ = int(degree)
+        if not isinstance(form_type, FormType):
+            raise TypeError("form_type must be a FormType.")
+        if (
+            form_type.dimension != bridge.dimension
+            or form_type.ambient_dimension != bridge.dimension
+            or form_type.fiber_shape
+        ):
+            raise ValueError(
+                "Scientific form type does not match the structured NR grid."
+            )
+        degree_ = form_type.degree
         components = bridge.unpack(degree_, packed_values)
         shardings = self.cochain_component_shardings(bridge, degree_)
         distributed = tuple(
@@ -344,18 +394,19 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
         )
         return DistributedCochainState(
             distributed,
-            degree_,
-            bridge.bridge_id,
-            canonical_fingerprint(
+            form_type,
+            bridge.cochain.realization_id,
+            layout_id=canonical_fingerprint(
                 {
                     "kind": "distributed-numerical-relativity-cochain",
                     "distribution": self.prepared_id,
-                    "bridge": bridge.bridge_id,
-                    "degree": degree_,
+                    "realization": bridge.cochain.realization_id,
+                    "form_type": form_type.form_type_id,
                     "shapes": [list(component.shape) for component in components],
                     "specifications": [str(value.spec) for value in shardings],
                 }
             ),
+            distribution_id=self.prepared_id,
         )
 
     def cochain_component_shardings(

@@ -263,25 +263,43 @@ def test_side_records_refuse_inconsistent_declarations() -> None:
     )
     flux = SideActionDescriptor(quantity="conormal-flux", orientation="outward", **common)
     route = SideGatherRoute(((0, 1), (1, 2)), np.ones((2, 1, 2)), coefficient_shape=(3,))
-    arrays: dict[str, Any] = dict(
-        sites=np.zeros((2, 1, 2)),
-        weights=np.ones((2, 1)),
-        normals=np.zeros((2, 1, 2)),
-        support_rows=np.arange(3),
-    )
+    sites = np.zeros((2, 1, 2))
+    weights = np.ones((2, 1))
+    normals = np.zeros((2, 1, 2))
+    support_rows = np.arange(3)
 
     with pytest.raises(ValueError, match="declare its normal orientation"):
         SideActionDescriptor(quantity="conormal-flux", orientation="unoriented", **common)
     with pytest.raises(ValueError, match="compiled physics owners"):
-        PreparedTraceAction(flux, route, ArraySpace((3,)), **arrays)
+        PreparedTraceAction(
+            flux,
+            route,
+            ArraySpace((3,)),
+            sites=sites,
+            weights=weights,
+            normals=normals,
+            support_rows=support_rows,
+        )
     value = SideActionDescriptor(quantity="value", orientation="unoriented", **common)
     with pytest.raises(ValueError, match="weights positive"):
         PreparedTraceAction(
-            value, route, ArraySpace((3,)), **{**arrays, "weights": -np.ones((2, 1))}
+            value,
+            route,
+            ArraySpace((3,)),
+            sites=sites,
+            weights=-weights,
+            normals=normals,
+            support_rows=support_rows,
         )
     with pytest.raises(ValueError, match="sorted, unique"):
         PreparedTraceAction(
-            value, route, ArraySpace((3,)), **{**arrays, "support_rows": (2, 0)}
+            value,
+            route,
+            ArraySpace((3,)),
+            sites=sites,
+            weights=weights,
+            normals=normals,
+            support_rows=(2, 0),
         )
     with pytest.raises(ValueError, match="outside the coefficient rows"):
         SideGatherRoute(((0, 3),), np.ones((1, 1, 2)), coefficient_shape=(3,))
@@ -786,9 +804,6 @@ def test_fe_side_traces_and_reactions_refuse_unsupported_requests() -> None:
     other = _fe_discretization(
         "quadrilateral", phx.discretization.lagrange_element("quadrilateral", 1)
     )
-    compatible = _fe_discretization(
-        "triangle", phx.discretization.raviart_thomas_element("triangle")
-    )
     compiled = phx.equations.compile_finite_element_problem(
         phx.equations.FiniteElementForm(
             "diffusion", "u", (phx.equations.DiffusionAction("u"),)
@@ -800,8 +815,6 @@ def test_fe_side_traces_and_reactions_refuse_unsupported_requests() -> None:
         discretization.prepare_side_trace("u", exterior, rule=rule, side="neighbor")
     with pytest.raises(ValueError, match="compose the owner and neighbor"):
         discretization.prepare_side_trace("u", interior, rule=rule, side="average")
-    with pytest.raises(ValueError, match="Piola-mapped"):
-        compatible.prepare_side_trace("u", compatible.exterior_facet_domain, rule=rule)
     with pytest.raises(ValueError, match="not produced by this finite-element"):
         discretization.prepare_side_trace("u", other.exterior_facet_domain, rule=rule)
     with pytest.raises(ValueError, match="vector field"):

@@ -16,6 +16,8 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import NormCompatibleInterpolationPlan, StructuredCochainBridge
+from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
+from ..linalg import AbstractVectorSpace, apply_real_map_componentwise, ArraySpace
 from ..typing import parse
 
 
@@ -82,7 +84,7 @@ class MaxwellBoundaryPlan(StrictModule):
 
     def prepare(
         self,
-        bridge: StructuredCochainBridge,
+        bridge: AbstractCellDeRhamComplex,
         layout: Any,
         /,
     ) -> PreparedMaxwellBoundary:
@@ -96,7 +98,7 @@ class PreparedMaxwellBoundary(StrictModule):
     electric_boundary: Array
     magnetic_boundary: Array
     admittance: Array | None
-    electric_measure: Array
+    electric_measure: AbstractVectorSpace
     magnetic_closedness_preserving: bool = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -104,21 +106,21 @@ class PreparedMaxwellBoundary(StrictModule):
     def __init__(
         self,
         plan: MaxwellBoundaryPlan,
-        bridge: StructuredCochainBridge,
+        bridge: AbstractCellDeRhamComplex,
         layout: Any,
         /,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
+        if not isinstance(bridge, AbstractCellDeRhamComplex):
+            raise TypeError("bridge must be an AbstractCellDeRhamComplex.")
         electric_boundary = jnp.asarray(
-            bridge.cochain.boundary_masks[layout.electric_degree],
+            bridge.boundary_masks[layout.electric_degree],
             dtype=jnp.bool_,
         )
         magnetic_boundary = jnp.asarray(
-            bridge.cochain.boundary_masks[layout.magnetic_degree],
+            bridge.boundary_masks[layout.magnetic_degree],
             dtype=jnp.bool_,
         )
-        if layout.polarization == "tez":
+        if layout.polarization == "tez" and isinstance(bridge, StructuredCochainBridge):
             shape = bridge.orientation_shapes[layout.magnetic_degree][0]
             adjacent = np.zeros(shape, dtype=np.bool_)
             for axis, structured_axis in enumerate(bridge.grid.structured_axes):
@@ -151,14 +153,16 @@ class PreparedMaxwellBoundary(StrictModule):
         self.electric_boundary = electric_boundary
         self.magnetic_boundary = magnetic_boundary
         self.admittance = admittance
-        self.electric_measure = bridge.cochain.hodge_stars[layout.electric_degree]
+        self.electric_measure = bridge.hilbert_complex(boundary="absolute").space(
+            layout.electric_degree
+        )
         self.magnetic_closedness_preserving = plan.kind != "pmc"
         self.layout_id = layout.layout_id
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-maxwell-boundary",
                 "plan": plan.plan_id,
-                "bridge": bridge.bridge_id,
+                "realization": bridge.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -201,75 +205,15 @@ class PreparedMaxwellBoundary(StrictModule):
         value = jnp.asarray(electric)
         if self.kind != "impedance" or self.admittance is None:
             return jnp.asarray(0.0, dtype=value.real.dtype)
-        density = jnp.real(self.admittance) * jnp.real(value * jnp.conj(value))
-        return jnp.sum(
-            jnp.where(self.electric_boundary, self.electric_measure * density, 0)
+        current = self.impedance_current(value)
+        metric = self.electric_measure
+        paired = (
+            apply_real_map_componentwise(metric.riesz, current)
+            if isinstance(metric, ArraySpace)
+            and not jnp.issubdtype(metric.dtype, jnp.complexfloating)
+            else metric.riesz(current)
         )
-
-
-class BlochCochainCalculus(StrictModule, NonTrainableState):
-    """Unitary gauge-twisted cochain calculus on a periodic structured quotient."""
-
-    bridge: StructuredCochainBridge
-    wavevector: Array
-    gauges: tuple[Array, ...]
-    phases: Array
-    calculus_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        bridge: StructuredCochainBridge,
-        wavevector: ArrayLike,
-        /,
-    ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
-        if not all(axis.periodic for axis in bridge.grid.structured_axes):
-            raise ValueError("Bloch calculus requires periodic quotient axes.")
-        wavevector_ = jnp.asarray(wavevector, dtype=jnp.float64)
-        if wavevector_.shape != (bridge.dimension,):
-            raise ValueError("wavevector must have one entry per structured axis.")
-        if bool(jnp.any(~jnp.isfinite(wavevector_))):
-            raise ValueError("wavevector must be finite.")
-        gauges = tuple(
-            jnp.exp(1j * (coordinates @ wavevector_))
-            for coordinates in bridge.cochain.coordinates
-            if coordinates is not None
-        )
-        if len(gauges) != bridge.dimension + 1:
-            raise RuntimeError("Bloch calculus requires coordinates on every degree.")
-        lengths = jnp.asarray(
-            [jnp.sum(axis.interval_widths) for axis in bridge.grid.structured_axes]
-        )
-        self.bridge = bridge
-        self.wavevector = wavevector_
-        self.gauges = gauges
-        self.phases = jnp.exp(1j * wavevector_ * lengths)
-        self.calculus_id = canonical_fingerprint(
-            {
-                "kind": "bloch-cochain-calculus",
-                "bridge": bridge.bridge_id,
-                "wavevector": array_tree_fingerprint(wavevector_),
-            }
-        )
-
-    def exterior_derivative(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        value = jnp.asarray(values)
-        return jnp.conj(self.gauges[degree_ + 1]) * self.bridge.exterior_derivative(
-            degree_, self.gauges[degree_] * value
-        )
-
-    def codifferential(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        value = jnp.asarray(values)
-        return jnp.conj(self.gauges[degree_ - 1]) * self.bridge.codifferential(
-            degree_, self.gauges[degree_] * value
-        )
-
-    def chain_residual(self, degree: int, values: ArrayLike, /) -> Array:
-        first = self.exterior_derivative(degree, values)
-        return self.exterior_derivative(degree + 1, first)
+        return jnp.real(jnp.vdot(value, paired))
 
 
 class MaxwellInterfaceJump(StrictModule):
@@ -390,7 +334,6 @@ class MaxwellInterfaceMortar(StrictModule, NonTrainableState):
 
 
 __all__ = [
-    "BlochCochainCalculus",
     "MaxwellBoundaryKind",
     "MaxwellBoundaryPlan",
     "MaxwellInterfaceJump",

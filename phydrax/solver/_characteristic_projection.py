@@ -12,7 +12,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -25,6 +24,7 @@ from phydrax.domain import (
     PointBatch,
     PointSampling,
 )
+from phydrax.optim._adam import adam
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -556,7 +556,7 @@ def solve_characteristic_projection(
         raise ValueError("maximum_projection_loss must be finite or positive infinity.")
     if loss_limit < 0.0:
         raise ValueError("maximum_projection_loss must be non-negative.")
-    optimizer = optax.adam(1e-3) if optim is None else optim
+    optimizer = adam(1e-3) if optim is None else optim
     root_key = jr.key(int(seed))
     working = solver
     base_term_count = len(solver.terms)

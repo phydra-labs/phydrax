@@ -261,11 +261,12 @@ deliberately excluded from the portable multivalued checkpoint.
 
 ---
 
-::: phydrax.discretization.CochainMetricPlan
+Metric revisions use `CochainDiscretization.with_metric(hodges, numeric_revision=...)`.
+Hodges remain metric-only; fixed-pattern numerical refresh preserves binding
+identity for compiled execution. Compatible transfers expose `ComplexMap` and
+commutation evidence rather than a second cochain metric-state carrier.
 
----
-
-::: phydrax.discretization.CochainMetricState
+::: phydrax.discretization.CochainDiscretization
 
 ---
 
@@ -397,7 +398,7 @@ deliberately excluded from the portable multivalued checkpoint.
 
 ---
 
-::: phydrax.discretization.CutCellCochainState
+`CutCellCochainPlan.prepare()` returns a `CochainDiscretization` with retained boundary masks and an explicit numerical revision.
 
 ---
 

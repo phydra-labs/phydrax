@@ -26,21 +26,11 @@ from ...linalg import (
     solve_small_linear,
 )
 from .._axis import broadcasted_grid
-from ._incompressible import FaceVelocity
+from ._incompressible import _difference, FaceVelocity
 from ._structured import FiniteVolumeDiscretization
 
 
 CoordinateMap = Callable[[Array], ArrayLike]
-
-
-def _difference(integrated: Array, axis: int, periodic: bool, /) -> Array:
-    if periodic:
-        return jnp.roll(integrated, -1, axis=axis) - integrated
-    lower = [slice(None)] * integrated.ndim
-    upper = [slice(None)] * integrated.ndim
-    lower[axis] = slice(0, integrated.shape[axis] - 1)
-    upper[axis] = slice(1, integrated.shape[axis])
-    return integrated[tuple(upper)] - integrated[tuple(lower)]
 
 
 def _reference_vertices(reference: FiniteVolumeDiscretization, /) -> Array:

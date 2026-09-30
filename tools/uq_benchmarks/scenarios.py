@@ -24,6 +24,7 @@ from benchmarks._runtime import (
     measure_synchronized,
 )
 from phydrax.axes import AxisArray
+from phydrax.optim import adam
 from phydrax.uq._conditional_moments import _condition_affine_gaussian_diagonal
 
 from .configuration import BenchmarkConfiguration
@@ -2010,7 +2011,7 @@ def _small_deep_ensemble_predictions(
     num_steps: int,
 ) -> jax.Array:
     """Fit independent bootstrapped nonlinear regressors for a robust baseline."""
-    optimizer = optax.adam(1.0e-2)
+    optimizer = adam(1.0e-2)
 
     def predict(parameters: Any, inputs: Any) -> Any:
         hidden = jnp.tanh(

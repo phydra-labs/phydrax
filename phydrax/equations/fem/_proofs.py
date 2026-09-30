@@ -23,6 +23,7 @@ from ...discretization.fem import (
     IntegrationDomain,
 )
 from ...discretization.fem.smoothing import SmoothedElasticityOperator
+from ...exterior import FormType, FormValueSpec
 from ...linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -47,7 +48,7 @@ from .._finite_element_variational import (
     SourceAction,
 )
 from .._variational import VariationalCoefficient
-from ._operators import curl, symmetric_gradient
+from ._operators import form_derivative, symmetric_gradient
 
 
 def linear_elasticity_form(
@@ -290,7 +291,16 @@ def maxwell_form(
     /,
     *,
     form_id: str = "maxwell-curl-curl",
+    value_spec: FormValueSpec | None = None,
 ) -> FiniteElementForm:
+    if value_spec is not None and (
+        not isinstance(value_spec, FormValueSpec)
+        or value_spec.form_type.degree != 1
+        or value_spec.form_type.fiber_shape
+    ):
+        raise ValueError(
+            "Maxwell curl-curl requires a scalar-fiber one-form value specification."
+        )
     mass = jnp.asarray(mass_coefficient)
     curl_weight = jnp.asarray(curl_coefficient)
 
@@ -304,11 +314,22 @@ def maxwell_form(
         context: FiniteElementExecutionContext,
     ) -> Array:
         value = values[0]
-        field_curl = curl(gradients[0])
-        test_curl = curl(test_gradients)
-        return mass * ein.contract(
-            "cq,cqiv,cqv->ci", weights, test_basis, value
-        ) + curl_weight * ein.contract("cq,cqi,cq->ci", weights, test_curl, field_curl)
+        spec = (
+            value_spec
+            if value_spec is not None
+            else FormValueSpec(
+                FormType(gradients[0].shape[-1], 1, twist="untwisted"),
+                proxy="circulation",
+            )
+        )
+        mass_action = mass * ein.contract("cq,cqiv,cqv->ci", weights, test_basis, value)
+        if spec.form_type.degree == spec.form_type.dimension:
+            return mass_action
+        field_derivative = form_derivative(gradients[0], spec)
+        test_derivative = form_derivative(test_gradients, spec)
+        return mass_action + curl_weight * ein.contract(
+            "cq,cqia,cqa->ci", weights, test_derivative, field_derivative
+        )
 
     return FiniteElementForm(
         form_id,
@@ -626,7 +647,7 @@ def solve_hdg_poisson(
     element = discretization.elements[field_index][0]
     dof_map = discretization.dof_maps[field_index]
     if (
-        element.conformity != "L2"
+        element.continuity != "discontinuous"
         or element.local_dof_count != 3
         or dof_map.association != "cell"
     ):

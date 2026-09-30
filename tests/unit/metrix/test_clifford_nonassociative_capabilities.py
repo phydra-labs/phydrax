@@ -207,3 +207,22 @@ def test_clifford_nonassociative_capabilities_scenario_2() -> None:
             empty,
             plan_id="empty",
         )
+
+
+def test_metric_clifford_product_uses_grade_major_lexicographic_blades() -> None:
+    field = phx.metrix.clifford.CliffordMetricField(
+        lambda q: jnp.eye(3, dtype=q.dtype),
+        dimension=3,
+        signature=(3, 0),
+        field_id="euclidean-cl3",
+    )
+    product = phx.metrix.clifford.PreparedCliffordMetricProduct(field)
+    basis = jnp.eye(8)
+    point = jnp.zeros((3,))
+    # (1, e0, e1, e2, e01, e02, e12, e012)
+    assert jnp.allclose(product(point, basis[1], basis[3]), basis[5])
+    assert jnp.allclose(product(point, basis[3], basis[1]), -basis[5])
+    assert jnp.allclose(product(point, basis[4], basis[3]), basis[7])
+    assert jnp.allclose(product(point, basis[7], basis[7]), -basis[0])
+    pin = phx.metrix.clifford.PinElement(product, point, basis[3], parity=1)
+    assert bool(pin.valid)

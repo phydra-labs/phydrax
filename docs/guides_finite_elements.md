@@ -11,9 +11,12 @@ unstructured finite volume. `CellBlock` retains ordered local vertices and a cel
 kind; `CellComplexTopology` remains the incidence authority. Connectivity and
 entity identities are static, while coordinate arrays are numeric geometry.
 
-Supported cell blocks are triangles, quadrilaterals, tetrahedra, and
-hexahedra. Polygonal meshes order triangle blocks before quadrilateral blocks
-so global cell/facet routes remain canonical.
+`CellMesh.from_simplices(..., dimension=...)` admits intervals and canonical
+full-dimensional n-D affine simplices with explicit dimension.
+`ReferenceCellTopology` uses `simplex:N`/`tensor:N` identities and a generic
+nominal facet descriptor. Generic tensor meshes remain dimension1–3; standalone
+tensor form bases may be n-D. Polygonal meshes order triangle blocks before
+quadrilateral blocks so global cell/facet routes remain canonical.
 
 Arbitrary straight-sided polygons have two separate substrates. The
 [explicit polygon H1 method](guides_explicit_polygon_h1.md) constructs a
@@ -22,15 +25,22 @@ degree-one interior basis by discrete-harmonic fan condensation. The
 degrees of freedom, polynomial projections, and projector-kernel stabilization.
 Neither path fabricates a reference-polygon polynomial element.
 
+Affine simplex reconstruction uses exact membership and exterior-distance queries,
+not a fabricated bounding box or an integration-measure claim. Quadrilateral and
+planar-face hexahedral queries use their exact native regions; a warped hexahedron
+requires an explicit curved-geometry witness.
+
+
 ## Reference elements and fields
 
 `lagrange_element(cell_kind, degree)` constructs nodal triangle, quadrilateral,
 tetrahedron, and hexahedron elements. Arbitrary-order conforming entity
 numbering is executable for polygonal and hexahedral H1 fields; discontinuous
-fields remain cell-local. Coefficient representation is declared by the
-element independently of H1/L2/H(div)/H(curl) conformity. Additional
-constructors provide discontinuous P0/P1+, triangular RT0, and triangular
-first-kind Nedelec order zero.
+fields remain cell-local. `FiniteElementSpec.value_spec` declares canonical form
+degree, twist and proxy; conformity/mapping are derived, with continuity declared
+separately. `form_element` supplies trimmed/full simplex and tensor-trimmed
+families in canonical n-D references. Physical flux/density requires explicit
+twist, and ambiguous degree1 2-D maps require circulation or flux explicitly.
 
 `FiniteElementFieldSpec` supports replicated component shapes and multiple named
 fields. One `CompiledFiniteElementProblem` owns the ordered product space and
@@ -39,6 +49,16 @@ scatters every coupled term directly to its output residual block.
 `phydrax.discretization.CellGeometrySpec` assigns an independent coordinate element and
 geometry DOF map to every block. This permits curved P2 geometry with a lower-
 or higher-order field element.
+
+`FiniteElementDeRhamComplex` provides exact sparse degree maps, metric-only Gram
+Hodges, reconstruction/traces and commuting `ComplexMap` transfers. Full-family
+complex order is its top polynomial order, so degree k uses P_(order+n−k)Λk;
+trimmed/tensor-trimmed complexes keep the same order in each degree. Material
+weights are separate coordinate forms, not part of an SPD metric Hodge.
+`hodge_solve` accepts a native `LinearSolvePolicy`, never a string selector.
+Hiptmair–Xu uses native vector/potential corrections; high-order preparation
+composes the low-order auxiliary plan instead of another private solver.
+
 
 ## Geometry
 
@@ -284,29 +304,31 @@ tessellation fallback or differentiable host remeshing. Provider preflight
 rejects unsupported controls. See [Meshing](guides_meshing.md).
 
 `prepare_finite_element_cell_map(discretization, block_index)` freezes the
-coordinate element and gathers while keeping coordinates, cell indices, and
-reference iterates as JAX inputs. Its paired evaluation returns physical
-points, Jacobians, left inverses, determinant/measure, and validity margins;
-curved particle location and other consumers must reuse this map.
+coordinate element and gathers while keeping coordinates, cell indices and
+reference iterates as JAX inputs. Integer indices retain block identity;
+`block_index=None` prepares one homogeneous whole-support map through the same
+canonical owner. Evaluation returns physical points, Jacobians, left inverses,
+determinant/measure and validity margins; curved location reuses this map.
 
 ## Field views
 
 `prepare_finite_element_field_reconstruction(discretization, field)` turns one
-scalar-basis H1 or L2 field into a `PreparedFieldReconstruction`. Evaluation
-uses native tabulation and oriented DOF routes: values and first physical
-derivatives are exact inside each cell, the regularity is `C^0` (H1) or
-`C^-1` (L2) with polynomial pieces of the element degree on affine cells, and
-the coefficient adjoint is the exact transpose scatter
+declared scalar or form field into `PreparedFieldReconstruction`.
+Form fields use `FormFieldReconstructionKernel` with canonical physical proxy
+and twist; scalar H1/L2 retains its existing value/derivative behavior.
+Native tabulation and oriented DOF routes provide cell-sided values and physical
+derivatives, with the declared regularity rather than an inferred global C0 claim.
+The coefficient adjoint is the exact transpose scatter
 (`reconstruction.transpose`, `reconstruction.duality_evidence`). A route with
 any invalid query point has no transpose: both raise `ValueError` naming the
 invalid points and their `FieldQueryStatus`.
 
-Arbitrary points on triangle and tetrahedron blocks are located by a
-`PreparedSimplicialCellLocator`; every containing cell is reported, and no
-nearest cell is ever substituted. Other cell kinds need an explicit
-`AbstractCellLocator` inverse provider; their own quadrature and node points
-remain available through `prepare_finite_element_point_interpolation`, which
-also evaluates physical derivatives with `derivative_axis=`.
+Affine interval and n-D simplex queries use `PreparedSimplicialCellLocator`;
+every containing cell is reported, never replaced by a nearest cell.
+Quadrilateral/hexahedral/tensor cells use their native inverse-map locator.
+Support geometry still follows exact region admission: warped hex needs an
+explicit curved witness. Prepared quadrature/node interpolation also supports
+physical derivatives with `derivative_axis=`.
 
 A view binds coefficients to an explicit, equivalent `GeometryDomain`:
 
