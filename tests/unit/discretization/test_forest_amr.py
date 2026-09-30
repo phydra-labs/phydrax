@@ -6,6 +6,7 @@
 import itertools
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -269,6 +270,94 @@ def test_forest_amr_scenario_2() -> None:
             np.testing.assert_allclose(jnp.sum(prolonged), jnp.sum(cochain), atol=1e-13)
     with pytest.raises(ValueError, match="must refine"):
         phx.discretization.ForestCochainTransfer(fine_complex, coarse_complex)
+
+
+@pytest.mark.parametrize(
+    ("periodic", "betti"),
+    [((False, False), (1, 0, 0)), ((False, True), (1, 1, 0))],
+    ids=["disk", "cylinder"],
+)
+def test_forest_hilbert_cohomology_excludes_capacity_padding(
+    periodic: tuple[bool, bool],
+    betti: tuple[int, int, int],
+) -> None:
+    plan = _plan((2, 1), maximum_level=3, periodic=periodic)
+    compiler = phx.discretization.ForestTopologyCompiler(plan)
+    topology = _refine_slots(compiler, compiler.initialize(1).topology, (0, 3)).topology
+    forest = phx.discretization.ForestCochainComplex(topology)
+    hodges = tuple(
+        phx.discretization.DiagonalHodge(jnp.linspace(1.0, 2.0, space.size))
+        for space in forest.spaces
+    )
+    complex_ = forest.hilbert_complex(hodges)
+    matrices = tuple(
+        np.asarray(
+            jax.vmap(operator.mv)(jnp.eye(operator.source.size, dtype=jnp.float64)).T
+        )
+        for operator in complex_.differentials
+    )
+    ranks = tuple(np.linalg.matrix_rank(matrix, tol=1.0e-10) for matrix in matrices)
+    computed = (
+        complex_.space(0).size - ranks[0],
+        complex_.space(1).size - ranks[0] - ranks[1],
+        complex_.space(2).size - ranks[1],
+    )
+    assert computed == betti
+    np.testing.assert_allclose(matrices[1] @ matrices[0], 0.0, atol=1.0e-13)
+
+
+def test_forest_hilbert_adjoint_uses_restricted_metric() -> None:
+    compiler = phx.discretization.ForestTopologyCompiler(_plan((2, 1), maximum_level=2))
+    topology = _refine_slots(compiler, compiler.initialize(0).topology, (0,)).topology
+    forest = phx.discretization.ForestCochainComplex(topology)
+    hodges = tuple(
+        phx.discretization.DiagonalHodge(jnp.linspace(0.75, 2.5, space.size))
+        for space in forest.spaces
+    )
+    complex_ = forest.hilbert_complex(hodges)
+    u = jnp.linspace(-0.7, 0.4, complex_.space(0).size)
+    v = jnp.linspace(0.2, 1.1, complex_.space(1).size)
+    d = complex_.differential(0)
+    delta = phx.linalg.codifferential(complex_, 1)
+    np.testing.assert_allclose(
+        complex_.space(1).inner(d.mv(u), v),
+        complex_.space(0).inner(u, delta.mv(v)),
+        atol=1.0e-12,
+    )
+
+
+def test_forest_sparse_hodge_inverse_excludes_inactive_couplings() -> None:
+    compiler = phx.discretization.ForestTopologyCompiler(_plan((2, 1), maximum_level=2))
+    forest = phx.discretization.ForestCochainComplex(compiler.initialize(0).topology)
+    matrices = tuple(
+        2.0 * np.eye(space.size, dtype=np.float64) + 0.125 for space in forest.spaces
+    )
+    hodges = []
+    for matrix in matrices:
+        rows, columns = np.triu_indices(matrix.shape[0])
+        hodges.append(
+            phx.discretization.SparseHodge(
+                rows,
+                columns,
+                matrix[rows, columns],
+                matrix.shape[0],
+            )
+        )
+    complex_ = forest.hilbert_complex(tuple(hodges))
+    count = complex_.space(0).size
+    assert forest.spaces[0].size > count
+    rhs = jnp.linspace(0.25, 1.25, count)
+    result = complex_.space(0).inverse_riesz(rhs)
+    np.testing.assert_allclose(
+        result,
+        np.linalg.solve(matrices[0][:count, :count], np.asarray(rhs)),
+        rtol=1.0e-8,
+        atol=1.0e-10,
+    )
+    full_rhs = np.zeros((forest.spaces[0].size,), dtype=np.float64)
+    full_rhs[:count] = np.asarray(rhs)
+    wrong = np.linalg.solve(matrices[0], full_rhs)[:count]
+    assert np.max(np.abs(wrong - np.asarray(result))) > 1.0e-4
 
 
 def test_subcycled_reflux_restores_exact_conservation() -> None:

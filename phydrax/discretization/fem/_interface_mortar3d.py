@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +14,11 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import DenseLinearOperator
+from ...linalg import ArraySpace, DenseLinearOperator, DualSpace
+
+
+if TYPE_CHECKING:
+    from ._de_rham import FiniteElementDeRhamComplex
 
 
 class MortarInterfaceEvidence3D(StrictModule, NonTrainableState):
@@ -43,6 +49,7 @@ class PreparedMaxwellMortarInterfaceTrace3D(StrictModule, NonTrainableState):
     nedelec_trace_size: int = eqx.field(static=True)
     rwg_dual_size: int = eqx.field(static=True)
     overlay_id: str = eqx.field(static=True)
+    volume_complex: FiniteElementDeRhamComplex
 
 
 def _evidence(
@@ -144,12 +151,20 @@ def prepare_maxwell_mortar_interface_trace_3d(
     /,
     *,
     coverage_fraction: float,
+    volume_complex: FiniteElementDeRhamComplex,
+    boundary_space: ArraySpace,
     orientation_margin: float,
     geometric_residual: float,
     commuting_defect: float,
     maximum_commuting_defect: float = 1e-8,
     minimum_inf_sup: float = 1e-10,
 ) -> PreparedMaxwellMortarInterfaceTrace3D:
+    from ._de_rham import FiniteElementDeRhamComplex
+
+    if not isinstance(volume_complex, FiniteElementDeRhamComplex):
+        raise TypeError("volume_complex must be FiniteElementDeRhamComplex.")
+    if volume_complex.dimension != 3:
+        raise ValueError("Maxwell mortar requires a three-dimensional FE complex.")
     matrix = np.asarray(cross_mass)
     conormal = np.asarray(magnetic_conormal)
     if (
@@ -161,6 +176,18 @@ def prepare_maxwell_mortar_interface_trace_3d(
         raise ValueError(
             "Maxwell mortar matrices must be aligned nonempty rank-two arrays."
         )
+    if matrix.shape[1] != volume_complex.hilbert_complex().space(1).size:
+        raise ValueError("Maxwell mortar columns must span the complete FE edge space.")
+    if not isinstance(boundary_space, ArraySpace):
+        raise TypeError(
+            "boundary_space must be the declared boundary coefficient ArraySpace."
+        )
+    if boundary_space.size != matrix.shape[0]:
+        raise ValueError(
+            "Maxwell mortar rows must span the declared boundary coefficient space."
+        )
+    if np.any(~np.isfinite(matrix)) or np.any(~np.isfinite(conormal)):
+        raise ValueError("Maxwell mortar trace and conormal must be finite.")
     if float(commuting_defect) > float(maximum_commuting_defect):
         raise ValueError("Maxwell mortar commuting defect exceeds its envelope.")
     evidence = _evidence(
@@ -172,14 +199,38 @@ def prepare_maxwell_mortar_interface_trace_3d(
         minimum_inf_sup=minimum_inf_sup,
         kind="maxwell-mortar-interface-evidence-3d",
     )
+    volume_space = volume_complex.hilbert_complex().space(1)
+    if not isinstance(volume_space, ArraySpace):
+        raise TypeError("Maxwell mortar requires an array-valued FE edge space.")
+    dtype = volume_space.dtype
+    if boundary_space.dtype != dtype:
+        raise TypeError("FE and boundary coefficient spaces must share one dtype.")
+    binding = canonical_fingerprint(
+        {
+            "kind": "maxwell-mortar-binding-3d",
+            "evidence": evidence.evidence_id,
+            "complex": volume_complex.realization_id,
+            "conormal": array_tree_fingerprint(conormal),
+            "boundary_space": boundary_space.space_id,
+        }
+    )
     trace = DenseLinearOperator(
-        jnp.asarray(matrix), operator_id=f"{evidence.evidence_id}:trace"
+        jnp.asarray(matrix, dtype=dtype),
+        source=volume_space,
+        target=DualSpace(boundary_space),
+        operator_id=f"{binding}:trace",
     )
     load = DenseLinearOperator(
-        jnp.asarray(matrix.T.conj()), operator_id=f"{evidence.evidence_id}:load"
+        jnp.asarray(matrix.T.conj(), dtype=dtype),
+        source=boundary_space,
+        target=DualSpace(volume_space),
+        operator_id=f"{binding}:load",
     )
     conormal_op = DenseLinearOperator(
-        jnp.asarray(conormal), operator_id=f"{evidence.evidence_id}:conormal"
+        jnp.asarray(conormal, dtype=dtype),
+        source=volume_space,
+        target=DualSpace(boundary_space),
+        operator_id=f"{binding}:conormal",
     )
     return PreparedMaxwellMortarInterfaceTrace3D(
         trace,
@@ -188,7 +239,8 @@ def prepare_maxwell_mortar_interface_trace_3d(
         evidence,
         matrix.shape[1],
         matrix.shape[0],
-        evidence.evidence_id,
+        binding,
+        volume_complex,
     )
 
 

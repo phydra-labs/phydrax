@@ -26,7 +26,8 @@ from phydrax.domain import (
     Interior,
 )
 from phydrax.domain.graph import (
-    cochain_field_spec,
+    as_cochain_field,
+    cochain_form_type,
     CochainCells,
     Edges,
     EdgeType,
@@ -40,10 +41,9 @@ from phydrax.domain.graph import (
     GraphDatasetDomain,
     GraphDomain,
     GraphTrajectoryDatasetDomain,
-    has_cochain_field_spec,
+    has_cochain_form_type,
     Nodes,
     NodeType,
-    with_cochain_field_spec,
 )
 
 from .._doc import DOC_KEY0
@@ -379,7 +379,7 @@ class GraphRestriction(AbstractConditionOperator):
             )
         selector = self.component.spec.selection_for(self.graph_label)
         if isinstance(selector, CochainCells):
-            field_spec = cochain_field_spec(value)
+            field_spec = cochain_form_type(value)
             if field_spec.degree != selector.degree:
                 raise ValueError(
                     f"Cochain restriction selects degree {selector.degree}, but "
@@ -722,7 +722,7 @@ def enforce_graph_values(
     selector = component.spec.selection_for(label)
     graph_component_kind(selector)
     if isinstance(selector, CochainCells):
-        field_spec = cochain_field_spec(u)
+        field_spec = cochain_form_type(u)
         if field_spec.degree != selector.degree:
             raise ValueError(
                 f"Cannot enforce degree-{selector.degree} cells on a degree-{field_spec.degree} cochain field."
@@ -730,12 +730,12 @@ def enforce_graph_values(
     target_fn = _coerce_target(target, u)
     if isinstance(selector, CochainCells):
         if (
-            has_cochain_field_spec(target_fn)
-            and cochain_field_spec(target_fn) != field_spec
+            has_cochain_form_type(target_fn)
+            and cochain_form_type(target_fn).form_type_id != field_spec.form_type_id
         ):
             raise ValueError(
-                "Cochain enforcement targets must have the same degree, side, "
-                "orientation, and sampling semantics as the base field."
+                "Cochain enforcement targets must have the same form_type "
+                "as the base field."
             )
     restriction: GraphRestriction | CochainAction
     if isinstance(selector, CochainCells):
@@ -758,7 +758,7 @@ def enforce_graph_values(
     if isinstance(selector, CochainCells):
         # The overwrite only rewrites selected cells of the same cochain, so the
         # enforced field keeps the base field's declared cochain semantics.
-        return with_cochain_field_spec(enforced, field_spec)
+        return as_cochain_field(enforced, field_spec, representation="cochain")
     return enforced
 
 

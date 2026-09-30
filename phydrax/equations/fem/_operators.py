@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -14,9 +16,53 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...exterior import (
+    exterior_derivative_from_jacobian,
+    form_to_vector,
+    FormProxy,
+    FormType,
+    FormValueSpec,
+    interior,
+    vector_to_form,
+)
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
+    inverse_small_linear,
+    SmallLinearSolvePlan,
+)
 
 
+def _cell_inverse_and_determinant(jacobian: Array, /) -> tuple[Array, Array, Array]:
+    dimension = jacobian.shape[-1]
+    if dimension <= 4:
+        result = inverse_small_linear(SmallLinearSolvePlan(dimension), jacobian)
+        return result.value, result.determinant, result.successful
+    reference = ArraySpace(
+        (dimension,),
+        dtype=jacobian.dtype,
+        space_id=f"finite-element-reference-tangent:{dimension}",
+    )
+    physical = ArraySpace(
+        (dimension,),
+        dtype=jacobian.dtype,
+        space_id=f"finite-element-physical-tangent:{dimension}",
+    )
+    operator = DenseLinearOperator(
+        jacobian,
+        source=reference,
+        target=physical,
+        operator_id="finite-element-metric-jacobian",
+    )
+    prepared = factorize(operator, FactorizationPolicy("lu"))
+    result = prepared.materialize_inverse()
+    determinant = prepared.determinant_sign() * jnp.exp(prepared.log_abs_determinant())
+    return result.value, determinant, result.successful
+
+
+@final
 class FiniteElementMetricData(StrictModule):
     """Shared pointwise geometry used by dense and factorized cell actions."""
 
@@ -50,24 +96,19 @@ class FiniteElementMetricData(StrictModule):
         ):
             raise ValueError("Coordinate basis, routes, and reference weights disagree.")
         dimension = gradients.shape[-1]
-        if coordinates.shape[-1] != dimension or dimension not in (2, 3):
-            raise ValueError("Tensor cell metrics require square 2-D or 3-D geometry.")
+        if coordinates.shape[-1] != dimension or dimension < 1:
+            raise ValueError("Cell metrics require nonempty square geometry.")
         physical_points = ein.contract("qi,cid->cqd", basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", gradients, coordinates)
-        inverse_result = inverse_small_linear(
-            SmallLinearSolvePlan(dimension),
-            jacobian,
+        inverse_jacobian, determinant, successful = _cell_inverse_and_determinant(
+            jacobian
         )
-        determinant = inverse_result.determinant
         measure = jnp.abs(determinant)
         measure = eqx.error_if(
             measure,
-            jnp.any(
-                ~inverse_result.successful | ~jnp.isfinite(measure) | (measure <= 0.0)
-            ),
+            jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
             "Finite-element metric determinant must be positive and finite.",
         )
-        inverse_jacobian = inverse_result.value
         cofactor = measure[..., None, None] * inverse_jacobian
         inverse_metric = ein.contract(
             "cqrd,cqsd->cqrs", inverse_jacobian, inverse_jacobian
@@ -170,11 +211,13 @@ class PreparedFacetTrace(StrictModule):
         return ein.contract("qi,...q->...i", self.basis_values, local)
 
 
+@final
 class FieldJet(StrictModule):
     value: Array
     gradient: Array | None
     divergence: Array | None
     curl: Array | None
+    value_spec: FormValueSpec | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -184,11 +227,31 @@ class FieldJet(StrictModule):
         gradient: ArrayLike | None = None,
         divergence: ArrayLike | None = None,
         curl: ArrayLike | None = None,
+        value_spec: FormValueSpec | None = None,
     ) -> None:
-        self.value = jnp.asarray(value)
-        self.gradient = None if gradient is None else jnp.asarray(gradient)
-        self.divergence = None if divergence is None else jnp.asarray(divergence)
-        self.curl = None if curl is None else jnp.asarray(curl)
+        if value_spec is not None and not isinstance(value_spec, FormValueSpec):
+            raise TypeError("value_spec must be a FormValueSpec or None.")
+        values = jnp.asarray(value)
+        gradients = None if gradient is None else jnp.asarray(gradient)
+        divergences = None if divergence is None else jnp.asarray(divergence)
+        curls = None if curl is None else jnp.asarray(curl)
+        if value_spec is not None:
+            shape = value_spec.value_shape
+            if shape and values.shape[-len(shape) :] != shape:
+                raise ValueError(
+                    "Field jet values do not match their form value specification."
+                )
+            if gradients is not None and gradients.shape != values.shape + (
+                value_spec.form_type.ambient_dimension,
+            ):
+                raise ValueError(
+                    "Field jet gradient axes do not match the form value specification."
+                )
+        self.value_spec = value_spec
+        self.value = values
+        self.gradient = gradients
+        self.divergence = divergences
+        self.curl = curls
 
 
 class FacetJet(StrictModule):
@@ -326,46 +389,107 @@ def symmetric_gradient(gradient: ArrayLike, /) -> Array:
     return 0.5 * (gradient_ + jnp.swapaxes(gradient_, -1, -2))
 
 
-def divergence(gradient: ArrayLike, /) -> Array:
-    gradient_ = jnp.asarray(gradient)
-    if gradient_.shape[-1] != gradient_.shape[-2]:
-        raise ValueError("Divergence requires matching value/coordinate dimensions.")
-    return jnp.trace(gradient_, axis1=-2, axis2=-1)
+def form_derivative(gradient: ArrayLike, value_spec: FormValueSpec, /) -> Array:
+    """Evaluate d from a Cartesian proxy gradient without vector identities."""
+    derivative = jnp.asarray(gradient)
+    coordinate_first = jnp.moveaxis(derivative, -1, -len(value_spec.value_shape) - 1)
+    form_jacobian = jnp.moveaxis(
+        vector_to_form(coordinate_first, value_spec),
+        -len(value_spec.form_type.fiber_shape) - 2,
+        -1,
+    )
+    return exterior_derivative_from_jacobian(form_jacobian, value_spec.form_type)
 
 
-def curl(gradient: ArrayLike, /) -> Array:
-    gradient_ = jnp.asarray(gradient)
-    if gradient_.shape[-2:] == (2, 2):
-        return gradient_[..., 1, 0] - gradient_[..., 0, 1]
-    if gradient_.shape[-2:] == (3, 3):
-        return jnp.stack(
-            (
-                gradient_[..., 2, 1] - gradient_[..., 1, 2],
-                gradient_[..., 0, 2] - gradient_[..., 2, 0],
-                gradient_[..., 1, 0] - gradient_[..., 0, 1],
-            ),
-            axis=-1,
+def divergence(
+    gradient: ArrayLike, /, *, value_spec: FormValueSpec | None = None
+) -> Array:
+    derivative = jnp.asarray(gradient)
+    dimension = derivative.shape[-1]
+    spec = (
+        value_spec
+        if value_spec is not None
+        else FormValueSpec(
+            FormType(dimension, dimension - 1, twist="untwisted"), proxy="flux"
         )
-    raise ValueError("Curl requires a two- or three-dimensional vector gradient.")
+    )
+    shape = spec.value_shape + (dimension,)
+    if spec.proxy != "flux" or derivative.shape[-len(shape) :] != shape:
+        raise ValueError("Divergence requires a flux proxy gradient.")
+    return jnp.squeeze(
+        form_derivative(derivative, spec), axis=-len(spec.form_type.fiber_shape) - 1
+    )
 
 
-def normal_trace(value: ArrayLike, normal: ArrayLike, /) -> Array:
+def curl(gradient: ArrayLike, /, *, value_spec: FormValueSpec | None = None) -> Array:
+    derivative = jnp.asarray(gradient)
+    dimension = derivative.shape[-1]
+    spec = (
+        value_spec
+        if value_spec is not None
+        else FormValueSpec(FormType(dimension, 1, twist="untwisted"), proxy="circulation")
+    )
+    if spec.proxy != "circulation" or dimension < 2:
+        raise ValueError("Curl requires a circulation proxy in dimension at least two.")
+    coefficients = form_derivative(derivative, spec)
+    output_type = spec.form_type.exterior_derivative_type()
+    proxy: FormProxy = (
+        "density" if dimension == 2 else "flux" if dimension == 3 else "components"
+    )
+    return form_to_vector(coefficients, FormValueSpec(output_type, proxy=proxy))
+
+
+def normal_trace(
+    value: ArrayLike, normal: ArrayLike, /, *, value_spec: FormValueSpec | None = None
+) -> Array:
     value_ = jnp.asarray(value)
     normal_ = jnp.asarray(normal)
-    if value_.shape[-1] != normal_.shape[-1]:
-        raise ValueError("Normal trace value and normal dimensions must match.")
-    return jnp.sum(value_ * normal_, axis=-1)
+    dimension = normal_.shape[-1]
+    spec = (
+        value_spec
+        if value_spec is not None
+        else FormValueSpec(
+            FormType(dimension, dimension - 1, twist="untwisted"), proxy="flux"
+        )
+    )
+    if spec.proxy != "flux":
+        raise ValueError("Normal trace requires a flux proxy.")
+    fiber_rank = len(spec.form_type.fiber_shape)
+    normal_spec = FormValueSpec(
+        FormType(dimension, dimension - 1, twist=spec.form_type.twist), proxy="flux"
+    )
+    normal_coefficients = vector_to_form(normal_, normal_spec)
+    normal_coefficients = normal_coefficients.reshape(
+        normal_coefficients.shape + (1,) * fiber_rank
+    )
+    return jnp.sum(
+        vector_to_form(value_, spec) * normal_coefficients, axis=-fiber_rank - 1
+    )
 
 
-def tangential_trace(value: ArrayLike, normal: ArrayLike, /) -> Array:
+def tangential_trace(
+    value: ArrayLike, normal: ArrayLike, /, *, value_spec: FormValueSpec | None = None
+) -> Array:
     value_ = jnp.asarray(value)
     normal_ = jnp.asarray(normal)
-    if value_.shape[-1] == 2:
+    dimension = normal_.shape[-1]
+    spec = (
+        value_spec
+        if value_spec is not None
+        else FormValueSpec(FormType(dimension, 1, twist="untwisted"), proxy="circulation")
+    )
+    if spec.proxy != "circulation":
+        raise ValueError("Tangential trace requires a circulation proxy.")
+    coefficients = vector_to_form(value_, spec)
+    if dimension == 2:
         tangent = jnp.stack((-normal_[..., 1], normal_[..., 0]), axis=-1)
-        return jnp.sum(value_ * tangent, axis=-1)
-    if value_.shape[-1] == 3:
-        return value_ - jnp.sum(value_ * normal_, axis=-1, keepdims=True) * normal_
-    raise ValueError("Tangential trace requires a two- or three-dimensional value.")
+        return jnp.squeeze(
+            interior(tangent, coefficients, spec.form_type),
+            axis=-len(spec.form_type.fiber_shape) - 1,
+        )
+    contraction = interior(normal_, coefficients, spec.form_type)
+    normal_event = normal_.reshape(normal_.shape + (1,) * len(spec.form_type.fiber_shape))
+    return value_ - contraction * normal_event
 
 
 def jump(plus: ArrayLike, minus: ArrayLike, /) -> Array:

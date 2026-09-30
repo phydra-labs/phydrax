@@ -12,11 +12,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
+from phydrax.optim._adam import adam
 
 from .._strict import StrictModule
 from ..stochastic._bsde import (
@@ -480,7 +480,7 @@ def solve_deep_picard(
     if source_builder is not None and not callable(source_builder):
         raise TypeError("source_builder must be callable or None.")
     if optim is None:
-        optim = optax.adam(1e-3)
+        optim = adam(1e-3)
     root_key = jr.key(int(seed))
     validation_sampler = (
         validation_query_sampler

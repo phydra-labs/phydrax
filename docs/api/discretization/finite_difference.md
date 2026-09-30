@@ -426,7 +426,7 @@ different policy.
 
 ---
 
-::: phydrax.solver.maxwell.BlochCochainCalculus
+::: phydrax.exterior.bloch_coefficient_system
 
 ---
 

@@ -29,7 +29,7 @@ conductors radiate; the path itself never enters the discrete problem.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import assert_never, Literal, TypeAlias
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -41,6 +41,10 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from ..discretization import StructuredCochainBridge
+from ..discretization._cubical_whitney import (
+    CubicalGridGeometry,
+    CubicalSplineWhitneyKernel,
+)
 from ..ein import contract
 from ..electromagnetics._uniform_motion_field import (
     UniformMotionFieldPlan,
@@ -72,11 +76,6 @@ from ._maxwell_pml import MaxwellCPMLPlan
 
 SourceFormulation: TypeAlias = Literal["total-field", "scattered-field"]
 
-# Series/recurrence switch for the moments ∫₀¹ τᵐ exp(iθτ) dτ: below it the
-# upward recurrence would amplify rounding by up to m!/|θ|ᵐ.
-_MOMENT_SERIES_LIMIT = 1.0
-_MOMENT_SERIES_TERMS = 26
-_MOMENT_COUNT = 4
 # Edge quadrature for the incident field and the closest admissible approach of
 # a scattered-field source entity to the charge path, in local edge lengths.
 _EDGE_QUADRATURE_NODES = 16
@@ -123,84 +122,8 @@ def _real(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     return result
 
 
-def _moments(theta: Array, /) -> Array:
-    """``M_m(θ) = ∫₀¹ τᵐ exp(iθτ) dτ`` for ``m < 4``, stable at every ``θ``."""
-    z = 1j * theta.astype(jnp.complex128)
-    small = jnp.abs(theta) < _MOMENT_SERIES_LIMIT
-    safe = jnp.where(small, 1.0, z)
-    exponential = jnp.exp(z)
-    recurrence = [(exponential - 1.0) / safe]
-    for order in range(1, _MOMENT_COUNT):
-        recurrence.append((exponential - order * recurrence[-1]) / safe)
-    # Σₙ (iθ)ⁿ / (n! (n + m + 1)).
-    powers = jnp.ones_like(z)
-    series = [jnp.zeros_like(z) for _ in range(_MOMENT_COUNT)]
-    factorial = 1.0
-    for term in range(_MOMENT_SERIES_TERMS):
-        if term:
-            powers = powers * z
-            factorial = factorial * term
-        for order in range(_MOMENT_COUNT):
-            series[order] = series[order] + powers / (factorial * (term + order + 1))
-    return jnp.stack(
-        [
-            jnp.where(small, series[order], recurrence[order])
-            for order in range(_MOMENT_COUNT)
-        ],
-        axis=-1,
-    )
-
-
-class _GridGeometry:
-    """Host view of a structured bridge: nodes, widths, periodicity, indexing."""
-
-    def __init__(self, bridge: StructuredCochainBridge, /) -> None:
-        axes = bridge.grid.structured_axes
-        self.dimension = bridge.dimension
-        self.periodic = tuple(bool(axis.periodic) for axis in axes)
-        self.widths = tuple(
-            np.asarray(axis.interval_widths, dtype=np.float64) for axis in axes
-        )
-        points = tuple(
-            np.asarray(axis.point_coordinates, dtype=np.float64) for axis in axes
-        )
-        # Cell boundaries including the closing node of periodic axes.
-        self.boundaries = tuple(
-            np.concatenate((point[:1], point[0] + np.cumsum(width)))
-            for point, width in zip(points, self.widths, strict=True)
-        )
-        self.lower = np.asarray([edges[0] for edges in self.boundaries])
-        self.upper = np.asarray([edges[-1] for edges in self.boundaries])
-        self.length = self.upper - self.lower
-        self.node_shape = bridge.orientation_shapes[0][0]
-        self.edge_shapes = bridge.orientation_shapes[1]
-        self.edge_offsets = bridge.orientation_offsets[1]
-
-    def cell(self, axis: int, coordinate: float, /) -> tuple[int, float]:
-        """Cell index and lower corner containing ``coordinate`` (wrapped if periodic)."""
-        value = coordinate
-        if self.periodic[axis]:
-            value = self.lower[axis] + (coordinate - self.lower[axis]) % self.length[axis]
-        edges = self.boundaries[axis]
-        index = int(
-            np.clip(np.searchsorted(edges, value, side="right") - 1, 0, edges.size - 2)
-        )
-        return index, value - edges[index]
-
-    def node(self, axis: int, index: int, /) -> int:
-        return index % self.node_shape[axis] if self.periodic[axis] else index
-
-    def edge_index(self, axis: int, index: tuple[int, ...], /) -> int:
-        return self.edge_offsets[axis] + int(
-            np.ravel_multi_index(index, self.edge_shapes[axis])
-        )
-
-    def node_index(self, index: tuple[int, ...], /) -> int:
-        return int(np.ravel_multi_index(index, self.node_shape))
-
-
 def _path_breakpoints(
-    grid: _GridGeometry, origin: np.ndarray, direction: np.ndarray, /
+    grid: CubicalGridGeometry, origin: np.ndarray, direction: np.ndarray, /
 ) -> tuple[np.ndarray, int | None, int]:
     """Sorted path parameters of every cell crossing, periodic axis, open ends."""
     moving = tuple(
@@ -239,98 +162,7 @@ def _path_breakpoints(
     return np.unique(np.concatenate(crossings)), None, 2
 
 
-def _linear_factor(alpha: float, beta: float, high: bool, /) -> np.ndarray:
-    """Coefficients (ascending in τ) of ``ξ`` or ``1 − ξ`` for ``ξ = α + βτ``."""
-    return np.asarray([alpha, beta]) if high else np.asarray([1.0 - alpha, -beta])
-
-
-def _padded(polynomial: np.ndarray, /) -> np.ndarray:
-    return np.pad(polynomial, (0, _MOMENT_COUNT - polynomial.size))
-
-
-class _WhitneyPath:
-    """Host Whitney edge/node contributions of the straight path."""
-
-    def __init__(
-        self,
-        grid: _GridGeometry,
-        origin: np.ndarray,
-        direction: np.ndarray,
-        breakpoints: np.ndarray,
-        /,
-    ) -> None:
-        dimension = grid.dimension
-        edge_rows: list[int] = []
-        edge_coefficients: list[np.ndarray] = []
-        edge_segments: list[int] = []
-        node_rows: list[int] = []
-        node_coefficients: list[np.ndarray] = []
-        node_segments: list[int] = []
-        starts: list[float] = []
-        lengths: list[float] = []
-        cells: list[tuple[int, ...]] = []
-        scale = max(float(np.max(np.abs(breakpoints))), 1.0)
-        for start, stop in zip(breakpoints[:-1], breakpoints[1:], strict=True):
-            length = float(stop - start)
-            if length <= 64.0 * np.finfo(np.float64).eps * scale:
-                continue
-            middle = origin + 0.5 * (start + stop) * direction
-            index: list[int] = []
-            alpha: list[float] = []
-            beta: list[float] = []
-            for axis in range(dimension):
-                cell, offset = grid.cell(axis, float(middle[axis]))
-                width = float(grid.widths[axis][cell])
-                index.append(cell)
-                slope = direction[axis] * length / width
-                alpha.append(offset / width - 0.5 * slope)
-                beta.append(slope)
-            segment = len(starts)
-            starts.append(float(start))
-            lengths.append(length)
-            cells.append(tuple(index))
-            for axis in range(dimension):
-                if abs(direction[axis]) <= _PARALLEL_TOLERANCE:
-                    continue
-                others = tuple(other for other in range(dimension) if other != axis)
-                weight = direction[axis] / float(grid.widths[axis][index[axis]])
-                for sides in np.ndindex(*((2,) * len(others))):
-                    polynomial = np.asarray([weight])
-                    node = list(index)
-                    for other, side in zip(others, sides, strict=True):
-                        polynomial = np.polynomial.polynomial.polymul(
-                            polynomial,
-                            _linear_factor(alpha[other], beta[other], bool(side)),
-                        )
-                        node[other] = grid.node(other, index[other] + side)
-                    edge_rows.append(grid.edge_index(axis, tuple(node)))
-                    edge_coefficients.append(_padded(polynomial))
-                    edge_segments.append(segment)
-            for sides in np.ndindex(*((2,) * dimension)):
-                polynomial = np.asarray([1.0])
-                node = []
-                for axis, side in enumerate(sides):
-                    polynomial = np.polynomial.polynomial.polymul(
-                        polynomial, _linear_factor(alpha[axis], beta[axis], bool(side))
-                    )
-                    node.append(grid.node(axis, index[axis] + side))
-                node_rows.append(grid.node_index(tuple(node)))
-                node_coefficients.append(_padded(polynomial))
-                node_segments.append(segment)
-        if not starts:
-            raise ValueError("The charge path has no segment inside the domain.")
-        self.edge_rows = np.asarray(edge_rows, dtype=np.int32)
-        self.edge_coefficients = np.stack(edge_coefficients)
-        self.edge_segments = np.asarray(edge_segments, dtype=np.int32)
-        self.node_rows = np.asarray(node_rows, dtype=np.int32)
-        self.node_coefficients = np.stack(node_coefficients)
-        self.node_segments = np.asarray(node_segments, dtype=np.int32)
-        self.starts = np.asarray(starts)
-        self.lengths = np.asarray(lengths)
-        self.first_cell = cells[0]
-        self.last_cell = cells[-1]
-
-
+@final
 class MaxwellMovingChargePlan(StrictModule):
     """Charge in uniform rectilinear motion on a structured compatible complex.
 
@@ -411,6 +243,7 @@ class MaxwellMovingChargePlan(StrictModule):
         return PreparedMaxwellMovingCharge(self)
 
 
+@final
 class PreparedMaxwellMovingCharge(StrictModule):
     """Exact Whitney current and charge loads of one uniformly moving charge.
 
@@ -423,6 +256,7 @@ class PreparedMaxwellMovingCharge(StrictModule):
     __strict_contract__ = True
 
     plan: MaxwellMovingChargePlan
+    kernel: CubicalSplineWhitneyKernel
     edge_coefficients: Float64[_EdgeContributionDim, _MomentDim]
     edge_starts: Float64[_EdgeContributionDim]
     edge_lengths: Float64[_EdgeContributionDim]
@@ -440,13 +274,14 @@ class PreparedMaxwellMovingCharge(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: MaxwellMovingChargePlan, /) -> None:
-        grid = _GridGeometry(plan.bridge)
+        kernel = CubicalSplineWhitneyKernel(plan.bridge, 1)
+        grid = CubicalGridGeometry(plan.bridge)
         origin = np.asarray(plan.origin)
         direction = np.asarray(plan.direction)
         breakpoints, periodic_axis, open_endpoints = _path_breakpoints(
             grid, origin, direction
         )
-        path = _WhitneyPath(grid, origin, direction, breakpoints)
+        path = kernel.prepare_path(origin, direction, breakpoints)
         edge_count = plan.layout.electric_count
         node_count = plan.bridge.cochain.cell_counts[0]
         endpoint_nodes = np.zeros((node_count,), dtype=np.bool_)
@@ -462,6 +297,7 @@ class PreparedMaxwellMovingCharge(StrictModule):
         path_edges[path.edge_rows] = True
         scope = Scope()
         self.plan = plan
+        self.kernel = kernel
         self.edge_coefficients = parse(
             jnp.asarray(path.edge_coefficients),
             Float64[_EdgeContributionDim, _MomentDim],
@@ -546,10 +382,9 @@ class PreparedMaxwellMovingCharge(StrictModule):
         scatter: SparseLinearMap,
         /,
     ) -> Array:
-        wavenumber = omega / self.plan.speed
-        moments = _moments(wavenumber * lengths)
-        polynomial = jnp.sum(coefficients * moments, axis=-1)
-        values = lengths * jnp.exp(1j * wavenumber * starts) * polynomial
+        values = self.kernel.phase_integral(
+            coefficients, starts, lengths, omega / self.plan.speed
+        )
         return scatter.mv(values)
 
     def edge_load(self, angular_frequency: ConvertibleToArray, /) -> Array:
@@ -581,7 +416,7 @@ class PreparedMaxwellMovingCharge(StrictModule):
     def current(self, angular_frequency: ConvertibleToArray, /) -> Array:
         """Primal electric-current cochain ``J̃ = ⋆₁⁻¹ b``; the source is ``iω J̃``."""
         cochain = self.plan.bridge.cochain
-        return cochain.solve_hodge(
+        return cochain.inverse_hodge_star(
             self.plan.layout.electric_degree, self.edge_load(angular_frequency)
         )
 
@@ -612,6 +447,7 @@ def _scatter(rows: np.ndarray, size: int, identifier: str, /) -> SparseLinearMap
     )
 
 
+@final
 class FrequencyMovingChargeEvidence(StrictModule):
     """Branch, domain-size, source, and solve evidence of one frequency.
 
@@ -645,6 +481,7 @@ class FrequencyMovingChargeEvidence(StrictModule):
     method: FrequencyMaxwellSolveMethod = eqx.field(static=True)
 
 
+@final
 class FrequencyMovingChargeResult(StrictModule):
     """Total field, optional scattered/incident split, ledger, and evidence.
 
@@ -683,7 +520,7 @@ def _homogeneous_scalar(values: Array, probe: Array, name: str, /) -> complex:
 
 
 def _edge_segments(
-    grid: _GridGeometry, size: int, /
+    grid: CubicalGridGeometry, size: int, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Start point, axis, and length of every electric edge."""
     starts = np.zeros((size, grid.dimension))
@@ -726,6 +563,7 @@ def _segment_line_distance(
     return np.linalg.norm(first + parameter[:, None] * change, axis=1)
 
 
+@final
 class FrequencyMovingChargePlan(StrictModule):
     """Frequency-domain Maxwell solve of a uniformly moving charge.
 
@@ -825,6 +663,7 @@ class FrequencyMovingChargePlan(StrictModule):
         return PreparedFrequencyMovingCharge(self)
 
 
+@final
 class PreparedFrequencyMovingCharge(StrictModule):
     """Prepared moving-charge solve: reusable sparse pattern and host geometry."""
 
@@ -962,7 +801,7 @@ class PreparedFrequencyMovingCharge(StrictModule):
         needed = np.abs(np.asarray(influence)) > 0.0
         coupled = needed & host_conductor
         evaluated = needed | ~host_conductor
-        grid = _GridGeometry(plan.source.plan.bridge)
+        grid = CubicalGridGeometry(plan.source.plan.bridge)
         starts, axes, lengths = _edge_segments(grid, size)
         tangents = np.eye(grid.dimension)[axes]
         distance = (
@@ -1098,7 +937,7 @@ class PreparedFrequencyMovingCharge(StrictModule):
 def _transverse_clearance(plan: FrequencyMovingChargePlan, /) -> float:
     """Distance from the path to the nearest absorbing layer or wall across it."""
     source = plan.source.plan
-    grid = _GridGeometry(source.bridge)
+    grid = CubicalGridGeometry(source.bridge)
     origin = np.asarray(source.origin)
     direction = np.asarray(source.direction)
     widths = (0,) * grid.dimension if plan.stretching is None else plan.stretching.widths

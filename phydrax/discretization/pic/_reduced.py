@@ -13,34 +13,9 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._reduced_differences import backward_difference, forward_difference
 from .._tensor_support import PreparedTensorGrid
 from ._boundary import PICBoundaryResult
-
-
-def _forward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
-    """Forward difference, ``−_backward`` transposed (``value[N] = 0`` on walls)."""
-    if periodic:
-        shifted = jnp.roll(value, -1, axis=axis)
-    else:
-        pad = [(0, 0)] * value.ndim
-        pad[axis] = (0, 1)
-        shifted = jnp.pad(
-            jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis), pad
-        )
-    return (shifted - value) / spacing
-
-
-def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
-    """Face-to-cell divergence; a nonperiodic lower wall carries no flux."""
-    if periodic:
-        previous = jnp.roll(value, 1, axis=axis)
-    else:
-        pad = [(0, 0)] * value.ndim
-        pad[axis] = (1, 0)
-        previous = jnp.pad(
-            jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis), pad
-        )
-    return (value - previous) / spacing
 
 
 def _backward_gram_basis(
@@ -250,7 +225,9 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         divergence = jnp.sum(
             jnp.stack(
                 tuple(
-                    _backward(raw[axis], axis, self.spacing[axis], self.periodic[axis])
+                    backward_difference(
+                        raw[axis], axis, self.spacing[axis], self.periodic[axis]
+                    )
                     for axis in range(self.dimension)
                 )
             ),
@@ -273,7 +250,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
                 @ y_vectors.T
             )
             for axis in range(2):
-                corrected[axis] = raw[axis] - _forward(
+                corrected[axis] = raw[axis] - forward_difference(
                     potential, axis, self.spacing[axis], self.periodic[axis]
                 )
         elif self.periodic[0]:
@@ -285,7 +262,9 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
             potential = jnp.real(
                 jnp.fft.ifft(jnp.where(eigenvalue > 0.0, -transformed / safe, 0.0))
             )
-            corrected[0] = raw[0] - _forward(potential, 0, self.spacing[0], True)
+            corrected[0] = raw[0] - forward_difference(
+                potential, 0, self.spacing[0], True
+            )
         else:
             corrected[0] = raw[0] - self.spacing[0] * jnp.cumsum(residual)
         # The corrected current on the upper face of a nonperiodic axis is the
@@ -302,7 +281,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         final_residual = (rho_end - rho_start) / dt + jnp.sum(
             jnp.stack(
                 tuple(
-                    _backward(
+                    backward_difference(
                         corrected[axis],
                         axis,
                         self.spacing[axis],

@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
@@ -30,24 +29,14 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
+from ..exterior._form_type import FormTwist, FormType
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
     DiagonalPairing,
-    DifferentiationPolicy,
     DualSpace,
-    FailurePolicy,
-    JacobiPreconditionerBuilder,
-    LinearSolvePolicy,
-    LinearSystem,
     OperatorPairing,
-    OperatorProperties,
-    PCG,
-    PreconditioningPolicy,
-    prepare,
-    TolerancePolicy,
 )
-from ..sparse import EdgeRelation, SparseCoordinateOperator
 from ..typing import parse
 
 
@@ -73,110 +62,6 @@ def boundary_geometry_revision(vertices: ArrayLike, cells: ArrayLike, /) -> str:
             "cells": array_tree_fingerprint(np.asarray(cells, dtype=np.int64)),
         }
     )
-
-
-def _gram_tolerance(value: float, /) -> float:
-    tolerance = float(value)
-    if not np.isfinite(tolerance) or tolerance <= 0.0 or tolerance >= 1.0:
-        raise ValueError("gram_tolerance must be finite, positive, and below one.")
-    return tolerance
-
-
-def sparse_gram_trace_space(
-    targets: np.ndarray,
-    sources: np.ndarray,
-    values: np.ndarray,
-    /,
-    *,
-    size: int,
-    dtype: np.dtype,
-    space_id: str,
-    gram_tolerance: float,
-) -> tuple[ArraySpace, AbstractLinearOperator]:
-    """Return the Gram-paired coefficient space and its mass map.
-
-    ``(targets, sources, values)`` are the route entries of one symmetric
-    positive-definite physical Gram matrix; repeated entries accumulate. Its
-    inverse is a prepared Jacobi-preconditioned conjugate-gradient solve; no
-    inverse is formed.
-    """
-    tolerance = _gram_tolerance(gram_tolerance)
-    entries = np.asarray(values, dtype=np.float64)
-    if entries.ndim != 1 or not np.all(np.isfinite(entries)):
-        raise ValueError("Gram route values must be one finite vector.")
-    relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
-    coefficients = jnp.asarray(entries, dtype=jnp.float64)
-    coordinates = ArraySpace((size,), dtype=dtype, space_id=f"{space_id}:coordinates")
-    gram = SparseCoordinateOperator(
-        relation,
-        coefficients,
-        source=coordinates,
-        target=coordinates,
-        properties=OperatorProperties(
-            self_adjoint=True,
-            positive_definite=True,
-            evidence={
-                "self_adjoint": "construction",
-                "positive_definite": "construction",
-            },
-        ),
-        operator_id=f"{space_id}:gram",
-        accumulation_dtype=dtype,
-    )
-    riesz_solve = prepare(
-        LinearSystem(gram, problem_id=f"{space_id}:gram-system"),
-        LinearSolvePolicy(
-            PCG(),
-            tolerance=TolerancePolicy(
-                relative=tolerance, absolute=0.0, max_steps=4 * size
-            ),
-            preconditioning=PreconditioningPolicy(JacobiPreconditionerBuilder()),
-            differentiation=DifferentiationPolicy("rhs-only"),
-            failure=FailurePolicy("status"),
-        ),
-    )
-    space = ArraySpace(
-        (size,),
-        dtype=dtype,
-        pairing=OperatorPairing(gram, prepared_inverse=riesz_solve),
-        space_id=space_id,
-    )
-    mass = SparseCoordinateOperator(
-        relation,
-        coefficients,
-        source=space,
-        target=DualSpace(space),
-        operator_id=f"{space_id}:mass",
-        accumulation_dtype=dtype,
-    )
-    return space, mass
-
-
-def diagonal_gram_trace_space(
-    measures: ArrayLike, /, *, dtype: np.dtype, space_id: str
-) -> tuple[ArraySpace, AbstractLinearOperator]:
-    """Return the coefficient space paired by positive cell measures and its mass."""
-    host = np.asarray(measures, dtype=np.float64)
-    if host.ndim != 1 or not np.all(np.isfinite(host)) or np.any(host <= 0.0):
-        raise ValueError("Cell measures must be one finite positive vector.")
-    weights = jnp.asarray(host, dtype=jnp.float64)
-    size = host.shape[0]
-    cells = np.arange(size, dtype=np.int32)
-    space = ArraySpace(
-        (size,),
-        dtype=dtype,
-        pairing=DiagonalPairing(weights, pairing_id=f"{space_id}:measure"),
-        space_id=space_id,
-    )
-    mass = SparseCoordinateOperator(
-        EdgeRelation(cells, cells, source_size=size, target_size=size),
-        weights,
-        source=space,
-        target=DualSpace(space),
-        operator_id=f"{space_id}:mass",
-        accumulation_dtype=dtype,
-    )
-    return space, mass
 
 
 def _quantity_semantics(
@@ -342,6 +227,26 @@ class BoundaryTraceSpaceCapability(StrictModule, NonTrainableState):
                 "ambient_dimension": ambient_dimension,
                 "revision": revision,
             }
+        )
+
+    @property
+    def form_type(self) -> FormType:
+        """Intrinsic boundary form carried by the declared trace quantity."""
+        twist: FormTwist
+        match self.quantity:
+            case "dirichlet":
+                degree, twist = 0, "untwisted"
+            case "neumann":
+                degree, twist = self.boundary_dimension, "twisted"
+            case "surface-current" | "surface-current-dual":
+                degree, twist = 1, "twisted"
+            case _:
+                assert_never(self.quantity)
+        return FormType(
+            self.boundary_dimension,
+            degree,
+            twist=twist,
+            ambient_dimension=self.ambient_dimension,
         )
 
 

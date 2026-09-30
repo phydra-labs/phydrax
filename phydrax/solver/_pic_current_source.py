@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import StructuredCochainBridge
+from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
 from ..discretization.pic._current import PICMaxwellCurrentArguments
 from ._maxwell_sources import (
     AbstractMaxwellSourcePlan,
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ._maxwell import MaxwellCochainLayout, PreparedCompatibleMaxwell
 
 
+@final
 class PreparedPICMaxwellCurrentSource(StrictModule, NonTrainableState):
     electric_count: int = eqx.field(static=True)
     magnetic_count: int = eqx.field(static=True)
@@ -47,6 +48,7 @@ class PreparedPICMaxwellCurrentSource(StrictModule, NonTrainableState):
         del prepared
 
 
+@final
 class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
     """Dynamic full-cochain current supplied by a PIC step argument."""
 
@@ -59,7 +61,7 @@ class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
         self.source_id = identifier
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: MaxwellCochainLayout, /
+        self, bridge: AbstractCellDeRhamComplex, layout: MaxwellCochainLayout, /
     ) -> PreparedPICMaxwellCurrentSource:
         return PreparedPICMaxwellCurrentSource(
             layout.electric_count,
@@ -68,7 +70,7 @@ class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
                 {
                     "kind": "prepared-pic-maxwell-current-source",
                     "source": self.source_id,
-                    "bridge": bridge.bridge_id,
+                    "realization": bridge.realization_id,
                     "layout": layout.layout_id,
                 }
             ),

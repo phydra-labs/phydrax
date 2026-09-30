@@ -60,10 +60,10 @@ def run_benchmarks(
         graph,
         edge_weight_key="conductance",
     )
-    eigenbasis = phx.graph.cochain_laplacian_eigenbasis(
+    eigenbasis = phx.exterior.hodge_laplacian_eigenbasis(
         complex_ir,
         0,
-        num_modes=rank,
+        count=rank,
     )
     preprocessing_seconds = time.perf_counter() - started
     kernel = phx.kernels.AmplitudeKernel(
@@ -73,7 +73,7 @@ def run_benchmarks(
         ),
         0.8,
     )
-    entities = complex_ir.cell_entities(0)
+    entities = jnp.arange(complex_ir.cell_counts[0], dtype=jnp.int32)
     features, feature_first, feature_steady = _timed_compiled(
         lambda values: phx.kernels.kernel_features(kernel, values),
         entities,

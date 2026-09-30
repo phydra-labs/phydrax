@@ -45,6 +45,26 @@ _gitignore/
 benchmarks/*
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
+!benchmarks/analyze_adaptive_campaign.py
+# Native exterior-calculus drivers and their measured evidence records.
+!benchmarks/cochain_realization.py
+!benchmarks/cochain_realization.json
+!benchmarks/exterior_calculus.py
+!benchmarks/exterior_calculus.json
+!benchmarks/fem_de_rham.py
+!benchmarks/fem_de_rham.json
+!benchmarks/mac_complex_parity.py
+!benchmarks/mac_complex_parity.json
+!benchmarks/pic_chain_integration.py
+!benchmarks/pic_chain_integration.json
+!benchmarks/spectral_de_rham.py
+!benchmarks/spectral_de_rham.json
+!benchmarks/spline_de_rham.py
+!benchmarks/spline_de_rham.json
+!benchmarks/structured_cochain.py
+!benchmarks/structured_cochain.json
+!benchmarks/unstructured_maxwell.py
+!benchmarks/unstructured_maxwell.json
 !benchmarks/omniphysics_production_qualification.py
 !benchmarks/quantum_hall.py
 benchmarks/advanced_solvers/**/__pycache__/

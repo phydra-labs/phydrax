@@ -6,7 +6,11 @@
 
 from __future__ import annotations
 
+from math import prod
+from typing import final
+
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -15,93 +19,109 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._topology import CellComplexTopology
-from ._cut_cochain import CutCellCochainPlan, CutCellCochainState
+from ...exterior._complex import ComplexBoundary
+from ...linalg import (
+    AbstractLinearOperator,
+    adjoint,
+    ComplexMap,
+    ComplexMapEvidence,
+    DenseLinearOperator,
+    transpose,
+)
+from ...typing import parse
+from .._cochain import CochainDiscretization
+from ._cut_cochain import CutCellCochainPlan
 from ._cut_transition import MultivaluedCutCellTransition
 
 
-class CutCellCochainTransferEvidence(StrictModule, NonTrainableState):
-    """Degree-wise commuting defects for one admitted topology transfer."""
-
-    commuting_defects: tuple[float, ...] = eqx.field(static=True)
-    maximum_commuting_defect: float = eqx.field(static=True)
-    topology_changed: bool = eqx.field(static=True)
-    valid: bool = eqx.field(static=True)
-    evidence_id: str = eqx.field(static=True)
-
-
+@final
 class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
-    """Minimum-change commuting projections with exact transpose/metric adjoint."""
+    """Minimum-change commuting projection on admitted active coordinates.
+
+    Relative pairings are restricted before inversion. Public actions accept
+    full storage coordinates and zero-extend the active-coordinate results.
+    """
 
     source_plan: CutCellCochainPlan
     target_plan: CutCellCochainPlan
-    source_state: CutCellCochainState
-    target_state: CutCellCochainState
-    primal_matrices: tuple[Array, ...]
-    transpose_matrices: tuple[Array, ...]
-    adjoint_matrices: tuple[Array, ...]
-    evidence: CutCellCochainTransferEvidence
+    source_state: CochainDiscretization
+    target_state: CochainDiscretization
+    complex_map: ComplexMap
+    evidence: ComplexMapEvidence
+    transpose_operators: tuple[AbstractLinearOperator, ...]
+    adjoint_operators: tuple[AbstractLinearOperator, ...]
+    source_indices: tuple[Array, ...]
+    target_indices: tuple[Array, ...]
+    boundary: ComplexBoundary = eqx.field(static=True)
+    topology_changed: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         source_plan: CutCellCochainPlan,
         target_plan: CutCellCochainPlan,
-        source_state: CutCellCochainState,
-        target_state: CutCellCochainState,
+        source_state: CochainDiscretization,
+        target_state: CochainDiscretization,
         /,
         *,
         cell_transition: MultivaluedCutCellTransition | None = None,
         tolerance: float = 1.0e-9,
+        boundary: ComplexBoundary = "absolute",
     ) -> None:
         if not isinstance(source_plan, CutCellCochainPlan) or not isinstance(
             target_plan, CutCellCochainPlan
         ):
             raise TypeError("Cut cochain transfer requires source/target plans.")
-        if not isinstance(source_state, CutCellCochainState) or not isinstance(
-            target_state, CutCellCochainState
+        if not isinstance(source_state, CochainDiscretization) or not isinstance(
+            target_state, CochainDiscretization
         ):
-            raise TypeError("Cut cochain transfer requires accepted metric states.")
+            raise TypeError("Cut cochain transfer requires cochain realizations.")
+        boundary = parse(boundary, ComplexBoundary, "boundary")
+        for metric in (*source_state.hodges, *target_state.hodges):
+            metric.admit()
+        source_topology = source_state.topology
+        target_topology = target_state.topology
         if (
-            source_state.complex_id != source_plan.complex.topology_id
-            or target_state.complex_id != target_plan.complex.topology_id
-            or not bool(source_state.metrics.valid)
-            or not bool(target_state.metrics.valid)
+            source_topology.topology_id != source_plan.complex.mesh.topology.topology_id
+            or target_topology.topology_id
+            != target_plan.complex.mesh.topology.topology_id
         ):
-            raise ValueError("Cut cochain plans and metric states are incompatible.")
+            raise ValueError("Cut cochain plans and realizations are incompatible.")
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Cut cochain transfer tolerance must be positive.")
-        source_topology = source_state.topology.topology
-        target_topology = target_state.topology.topology
         dimension = source_topology.dimension
         if target_topology.dimension != dimension:
             raise ValueError("Cut cochain transfer dimensions must match.")
+        source = source_state.hilbert_complex(boundary=boundary)
+        target = target_state.hilbert_complex(boundary=boundary)
+        source_indices = tuple(
+            np.asarray(source_state.active_indices(k, boundary=boundary), dtype=np.int32)
+            for k in range(dimension + 1)
+        )
+        target_indices = tuple(
+            np.asarray(target_state.active_indices(k, boundary=boundary), dtype=np.int32)
+            for k in range(dimension + 1)
+        )
+        source_d = tuple(
+            incidence.scipy_boundary()
+            .T.tocsr()[source_indices[k + 1]][:, source_indices[k]]
+            .toarray()
+            for k, incidence in enumerate(source_topology.incidences)
+        )
+        target_d = tuple(
+            incidence.scipy_boundary()
+            .T.tocsr()[target_indices[k + 1]][:, target_indices[k]]
+            .toarray()
+            for k, incidence in enumerate(target_topology.incidences)
+        )
+        topology_changed = source_topology.topology_id != target_topology.topology_id
         source_counts = tuple(entity.count for entity in source_topology.entity_sets)
         target_counts = tuple(entity.count for entity in target_topology.entity_sets)
-        topology_changed = (
-            source_plan.complex.topology_id != target_plan.complex.topology_id
-        )
-
-        def derivative(topology: CellComplexTopology, degree: int) -> np.ndarray:
-            incidence = topology.incidences[degree]
-            relation = incidence.relation
-            valid = np.asarray(relation.valid, dtype=np.bool_)
-            matrix = np.zeros(
-                (relation.target_size, relation.source_size), dtype=np.float64
-            )
-            np.add.at(
-                matrix,
-                (
-                    np.asarray(relation.target_indices, dtype=np.int32)[valid],
-                    np.asarray(relation.source_indices, dtype=np.int32)[valid],
-                ),
-                np.asarray(incidence.signs, dtype=np.float64)[valid],
-            )
-            return matrix
-
-        if not topology_changed and source_counts == target_counts:
-            primal = [np.eye(count, dtype=np.float64) for count in source_counts]
+        primal: list[np.ndarray] = []
+        if not topology_changed:
+            for lower, upper in zip(source_indices, target_indices, strict=True):
+                primal.append((upper[:, None] == lower[None, :]).astype(np.float64))
         else:
             if (
                 not isinstance(cell_transition, MultivaluedCutCellTransition)
@@ -129,131 +149,140 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
                 ),
                 weights,
             )
-            primal = [np.empty((0, 0)) for _ in source_counts]
-            primal[-1] = cell_matrix
+            primal = [np.empty((0, 0), dtype=np.float64) for _ in source_counts]
+            primal[-1] = cell_matrix[np.ix_(target_indices[-1], source_indices[-1])]
             for degree in reversed(range(dimension)):
-                target_derivative = derivative(target_topology, degree)
-                source_derivative = derivative(source_topology, degree)
-                desired = primal[degree + 1] @ source_derivative
-                pseudoinverse = np.linalg.pinv(target_derivative, rcond=tolerance_)
+                desired = primal[degree + 1] @ source_d[degree]
+                pseudoinverse = np.linalg.pinv(target_d[degree], rcond=tolerance_)
                 source_ids = np.asarray(
                     source_topology.entities(degree).entity_ids, dtype=np.int64
-                )
+                )[source_indices[degree]]
                 target_ids = np.asarray(
                     target_topology.entities(degree).entity_ids, dtype=np.int64
+                )[target_indices[degree]]
+                geometric = (target_ids[:, None] == source_ids[None, :]).astype(
+                    np.float64
                 )
-                source_by_id = {
-                    int(identifier): index for index, identifier in enumerate(source_ids)
-                }
-                geometric = np.zeros(
-                    (target_counts[degree], source_counts[degree]), dtype=np.float64
-                )
-                for target_index, identifier in enumerate(target_ids):
-                    source_index = source_by_id.get(int(identifier))
-                    if source_index is not None:
-                        geometric[target_index, source_index] = 1.0
-                null_projection = np.eye(target_counts[degree]) - (
-                    pseudoinverse @ target_derivative
+                null_projection = (
+                    np.eye(target_ids.size, dtype=np.float64)
+                    - pseudoinverse @ target_d[degree]
                 )
                 primal[degree] = pseudoinverse @ desired + null_projection @ geometric
-        defects = []
-        for degree in range(dimension):
-            commutator = derivative(target_topology, degree) @ primal[degree] - primal[
-                degree + 1
-            ] @ derivative(source_topology, degree)
-            defects.append(float(np.max(np.abs(commutator), initial=0.0)))
-        maximum_defect = max(defects, default=0.0)
-        if maximum_defect > tolerance_:
+        defects = tuple(
+            float(
+                np.max(
+                    np.abs(target_d[k] @ primal[k] - primal[k + 1] @ source_d[k]),
+                    initial=0.0,
+                )
+            )
+            for k in range(dimension)
+        )
+        if max(defects, default=0.0) > tolerance_:
             raise ValueError(
                 "Cut cochain topology change has no admitted commuting projection."
             )
-        transpose_matrices = tuple(matrix.T for matrix in primal)
-        adjoints = []
-        for degree, matrix in enumerate(primal):
-            source_metric = np.asarray(
-                source_state.metrics.hodge_stars[degree], dtype=np.float64
+        map_id = canonical_fingerprint(
+            {
+                "kind": "cut-cell-cochain-complex-map",
+                "source": source.complex_id,
+                "target": target.complex_id,
+                "boundary": boundary,
+                "source_mask": source_indices,
+                "target_mask": target_indices,
+                "matrices": [array_tree_fingerprint(matrix) for matrix in primal],
+            }
+        )
+        maps = tuple(
+            DenseLinearOperator(
+                matrix,
+                source=source.space(k),
+                target=target.space(k),
+                operator_id=canonical_fingerprint({"map": map_id, "degree": k}),
             )
-            target_metric = np.asarray(
-                target_state.metrics.hodge_stars[degree], dtype=np.float64
-            )
-            adjoints.append((matrix.T * target_metric[None, :]) / source_metric[:, None])
-        evidence = CutCellCochainTransferEvidence(
-            commuting_defects=tuple(defects),
-            maximum_commuting_defect=maximum_defect,
-            topology_changed=topology_changed,
-            valid=True,
-            evidence_id=canonical_fingerprint(
-                {
-                    "kind": "cut-cell-cochain-transfer-evidence",
-                    "source": source_plan.complex.topology_id,
-                    "target": target_plan.complex.topology_id,
-                    "defects": defects,
-                    "tolerance": tolerance_,
-                }
-            ),
+            for k, matrix in enumerate(primal)
         )
         self.source_plan = source_plan
         self.target_plan = target_plan
         self.source_state = source_state
         self.target_state = target_state
-        self.primal_matrices = tuple(jnp.asarray(matrix) for matrix in primal)
-        self.transpose_matrices = tuple(
-            jnp.asarray(matrix) for matrix in transpose_matrices
+        self.complex_map = ComplexMap(source, target, maps, map_id=map_id)
+        self.evidence = ComplexMapEvidence(
+            jnp.asarray(defects, dtype=jnp.float64), jnp.asarray(True, dtype=jnp.bool_)
         )
-        self.adjoint_matrices = tuple(jnp.asarray(matrix) for matrix in adjoints)
-        self.evidence = evidence
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "cut-cell-cochain-transfer-plan",
-                "source": source_state.state_id,
-                "target": target_state.state_id,
-                "primal": [array_tree_fingerprint(matrix) for matrix in primal],
-                "evidence": evidence.evidence_id,
-            }
-        )
+        self.transpose_operators = tuple(transpose(operator) for operator in maps)
+        self.adjoint_operators = tuple(adjoint(operator) for operator in maps)
+        self.source_indices = tuple(jnp.asarray(indices) for indices in source_indices)
+        self.target_indices = tuple(jnp.asarray(indices) for indices in target_indices)
+        self.boundary = boundary
+        self.topology_changed = topology_changed
+        self.plan_id = map_id
 
     @staticmethod
-    def _apply(matrix: Array, values: ArrayLike, size: int, name: str, /) -> Array:
+    def _apply(
+        operator: AbstractLinearOperator,
+        values: ArrayLike,
+        indices: Array,
+        output_indices: Array,
+        input_size: int,
+        output_size: int,
+        /,
+    ) -> Array:
         value = jnp.asarray(values)
-        if value.ndim == 0 or value.shape[0] != size:
-            raise ValueError(f"{name} must begin with the expected entity count.")
-        return jnp.tensordot(matrix.astype(value.dtype), value, axes=((1,), (0,)))
+        if value.ndim == 0 or value.shape[0] != input_size:
+            raise ValueError(
+                "Cut cochain values must begin with the expected entity count."
+            )
+        selected = value[indices]
+        if selected.ndim == 1:
+            image = operator.mv(selected)
+        else:
+            columns = selected.reshape((indices.size, prod(value.shape[1:]))).T
+            image = jax.vmap(operator.mv)(columns).T.reshape(
+                (output_indices.size,) + value.shape[1:]
+            )
+        return (
+            jnp.zeros((output_size,) + value.shape[1:], dtype=image.dtype)
+            .at[output_indices]
+            .set(image)
+        )
+
+    def _degree(self, degree: int, /) -> int:
+        if degree < 0 or degree >= len(self.complex_map.maps):
+            raise ValueError("Cut cochain transfer degree is out of range.")
+        return degree
 
     def apply(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        if degree_ < 0 or degree_ >= len(self.primal_matrices):
-            raise ValueError("Cut cochain transfer degree is out of range.")
+        k = self._degree(degree)
         return self._apply(
-            self.primal_matrices[degree_],
+            self.complex_map.maps[k],
             values,
-            self.primal_matrices[degree_].shape[1],
-            "Source cochain",
+            self.source_indices[k],
+            self.target_indices[k],
+            self.source_state.topology.entities(k).count,
+            self.target_state.topology.entities(k).count,
         )
 
     def transpose(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        if degree_ < 0 or degree_ >= len(self.transpose_matrices):
-            raise ValueError("Cut cochain transpose degree is out of range.")
+        k = self._degree(degree)
         return self._apply(
-            self.transpose_matrices[degree_],
+            self.transpose_operators[k],
             values,
-            self.transpose_matrices[degree_].shape[1],
-            "Target cotangent",
+            self.target_indices[k],
+            self.source_indices[k],
+            self.target_state.topology.entities(k).count,
+            self.source_state.topology.entities(k).count,
         )
 
     def adjoint(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        if degree_ < 0 or degree_ >= len(self.adjoint_matrices):
-            raise ValueError("Cut cochain adjoint degree is out of range.")
+        k = self._degree(degree)
         return self._apply(
-            self.adjoint_matrices[degree_],
+            self.adjoint_operators[k],
             values,
-            self.adjoint_matrices[degree_].shape[1],
-            "Target metric value",
+            self.target_indices[k],
+            self.source_indices[k],
+            self.target_state.topology.entities(k).count,
+            self.source_state.topology.entities(k).count,
         )
 
 
-__all__ = [
-    "CutCellCochainTransferEvidence",
-    "CutCellCochainTransferPlan",
-]
+__all__ = ["CutCellCochainTransferPlan"]

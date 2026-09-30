@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Native exterior calculus in `phydrax.exterior`: explicit form degree, twist, fiber,
+  and proxy semantics; shared exterior algebra; de Rham integration, Whitney chains,
+  induced boundary traces, numerical form products, and coefficient systems.
+- Paired `HilbertComplex` and `ComplexMap` substrates, compound matrices with
+  singular-minor derivatives, prepared Hodge decomposition, harmonic evidence,
+  coordinate weak forms, mixed Hodge–Laplace recipes, and auxiliary-space solvers.
+- Compatible finite-element form families and reconstruction, public spline complexes,
+  Fourier and spherical complexes, and canonical AMR transfer evidence.
+- Forms-aware PDE validation, serialization, tokens, and smooth/discrete lowering,
+  with executable Hodge–Laplace, cavity, learned-Hodge, and solenoidal-field examples.
+- Phase-separated exterior, cochain, FE, Maxwell, spectral, spline, MAC, and PIC
+  benchmarks with compiler-memory and retained-state evidence.
 - Numerical interoperability across methods and pipelines
   (`docs/guides_numerical_interoperability.md`). Existing scientific owners
   stay authoritative; prepared bindings connect them.
@@ -1753,6 +1765,17 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Smooth forms carry explicit twist and an always-present coefficient axis.
+  Metric Hodge stars no longer require an orientation; converting between twisted
+  and untwisted forms requires an explicitly declared orientation.
+- Cochain Hodges are dynamic diagonal or sparse metric operators. Relative complexes
+  restrict both differentials and pairings before inversion, and numerical refresh
+  reuses admitted sparse structure and stable binding identities.
+- Graph cochain payloads lower the canonical discretization; spectral and harmonic
+  algorithms use native linear algebra. Operator-learning field payloads persist
+  canonical form identity and reject obsolete cochain specifications.
+- Native Adam defaults use a single explicit-dtype Optax boundary; callers supplying
+  their own external optimizer retain their provider contract.
 - The integrate conversion's time unit is declared once on
   `CouplingGraph(time_unit=...)` / `PartitionedCouplingDeclaration(time_unit=...)`.
 - `AbstractCouplingLaw.prepare` receives `interface_owners`; law runtime
@@ -2438,6 +2461,11 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Duplicate exterior-basis tables, graph cochain calculus/spectral/harmonic carriers,
+  diagonal-only cochain metric state, specialized RT/BDM/Nédélec factories, compatible
+  tensor and spline Piola/transfer shims, and redundant gauge path implementations.
+- Orphaned adaptive-campaign runner/profiler references to unavailable drivers.
+  Typed JSONL scientific analysis and promotion-evidence contracts remain supported.
 - Removed `TwoPhaseImplicitViscosity`, `TwoPhaseViscousResult`, the local
   two-phase viscosity module, obsolete total-energy/limiter/body residual
   fields, and the unused `MultiphaseFLIPPlan.surface_tension` argument.
@@ -2454,6 +2482,26 @@
   triangle-intersection implementations, and dense remesh transfer matrices.
 
 ### Fixed
+- Tetrahedral H(div) reference-face routing and nonvacuous shared-normal continuity.
+- Physical magnetic-flux gathering in passive and dispersive PIC media.
+- Large-prime cup-product accumulation and topology identity checks, repeated
+  cellular-sheaf attaching occurrences, and point-cloud topology fingerprints.
+- Sparse topology admission under compile-time evaluation, reusable traced sparse
+  storage, native complex strict-dtype solves, batched tiny linear algebra, and
+  generalized eigensolver dependent-direction handling.
+- Scientific FE trace identity for selected boundary closures, form spectral lifting,
+  full-Gram spectral normalization, and low-precision Adam bias correction.
+- High-dimensional cubic tensor-form duality uses stable separable interval
+  preparation instead of an ill-conditioned multidimensional monomial solve.
+  Piola mapping reuses factors across basis and fiber right-hand sides.
+- Full-coordinate FE differential/Laplacian actions and compact relative PIC
+  Poisson projection preserve principal metric restriction and physical charge.
+- Native restarted Krylov solves retain unused iteration budget after a projected
+  convergence nomination fails the actual residual check.
+- IAS15 prepares real Jacobi–Radau stages rather than depending on complex-valued
+  polynomial-root storage. Real orbital recurrences retain their declared dtype.
+- Compiler evidence no longer claims estimates are unavailable when official cost
+  and memory analysis supplied them.
 - Newton implicit roots no longer fail with a `lax.cond` pytree mismatch in
   DAE replay and large-offset BDF increments.
 - `DAEContinuation` carries the modified-Newton refresh triggers, so

@@ -1,0 +1,483 @@
+{
+  "benchmark_identity": {
+    "benchmark_driver_fingerprint": "08a6757cebcc68e26d3031ed289b8bb808635fecc221a4594104b46d2a2f60b7",
+    "evidence_schema": {
+      "fields": [
+        "codifferential_defect",
+        "graph_derivative_defect",
+        "hodge_defect",
+        "laplacian_defect"
+      ],
+      "signature": "012e07e36a46737345ffbeda59a239fdb5aa915de39f17196eb1256192200a6d"
+    },
+    "fingerprint": "f13036d82f42e9df5f3d6ec6bccb2608279fb02ea99182c096dc0cdce2e14fe7",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2"
+  },
+  "cases": [
+    {
+      "boundary": "absolute",
+      "capacity": 16,
+      "cold_seconds": 0.000214584,
+      "compilation_seconds": 0.03799675,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 3924,
+        "flops": 161,
+        "generated_code_bytes": 0,
+        "output_bytes": 416,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 256,
+        "unavailable_reason": null
+      },
+      "graph_lowering": {
+        "cold_seconds": 0.000161625,
+        "compilation_seconds": 0.027031709,
+        "compiler": {
+          "argument_bytes": 264,
+          "bytes_accessed": 1952,
+          "flops": 64,
+          "generated_code_bytes": 0,
+          "output_bytes": 264,
+          "source": "jax-compiled-cochain-graph-lowering",
+          "temporary_bytes": 128,
+          "unavailable_reason": null
+        },
+        "derivative_defect": 0.0,
+        "host_lowering_seconds": 0.177824542,
+        "lowering_seconds": 0.029493958,
+        "retained_preparation_bytes": 8456,
+        "warm": {
+          "count": 2,
+          "max_seconds": 3.0583e-05,
+          "mean_seconds": 2.9520500000000003e-05,
+          "median_seconds": 2.9520500000000003e-05,
+          "min_seconds": 2.8458e-05,
+          "samples_seconds": [
+            3.0583e-05,
+            2.8458e-05
+          ],
+          "std_seconds": 1.0625000000000004e-06
+        }
+      },
+      "last_step_evidence": {
+        "codifferential_defect": 0.0,
+        "graph_derivative_defect": 0.0,
+        "hodge_defect": 0.0,
+        "laplacian_defect": 0.0
+      },
+      "lowering_seconds": 0.0462125,
+      "metric": "diagonal",
+      "preparation_seconds": 1.478427625,
+      "retained_preparation_bytes": 5898,
+      "warm": {
+        "count": 2,
+        "max_seconds": 4.0416e-05,
+        "mean_seconds": 3.85205e-05,
+        "median_seconds": 3.85205e-05,
+        "min_seconds": 3.6625e-05,
+        "samples_seconds": [
+          4.0416e-05,
+          3.6625e-05
+        ],
+        "std_seconds": 1.895499999999999e-06
+      }
+    },
+    {
+      "boundary": "relative",
+      "capacity": 16,
+      "cold_seconds": 0.000207,
+      "compilation_seconds": 0.034370833,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 4356,
+        "flops": 151,
+        "generated_code_bytes": 0,
+        "output_bytes": 416,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 368,
+        "unavailable_reason": null
+      },
+      "graph_lowering": {
+        "cold_seconds": 0.000213,
+        "compilation_seconds": 0.022163166,
+        "compiler": {
+          "argument_bytes": 264,
+          "bytes_accessed": 1948,
+          "flops": 60,
+          "generated_code_bytes": 0,
+          "output_bytes": 264,
+          "source": "jax-compiled-cochain-graph-lowering",
+          "temporary_bytes": 128,
+          "unavailable_reason": null
+        },
+        "derivative_defect": 0.0,
+        "host_lowering_seconds": 0.006256166,
+        "lowering_seconds": 0.010151166,
+        "retained_preparation_bytes": 8456,
+        "warm": {
+          "count": 2,
+          "max_seconds": 3.1833e-05,
+          "mean_seconds": 2.9916499999999997e-05,
+          "median_seconds": 2.9916499999999997e-05,
+          "min_seconds": 2.8e-05,
+          "samples_seconds": [
+            3.1833e-05,
+            2.8e-05
+          ],
+          "std_seconds": 1.9164999999999994e-06
+        }
+      },
+      "last_step_evidence": {
+        "codifferential_defect": 0.0,
+        "graph_derivative_defect": 0.0,
+        "hodge_defect": 0.0,
+        "laplacian_defect": 0.0
+      },
+      "lowering_seconds": 0.047148292,
+      "metric": "diagonal",
+      "preparation_seconds": 0.012911416,
+      "retained_preparation_bytes": 5898,
+      "warm": {
+        "count": 2,
+        "max_seconds": 3.7083e-05,
+        "mean_seconds": 3.6874499999999994e-05,
+        "median_seconds": 3.6874499999999994e-05,
+        "min_seconds": 3.6666e-05,
+        "samples_seconds": [
+          3.7083e-05,
+          3.6666e-05
+        ],
+        "std_seconds": 2.0849999999999978e-07
+      }
+    },
+    {
+      "boundary": "absolute",
+      "capacity": 16,
+      "cold_seconds": 0.0007355,
+      "compilation_seconds": 0.128276125,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 20801,
+        "flops": 1343,
+        "generated_code_bytes": 0,
+        "output_bytes": 416,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 3552,
+        "unavailable_reason": null
+      },
+      "graph_lowering": null,
+      "last_step_evidence": {
+        "codifferential_defect": 6.8721695001272565e-12,
+        "graph_derivative_defect": null,
+        "hodge_defect": 2.220446049250313e-16,
+        "laplacian_defect": 9.100054043642558e-12
+      },
+      "lowering_seconds": 0.819223,
+      "metric": "sparse",
+      "preparation_seconds": 6.23161775,
+      "retained_preparation_bytes": 15085,
+      "warm": {
+        "count": 2,
+        "max_seconds": 6.625e-05,
+        "mean_seconds": 6.24585e-05,
+        "median_seconds": 6.24585e-05,
+        "min_seconds": 5.8667e-05,
+        "samples_seconds": [
+          6.625e-05,
+          5.8667e-05
+        ],
+        "std_seconds": 3.791499999999999e-06
+      }
+    },
+    {
+      "boundary": "relative",
+      "capacity": 16,
+      "cold_seconds": 0.0003555,
+      "compilation_seconds": 0.136452042,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 20501,
+        "flops": 1213,
+        "generated_code_bytes": 0,
+        "output_bytes": 416,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 3360,
+        "unavailable_reason": null
+      },
+      "graph_lowering": null,
+      "last_step_evidence": {
+        "codifferential_defect": 1.489341983074155e-11,
+        "graph_derivative_defect": null,
+        "hodge_defect": 2.220446049250313e-16,
+        "laplacian_defect": 1.5017868892908126e-11
+      },
+      "lowering_seconds": 0.941659291,
+      "metric": "sparse",
+      "preparation_seconds": 1.863875708,
+      "retained_preparation_bytes": 15085,
+      "warm": {
+        "count": 2,
+        "max_seconds": 5.7416e-05,
+        "mean_seconds": 5.52705e-05,
+        "median_seconds": 5.52705e-05,
+        "min_seconds": 5.3125e-05,
+        "samples_seconds": [
+          5.7416e-05,
+          5.3125e-05
+        ],
+        "std_seconds": 2.1455000000000017e-06
+      }
+    },
+    {
+      "boundary": "absolute",
+      "capacity": 64,
+      "cold_seconds": 0.000203791,
+      "compilation_seconds": 0.053733042,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 15444,
+        "flops": 641,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 1024,
+        "unavailable_reason": null
+      },
+      "graph_lowering": {
+        "cold_seconds": 0.000171042,
+        "compilation_seconds": 0.061110459,
+        "compiler": {
+          "argument_bytes": 1032,
+          "bytes_accessed": 7712,
+          "flops": 256,
+          "generated_code_bytes": 0,
+          "output_bytes": 1032,
+          "source": "jax-compiled-cochain-graph-lowering",
+          "temporary_bytes": 512,
+          "unavailable_reason": null
+        },
+        "derivative_defect": 0.0,
+        "host_lowering_seconds": 0.190433458,
+        "lowering_seconds": 0.023299375,
+        "retained_preparation_bytes": 33512,
+        "warm": {
+          "count": 2,
+          "max_seconds": 3.3083e-05,
+          "mean_seconds": 3.06875e-05,
+          "median_seconds": 3.06875e-05,
+          "min_seconds": 2.8292e-05,
+          "samples_seconds": [
+            3.3083e-05,
+            2.8292e-05
+          ],
+          "std_seconds": 2.395500000000001e-06
+        }
+      },
+      "last_step_evidence": {
+        "codifferential_defect": 0.0,
+        "graph_derivative_defect": 0.0,
+        "hodge_defect": 0.0,
+        "laplacian_defect": 0.0
+      },
+      "lowering_seconds": 0.060008709,
+      "metric": "diagonal",
+      "preparation_seconds": 1.658053875,
+      "retained_preparation_bytes": 23466,
+      "warm": {
+        "count": 2,
+        "max_seconds": 4.3333e-05,
+        "mean_seconds": 4.1354e-05,
+        "median_seconds": 4.1354e-05,
+        "min_seconds": 3.9375e-05,
+        "samples_seconds": [
+          4.3333e-05,
+          3.9375e-05
+        ],
+        "std_seconds": 1.978999999999999e-06
+      }
+    },
+    {
+      "boundary": "relative",
+      "capacity": 64,
+      "cold_seconds": 0.00023825,
+      "compilation_seconds": 0.048053125,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 17796,
+        "flops": 631,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 1520,
+        "unavailable_reason": null
+      },
+      "graph_lowering": {
+        "cold_seconds": 0.000187667,
+        "compilation_seconds": 0.025199583,
+        "compiler": {
+          "argument_bytes": 1032,
+          "bytes_accessed": 7900,
+          "flops": 252,
+          "generated_code_bytes": 0,
+          "output_bytes": 1032,
+          "source": "jax-compiled-cochain-graph-lowering",
+          "temporary_bytes": 512,
+          "unavailable_reason": null
+        },
+        "derivative_defect": 0.0,
+        "host_lowering_seconds": 0.00572675,
+        "lowering_seconds": 0.010810917,
+        "retained_preparation_bytes": 33512,
+        "warm": {
+          "count": 2,
+          "max_seconds": 3.1667e-05,
+          "mean_seconds": 3.0521e-05,
+          "median_seconds": 3.0521e-05,
+          "min_seconds": 2.9375e-05,
+          "samples_seconds": [
+            3.1667e-05,
+            2.9375e-05
+          ],
+          "std_seconds": 1.1460000000000005e-06
+        }
+      },
+      "last_step_evidence": {
+        "codifferential_defect": 0.0,
+        "graph_derivative_defect": 0.0,
+        "hodge_defect": 0.0,
+        "laplacian_defect": 0.0
+      },
+      "lowering_seconds": 0.050878334,
+      "metric": "diagonal",
+      "preparation_seconds": 0.014008792,
+      "retained_preparation_bytes": 23466,
+      "warm": {
+        "count": 2,
+        "max_seconds": 4.1458e-05,
+        "mean_seconds": 3.9999999999999996e-05,
+        "median_seconds": 3.9999999999999996e-05,
+        "min_seconds": 3.8542e-05,
+        "samples_seconds": [
+          4.1458e-05,
+          3.8542e-05
+        ],
+        "std_seconds": 1.458000000000002e-06
+      }
+    },
+    {
+      "boundary": "absolute",
+      "capacity": 64,
+      "cold_seconds": 0.000457542,
+      "compilation_seconds": 0.154834708,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 90582,
+        "flops": 5346,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 7840,
+        "unavailable_reason": null
+      },
+      "graph_lowering": null,
+      "last_step_evidence": {
+        "codifferential_defect": 2.9037661164466044e-11,
+        "graph_derivative_defect": null,
+        "hodge_defect": 4.440892098500626e-16,
+        "laplacian_defect": 4.209732562543422e-11
+      },
+      "lowering_seconds": 0.817292625,
+      "metric": "sparse",
+      "preparation_seconds": 6.483590333,
+      "retained_preparation_bytes": 60877,
+      "warm": {
+        "count": 2,
+        "max_seconds": 8.3084e-05,
+        "mean_seconds": 8.20005e-05,
+        "median_seconds": 8.20005e-05,
+        "min_seconds": 8.0917e-05,
+        "samples_seconds": [
+          8.3084e-05,
+          8.0917e-05
+        ],
+        "std_seconds": 1.0835000000000041e-06
+      }
+    },
+    {
+      "boundary": "relative",
+      "capacity": 64,
+      "cold_seconds": 0.000472583,
+      "compilation_seconds": 0.153015208,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 94584,
+        "flops": 4826,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "jax-compiled-cochain-realization",
+        "temporary_bytes": 8224,
+        "unavailable_reason": null
+      },
+      "graph_lowering": null,
+      "last_step_evidence": {
+        "codifferential_defect": 9.923978305792502e-12,
+        "graph_derivative_defect": null,
+        "hodge_defect": 4.440892098500626e-16,
+        "laplacian_defect": 1.4368183726132244e-11
+      },
+      "lowering_seconds": 1.294769417,
+      "metric": "sparse",
+      "preparation_seconds": 1.474124625,
+      "retained_preparation_bytes": 60877,
+      "warm": {
+        "count": 2,
+        "max_seconds": 9.2792e-05,
+        "mean_seconds": 8.93335e-05,
+        "median_seconds": 8.93335e-05,
+        "min_seconds": 8.5875e-05,
+        "samples_seconds": [
+          9.2792e-05,
+          8.5875e-05
+        ],
+        "std_seconds": 3.458500000000001e-06
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

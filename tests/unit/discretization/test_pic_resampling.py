@@ -531,9 +531,13 @@ def _tetrahedral_run() -> tuple[Any, Any, Any]:
         element.default_runtime.coordinates,
         D.SimplicialLocationPolicy(4, 8, 4),
     )
-    hodge = phx.solver.maxwell.tetrahedral_maxwell_hodge(mesh.coordinates, locator.cells)
+    complex_ = D.fem.FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
     maxwell = phx.solver.maxwell.UnstructuredMaxwellPlan(
-        hodge.cochain, phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(), 100.0
+        complex_,
+        phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
+        spectral_upper_bound=100.0,
+        courant_factor=0.9,
+        boundary="relative",
     ).prepare()
     solver = phx.solver.UnstructuredMaxwellPICFieldSolver(
         maxwell, PIC.UnstructuredWhitneyCurrentPlan(locator, maximum_segments=4)

@@ -33,15 +33,18 @@ def cochain_metric_reduce(
     reduction: CochainMetricReduction = "graph_mean",
     segment_weight: ArrayLike | None = None,
     entity_mask: ArrayLike | None = None,
+    metric_energy: ArrayLike | None = None,
     precision: GeometryPrecisionPolicy | None = None,
 ) -> Array:
     """Reduce per-cell scalar values without allowing mesh size to bias cases.
 
     Each non-empty graph segment contributes equally. ``graph_mean`` uses an
     arithmetic cell mean, ``metric_mean`` normalizes by the segment's Hodge-star
-    mass, and ``metric_sum`` retains that physical mass. ``entity_mask`` excludes
-    padding or other cells without changing static shapes. ``segment_weight`` may
-    supply one constant measure factor per segment, repeated over its cells.
+    mass, and ``metric_sum`` retains that physical mass. ``metric_energy`` supplies
+    coordinate contributions of a native full-Gram quadratic form when present;
+    otherwise the metric is diagonal. ``entity_mask`` excludes padding or other
+    cells without changing static shapes. ``segment_weight`` may supply one
+    constant measure factor per segment, repeated over its cells.
     """
     reduction = parse(reduction, CochainMetricReduction, "reduction")
     count = int(n_graph)
@@ -91,6 +94,12 @@ def cochain_metric_reduce(
 
     reduced_values = precision_.accumulation(value_array)
     reduced_metric = precision_.accumulation(metric)
+    if metric_energy is None:
+        energy = reduced_metric * reduced_values
+    else:
+        energy = precision_.accumulation(jnp.asarray(metric_energy))
+        if energy.shape != value_array.shape:
+            raise ValueError("metric_energy must match the per-cell value shape.")
     cells = jnp.bincount(safe_graph_id, weights=active_weight, length=count)
     unweighted_sum = jnp.bincount(
         safe_graph_id,
@@ -104,7 +113,7 @@ def cochain_metric_reduce(
     )
     metric_sum = jnp.bincount(
         safe_graph_id,
-        weights=reduced_metric * reduced_values * active_weight,
+        weights=energy * active_weight,
         length=count,
     )
     time_sum = jnp.bincount(

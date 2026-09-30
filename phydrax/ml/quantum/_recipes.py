@@ -15,6 +15,8 @@ import optax
 from jax import Array
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from ..._differentiation import (
     ComponentAuthority,
     DerivativeContract,
@@ -346,7 +348,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         # The recipe stays a pure fitting algorithm: it runs the training
         # kernel's preflight (roles, MODEL authority, data-fit admission) but
         # not the kernel's accepted-update lifecycle.
-        optimizer = optax.adam(self.learning_rate)
+        optimizer = adam(self.learning_rate)
         prepare_training_kernel(
             classifier,
             (

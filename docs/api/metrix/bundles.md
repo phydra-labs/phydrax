@@ -20,11 +20,10 @@ repairing either connection.
 
 ## Metric cochain assembly
 
-`phydrax.graph.assemble_metric_cochain_complex` pairs explicit primal and dual
-cell parameterizations. It integrates their Riemannian measures and constructs
-the diagonal Hodge star as dual measure divided by primal measure. A dual-cell
-policy is never inferred from mesh shape.
+`phydrax.exterior.metric_dual_hodges(bridge, metric, /, *, dual)` pairs
+explicit primal/dual cell parameterizations and integrates their Riemannian
+measures. Dual[k] has dimension n−k and count equal to primal degree k.
+A dual-cell policy is never inferred from mesh shape; the result is a tuple of
+metric-only diagonal Hodges, not another metric-assembly carrier.
 
-::: phydrax.graph.MetricCochainAssembly
-
-::: phydrax.graph.assemble_metric_cochain_complex
+::: phydrax.exterior.metric_dual_hodges

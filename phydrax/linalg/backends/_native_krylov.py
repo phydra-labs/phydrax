@@ -881,8 +881,8 @@ def _pcg_batched_raw(
             )
             safe_denominator = jnp.where(invalid, 1.0, denominator)
             alpha = rho_ / safe_denominator
-            candidate_x = x + alpha[None, :] * p
-            recursive_r = r - alpha[None, :] * image
+            candidate_x = x + alpha.astype(p.dtype)[None, :] * p
+            recursive_r = r - alpha.astype(image.dtype)[None, :] * image
             recursive_norm = _norm(recursive_r, batched_inner)
             nominated = executing & (recursive_norm <= threshold)
             any_nominated = jnp.any(nominated)
@@ -910,7 +910,7 @@ def _pcg_batched_raw(
                 0.0,
                 next_rho / jnp.where(rho_ == 0.0, 1.0, rho_),
             )
-            candidate_p = candidate_z + beta[None, :] * p
+            candidate_p = candidate_z + beta.astype(p.dtype)[None, :] * p
             finite = jnp.all(jnp.isfinite(candidate_x), axis=0) & jnp.isfinite(norm)
             candidate_breakdown = jnp.where(
                 finite,
@@ -1056,8 +1056,8 @@ def _pcg_raw(
             )
             safe_denominator = jnp.where(invalid, 1.0, denominator)
             alpha = rho_i / safe_denominator
-            candidate_x = x_ + alpha * p_
-            recursive_r = r_ - alpha * image
+            candidate_x = x_ + alpha.astype(p_.dtype) * p_
+            recursive_r = r_ - alpha.astype(image.dtype) * image
             recursive_norm = _norm(recursive_r, inner)
             nominated = recursive_norm <= threshold
             candidate_r, norm = jax.lax.cond(
@@ -1075,7 +1075,7 @@ def _pcg_raw(
             beta = jnp.where(
                 replaced, 0.0, next_rho / jnp.where(rho_i == 0.0, 1.0, rho_i)
             )
-            candidate_p = candidate_z + beta * p_
+            candidate_p = candidate_z + beta.astype(p_.dtype) * p_
             finite_local = jnp.all(jnp.isfinite(candidate_x)) & jnp.isfinite(norm)
             finite = finite_local if finite_all is None else finite_all(finite_local)
             breakdown_i = jnp.where(
@@ -1243,19 +1243,22 @@ def _minres_raw(
                 observed_i,
             ) = operand
             safe_beta = jnp.where(beta_i > epsilon, beta_i, 1.0)
-            v = y_i / safe_beta
+            v = y_i / safe_beta.astype(y_i.dtype)
             next_y = action(v)
             next_y = jax.lax.cond(
                 index > 0,
                 lambda value: (
                     value
-                    - (beta_i / jnp.where(old_beta_i > epsilon, old_beta_i, 1.0)) * r1_
+                    - (beta_i / jnp.where(old_beta_i > epsilon, old_beta_i, 1.0)).astype(
+                        r1_.dtype
+                    )
+                    * r1_
                 ),
                 lambda value: value,
                 next_y,
             )
             alpha = jnp.real(inner(v, next_y))
-            next_y = next_y - (alpha / safe_beta) * r2_
+            next_y = next_y - (alpha / safe_beta).astype(r2_.dtype) * r2_
             next_r1 = r2_
             next_r2 = next_y
             preconditioned = precondition(
@@ -1276,8 +1279,12 @@ def _minres_raw(
             next_phibar = next_sine * phibar_i
             w1 = w2_i
             next_w2 = w_i
-            next_w = (v - old_epsilon * w1 - delta * next_w2) / safe_gamma
-            next_x = x_ + phi * next_w
+            next_w = (
+                v
+                - old_epsilon.astype(w1.dtype) * w1
+                - delta.astype(next_w2.dtype) * next_w2
+            ) / safe_gamma.astype(v.dtype)
+            next_x = x_ + phi.astype(next_w.dtype) * next_w
             residual_estimate = jnp.abs(next_phibar)
             converged = residual_estimate <= threshold
             invalid = (
@@ -1394,7 +1401,10 @@ def _fgmres_raw(
         jnp.asarray(0, dtype=jnp.int32),
         iteration_state,
     )
-    cycles = (max_steps + restart - 1) // restart
+    # A projected convergence nomination can shorten a cycle without satisfying
+    # the physical residual. Such a cycle consumes only its actual Arnoldi
+    # steps, so the maximum number of cycles is the iteration budget itself.
+    cycles = max_steps
     columns = jnp.arange(restart, dtype=jnp.int32)
 
     def reduced_solve(hessenberg: Array, reduced_rhs: Array, steps: Array) -> Array:
@@ -1449,7 +1459,9 @@ def _fgmres_raw(
                 dtype=stored_basis_dtype,
             )
             basis = basis.at[0].set(
-                (cycle_residual / safe_norm).astype(stored_basis_dtype)
+                (cycle_residual / safe_norm.astype(cycle_residual.dtype)).astype(
+                    stored_basis_dtype
+                )
             )
             preconditioned_basis = jnp.zeros(
                 (0 if identity_preconditioner else restart, rhs.size),
@@ -1459,7 +1471,7 @@ def _fgmres_raw(
             cosines = jnp.zeros((restart,), dtype=rhs.real.dtype)
             sines = jnp.zeros((restart,), dtype=rhs.dtype)
             reduced_rhs = jnp.zeros((restart + 1,), dtype=rhs.dtype)
-            reduced_rhs = reduced_rhs.at[0].set(cycle_norm)
+            reduced_rhs = reduced_rhs.at[0].set(cycle_norm.astype(rhs.dtype))
             inner_state: _ArnoldiCarry = (
                 basis,
                 preconditioned_basis,
@@ -1553,9 +1565,12 @@ def _fgmres_raw(
                         jnp.finfo(rhs.real.dtype).eps
                     ) * jnp.maximum(_norm(image, inner), 1.0)
                     basis_i = basis_i.at[local_index + 1].set(
-                        (orthogonal / jnp.where(near_breakdown, 1.0, next_norm)).astype(
-                            stored_basis_dtype
-                        )
+                        (
+                            orthogonal
+                            / jnp.where(near_breakdown, 1.0, next_norm).astype(
+                                orthogonal.dtype
+                            )
+                        ).astype(stored_basis_dtype)
                     )
                     if not identity_preconditioner:
                         preconditioned_i = preconditioned_i.at[local_index].set(
@@ -1563,12 +1578,14 @@ def _fgmres_raw(
                         )
                     column = hessenberg_i[:, local_index]
                     column = column.at[:-1].set(projection)
-                    column = column.at[local_index + 1].set(next_norm)
+                    column = column.at[local_index + 1].set(
+                        next_norm.astype(column.dtype)
+                    )
 
                     def apply_previous_rotation(index: Array, value: Array) -> Array:
                         upper = value[index]
                         lower = value[index + 1]
-                        cosine = cosines_i[index]
+                        cosine = cosines_i[index].astype(upper.dtype)
                         sine = sines_i[index]
                         rotated = value.at[index].set(cosine * upper + sine * lower)
                         rotated = rotated.at[index + 1].set(
@@ -1590,7 +1607,7 @@ def _fgmres_raw(
                     rotation_scale = jnp.hypot(upper_abs, _safe_abs(lower))
                     safe_scale = jnp.where(rotation_scale > 0.0, rotation_scale, 1.0)
                     safe_upper_abs = jnp.where(upper_abs > 0.0, upper_abs, 1.0)
-                    phase = upper / safe_upper_abs
+                    phase = upper / safe_upper_abs.astype(upper.dtype)
                     phase = jnp.where(
                         upper_abs > 0.0,
                         phase,
@@ -1603,10 +1620,12 @@ def _fgmres_raw(
                     )
                     sine = jnp.where(
                         rotation_scale > 0.0,
-                        phase * jnp.conj(lower) / safe_scale,
+                        phase * jnp.conj(lower) / safe_scale.astype(phase.dtype),
                         jnp.zeros((), dtype=rhs.dtype),
                     )
-                    column = column.at[local_index].set(cosine * upper + sine * lower)
+                    column = column.at[local_index].set(
+                        cosine.astype(upper.dtype) * upper + sine * lower
+                    )
                     column = column.at[local_index + 1].set(0)
                     hessenberg_i = hessenberg_i.at[:, local_index].set(column)
                     cosines_i = cosines_i.at[local_index].set(cosine)
@@ -1614,10 +1633,12 @@ def _fgmres_raw(
                     reduced_upper = reduced_rhs_i[local_index]
                     reduced_lower = reduced_rhs_i[local_index + 1]
                     reduced_rhs_i = reduced_rhs_i.at[local_index].set(
-                        cosine * reduced_upper + sine * reduced_lower
+                        cosine.astype(reduced_upper.dtype) * reduced_upper
+                        + sine * reduced_lower
                     )
                     reduced_rhs_i = reduced_rhs_i.at[local_index + 1].set(
-                        -jnp.conj(sine) * reduced_upper + cosine * reduced_lower
+                        -jnp.conj(sine) * reduced_upper
+                        + cosine.astype(reduced_lower.dtype) * reduced_lower
                     )
                     estimated_norm = _safe_abs(reduced_rhs_i[local_index + 1])
                     finite_step = (
@@ -1763,7 +1784,8 @@ def _fgmres_raw(
                     converged,
                     int(KrylovBreakdownStatus.HAPPY),
                     jnp.where(
-                        inner_breakdown != int(KrylovBreakdownStatus.NONE),
+                        (inner_breakdown != int(KrylovBreakdownStatus.NONE))
+                        & (inner_breakdown != int(KrylovBreakdownStatus.HAPPY)),
                         inner_breakdown,
                         jnp.where(
                             stagnated,

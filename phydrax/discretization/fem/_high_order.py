@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from math import comb, factorial, sqrt
 from numbers import Integral
-from typing import Literal
+from typing import final, Literal
 
 import equinox as eqx
 import jax
@@ -27,6 +27,7 @@ from ..._interpolation import (
 from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior import FormType, FormValueSpec
 from ._reference import FiniteElementSpec
 
 
@@ -225,6 +226,7 @@ def _interval_entity_dofs(
     )
 
 
+@final
 class ReferenceNodalFamily(StrictModule, NonTrainableState):
     """An anisotropic tensor-product nodal family on interval, quad, or hex."""
 
@@ -328,7 +330,10 @@ class ReferenceNodalFamily(StrictModule, NonTrainableState):
             max(self.orders),
             grid,
             entity_dofs,
-            conformity="H1",
+            value_spec=FormValueSpec(
+                FormType(self.dimension, 0, twist="untwisted"), proxy="scalar"
+            ),
+            continuity="conforming",
             representation="point_value",
             tabulator=self.tabulate,
             tabulator_id=self.family_id,
@@ -709,6 +714,7 @@ def _warp_and_blend_nodes(
     raise ValueError("Warp-and-blend nodes require dimension two or three.")
 
 
+@final
 class SimplexNodalFamily(StrictModule, NonTrainableState):
     """Warp-and-blend simplex nodes with an orthonormal modal tabulation."""
 
@@ -849,7 +855,10 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                     tuple(tuple(values) for values in dimension)
                     for dimension in entity_dofs
                 ),
-                conformity="H1",
+                value_spec=FormValueSpec(
+                    FormType(topology.dimension, 0, twist="untwisted"), proxy="scalar"
+                ),
+                continuity="discontinuous",
                 representation="point_value",
                 tabulator=self.tabulate,
                 tabulator_id=self.family_id,
@@ -878,7 +887,10 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             tuple(
                 tuple(tuple(values) for values in dimension) for dimension in entity_dofs
             ),
-            conformity="H1",
+            value_spec=FormValueSpec(
+                FormType(topology.dimension, 0, twist="untwisted"), proxy="scalar"
+            ),
+            continuity="conforming",
             representation="point_value",
             tabulator=self.tabulate,
             tabulator_id=self.family_id,

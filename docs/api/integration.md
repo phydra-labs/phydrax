@@ -572,6 +572,13 @@ implementation.
 
 ::: phydrax.integration.CubatureRule
 
+`CubatureRule(reference, degree, /, *, dimension=None, ...)` admits generic
+`reference="simplex"` or `"tensor"` only with an explicit positive dimension.
+The native polynomial owner supplies unit-simplex Duffy or unit-cube Gauss rules,
+and reference identity is `simplex:N` / `tensor:N`. Named reference defaults are
+unchanged; generic dimension is never inferred from a shape or display string.
+
+
 ---
 
 ::: phydrax.integration.GaussianCubatureRule

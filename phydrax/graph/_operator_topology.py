@@ -21,6 +21,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cochain_hodge import DiagonalHodge
 from ..typing import parse
 from ._ir import batch_graphs, GraphIR, unbatch_graph
 
@@ -92,6 +93,23 @@ def operator_graph_fingerprint(graph: GraphIR, /) -> str:
         graph.edge_mask,
         graph.graph_mask,
     )
+    for binding in graph.cochain_bindings:
+        owner = binding.discretization
+        digest.update(
+            repr(
+                (
+                    owner.prepared_id,
+                    owner.numeric_revision,
+                    binding.boundary,
+                    binding.node_offset,
+                    binding.graph_index,
+                )
+            ).encode("utf-8")
+        )
+        tree += tuple(
+            hodge.weights if isinstance(hodge, DiagonalHodge) else hodge.upper_values
+            for hodge in owner.hodges
+        )
     leaves, structure = jax.tree_util.tree_flatten(tree)
     digest.update(repr(structure).encode("utf-8"))
     for leaf in leaves:
@@ -574,6 +592,14 @@ def broadcast_operator_topology(
         ),
         graph_mask=(
             None if graph.graph_mask is None else jnp.tile(graph.graph_mask, repetitions)
+        ),
+        cochain_bindings=tuple(
+            binding.shifted(
+                repetition * jax.tree.leaves(graph.nodes)[0].shape[0],
+                repetition * graph.num_graphs,
+            )
+            for repetition in range(repetitions)
+            for binding in graph.cochain_bindings
         ),
         validate=False,
     )

@@ -1,172 +1,51 @@
-from typing import Any
-
 import jax
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 import phydrax as phx
+from phydrax.discretization.fem._form_elements import form_element, FormElementFamily
+from phydrax.discretization.fem._generic import (
+    FiniteElementDiscretization,
+    FiniteElementDofMap,
+)
+from phydrax.discretization.fem._reference import FiniteElementSpec
 
 
 _VERTICES = np.asarray(
     ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 )
 _FACES = ((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3))
-_NORMALS = np.asarray(
-    ((0.0, 0.0, -1.0), (0.0, -1.0, 0.0), (1.0, 1.0, 1.0), (-1.0, 0.0, 0.0))
-)
-_NORMALS /= np.linalg.norm(_NORMALS, axis=1)[:, None]
-_AREAS = np.asarray((0.5, 0.5, np.sqrt(3.0) / 2.0, 0.5))
-
-
-def _unit_gauss(order: Any) -> Any:
-    points, weights = np.polynomial.legendre.leggauss(order)
-    return 0.5 * (points + 1.0), 0.5 * weights
-
-
-def _face_quadrature(face: Any, order: Any = 5) -> Any:
-    nodes, weights = _unit_gauss(order)
-    vertices = _VERTICES[list(face)]
-    surface_jacobian = np.linalg.norm(
-        np.cross(vertices[1] - vertices[0], vertices[2] - vertices[0])
-    )
-    points = []
-    physical_weights = []
-    barycentric = []
-    for first, first_weight in zip(nodes, weights, strict=True):
-        for second, second_weight in zip(nodes, weights, strict=True):
-            coordinates = np.asarray(
-                (
-                    1.0 - first - (1.0 - first) * second,
-                    first,
-                    (1.0 - first) * second,
-                )
-            )
-            points.append(coordinates @ vertices)
-            barycentric.append(coordinates)
-            physical_weights.append(
-                first_weight * second_weight * (1.0 - first) * surface_jacobian
-            )
-    return np.asarray(points), np.asarray(physical_weights), np.asarray(barycentric)
-
-
-def _tetrahedron_quadrature(order: Any = 6) -> Any:
-    nodes, weights = _unit_gauss(order)
-    points = []
-    physical_weights = []
-    for first, first_weight in zip(nodes, weights, strict=True):
-        for second, second_weight in zip(nodes, weights, strict=True):
-            for third, third_weight in zip(nodes, weights, strict=True):
-                points.append(
-                    (
-                        first,
-                        (1.0 - first) * second,
-                        (1.0 - first) * (1.0 - second) * third,
-                    )
-                )
-                physical_weights.append(
-                    first_weight
-                    * second_weight
-                    * third_weight
-                    * (1.0 - first) ** 2
-                    * (1.0 - second)
-                )
-    return np.asarray(points), np.asarray(physical_weights)
 
 
 def _physical_values(
-    element: Any, cell_points: Any, physical_points: Any, orientation: Any
-) -> Any:
+    element: FiniteElementSpec,
+    cell_points: npt.NDArray[np.float64],
+    physical_points: npt.NDArray[np.float64],
+    transform: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
     jacobian = (cell_points[1:] - cell_points[0]).T
-    reference_points = (physical_points - cell_points[0]) @ np.linalg.inv(jacobian).T
+    reference_points = np.linalg.solve(jacobian, (physical_points - cell_points[0]).T).T
     reference_values, _ = element.tabulate(reference_points)
-    return (
-        np.einsum("ab,qkb->qka", jacobian, np.asarray(reference_values))
-        / np.linalg.det(jacobian)
-        * orientation[None, :, None]
-    )
+    physical = np.einsum("ab,qkb->qka", jacobian, np.asarray(reference_values))
+    physical /= np.linalg.det(jacobian)
+    return np.einsum("qia,ij->qja", physical, transform)
 
 
-def test_tetrahedral_rt0_has_unit_oriented_face_fluxes() -> None:
-    element = phx.discretization.tetrahedral_rt_element()
-    centers = np.asarray([np.mean(_VERTICES[list(face)], axis=0) for face in _FACES])
-    values, gradients = element.tabulate(centers)
-    flux = np.asarray(
-        [
-            [
-                _AREAS[face] * np.dot(values[face, basis], _NORMALS[face])
-                for basis in range(4)
-            ]
-            for face in range(4)
-        ]
-    )
-    np.testing.assert_allclose(flux, np.eye(4), atol=1e-12)
-    divergence = np.trace(np.asarray(gradients), axis1=-2, axis2=-1)
-    np.testing.assert_allclose(divergence, 6.0)
-
-
-def test_tetrahedral_bdm1_is_dual_to_linear_face_flux_moments() -> None:
-    element = phx.discretization.tetrahedral_bdm_element()
+def test_tetrahedral_trimmed_one_has_unit_canonical_face_integrals() -> None:
+    element = form_element("tetrahedron", 2, 1, twist="untwisted", proxy="flux")
+    faces = element.entity_vertices[2]
+    centers = np.asarray([np.mean(_VERTICES[list(face)], axis=0) for face in faces])
+    values, _ = element.tabulate(centers)
     rows = []
-    for face_index, face in enumerate(_FACES):
-        face_vertices = _VERTICES[list(face)]
-        barycentric = np.asarray(
-            ((2 / 3, 1 / 6, 1 / 6), (1 / 6, 2 / 3, 1 / 6), (1 / 6, 1 / 6, 2 / 3))
-        )
-        points = barycentric @ face_vertices
-        values, _ = element.tabulate(points)
-        normal_flux = np.asarray(values) @ _NORMALS[face_index]
-        for moment in range(3):
-            rows.append(
-                _AREAS[face_index]
-                / 3.0
-                * np.sum(barycentric[:, moment, None] * normal_flux, axis=0)
-            )
-    np.testing.assert_allclose(np.asarray(rows), np.eye(12), atol=2e-12)
-
-
-def test_tetrahedral_bdm2_is_dual_to_face_and_interior_moments() -> None:
-    element = phx.discretization.tetrahedral_bdm_element(2)
-    rows = []
-    for face_index, face in enumerate(_FACES):
-        points, weights, barycentric = _face_quadrature(face)
-        values, _ = element.tabulate(points)
-        normal_flux = np.asarray(values) @ _NORMALS[face_index]
-        first, second, third = barycentric.T
-        moments = np.column_stack(
-            (
-                first * first,
-                second * second,
-                third * third,
-                2.0 * first * second,
-                2.0 * second * third,
-                2.0 * third * first,
-            )
-        )
-        for moment in range(6):
-            rows.append(
-                np.sum(
-                    weights[:, None] * moments[:, moment, None] * normal_flux,
-                    axis=0,
-                )
-            )
-
-    points, weights = _tetrahedron_quadrature()
-    values, _ = element.tabulate(points)
-    x, y, z = points.T
-    zero = np.zeros_like(x)
-    interior_tests = (
-        np.column_stack((np.ones_like(x), zero, zero)),
-        np.column_stack((zero, np.ones_like(x), zero)),
-        np.column_stack((zero, zero, np.ones_like(x))),
-        np.column_stack((zero, -z, y)),
-        np.column_stack((z, zero, -x)),
-        np.column_stack((-y, x, zero)),
-    )
-    for test in interior_tests:
-        rows.append(
-            np.sum(weights[:, None] * np.sum(values * test[:, None, :], axis=2), axis=0)
-        )
-    np.testing.assert_allclose(np.asarray(rows), np.eye(30), atol=2e-11)
+    for face_index, face in enumerate(faces):
+        corners = _VERTICES[np.asarray(face, dtype=np.int32)]
+        area_normal = 0.5 * np.cross(corners[1] - corners[0], corners[2] - corners[0])
+        rows.append(np.asarray(values)[face_index] @ area_normal)
+    expected = np.zeros((4, element.local_dof_count), dtype=np.float64)
+    for face_index, face_dofs in enumerate(element.entity_dofs[2]):
+        expected[face_index, face_dofs[0]] = 1.0
+    np.testing.assert_allclose(np.asarray(rows), expected, atol=1e-12)
 
 
 def test_hdiv_stokes_prepares_bdm_dg_pair_with_explicit_gauge() -> None:
@@ -211,60 +90,108 @@ def test_hdiv_nitsche_couples_shared_tetrahedral_face_symmetrically() -> None:
     np.testing.assert_allclose(residual[1], 0.0, atol=1e-12)
 
 
-def test_bdm2_normal_trace_is_continuous_across_a_shared_face() -> None:
-    coordinates = np.concatenate((_VERTICES, np.asarray(((0.0, 0.0, -1.0),))))
-    cells = np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)))
+def _face_pair(
+    left_face: int,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int32]]:
+    """Reflect the opposite vertex and misalign both local face numberings."""
+    face = _FACES[left_face]
+    corners = _VERTICES[np.asarray(face, dtype=np.int32)]
+    normal = np.cross(corners[1] - corners[0], corners[2] - corners[0])
+    normal /= np.linalg.norm(normal)
+    opposite = next(vertex for vertex in range(4) if vertex not in face)
+    distance = np.dot(_VERTICES[opposite] - corners[0], normal)
+    reflected = _VERTICES[opposite] - 2.0 * distance * normal
+    coordinates = np.concatenate((_VERTICES, reflected[None, :]))
+    right_face = _FACES[(left_face + 1) % 4]
+    right = np.full((4,), 4, dtype=np.int32)
+    right[np.asarray(right_face, dtype=np.int32)] = np.asarray(face[::-1], dtype=np.int32)
+    jacobian = (coordinates[right[1:]] - coordinates[right[0]]).T
+    if np.linalg.det(jacobian) < 0.0:
+        first, second = right_face[:2]
+        right[first], right[second] = right[second], right[first]
+    return coordinates, np.stack((np.arange(4, dtype=np.int32), right))
+
+
+def _assert_nonzero_shared_normal_continuity(
+    element: FiniteElementSpec,
+    dof_map: FiniteElementDofMap,
+    coordinates: npt.NDArray[np.float64],
+    cells: npt.NDArray[np.int32],
+    left_face: int,
+) -> None:
+    face_points = coordinates[np.asarray(_FACES[left_face], dtype=np.int32)]
+    barycentric = np.asarray(
+        ((0.2, 0.3, 0.5), (0.6, 0.1, 0.3), (0.17, 0.61, 0.22)),
+        dtype=np.float64,
+    )
+    points = barycentric @ face_points
+    normal = np.cross(face_points[1] - face_points[0], face_points[2] - face_points[0])
+    normal /= np.linalg.norm(normal)
+    routes = np.asarray(dof_map.cell_dofs[0], dtype=np.int32)
+    shared = np.intersect1d(routes[0], routes[1])
+    assert shared.size == len(element.entity_dofs[2][left_face])
+    bases = tuple(
+        _physical_values(
+            element,
+            coordinates[cells[cell]],
+            points,
+            np.asarray(dof_map.cell_transforms[0][cell], dtype=np.float64),
+        )
+        for cell in range(2)
+    )
+    for global_dof in shared:
+        traces = tuple(
+            np.sum(bases[cell][:, routes[cell] == global_dof, :], axis=1) @ normal
+            for cell in range(2)
+        )
+        # Continuity of a zero trace is vacuous: each shared functional must
+        # produce a genuinely supported normal field on the claimed face.
+        assert np.linalg.norm(traces[0]) > 1e-8
+        assert np.linalg.norm(traces[1]) > 1e-8
+        np.testing.assert_allclose(traces[0], traces[1], atol=1e-12)
+
+
+@pytest.mark.parametrize("left_face", range(4))
+@pytest.mark.parametrize("family,order", (("trimmed", 1), ("full", 1), ("full", 2)))
+def test_hdiv_all_faces_have_nonzero_continuous_normal_trace(
+    left_face: int, family: FormElementFamily, order: int
+) -> None:
+    coordinates, cells = _face_pair(left_face)
+    mesh = phx.discretization.CellMesh.from_tetrahedra(coordinates, cells)
+    element = form_element(
+        "tetrahedron", 2, order, family=family, twist="untwisted", proxy="flux"
+    )
+    dof_map = FiniteElementDofMap(mesh, (element,))
+    _assert_nonzero_shared_normal_continuity(
+        element, dof_map, coordinates, cells, left_face
+    )
+
+
+@pytest.mark.parametrize("left_face", range(4))
+def test_hdiv_stokes_all_faces_have_nonzero_continuous_normal_trace(
+    left_face: int,
+) -> None:
+    coordinates, cells = _face_pair(left_face)
     mesh = phx.discretization.CellMesh.from_tetrahedra(coordinates, cells)
     prepared = phx.equations.fem.HDivStokesPlan(
         mesh, phx.discretization.PressureGaugePolicy("mean-zero")
     ).prepare()
     discretization = prepared.problem.discretization
-    # ty: ignore[unresolved-attribute]
-    dof_map = discretization.dof_maps[0]
-    # ty: ignore[unresolved-attribute]
-    element = discretization.elements[0][0]
-    # ty: ignore[unresolved-attribute]
-    shared_face = int(np.flatnonzero(~np.asarray(mesh.connectivity.boundary_faces))[0])
-    # ty: ignore[unresolved-attribute]
-    face_vertices = np.asarray(mesh.connectivity.faces)[shared_face]
-    face_points = coordinates[face_vertices]
-    barycentric = np.asarray(((0.2, 0.3, 0.5), (0.6, 0.1, 0.3)))
-    physical_points = barycentric @ face_points
-    center = np.mean(face_points, axis=0)
-    base_normal = np.cross(
-        face_points[1] - face_points[0], face_points[2] - face_points[0]
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise AssertionError("HDivStokes must prepare its concrete FE discretization.")
+    _assert_nonzero_shared_normal_continuity(
+        discretization.elements[0][0],
+        discretization.dof_maps[0],
+        coordinates,
+        cells,
+        left_face,
     )
-    base_normal /= np.linalg.norm(base_normal)
-
-    physical_bases = []
-    outward_normals = []
-    for cell in range(2):
-        cell_points = coordinates[cells[cell]]
-        physical_bases.append(
-            _physical_values(
-                element,
-                cell_points,
-                physical_points,
-                np.asarray(dof_map.orientations[0][cell]),
-            )
-        )
-        outward = base_normal.copy()
-        if np.dot(outward, np.mean(cell_points, axis=0) - center) > 0.0:
-            outward = -outward
-        outward_normals.append(outward)
-
-    for moment in range(6):
-        velocity = np.zeros((dof_map.global_dof_count,))
-        velocity[shared_face * 6 + moment] = 1.0
-        traces = []
-        for cell in range(2):
-            local = velocity[np.asarray(dof_map.cell_dofs[0][cell])]
-            field = np.einsum("k,qka->qa", local, physical_bases[cell])
-            traces.append(field @ outward_normals[cell])
-        np.testing.assert_allclose(traces[0] + traces[1], 0.0, atol=2e-11)
 
 
-def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity() -> None:
+@pytest.mark.parametrize("face_id", (41, 43, 47, 53))
+def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity(
+    face_id: int,
+) -> None:
     mesh = phx.discretization.CellMesh(
         _VERTICES,
         (
@@ -275,7 +202,7 @@ def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity() -
         entity_global_ids={2: np.asarray((41, 43, 47, 53))},
     )
     boundary = phx.equations.fem.HDivNormalBoundaryCondition(
-        np.asarray((47,)),
+        np.asarray((face_id,)),
         resistance=2.5,
         prescribed_flux=3.0,
     )
@@ -286,10 +213,42 @@ def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity() -
     ).prepare()
 
     _, pressure, multiplier = prepared.state_space.zeros()
-    velocity = prepared.normal_flux_operator.adjoint_mv(np.asarray((0.5,)))
-    np.testing.assert_array_equal(prepared.normal_flux_face_ids, np.asarray((47,)))
+    discretization = prepared.problem.discretization
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise AssertionError("HDivStokes must prepare its concrete FE discretization.")
+    element = discretization.elements[0][0]
+    dof_map = discretization.dof_maps[0]
+    face_index = int(
+        np.flatnonzero(np.asarray(mesh.entity_set(2).entity_ids) == face_id)[0]
+    )
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, phx.discretization.TetrahedralConnectivity):
+        raise AssertionError("Normal flow requires tetrahedral face support.")
+    corners = _VERTICES[np.asarray(connectivity.faces)[face_index]]
+    area_normal = 0.5 * np.cross(corners[1] - corners[0], corners[2] - corners[0])
+    if np.dot(area_normal, np.mean(corners, axis=0) - np.mean(_VERTICES, axis=0)) < 0:
+        area_normal = -area_normal
+    # Degree-two triangle quadrature and the physical reference basis give
+    # an independent outward flux row on the selected global face support.
+    points = (
+        np.asarray(((2 / 3, 1 / 6, 1 / 6), (1 / 6, 2 / 3, 1 / 6), (1 / 6, 1 / 6, 2 / 3)))
+        @ corners
+    )
+    basis = _physical_values(
+        element, _VERTICES, points, np.asarray(dof_map.cell_transforms[0][0])
+    )
+    local_flux = np.mean(basis, axis=0) @ area_normal
+    flux = np.zeros(dof_map.global_dof_count)
+    flux[np.asarray(dof_map.cell_dofs[0][0])] = local_flux
+    assert np.linalg.norm(flux) > 1e-8
+    velocity = 3.0 * flux / np.dot(flux, flux)
+    np.testing.assert_allclose(np.dot(flux, velocity), 3.0, atol=1e-12)
+    np.testing.assert_array_equal(prepared.normal_flux_face_ids, np.asarray((face_id,)))
     np.testing.assert_allclose(prepared.normal_flux(velocity), np.asarray((3.0,)))
-    np.testing.assert_allclose(prepared.normal_flux_residual(velocity), 0.0)
+    flux_roundoff = 50.0 * np.finfo(velocity.dtype).eps * 3.0
+    np.testing.assert_allclose(
+        prepared.normal_flux_residual(velocity), 0.0, atol=flux_roundoff
+    )
     resistance_action = prepared.normal_resistance_operator.mv(velocity)
     np.testing.assert_allclose(
         np.vdot(np.asarray(velocity), np.asarray(resistance_action)),

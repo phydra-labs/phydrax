@@ -48,10 +48,10 @@ from ...sparse import (
     RowRelation,
 )
 from ...typing import parse
+from .._cubical_whitney import PICShapeOrder
 from ..particle._core import ParticleDiscretization
 from ..spectral import SharedGridHankelOffset
 from ..splatting._assignment import _basis_and_derivative
-from ._transfer import PICShapeOrder
 
 
 class QuasiCylindricalGrid(StrictModule, NonTrainableState):

@@ -329,7 +329,7 @@ class SemiconductorDetectorPlan(StrictModule, NonTrainableState):
         core = cochain.codifferential(
             1, self.effective_permittivity.astype(gradient.dtype) * gradient
         )
-        reaction = cochain.hodge_stars[0].astype(core.dtype) * (
+        reaction = cochain.hodge_diagonal(0).astype(core.dtype) * (
             core - effective_space_charge
         )
         return contract("en,n->e", self.electrode_masks.astype(reaction.dtype), reaction)
@@ -434,7 +434,7 @@ class DetectorBiasElectrostaticPlan(StrictModule, NonTrainableState):
         )
         cochain = self.detector.bridge.cochain
         volume_charge = jnp.sum(
-            cochain.hodge_stars[0].astype(effective.dtype) * effective
+            cochain.hodge_diagonal(0).astype(effective.dtype) * effective
         )
         closure = jnp.abs(jnp.sum(electrode_charges) + volume_charge)
         scale = jnp.maximum(

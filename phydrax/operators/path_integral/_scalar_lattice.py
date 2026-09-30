@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._sampling import SingleCoordinateProposalPayload
 from ..._strict import StrictModule
-from ...discretization import CochainDiscretization
+from ...discretization import CochainDiscretization, DiagonalHodge
 from ...metrix import EuclideanStateGeometry
 from ._lattice_action import (
     AbstractIncrementalLatticeAction,
@@ -71,7 +71,7 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
             raise ValueError("kinetic_scale must be positive.")
         if quartic < 0.0:
             raise ValueError("quartic_coupling must be non-negative.")
-        dtype = jnp.result_type(discretization.hodge_stars[0].dtype, jnp.float32)
+        dtype = jnp.result_type(discretization.primal_measures[0].dtype, jnp.float32)
         topology_id = discretization.topology.topology_id
         field_space_id = discretization.field_spaces[0].field_space_id
         configuration_shape = (discretization.cell_counts[0],)
@@ -135,7 +135,7 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
     def action(self, configuration: PyTree[Any], /) -> Array:
         field = self._configuration(configuration)
         derivative = self.discretization.exterior_derivative(0, field)
-        hodge_derivative = self.discretization.apply_hodge(1, derivative)
+        hodge_derivative = self.discretization.hodge_star(1, derivative)
         kinetic = 0.5 * self.kinetic_scale * jnp.vdot(derivative, hodge_derivative)
         return jnp.real(kinetic) + jnp.sum(self.site_contributions(field))
 
@@ -186,7 +186,7 @@ class LocalPhi4LatticeAction(AbstractIncrementalLatticeAction):
         self.incident_edges = edges
         self.incident_signs = signs
         self.incident_valid = valid
-        self.edge_weights = base.discretization.hodge_stars[1]
+        self.edge_weights = base.discretization.hodge_diagonal(1)
         self.topology_id = base.topology_id
         self.field_space_id = base.field_space_id
         self.configuration_shape = base.configuration_shape
@@ -302,7 +302,7 @@ def prepare_local_phi4_action(
     """Prepare incident-edge routes for exact scalar single-site updates."""
     if not isinstance(action, Phi4LatticeAction):
         raise TypeError("action must be Phi4LatticeAction.")
-    if action.discretization.hodge_matrices[1] is not None:
+    if not isinstance(action.discretization.hodges[1], DiagonalHodge):
         raise ValueError("Local phi4 updates require a diagonal degree-one Hodge map.")
     incidence = action.discretization.topology.incidences[0]
     relation = incidence.relation

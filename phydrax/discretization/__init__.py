@@ -71,6 +71,7 @@ from ._axis import (
     UniformCellAxisSpec,
 )
 from ._axis_domain import AxisDomain, AxisDomainKind, HalfLineDirection
+from ._boundary_complex import boundary_subcomplex, BoundaryComplex
 from ._boundary_trace import BoundarySurfaceTrace
 from ._boundary_trace_space import (
     BoundaryEntityKind,
@@ -88,6 +89,9 @@ from ._bundle import (
     DiscretizationRecord,
 )
 from ._cell_complex import (
+    cubical_cell_complex,
+    CubicalCellComplex,
+    interval_cell_complex,
     polygonal_cell_complex,
     polygonal_connectivity,
     PolygonalConnectivity,
@@ -97,10 +101,13 @@ from ._cell_complex import (
     PolyhedralWorksetLimitError,
     PolyhedralWorksets,
     prepare_polyhedral_worksets,
+    simplicial_cell_complex,
+    simplicial_cell_geometry,
     tetrahedral_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from ._cell_de_rham import AbstractCellDeRhamComplex
 from ._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
@@ -112,28 +119,23 @@ from ._cell_geometry_validity import (
     CellValidityStatus,
     certify_cell_geometry_validity,
 )
-from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
-from ._cochain import (
-    CochainBoundaryKind,
-    CochainBoundaryPolicy,
-    CochainCellOrientation,
-    CochainDiscretization,
-    CochainFieldSpec,
-    CochainSampling,
-    CochainSide,
-)
+from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock, SimplicialConnectivity
+from ._cochain import CochainDiscretization
+from ._cochain_distribution import CochainHaloExchange, CochainPartition
 from ._cochain_electrochemical import (
     CochainElectrochemicalFluxEvaluation,
     PreparedCochainElectrochemicalFlux,
     scharfetter_gummel_flux,
     stable_bernoulli,
 )
-from ._cochain_metrics import (
-    CochainMetricEvidence,
-    CochainMetricPlan,
-    CochainMetricState,
-    PreparedCochainTopology,
+from ._cochain_hodge import (
+    CochainHodge,
+    DiagonalHodge,
+    DualCellPolicy,
+    simplicial_dual_hodges,
+    SparseHodge,
 )
+from ._cochain_orientation import reorient_cell_complex, reorient_cochain
 from ._constraints import AbstractDiscreteDirichletConstraint
 from ._core import (
     DiscretizationCapability,
@@ -154,6 +156,7 @@ from ._embedded_transfer import (
     PreparedEmbeddedMeasureTransfer,
 )
 from ._field_query import FieldQueryCoverage, PreparedFieldQuery
+from ._gram import diagonal_gram_space, sparse_gram_space
 from ._integration_domain import IntegrationDomain
 from ._lagrangian_marker import (
     LagrangianMarkerDiscretization,
@@ -198,6 +201,7 @@ from ._motion_validity import (
 from ._nested_cell_transfer import nested_cell_transfer
 from ._oriented_path import (
     CellBoundaryPathPlan,
+    ordered_path_transport,
     oriented_edge_endpoints,
     OrientedEdgePathPlan,
     prepare_cell_boundary_paths,
@@ -317,6 +321,7 @@ from ._state_transfer import (
 from ._structured_cochain import (
     StructuredCochainBridge,
     StructuredCochainResourcePolicy,
+    StructuredDifferentialOperator,
 )
 from ._support import DiscreteSupport
 from ._temporal import RealizedTemporalMesh, TemporalMesh, TemporalMeshRole
@@ -399,7 +404,6 @@ from .amr import (
     CanonicalPatchLevel,
     CertifiedImplicitBody,
     CompatibleEntityTransfer,
-    CompatibleEntityTransferEvidence,
     CompatibleEntityTransferFamily,
     complex_amr_fill_patch,
     ComplexAMRFillPatchResult,
@@ -407,8 +411,6 @@ from .amr import (
     complexify_composite_amr_operator,
     CompositeAMRCellLayout,
     CutCellCochainPlan,
-    CutCellCochainState,
-    CutCellCochainTransferEvidence,
     CutCellCochainTransferPlan,
     CutCellSignTopology,
     DistributedBlockAMRResourceEvidence,
@@ -679,6 +681,7 @@ from .fem import (
     FiniteElementBoundaryRealization,
     FiniteElementBoundarySet,
     FiniteElementCellMapEvaluation,
+    FiniteElementDeRhamComplex,
     FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
     FiniteElementDistributedPhasePlan,
@@ -708,6 +711,10 @@ from .fem import (
     FiniteElementRuntimeData,
     FiniteElementSpec,
     FiniteElementTopologyTransfer,
+    form_element,
+    FormBasis,
+    FormElementFamily,
+    FormFieldReconstructionKernel,
     HDGCondensationPlan,
     HDGTraceSpace,
     lagrange_element,
@@ -726,7 +733,6 @@ from .fem import (
     MixedPressureStabilizationKind,
     MortarInterfaceEvidence3D,
     MultiscaleFiniteElementBasis,
-    nedelec_element,
     partition_cells_cost_aware,
     PartitionedFiniteElementDofMap,
     periodic_constraint,
@@ -747,7 +753,6 @@ from .fem import (
     PressureGaugeEvidence,
     PressureGaugeMode,
     PressureGaugePolicy,
-    raviart_thomas_element,
     read_finite_element_mesh,
     refresh_l2_projection_target,
     residual_jump_estimate,
@@ -755,9 +760,7 @@ from .fem import (
     RigidDeformableAttachmentPlan,
     RigidDeformableKKTLinearization,
     RigidDeformableKKTPayload,
-    tetrahedral_bdm_element,
-    tetrahedral_rt_element,
-    TetrahedralNedelecSpace,
+    SimplicialWhitneyKernel,
     write_finite_element_field,
 )
 from .finite_difference import (
@@ -1305,6 +1308,7 @@ from .flip import (
     SparseFLIPTransferState,
     transition_ale_flip_epoch,
 )
+from .iga import AssembledSplineDeRhamComplex, SplineDeRhamComplex
 from .lattice_boltzmann import (
     __all__ as _lattice_boltzmann_all,
     BGKCollisionPlan,
@@ -2198,7 +2202,9 @@ from .spectral import (
     estimate_spectral_regularity,
     FinalEdgePolicy,
     FourierBasisPlan,
+    FourierDeRhamComplex,
     FourierLaguerrePlan,
+    FourierNyquistPolicy,
     FourierShellStatisticResult,
     GeneralizedTauPlan,
     HarmonicTruncationKind,
@@ -2300,6 +2306,7 @@ from .spectral import (
     SphericalClebschGordanPlan,
     SphericalClebschGordanReport,
     SphericalCoordinateDerivativeResult,
+    SphericalDeRhamComplex,
     SphericalExecution,
     SphericalHarmonicPlan,
     SphericalModeLayout,
@@ -2391,6 +2398,7 @@ from .vortex import __all__ as _vortex_all
 
 
 _FACADE_EXPORT_MODULES = (
+    "._cubical_whitney",
     "._lattice_boundary",
     "._lattice_distribution",
     ".bem",
@@ -2692,7 +2700,6 @@ __all__ = [
     "complex_amr_fill_patch",
     "complexify_composite_amr_operator",
     "CompatibleEntityTransfer",
-    "CompatibleEntityTransferEvidence",
     "CompatibleEntityTransferFamily",
     "CompositeAMRDiffusionPlan",
     "MultivaluedCutCellDiffusionPlan",
@@ -2710,23 +2717,38 @@ __all__ = [
     "BoundaryStencilSet",
     "BoundaryRealizationKind",
     "BoundaryRealizationPlan",
-    "CochainBoundaryKind",
+    "BoundaryComplex",
+    "boundary_subcomplex",
+    "interval_cell_complex",
     "CochainDiscretization",
-    "CochainMetricEvidence",
-    "CochainMetricPlan",
-    "CochainMetricState",
-    "PreparedCochainTopology",
-    "CochainBoundaryPolicy",
+    "CochainHaloExchange",
+    "CochainPartition",
+    "AbstractCellDeRhamComplex",
+    "CochainHodge",
+    "DiagonalHodge",
+    "SparseHodge",
+    "DualCellPolicy",
+    "simplicial_dual_hodges",
+    "diagonal_gram_space",
+    "sparse_gram_space",
+    "reorient_cell_complex",
+    "reorient_cochain",
+    "CubicalCellComplex",
+    "CubicalSplineWhitneyKernel",
+    "cubical_cell_complex",
+    "simplicial_cell_complex",
+    "simplicial_cell_geometry",
+    "ordered_path_transport",
+    "FourierDeRhamComplex",
+    "FourierNyquistPolicy",
+    "SphericalDeRhamComplex",
+    "StructuredDifferentialOperator",
     "CheckpointedFDAdjointPlan",
-    "CochainCellOrientation",
     "CharacteristicReconstructionPlan",
     "CharacteristicSystem",
     "ConformingInterfaceRuntime",
     "CornerPolicy",
-    "CochainFieldSpec",
     "CompatibleSBPSecondDerivative",
-    "CochainSampling",
-    "CochainSide",
     "ChebyshevCollocation",
     "CompositeFaceVelocity",
     "CompositeMACMarkerRelation",
@@ -2805,8 +2827,6 @@ __all__ = [
     "LagrangianMarkerKinematics",
     "LagrangianMarkerSetPlan",
     "CutCellCochainPlan",
-    "CutCellCochainState",
-    "CutCellCochainTransferEvidence",
     "CutCellCochainTransferPlan",
     "CutCellSignTopology",
     "DistributedCutCellEvidence",
@@ -3400,11 +3420,15 @@ __all__ = [
     "local_dual_weighted_residual",
     "FiniteElementSpec",
     "IntegrationDomain",
-    "nedelec_element",
-    "TetrahedralNedelecSpace",
-    "raviart_thomas_element",
-    "tetrahedral_bdm_element",
-    "tetrahedral_rt_element",
+    "SimplicialConnectivity",
+    "FormBasis",
+    "FormElementFamily",
+    "form_element",
+    "FiniteElementDeRhamComplex",
+    "FormFieldReconstructionKernel",
+    "SimplicialWhitneyKernel",
+    "SplineDeRhamComplex",
+    "AssembledSplineDeRhamComplex",
     "HDGCondensationPlan",
     "HDGTraceSpace",
     "PartitionedFiniteElementDofMap",

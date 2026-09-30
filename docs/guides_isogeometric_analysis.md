@@ -184,3 +184,29 @@ shell/surface mechanics, vector or mixed fields, H(div)/H(curl) mappings, contac
 or public sparse assembly. It does not infer quadrature order. A positive weight
 vector alone does not certify a valid map; preparation must also pass sampled
 rank and orientation checks.
+
+## Public compatible spline complexes
+
+`SplineDeRhamComplex(grids, periodic=..., geometry=..., geometry_id=...,
+twist="untwisted", quadrature_degree=..., hodge_policy=...)` is the public
+exterior realization, separate from the scalar `IsogeometricPlan` workflow.
+It supplies exact sparse d and paired degree spaces through
+`hilbert_complex(boundary="absolute" | "relative")`. Identity tensor geometry
+uses native Kronecker Gram blocks; mapped geometry uses explicit pullback
+quadrature and native linear solve preparation.
+
+`interpolant`, physical-component `reconstruction`, commuting `transfer` and
+outward `trace(axis, side)` retain canonical form degree/twist/component ordering.
+Trace and transfer are `ComplexMap` objects with numerical commutation evidence,
+not private Piola or signed-trace helper carriers. The assembled public complex
+validates exactness and relative closure before numerical execution.
+API availability alone does not expand the released support matrix.
+
+Mapped-complex `refresh_geometry(geometry)` reuses prepared basis/quadrature/moment
+data and static binding ids while refreshing metric/face pairings on device.
+For a dynamic identity chart, prepare it as a callable with explicit geometry_id;
+the unmapped identity shortcut deliberately has no geometry refresh contract.
+
+
+See [IGA APIs](api/discretization/isogeometric.md#public-spline-de-rham-complex)
+and [exterior complexes](api/exterior/complexes.md).

@@ -38,11 +38,8 @@ from ._core import (
     BlockLevelState,
     BlockMetadata,
 )
-from ._cut_cochain import CutCellCochainPlan, CutCellCochainState
-from ._cut_cochain_transfer import (
-    CutCellCochainTransferEvidence,
-    CutCellCochainTransferPlan,
-)
+from ._cut_cochain import CutCellCochainPlan
+from ._cut_cochain_transfer import CutCellCochainTransferPlan
 from ._cut_complex import (
     CutCellSignTopology,
     EmbeddedLevelSetBody,
@@ -98,7 +95,6 @@ from ._entity_runtime import (
 )
 from ._entity_transfer import (
     CompatibleEntityTransfer,
-    CompatibleEntityTransferEvidence,
     CompatibleEntityTransferFamily,
 )
 from ._fd_halo import (
@@ -277,8 +273,6 @@ __all__ = [
     "PatchShapeSignature",
     "PatchClusteringPolicy",
     "CutCellCochainPlan",
-    "CutCellCochainState",
-    "CutCellCochainTransferEvidence",
     "CutCellCochainTransferPlan",
     "CutCellSignTopology",
     "EventAwareCutCellDerivativePlan",
@@ -336,7 +330,6 @@ __all__ = [
     "VariablePatchEntityFieldState",
     "VariablePatchEntityRoute",
     "CompatibleEntityTransfer",
-    "CompatibleEntityTransferEvidence",
     "CompatibleEntityTransferFamily",
     "VariablePatchALEPlan",
     "VariablePatchALEStepEvidence",

@@ -708,7 +708,7 @@ def _yee_case(
         mu, float(scale.vacuum_permeability), rtol=_SCALE_TOLERANCE, atol=0.0
     ):
         raise ValueError("The Maxwell medium must be the scale's vacuum.")
-    counts, spacing, lower = _uniform_axes(maxwell.plan.bridge.grid.structured_axes)
+    counts, spacing, lower = _uniform_axes(solver.bridge.grid.structured_axes)
     return _SolverCase(
         "periodic-yee-plasma",
         counts,

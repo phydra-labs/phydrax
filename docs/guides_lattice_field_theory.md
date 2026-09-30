@@ -156,7 +156,7 @@ boundaries = phx.discretization.prepare_cell_boundary_paths(topology)
 group = phx.metrix.SpecialUnitaryGroup(2)
 link_space = phx.graph.MatrixGaugeLinkSpace(topology, group)
 links = link_space.identity()
-holonomy = phx.graph.path_holonomy(link_space, links, boundaries.paths)
+holonomy = phx.discretization.ordered_path_transport(boundaries.paths, links)
 ```
 
 For an oriented edge from `x` to `y`, gauge transformations use

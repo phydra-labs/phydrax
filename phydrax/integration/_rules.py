@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from numbers import Integral
-from typing import NamedTuple, Sequence, TypeAlias
+from typing import final, NamedTuple, Sequence, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,6 +25,8 @@ from .._polynomial._cubature import (
     cubature_rule_data,
     CubatureReference,
     CubatureRuleData,
+    simplex_rule_data,
+    tensor_product_rule_data,
 )
 from .._polynomial._gaussian_cubature import (
     gaussian_cubature_rule_data,
@@ -36,6 +38,7 @@ from .._polynomial._orthogonal import (
     standard_normal_hermite_rule_data,
 )
 from .._strict import StrictModule
+from ..typing import parse
 
 
 class ReferenceCellData(NamedTuple):
@@ -47,6 +50,7 @@ class ReferenceCellData(NamedTuple):
     cell: str
 
 
+@final
 class CubatureRule(StrictModule):
     """Curated positive cubature on a canonical multidimensional reference."""
 
@@ -62,15 +66,52 @@ class CubatureRule(StrictModule):
         *,
         allow_duffy_fallback: bool = True,
         maximum_rule_bytes: int = 64 * 1024**2,
+        dimension: int | None = None,
     ) -> None:
-        prepared = cubature_rule_data(
-            reference,
-            degree,
-            allow_duffy_fallback=allow_duffy_fallback,
-            maximum_rule_bytes=maximum_rule_bytes,
-        )
+        reference = parse(reference, CubatureReference, "reference")
+        if isinstance(degree, bool) or not isinstance(degree, Integral):
+            raise TypeError("Cubature degree must be an integer.")
+        requested = int(degree)
+        if requested < 0:
+            raise ValueError("Cubature degree must be nonnegative.")
+        if dimension is not None and (
+            isinstance(dimension, bool) or not isinstance(dimension, Integral)
+        ):
+            raise TypeError("Cubature dimension must be an integer.")
+        if dimension is not None and dimension < 1:
+            raise ValueError("Cubature dimension must be positive.")
+        match reference:
+            case "simplex":
+                if dimension is None:
+                    raise ValueError(
+                        "Generic simplex cubature requires an explicit dimension."
+                    )
+                prepared = simplex_rule_data(
+                    dimension, requested, maximum_rule_bytes=maximum_rule_bytes
+                )
+            case "tensor":
+                if dimension is None:
+                    raise ValueError(
+                        "Generic tensor cubature requires an explicit dimension."
+                    )
+                prepared = tensor_product_rule_data(
+                    dimension,
+                    (requested + 2) // 2,
+                    maximum_rule_bytes=maximum_rule_bytes,
+                )
+            case _:
+                prepared = cubature_rule_data(
+                    reference,
+                    requested,
+                    allow_duffy_fallback=allow_duffy_fallback,
+                    maximum_rule_bytes=maximum_rule_bytes,
+                )
+                if dimension is not None and dimension != prepared.reference_dimension:
+                    raise ValueError(
+                        "Declared cubature dimension does not match the reference."
+                    )
         self.prepared = prepared
-        self.requested_degree = int(degree)
+        self.requested_degree = requested
         self.allow_duffy_fallback = bool(allow_duffy_fallback)
 
     @property
@@ -106,11 +147,16 @@ class CubatureRule(StrictModule):
         return self.prepared.rule_id
 
     def materialize(self) -> ReferenceCellData:
+        match self.reference_domain:
+            case "simplex" | "tensor":
+                cell = f"{self.reference_domain}:{self.prepared.reference_dimension}"
+            case _:
+                cell = self.reference_domain
         return ReferenceCellData(
             self.prepared.points,
             self.prepared.weights,
             None,
-            self.reference_domain,
+            cell,
         )
 
 

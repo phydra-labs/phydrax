@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from numbers import Integral
-from typing import Literal, TypeAlias
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -33,7 +33,10 @@ CubatureReference: TypeAlias = Literal[
     "sphere",
     "ball",
     "standard-normal",
+    "simplex",
+    "tensor",
 ]
+TensorProductRuleFamily: TypeAlias = Literal["gauss", "lobatto"]
 CubatureFamily: TypeAlias = Literal[
     "xiao-gimbutas",
     "lebedev",
@@ -45,6 +48,7 @@ CubatureFamily: TypeAlias = Literal[
     "stroud-secrest-5-2",
     "stroud-secrest-5-3",
     "tensor-hermite",
+    "tensor-product",
 ]
 
 _REFERENCE_DIMENSION: dict[str, int | None] = {
@@ -55,6 +59,8 @@ _REFERENCE_DIMENSION: dict[str, int | None] = {
     "sphere": 3,
     "ball": 3,
     "standard-normal": None,
+    "simplex": None,
+    "tensor": None,
 }
 _REFERENCE_MASS: dict[str, float] = {
     "triangle": 0.5,
@@ -74,9 +80,12 @@ _REFERENCE_MEASURE: dict[str, str] = {
     "ball": "lebesgue",
     "standard-normal": "standard-normal",
 }
+_REFERENCE_MEASURE["simplex"] = "lebesgue"
+_REFERENCE_MEASURE["tensor"] = "lebesgue"
 _DEFAULT_RULE_BYTES = 64 * 1024**2
 
 
+@final
 class CubatureRuleData(StrictModule, NonTrainableState):
     """Prepared multidimensional cubature with explicit measure semantics."""
 
@@ -85,6 +94,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
     exact_degree: int = eqx.field(static=True)
     family: str = eqx.field(static=True)
     reference_domain: str = eqx.field(static=True)
+    reference_dimension: int = eqx.field(static=True)
     integration_measure: str = eqx.field(static=True)
     measure_mass: float = eqx.field(static=True)
     backend: str = eqx.field(static=True)
@@ -105,19 +115,34 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         source_id: str,
         dtype: DTypeLike = jnp.float64,
         maximum_rule_bytes: int = _DEFAULT_RULE_BYTES,
+        dimension: int | None = None,
     ) -> None:
         degree = _degree(exact_degree)
-        if reference_domain not in _REFERENCE_DIMENSION:
-            raise ValueError(f"Unsupported cubature reference: {reference_domain!r}.")
+        reference_domain = parse(reference_domain, CubatureReference, "reference_domain")
         family = parse(family, CubatureFamily, "family")
         dtype_ = np.dtype(dtype)
         points_host = np.asarray(points, dtype=dtype_)
         weights_host = np.asarray(weights, dtype=dtype_).reshape((-1,))
-        dimension = _REFERENCE_DIMENSION[reference_domain]
+        reference_dimension = _REFERENCE_DIMENSION[reference_domain]
+        if dimension is not None:
+            declared_dimension = _degree(dimension)
+            if declared_dimension == 0:
+                raise ValueError("Positive-dimensional cubature requires dimension >= 1.")
+            if (
+                reference_dimension is not None
+                and declared_dimension != reference_dimension
+            ):
+                raise ValueError("Explicit dimension does not match cubature reference.")
+            reference_dimension = declared_dimension
+        elif reference_domain in ("simplex", "tensor"):
+            raise ValueError("Generic reference cubature requires explicit dimension.")
         if (
             points_host.ndim != 2
             or points_host.shape[1] == 0
-            or (dimension is not None and points_host.shape[1] != dimension)
+            or (
+                reference_dimension is not None
+                and points_host.shape[1] != reference_dimension
+            )
             or points_host.shape[0] == 0
             or weights_host.shape != points_host.shape[:1]
         ):
@@ -144,7 +169,13 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             raise ValueError("Cubature points must be unique.")
         tolerance = float(512.0 * np.finfo(dtype_).eps * max(1, points_host.shape[0]))
         _validate_reference_points(reference_domain, points_host, tolerance)
-        mass = _REFERENCE_MASS[reference_domain]
+        mass = (
+            math.exp(-math.lgamma(point_dimension + 1))
+            if reference_domain == "simplex"
+            else 1.0
+            if reference_domain == "tensor"
+            else _REFERENCE_MASS[reference_domain]
+        )
         if not np.isclose(
             np.sum(weights_host),
             mass,
@@ -168,6 +199,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         self.exact_degree = degree
         self.family = family
         self.reference_domain = reference_domain
+        self.reference_dimension = point_dimension
         self.integration_measure = _REFERENCE_MEASURE[reference_domain]
         self.measure_mass = mass
         self.backend = str(backend)
@@ -178,6 +210,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
                 "kind": "cubature-rule",
                 "family": family,
                 "reference_domain": reference_domain,
+                "reference_dimension": point_dimension,
                 "integration_measure": self.integration_measure,
                 "measure_mass": mass,
                 "exact_degree": degree,
@@ -206,11 +239,15 @@ def _validate_reference_points(
 ) -> None:
     if reference == "standard-normal":
         return
-    if reference in ("triangle", "tetrahedron"):
+    if reference in ("triangle", "tetrahedron", "simplex"):
         if np.any(points < -tolerance) or np.any(
             np.sum(points, axis=1) > 1.0 + tolerance
         ):
             raise ValueError("Simplex cubature points lie outside the unit simplex.")
+        return
+    if reference == "tensor":
+        if np.any(points < -tolerance) or np.any(points > 1.0 + tolerance):
+            raise ValueError("Tensor cubature points lie outside the unit cube.")
         return
     norms = np.linalg.norm(points, axis=1)
     if reference in ("circle", "sphere"):
@@ -256,6 +293,118 @@ def xiao_gimbutas_rule_data(
     )
 
 
+def _product_capacity(dimension: int, order: int, maximum_rule_bytes: int, /) -> int:
+    if (
+        isinstance(maximum_rule_bytes, bool)
+        or not isinstance(maximum_rule_bytes, Integral)
+        or maximum_rule_bytes <= 0
+    ):
+        raise ValueError("maximum_rule_bytes must be a positive integer.")
+    # Points, tensor grids and transformed points coexist during preparation.
+    capacity = maximum_rule_bytes // (8 * (3 * dimension + 1))
+    if capacity < 1 or (order > 1 and dimension * math.log(order) > math.log(capacity)):
+        raise ValueError("Cubature preparation exceeds maximum_rule_bytes.")
+    count = order**dimension
+    if count > capacity:
+        raise ValueError("Cubature preparation exceeds maximum_rule_bytes.")
+    return count
+
+
+def _axis_product(
+    dimension: int,
+    order: int,
+    family: TensorProductRuleFamily,
+    maximum_rule_bytes: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    _product_capacity(dimension, order, maximum_rule_bytes)
+    axis_rule = legendre_rule_data(order, family)
+    axis = 0.5 * (np.asarray(axis_rule.nodes, dtype=np.float64) + 1.0)
+    weights = 0.5 * np.asarray(axis_rule.weights, dtype=np.float64)
+    axes = np.meshgrid(*(axis for _ in range(dimension)), indexing="ij")
+    weight_axes = np.meshgrid(
+        *(weights for _ in range(dimension)), indexing="ij", sparse=True
+    )
+    points = np.stack(axes, axis=-1).reshape((-1, dimension))
+    combined = np.ones((order,) * dimension, dtype=np.float64)
+    for values in weight_axes:
+        combined *= values
+    return points, combined.reshape((-1,))
+
+
+def _duffy_product(
+    dimension: int, order: int, maximum_rule_bytes: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    nodes, weights = _axis_product(dimension, order, "gauss", maximum_rule_bytes)
+    points = np.empty_like(nodes)
+    remaining = np.ones((nodes.shape[0],), dtype=np.float64)
+    for axis in range(dimension):
+        points[:, axis] = remaining * nodes[:, axis]
+        if axis < dimension - 1:
+            weights *= (1.0 - nodes[:, axis]) ** (dimension - axis - 1)
+        remaining *= 1.0 - nodes[:, axis]
+    return points, weights
+
+
+def simplex_rule_data(
+    dimension: int, degree: int, /, *, maximum_rule_bytes: int = _DEFAULT_RULE_BYTES
+) -> CubatureRuleData:
+    """Dimension-explicit positive Duffy quadrature on the unit n-simplex."""
+    dimension = _degree(dimension)
+    if dimension == 0:
+        raise ValueError("Simplex cubature requires dimension >= 1.")
+    requested = _degree(degree)
+    order = max(1, (requested + dimension + 1) // 2)
+    points, weights = _duffy_product(dimension, order, maximum_rule_bytes)
+    return CubatureRuleData(
+        points,
+        weights,
+        exact_degree=2 * order - dimension,
+        family="duffy",
+        reference_domain="simplex",
+        dimension=dimension,
+        backend="analytic-product",
+        source_id=f"duffy-gauss-legendre:simplex:{dimension}:{order}",
+        maximum_rule_bytes=maximum_rule_bytes,
+    )
+
+
+def tensor_product_rule_data(
+    dimension: int,
+    points: int,
+    /,
+    *,
+    family: TensorProductRuleFamily = "gauss",
+    maximum_rule_bytes: int = _DEFAULT_RULE_BYTES,
+) -> CubatureRuleData:
+    """Positive tensor GL/GLL quadrature on the unit n-cube."""
+    dimension, count = _degree(dimension), _degree(points)
+    if dimension == 0 or count == 0:
+        raise ValueError("Tensor cubature requires dimension and points >= 1.")
+    family = parse(family, TensorProductRuleFamily, "family")
+    match family:
+        case "gauss":
+            exact_degree = 2 * count - 1
+        case "lobatto":
+            if count < 2:
+                raise ValueError("Lobatto tensor cubature requires points >= 2.")
+            exact_degree = 2 * count - 3
+        case _:
+            assert_never(family)
+    nodes, weights = _axis_product(dimension, count, family, maximum_rule_bytes)
+    return CubatureRuleData(
+        nodes,
+        weights,
+        exact_degree=exact_degree,
+        family="tensor-product",
+        reference_domain="tensor",
+        dimension=dimension,
+        backend="analytic-product",
+        source_id=f"tensor-legendre:{family}:{dimension}:{count}",
+        maximum_rule_bytes=maximum_rule_bytes,
+    )
+
+
 def duffy_simplex_rule_data(
     reference: Literal["triangle", "tetrahedron"],
     degree: int,
@@ -266,34 +415,9 @@ def duffy_simplex_rule_data(
     requested = _degree(degree)
     offset = 1 if reference == "triangle" else 2
     order = max(1, math.ceil((requested + offset + 1) / 2))
-    axis_rule = legendre_rule_data(order, "gauss")
-    axis = 0.5 * (np.asarray(axis_rule.nodes) + 1.0)
-    weights = 0.5 * np.asarray(axis_rule.weights)
-    if reference == "triangle":
-        first, second = np.meshgrid(axis, axis, indexing="ij")
-        points = np.stack((first, (1.0 - first) * second), axis=-1)
-        combined = weights[:, None] * weights[None, :] * (1.0 - first)
-        exact_degree = 2 * order - 2
-    else:
-        first, second, third = np.meshgrid(axis, axis, axis, indexing="ij")
-        one_minus_first = 1.0 - first
-        one_minus_second = 1.0 - second
-        points = np.stack(
-            (
-                first,
-                one_minus_first * second,
-                one_minus_first * one_minus_second * third,
-            ),
-            axis=-1,
-        )
-        combined = (
-            weights[:, None, None]
-            * weights[None, :, None]
-            * weights[None, None, :]
-            * one_minus_first**2
-            * one_minus_second
-        )
-        exact_degree = 2 * order - 3
+    dimension = 2 if reference == "triangle" else 3
+    points, combined = _duffy_product(dimension, order, maximum_rule_bytes)
+    exact_degree = 2 * order - dimension
     return CubatureRuleData(
         points.reshape((-1, points.shape[-1])),
         combined.reshape((-1,)),
@@ -465,4 +589,7 @@ __all__ = [
     "radial_ball_rule_data",
     "radial_disk_rule_data",
     "xiao_gimbutas_rule_data",
+    "simplex_rule_data",
+    "tensor_product_rule_data",
+    "TensorProductRuleFamily",
 ]

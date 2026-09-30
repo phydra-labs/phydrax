@@ -20,6 +20,7 @@ import phydrax as phx
 from benchmarks._runtime import synchronize
 from phydrax._interpolation import bspline_stencil
 from phydrax._trainable import partition_parameters
+from phydrax.optim import adam
 
 
 def _benchmark(
@@ -290,7 +291,7 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
     fitting_basis = _basis_matrix(fixed_grid, calibration)
     target_values = target(calibration)
     initial_coefficients = jnp.linalg.lstsq(fitting_basis, target_values)[0]
-    optimizer = optax.adam(3.0e-2)
+    optimizer = adam(3.0e-2)
     parameters = (trainable_grid.raw_span_logits, initial_coefficients)
     optimizer_state = optimizer.init(parameters)
 

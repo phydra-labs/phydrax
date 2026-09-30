@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import product
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,73 +19,27 @@ from jax.typing import DTypeLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import adjoint, ArraySpace, transpose
+from ...linalg import (
+    AbstractLinearOperator,
+    adjoint,
+    ArraySpace,
+    ComplexMap,
+    ComplexMapEvidence,
+    dual_transpose,
+)
 from ...sparse import EdgeRelation, SparseCoordinateOperator
-from ._entities import EntityKey, VariablePatchEntityComplex
+from ._entities import _active_operator, EntityKey, VariablePatchEntityComplex
 
 
-class CompatibleEntityTransferEvidence(StrictModule, NonTrainableState):
-    """Capacity, roundtrip, constant, and commuting evidence for one degree."""
-
-    degree: int = eqx.field(static=True)
-    prolongation_routes: int = eqx.field(static=True)
-    restriction_routes: int = eqx.field(static=True)
-    route_capacity: int = eqx.field(static=True)
-    constant_defect: float = eqx.field(static=True)
-    roundtrip_defect: float = eqx.field(static=True)
-    commuting_defect: float = eqx.field(static=True)
-    evidence_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        degree: int,
-        prolongation_routes: int,
-        restriction_routes: int,
-        route_capacity: int,
-        constant_defect: float,
-        roundtrip_defect: float,
-        commuting_defect: float,
-        /,
-    ) -> None:
-        defects = (
-            float(constant_defect),
-            float(roundtrip_defect),
-            float(commuting_defect),
-        )
-        if (
-            int(degree) < 0
-            or min(int(prolongation_routes), int(restriction_routes)) < 0
-            or max(int(prolongation_routes), int(restriction_routes))
-            > int(route_capacity)
-            or any(not np.isfinite(value) or value < 0.0 for value in defects)
-        ):
-            raise ValueError("Compatible entity transfer evidence is invalid.")
-        self.degree = int(degree)
-        self.prolongation_routes = int(prolongation_routes)
-        self.restriction_routes = int(restriction_routes)
-        self.route_capacity = int(route_capacity)
-        self.constant_defect = defects[0]
-        self.roundtrip_defect = defects[1]
-        self.commuting_defect = defects[2]
-        self.evidence_id = canonical_fingerprint(
-            {
-                "kind": "compatible-entity-transfer-evidence",
-                "degree": int(degree),
-                "prolongation_routes": int(prolongation_routes),
-                "restriction_routes": int(restriction_routes),
-                "route_capacity": int(route_capacity),
-                "defects": defects,
-            }
-        )
-
-
+@final
 class CompatibleEntityTransfer(StrictModule, NonTrainableState):
     degree: int = eqx.field(static=True)
     prolongation: SparseCoordinateOperator
     restriction: SparseCoordinateOperator
-    dual_pullback: object
-    hilbert_adjoint: object
-    evidence: CompatibleEntityTransferEvidence
+    dual_pullback: AbstractLinearOperator
+    hilbert_adjoint: AbstractLinearOperator
+    constant_defect: float = eqx.field(static=True)
+    roundtrip_defect: float = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
 
@@ -242,6 +197,7 @@ def _restriction_routes(
     return source, target, coefficients
 
 
+@final
 class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
     """Joint tensor-product transfer satisfying the discrete de Rham commutator."""
 
@@ -249,6 +205,8 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
     fine: VariablePatchEntityComplex
     refinement_ratio: int = eqx.field(static=True)
     transfers: tuple[CompatibleEntityTransfer, ...]
+    complex_map: ComplexMap
+    evidence: ComplexMapEvidence
     family_id: str = eqx.field(static=True)
 
     def __init__(
@@ -261,13 +219,15 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
         *,
         dtype: DTypeLike = jnp.float64,
     ) -> None:
+        if not isinstance(coarse, VariablePatchEntityComplex) or not isinstance(
+            fine, VariablePatchEntityComplex
+        ):
+            raise TypeError("Compatible entity transfers require entity complexes.")
         ratio = int(refinement_ratio)
         capacities = tuple(route_capacities)
         dimension = coarse.complex.dimension
         if (
-            not isinstance(coarse, VariablePatchEntityComplex)
-            or not isinstance(fine, VariablePatchEntityComplex)
-            or fine.level != coarse.level + 1
+            fine.level != coarse.level + 1
             or fine.complex.dimension != dimension
             or ratio <= 1
             or len(capacities) != dimension + 1
@@ -286,8 +246,30 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
                 key for key in coarse.entity_keys[degree] if key is not None
             )
             fine_keys = tuple(key for key in fine.entity_keys[degree] if key is not None)
-            coarse_space = ArraySpace((coarse.capacity[degree],), dtype=dtype_)
-            fine_space = ArraySpace((fine.capacity[degree],), dtype=dtype_)
+            coarse_space = ArraySpace(
+                (coarse.capacity[degree],),
+                dtype=dtype_,
+                space_id=canonical_fingerprint(
+                    {
+                        "complex": coarse.complex_id,
+                        "degree": degree,
+                        "active_keys": coarse_keys,
+                        "dtype": dtype_.str,
+                    }
+                ),
+            )
+            fine_space = ArraySpace(
+                (fine.capacity[degree],),
+                dtype=dtype_,
+                space_id=canonical_fingerprint(
+                    {
+                        "complex": fine.complex_id,
+                        "degree": degree,
+                        "active_keys": fine_keys,
+                        "dtype": dtype_.str,
+                    }
+                ),
+            )
             p_source, p_target, p_weights = _prolongation_routes(
                 coarse_keys,
                 fine_keys,
@@ -341,26 +323,13 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
                     }
                 ),
             )
-            raw.append(
-                (
-                    prolongation,
-                    restriction,
-                    len(p_source),
-                    len(r_source),
-                    route_capacity,
-                )
-            )
+            raw.append((prolongation, restriction))
         prolongation_matrices = tuple(_scipy_matrix(value[0]) for value in raw)
         restriction_matrices = tuple(_scipy_matrix(value[1]) for value in raw)
+        commuting_defects: list[float] = []
         transfers = []
         tolerance = 1.0e-12
-        for degree, (
-            prolongation,
-            restriction,
-            prolongation_count,
-            restriction_count,
-            capacity,
-        ) in enumerate(raw):
+        for degree, (prolongation, restriction) in enumerate(raw):
             coarse_active = np.asarray(
                 coarse.complex.entities(degree).active_mask, dtype=np.bool_
             )
@@ -368,7 +337,9 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
                 fine.complex.entities(degree).active_mask, dtype=np.bool_
             )
             if degree == 0:
-                constant = prolongation_matrices[degree] @ coarse_active.astype("float64")
+                constant = prolongation_matrices[degree] @ coarse_active.astype(
+                    np.float64
+                )
                 constant_defect = float(
                     np.max(np.abs(constant[fine_active] - 1.0), initial=0.0)
                 )
@@ -376,14 +347,12 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
                 constant_defect = 0.0
             roundtrip = (
                 restriction_matrices[degree] @ prolongation_matrices[degree]
-            ).toarray()
-            identity = np.eye(coarse.capacity[degree])
+            ).tocsr() - sp.identity(coarse.capacity[degree], format="csr")
             supported_coarse = (
                 restriction_matrices[degree].getnnz(axis=1) > 0
             ) & coarse_active
-            active_roundtrip = np.abs((roundtrip - identity)[supported_coarse])
             roundtrip_defect = float(
-                0.0 if active_roundtrip.size == 0 else np.max(active_roundtrip)
+                np.max(np.abs(roundtrip[supported_coarse].data), initial=0.0)
             )
             if degree < dimension:
                 coarse_derivative = (
@@ -399,26 +368,18 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
                 commuting_defect = float(np.max(np.abs(commutator.data), initial=0.0))
             else:
                 commuting_defect = 0.0
+            if degree < dimension:
+                commuting_defects.append(commuting_defect)
             if max(constant_defect, roundtrip_defect, commuting_defect) > tolerance:
                 raise ValueError(
                     "Variable patch entity transfer failed constant/roundtrip/commuting qualification."
                 )
-            evidence = CompatibleEntityTransferEvidence(
-                degree,
-                prolongation_count,
-                restriction_count,
-                capacity,
-                constant_defect,
-                roundtrip_defect,
-                commuting_defect,
-            )
             transfer_id = canonical_fingerprint(
                 {
                     "kind": "compatible-variable-patch-entity-transfer",
                     "degree": degree,
                     "prolongation": prolongation.operator_id,
                     "restriction": restriction.operator_id,
-                    "evidence": evidence.evidence_id,
                 }
             )
             transfers.append(
@@ -426,9 +387,10 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
                     degree,
                     prolongation,
                     restriction,
-                    transpose(prolongation),
+                    dual_transpose(prolongation),
                     adjoint(prolongation),
-                    evidence,
+                    constant_defect,
+                    roundtrip_defect,
                     transfer_id,
                 )
             )
@@ -436,6 +398,29 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
         self.fine = fine
         self.refinement_ratio = ratio
         self.transfers = tuple(transfers)
+        source = coarse.hilbert_complex(dtype=dtype_)
+        target = fine.hilbert_complex(dtype=dtype_)
+        maps = tuple(
+            _active_operator(
+                transfer.prolongation, source.space(degree), target.space(degree)
+            )
+            for degree, transfer in enumerate(transfers)
+        )
+        self.complex_map = ComplexMap(
+            source,
+            target,
+            maps,
+            map_id=canonical_fingerprint(
+                {
+                    "kind": "compatible-entity-complex-map",
+                    "maps": [operator.operator_id for operator in maps],
+                }
+            ),
+        )
+        self.evidence = ComplexMapEvidence(
+            jnp.asarray(commuting_defects, dtype=jnp.float64),
+            jnp.asarray(True, dtype=jnp.bool_),
+        )
         self.family_id = canonical_fingerprint(
             {
                 "kind": "compatible-variable-patch-entity-transfer-family",
@@ -455,6 +440,5 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
 
 __all__ = [
     "CompatibleEntityTransfer",
-    "CompatibleEntityTransferEvidence",
     "CompatibleEntityTransferFamily",
 ]

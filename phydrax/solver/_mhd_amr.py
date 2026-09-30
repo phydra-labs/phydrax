@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
@@ -12,9 +14,10 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import StructuredCochainBridge
+from ..discretization import CochainDiscretization, StructuredCochainBridge
 from ..discretization.amr import VariablePatchEntityComplex
-from ..discretization.amr._cut_cochain import CutCellCochainState
+from ..exterior._complex import ComplexBoundary
+from ..typing import parse
 
 
 class MagneticAMRTransferDiagnostics(StrictModule):
@@ -255,25 +258,35 @@ class VariablePatchCochainSynchronizationPlan(StrictModule, NonTrainableState):
         return updated, diagnostics
 
 
+@final
 class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
     """Reflux-curl on mapped multivalued polyhedral node/edge/face complexes."""
 
-    state: CutCellCochainState
+    state: CochainDiscretization
+    boundary: ComplexBoundary = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, state: CutCellCochainState, /) -> None:
-        if not isinstance(state, CutCellCochainState):
+    def __init__(
+        self,
+        state: CochainDiscretization,
+        /,
+        *,
+        boundary: ComplexBoundary = "absolute",
+    ) -> None:
+        if not isinstance(state, CochainDiscretization):
             raise TypeError(
-                "Cut-cell cochain synchronization requires CutCellCochainState."
+                "Cut-cell cochain synchronization requires CochainDiscretization."
             )
-        if state.topology.topology.dimension != 3:
+        boundary_ = parse(boundary, ComplexBoundary, "boundary")
+        if state.topology.dimension != 3:
             raise ValueError("Cut-cell constrained transport requires a 3-D complex.")
         self.state = state
+        self.boundary = boundary_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "cut-cell-reflux-curl",
-                "complex": state.complex_id,
-                "metric_layout": state.metrics.metric_layout_id,
+                "complex": state.realization_id,
+                "boundary": boundary_,
             }
         )
 
@@ -283,7 +296,7 @@ class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
         register: ElectromotiveForceRegister,
         /,
     ) -> tuple[Array, MagneticAMRTransferDiagnostics]:
-        topology = self.state.topology.topology
+        topology = self.state.topology
         edge_count = topology.entities(1).count
         face_count = topology.entities(2).count
         magnetic = jnp.asarray(magnetic_flux)
@@ -291,12 +304,16 @@ class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cut-cell magnetic flux and EMF register must match face/edge counts."
             )
-        edge_derivative = topology.incidences[1].exterior_derivative()
-        face_derivative = topology.incidences[2].exterior_derivative()
-        correction = -edge_derivative.mv(register.mismatch)
-        updated = magnetic + correction
-        before = face_derivative.mv(magnetic)
-        after = face_derivative.mv(updated)
+        correction = -self.state.exterior_derivative(
+            1, register.mismatch, boundary=self.boundary
+        )
+        updated = jnp.where(
+            self.state.active_mask(2, boundary=self.boundary),
+            magnetic + correction,
+            0.0,
+        )
+        before = self.state.exterior_derivative(2, magnetic, boundary=self.boundary)
+        after = self.state.exterior_derivative(2, updated, boundary=self.boundary)
         return updated, MagneticAMRTransferDiagnostics(
             divergence_before=before,
             divergence_after=after,

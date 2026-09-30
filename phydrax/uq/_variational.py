@@ -19,6 +19,8 @@ import optax
 from jax import Array
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -519,7 +521,7 @@ def fit_variational(
     )
     optimizer = optax.chain(
         optax.clip_by_global_norm(config_.gradient_clip),
-        optax.adam(config_.learning_rate),
+        adam(config_.learning_rate),
     )
     kernel = prepare_training_kernel(
         family_,

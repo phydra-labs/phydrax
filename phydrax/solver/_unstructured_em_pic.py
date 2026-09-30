@@ -6,25 +6,24 @@
 
 from __future__ import annotations
 
-import itertools
-from typing import Any, assert_never
+from typing import Any, assert_never, final
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-
-from phydrax.ein import contract
 
 from .._dtype_names import RealPrecisionDType
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
 from ..discretization import tetrahedral_cell_complex, tetrahedral_connectivity
+from ..discretization.fem._simplicial_whitney_chains import SimplicialWhitneyKernel
 from ..discretization.pic import PICSpeciesPlan, UnstructuredWhitneyCurrentPlan
 from ..linalg import (
+    AbstractVectorSpace,
+    ArraySpace,
     ConjugateGradient,
-    DenseLinearOperator,
+    FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
@@ -33,6 +32,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import Bool, Dim, Int32
 from ._maxwell import CompatibleMaxwellState, MaxwellPrimaryState
 from ._maxwell_unstructured import PreparedUnstructuredMaxwell
 from ._pic_field_solver import (
@@ -48,6 +48,23 @@ from ._pic_field_solver import (
 )
 
 
+class MaxwellPICEdgeDim(Dim):
+    pass
+
+
+class MaxwellPICVertexDim(Dim):
+    pass
+
+
+class MaxwellPICActiveVertexDim(Dim):
+    pass
+
+
+class MaxwellPICActiveEdgeDim(Dim):
+    pass
+
+
+@final
 class UnstructuredMaxwellPICFieldSolver(
     AbstractPreparedPICFieldSolver, NonTrainableState
 ):
@@ -57,20 +74,23 @@ class UnstructuredMaxwellPICFieldSolver(
     on its own edge orientation. They enter Maxwell's Gauss charge density and
     electric current through the inverse degree-0/degree-1 Hodge stars on the
     Maxwell edge order, so the Maxwell charge rate ``δJ`` equals the deposited
-    content rate. Boundary vertices are absolutely constrained by Maxwell and
-    their charge is carried by the conductor, so charges live on interior
-    vertices.
+    content rate. The explicit relative Maxwell realization constrains conductor
+    traces; its restricted metric inverse carries charges on interior vertices.
+    Its Poisson stiffness acts on compact relative scalar coordinates with the
+    restricted electric Gram; only physical field states are zero extended.
     """
+
+    __strict_contract__ = True
 
     maxwell: PreparedUnstructuredMaxwell
     current: UnstructuredWhitneyCurrentPlan
-    gradients: Array
-    face_reconstruction: Array
-    cell_faces: Array
-    cell_face_signs: Array
-    current_to_maxwell_edges: Array
-    current_to_maxwell_signs: Array
-    interior: Array
+    kernel: SimplicialWhitneyKernel
+    current_to_maxwell_edges: Int32[MaxwellPICEdgeDim]
+    interior: Bool[MaxwellPICVertexDim]
+    charge_indices: Int32[MaxwellPICActiveVertexDim]
+    current_indices: Int32[MaxwellPICActiveEdgeDim]
+    charge_space: AbstractVectorSpace
+    current_space: AbstractVectorSpace
     minimum_edge_length: float = eqx.field(static=True)
     electrostatic: PreparedLinearSolve
     solver_id: str = eqx.field(static=True)
@@ -90,6 +110,10 @@ class UnstructuredMaxwellPICFieldSolver(
             raise TypeError("maxwell must be PreparedUnstructuredMaxwell.")
         if not isinstance(current, UnstructuredWhitneyCurrentPlan):
             raise TypeError("current must be UnstructuredWhitneyCurrentPlan.")
+        if maxwell.plan.boundary != "relative":
+            raise ValueError(
+                "Conductor PIC requires an explicitly relative Maxwell plan."
+            )
         if current.locator.dimension != 3:
             raise ValueError("Unstructured electromagnetic PIC requires tetrahedra.")
         cells = np.asarray(current.locator.cells, dtype=np.int32)
@@ -112,7 +136,6 @@ class UnstructuredMaxwellPICFieldSolver(
             for index in range(maxwell_edges.shape[0])
         }
         current_to_maxwell = []
-        current_to_maxwell_signs = []
         current_edges = np.asarray(current.edges, dtype=np.int32)
         for edge_index in range(current_edges.shape[0]):
             first = int(current_edges[edge_index, 0])
@@ -121,59 +144,40 @@ class UnstructuredMaxwellPICFieldSolver(
             if canonical not in edge_lookup:
                 raise ValueError("Whitney edge is absent from the Maxwell cochain.")
             current_to_maxwell.append(edge_lookup[canonical])
-            current_to_maxwell_signs.append(1.0 if (first, second) == canonical else -1.0)
+            if (first, second) != canonical:
+                raise ValueError("Whitney current edges must use canonical orientation.")
+        kernel = SimplicialWhitneyKernel(cochain, current.locator)
         coordinates = np.asarray(current.locator.coordinates, dtype=np.float64)
-        gradients = []
-        reconstruction = []
-        local_faces = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
-        for cell in cells:
-            vertices = coordinates[cell]
-            jacobian = (vertices[1:] - vertices[0]).T
-            inverse = np.linalg.solve(jacobian, np.eye(3, dtype=jacobian.dtype))
-            gradients.append(
-                np.concatenate((-np.sum(inverse, axis=0, keepdims=True), inverse), axis=0)
-            )
-            normal_matrix = np.asarray(
-                [
-                    0.5
-                    * np.cross(
-                        coordinates[cell[face[1]]] - coordinates[cell[face[0]]],
-                        coordinates[cell[face[2]]] - coordinates[cell[face[0]]],
-                    )
-                    for face in local_faces
-                ]
-            )
-            reconstruction.append(
-                np.linalg.lstsq(
-                    normal_matrix,
-                    np.eye(normal_matrix.shape[0], dtype=normal_matrix.dtype),
-                    rcond=1.0e-15,
-                )[0]
-            )
         edge_lengths = np.linalg.norm(
             coordinates[maxwell_edges[:, 1]] - coordinates[maxwell_edges[:, 0]], axis=-1
         )
-        interior = np.asarray(cochain.active_mask(0, "absolute"), dtype=np.bool_)
+        interior = ~np.asarray(connectivity.boundary_vertices, dtype=np.bool_)
         if not np.any(interior):
             raise ValueError("Unstructured PIC requires at least one interior vertex.")
         material = maxwell.constitutive.initialize_state()
+        relative = cochain.hilbert_complex(boundary="relative")
+        charge_indices = cochain.active_indices(0, boundary="relative")
+        current_indices = cochain.active_indices(1, boundary="relative")
+        derivative = relative.differential(0)
+        current_space = relative.space(1)
 
-        def gauss_content(potential: Array) -> Array:
-            # Content form ⋆0(-δD) of D = ε(-dφ); symmetric positive semidefinite.
-            displacement = maxwell.constitutive.electric_displacement(
-                -cochain.exterior_derivative(0, potential), material
+        def gauss_action(potential: Array) -> Array:
+            gradient = (
+                jnp.zeros((cochain.cell_counts[1],), dtype=potential.dtype)
+                .at[current_indices]
+                .set(derivative.mv(potential))
             )
-            return cochain.apply_hodge(0, -cochain.codifferential(1, displacement))
+            displacement = maxwell.constitutive.electric_displacement(gradient, material)
+            return derivative.transpose_mv(
+                current_space.riesz(displacement[current_indices])
+            )
 
-        count = cochain.cell_counts[0]
-        stiffness = np.asarray(
-            jax.vmap(gauss_content)(jnp.eye(count, dtype=jnp.float64)), dtype=np.float64
-        ).T
-        stiffness = interior[:, None] * stiffness * interior[None, :] + np.diag(
-            (~interior).astype(np.float64)
-        )
-        operator = DenseLinearOperator(
-            jnp.asarray(stiffness),
+        space = ArraySpace((charge_indices.size,), dtype=jnp.float64)
+        operator = FunctionLinearOperator(
+            gauss_action,
+            source=space,
+            target=space,
+            transpose_action=gauss_action,
             properties=OperatorProperties(
                 self_adjoint=True,
                 positive_definite=True,
@@ -202,13 +206,13 @@ class UnstructuredMaxwellPICFieldSolver(
         )
         self.maxwell = maxwell
         self.current = current
-        self.gradients = jnp.asarray(np.asarray(gradients))
-        self.face_reconstruction = jnp.asarray(np.asarray(reconstruction))
-        self.cell_faces = connectivity.cell_faces
-        self.cell_face_signs = connectivity.cell_face_signs
+        self.kernel = kernel
         self.current_to_maxwell_edges = jnp.asarray(current_to_maxwell, dtype=jnp.int32)
-        self.current_to_maxwell_signs = jnp.asarray(current_to_maxwell_signs)
         self.interior = jnp.asarray(interior)
+        self.charge_indices = charge_indices
+        self.current_indices = current_indices
+        self.charge_space = relative.space(0)
+        self.current_space = relative.space(1)
         self.minimum_edge_length = float(np.min(edge_lengths))
         self.electrostatic = electrostatic
         self.spatial_dimension = 3
@@ -220,7 +224,6 @@ class UnstructuredMaxwellPICFieldSolver(
                 "current": current.plan_id,
                 "topology": expected_topology.topology_id,
                 "edge_order": tuple(current_to_maxwell),
-                "edge_signs": tuple(current_to_maxwell_signs),
                 "electrostatic": electrostatic.plan.plan_id,
             }
         )
@@ -296,9 +299,20 @@ class UnstructuredMaxwellPICFieldSolver(
         end = centroid + 0.25 * (vertices[:, 0] - centroid)
         return jnp.asarray(centroid), jnp.asarray(end)
 
-    def _density(self, content: Array, /) -> Array:
+    def _potential_gradient(self, potential: Array, /) -> Array:
         cochain = self.maxwell.plan.cochain
-        return jnp.where(self.interior, cochain.solve_hodge(0, content), 0.0)
+        gradient = (
+            cochain.hilbert_complex(boundary="relative").differential(0).mv(potential)
+        )
+        return (
+            jnp.zeros((cochain.cell_counts[1],), dtype=gradient.dtype)
+            .at[self.current_indices]
+            .set(gradient)
+        )
+
+    def _density(self, content: Array, /) -> Array:
+        values = self.charge_space.inverse_riesz(content[self.charge_indices])
+        return jnp.zeros_like(content).at[self.charge_indices].set(values)
 
     def field_with_charge(self, charge: Array, /) -> CompatibleMaxwellState:
         initial = self.maxwell.initialize()
@@ -315,14 +329,13 @@ class UnstructuredMaxwellPICFieldSolver(
     def initialize_field(
         self, charge: Array, /, *, magnetic: Any = None
     ) -> tuple[CompatibleMaxwellState, Array]:
-        cochain = self.maxwell.plan.cochain
         density = jnp.where(self.interior, charge, 0.0)
-        rhs = jnp.where(self.interior, cochain.apply_hodge(0, density), 0.0)
+        rhs = self.charge_space.riesz(density[self.charge_indices])
         result = solve(self.electrostatic, rhs, initial_guess=jnp.zeros_like(rhs))
-        potential = jnp.where(self.interior, result.value, 0.0)
         initial = self.maxwell.initialize()
         displacement = self.maxwell.constitutive.electric_displacement(
-            -cochain.exterior_derivative(0, potential), initial.auxiliary.material
+            -self._potential_gradient(result.value),
+            initial.auxiliary.material,
         )
         flux = (
             jnp.zeros_like(initial.primary.magnetic_flux, dtype=density.dtype)
@@ -345,7 +358,6 @@ class UnstructuredMaxwellPICFieldSolver(
         Gauss stiffness; ``D ← D + ε(-dφ)`` with ``φ = 0`` on the conductor, so
         ``B``, material memory, and observers are unchanged.
         """
-        cochain = self.maxwell.plan.cochain
         density = jnp.where(self.interior, charge, 0.0)
         target = CompatibleMaxwellState(
             MaxwellPrimaryState(
@@ -355,11 +367,11 @@ class UnstructuredMaxwellPICFieldSolver(
             field.observations,
         )
         residual, _ = self.maxwell.constraints(target)
-        rhs = jnp.where(self.interior, cochain.apply_hodge(0, -residual), 0.0)
+        rhs = self.charge_space.riesz(-residual[self.charge_indices])
         result = solve(self.electrostatic, rhs, initial_guess=jnp.zeros_like(rhs))
-        potential = jnp.where(self.interior, result.value, 0.0)
         displacement = self.maxwell.constitutive.electric_displacement(
-            -cochain.exterior_derivative(0, potential), field.auxiliary.material
+            -self._potential_gradient(result.value),
+            field.auxiliary.material,
         )
         projected = CompatibleMaxwellState(
             MaxwellPrimaryState(
@@ -389,8 +401,8 @@ class UnstructuredMaxwellPICFieldSolver(
             field.primary.electric_displacement,
             field.primary.magnetic_flux,
             field.auxiliary.material,
-            cochain.hodge_metric(1),
-            cochain.hodge_metric(2),
+            cochain.hilbert_complex().space(1),
+            cochain.hilbert_complex().space(2),
         )
 
     def _nodal_content(
@@ -435,12 +447,12 @@ class UnstructuredMaxwellPICFieldSolver(
         flow = (
             jnp.zeros((self.maxwell.plan.cochain.cell_counts[1],), dtype=start.dtype)
             .at[self.current_to_maxwell_edges]
-            .add(self.current_to_maxwell_signs * result.edge_current)
+            .add(result.edge_current)
         )
-        # The Whitney flow is the negative integrated flux ⋆1 J on Maxwell edges.
-        current = -self.maxwell.plan.cochain.solve_hodge(1, flow)
+        values = self.current_space.inverse_riesz(flow[self.current_indices])
+        current = jnp.zeros_like(flow).at[self.current_indices].set(values)
         # The Whitney defect is in charge content, so its scale is too.
-        magnitude, _ = self._nodal_content(end, jnp.abs(macrocharge), active)
+        magnitude = result.end_charge_magnitude
         return PICFieldDeposit(
             current,
             self._density(result.start_charge),
@@ -487,30 +499,13 @@ class UnstructuredMaxwellPICFieldSolver(
     ) -> tuple[Array, Array, Array]:
         del species
         location = self.current.locator.locate(position)
-        cell = jnp.maximum(location.cell_ids, 0)
-        electric_cochain = self.maxwell.electric_field(field)
-        local_edges = self.current.cell_edges[cell]
-        local_signs = self.current.cell_edge_signs[cell]
-        electric = jnp.zeros((position.shape[0], 3), dtype=position.dtype)
-        for local_index, (a, b) in enumerate(itertools.combinations(range(4), 2)):
-            whitney = (
-                location.barycentric[:, a, None] * self.gradients[cell, b]
-                - location.barycentric[:, b, None] * self.gradients[cell, a]
-            )
-            coefficient = (
-                electric_cochain[
-                    self.current_to_maxwell_edges[local_edges[:, local_index]]
-                ]
-                * self.current_to_maxwell_signs[local_edges[:, local_index]]
-                * local_signs[:, local_index]
-            )
-            electric = electric + coefficient[:, None] * whitney
-        magnetic_flux = (
-            field.primary.magnetic_flux[self.cell_faces[cell]]
-            * self.cell_face_signs[cell]
+        electric_query = self.kernel.evaluate(position, 1, location=location)
+        magnetic_query = self.kernel.evaluate(
+            position, 2, proxy="flux", location=location
         )
-        magnetic = contract("pij,pj->pi", self.face_reconstruction[cell], magnetic_flux)
-        support = location.successful
+        electric = electric_query.gather(self.maxwell.electric_field(field))
+        magnetic = magnetic_query.gather(field.primary.magnetic_flux)
+        support = electric_query.successful & magnetic_query.successful
         return (
             jnp.where(active[:, None], electric, 0.0),
             jnp.where(active[:, None], magnetic, 0.0),

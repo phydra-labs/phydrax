@@ -14,6 +14,7 @@ import jax
 import numpy as np
 from jax import core as jax_core
 
+from ...exterior._form_type import FormType
 from ...typing import parse
 from .data import FunctionSamples, OperatorBatch
 
@@ -45,6 +46,7 @@ OperatorQuadraturePolicy: TypeAlias = Literal[
     "unused",
     "optional",
     "physical_required",
+    "native_pairing_required",
 ]
 OperatorMaskPolicy: TypeAlias = Literal[
     "unsupported",
@@ -61,6 +63,7 @@ OperatorFieldRepresentation: TypeAlias = Literal[
     "covector",
     "tensor",
     "clifford_multivector",
+    "cochain",
 ]
 OperatorTrainingRegime: TypeAlias = Literal[
     "task_specific",
@@ -93,7 +96,7 @@ OperatorCompatibilityCode: TypeAlias = Literal[
     "COCHAIN_SEMANTICS_REQUIRED",
     "COCHAIN_SEMANTICS_UNSUPPORTED",
     "STRUCTURED_TENSOR_REQUIRED",
-    "UNSUPPORTED_COCHAIN_SIDE",
+    "COCHAIN_FORM_TYPE_MISMATCH",
     "COCHAIN_DEGREE_MISMATCH",
     "COCHAIN_TOPOLOGY_MISMATCH",
     "COCHAIN_METRIC_REQUIRED",
@@ -123,7 +126,6 @@ class OperatorCapabilitySpec:
     masks: OperatorMaskPolicy = "supported"
     topology: OperatorTopologyPolicy = "unused"
     cochains: OperatorCochainPolicy = "unsupported"
-    cochain_sides: tuple[Literal["primal", "dual"], ...] = ("primal",)
     input_representations: tuple[OperatorFieldRepresentation, ...] = (
         "generic_channels",
         "scalar",
@@ -166,8 +168,6 @@ class OperatorCapabilitySpec:
         object.__setattr__(
             self, "cochains", parse(self.cochains, OperatorCochainPolicy, "cochains")
         )
-        if any(side not in ("primal", "dual") for side in self.cochain_sides):
-            raise ValueError("Invalid cochain capability policy.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,7 +382,7 @@ def _shared_topology(left: FunctionSamples, right: FunctionSamples, /) -> bool:
 
 
 def _field_schema_signature(field: Any, /) -> tuple[Any, ...]:
-    cochain = field.cochain
+    form_type = field.form_type
     output = field.output_spec
     return (
         field.channels,
@@ -396,14 +396,7 @@ def _field_schema_signature(field: Any, /) -> tuple[Any, ...]:
         tuple(field.scale),
         tuple(field.offset),
         field.required,
-        None
-        if cochain is None
-        else (
-            cochain.degree,
-            cochain.complex_side,
-            cochain.cell_orientation,
-            cochain.sampling,
-        ),
+        None if form_type is None else form_type.form_type_id,
         None
         if field.clifford_layout is None
         else field.clifford_layout.representation_id,
@@ -428,6 +421,38 @@ def _mapped_node_payload(samples: FunctionSamples, key: str, /) -> np.ndarray | 
     valid = mapping >= 0
     values = np.asarray(node_values)
     return values[mapping[valid]] if np.any(valid) else values[:0]
+
+
+def _cochain_form_matches(samples: FunctionSamples, form_type: FormType, /) -> bool:
+    topology = samples.topology
+    if topology is None or not topology.graph.cochain_bindings:
+        return False
+    return all(
+        binding.discretization.dimension == form_type.dimension
+        and binding.discretization.primal_twist == form_type.twist
+        for binding in topology.graph.cochain_bindings
+    )
+
+
+def _native_cochain_pairing_admission(samples: FunctionSamples, /) -> bool | None:
+    """Return eager evidence, or None pending device-guarded native consumption."""
+    topology = samples.topology
+    if (
+        topology is None
+        or topology.kind != "cell_complex"
+        or topology.site != "cell"
+        or topology.entity != "node"
+        or not topology.graph.cochain_bindings
+    ):
+        return False
+    deferred = False
+    for binding in topology.graph.cochain_bindings:
+        validity = binding.discretization.metric_valid
+        if isinstance(validity, jax_core.Tracer):
+            deferred = True
+        elif not bool(np.asarray(validity)):
+            return False
+    return None if deferred else True
 
 
 def _all_valid(samples: FunctionSamples, /) -> bool:
@@ -586,6 +611,16 @@ def _validate_operator_samples(
                 _issue(
                     "MISSING_PHYSICAL_QUADRATURE",
                     "explicit physical quadrature weights are required",
+                    name,
+                )
+            )
+        if capability.quadrature == "native_pairing_required" and (
+            samples.topology is None or not samples.topology.graph.cochain_bindings
+        ):
+            issues.append(
+                _issue(
+                    "COCHAIN_METRIC_REQUIRED",
+                    "a prepared native cochain pairing is required",
                     name,
                 )
             )
@@ -755,6 +790,7 @@ def _validate_operator_fields(
     /,
 ) -> None:
     cochain_fingerprints: set[str] = set()
+    admitted_metrics: set[str] = set()
     for field in supplied:
         if capability.requires_structured_tensors and field.tensor_layout is None:
             issues.append(
@@ -764,8 +800,9 @@ def _validate_operator_fields(
                     field.name,
                 )
             )
-        cochain = field.cochain
-        if capability.cochains == "required" and cochain is None:
+        form_type = field.form_type
+        is_cochain = field.representation == "cochain" and form_type is not None
+        if capability.cochains == "required" and not is_cochain:
             issues.append(
                 _issue(
                     "COCHAIN_SEMANTICS_REQUIRED",
@@ -773,19 +810,11 @@ def _validate_operator_fields(
                     field.name,
                 )
             )
-        if capability.cochains == "unsupported" and cochain is not None:
+        if capability.cochains == "unsupported" and is_cochain:
             issues.append(
                 _issue(
                     "COCHAIN_SEMANTICS_UNSUPPORTED",
                     "configured architecture does not consume cochain field semantics",
-                    field.name,
-                )
-            )
-        if cochain is not None and cochain.complex_side not in capability.cochain_sides:
-            issues.append(
-                _issue(
-                    "UNSUPPORTED_COCHAIN_SIDE",
-                    f"{cochain.complex_side!r} is not one of {capability.cochain_sides}",
                     field.name,
                 )
             )
@@ -827,7 +856,7 @@ def _validate_operator_fields(
                     (f"query:{field.query_name}", batch.query(field.query_name))
                 )
 
-        if cochain is None:
+        if not is_cochain or form_type is None:
             continue
         for location, samples in bound_samples:
             topology = samples.topology
@@ -841,29 +870,33 @@ def _validate_operator_fields(
                 )
                 continue
             cochain_fingerprints.add(topology.graph_fingerprint)
+            if not _cochain_form_matches(samples, form_type):
+                issues.append(
+                    _issue(
+                        "COCHAIN_FORM_TYPE_MISMATCH",
+                        "form_type dimension or twist does not match primal graph placement",
+                        location,
+                    )
+                )
             degrees = _mapped_node_payload(samples, "cell_dim")
-            if degrees is None or np.any(degrees != cochain.degree):
+            if degrees is None or np.any(degrees != form_type.degree):
                 issues.append(
                     _issue(
                         "COCHAIN_DEGREE_MISMATCH",
-                        f"sampled cells do not all have declared degree {cochain.degree}",
+                        f"sampled cells do not all have declared degree {form_type.degree}",
                         location,
                     )
                 )
-            metric = _mapped_node_payload(samples, "hodge_star")
-            if (
-                metric is None
-                or np.any(~np.isfinite(metric))
-                or np.any(metric <= 0.0)
-                or samples.quadrature_weights is None
-            ):
-                issues.append(
-                    _issue(
-                        "COCHAIN_METRIC_REQUIRED",
-                        "cochain fields require positive Hodge-star sample weights",
-                        location,
+            if topology.graph_fingerprint not in admitted_metrics:
+                admitted_metrics.add(topology.graph_fingerprint)
+                if _native_cochain_pairing_admission(samples) is False:
+                    issues.append(
+                        _issue(
+                            "COCHAIN_METRIC_REQUIRED",
+                            "cochain fields require an admitted native positive-definite pairing",
+                            location,
+                        )
                     )
-                )
     if len(cochain_fingerprints) > 1:
         issues.append(
             _issue(

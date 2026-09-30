@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from phydrax.ein import contract
+from phydrax.optim._adam import adam
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import canonical_fingerprint
@@ -419,7 +420,7 @@ def fit_variational_kinetic_model(
     )
     if validation_source.shape[0] > policy_.maximum_transitions:
         raise ValueError("Validation transitions exceed the exact full-batch capacity.")
-    optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
+    optimizer_ = adam(policy_.learning_rate) if optimizer is None else optimizer
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
     cadence = int(checkpoint_every)
     if cadence <= 0:

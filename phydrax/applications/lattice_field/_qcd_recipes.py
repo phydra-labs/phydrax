@@ -18,9 +18,13 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
+from ...discretization._cell_complex import cubical_cell_complex
 from ...discretization._lattice_boundary import LatticeBoundaryPhasePlan
 from ...discretization._lattice_distribution import LatticeDecompositionPlan
-from ...discretization._oriented_path import CellBoundaryPathPlan
+from ...discretization._oriented_path import (
+    _prepare_cubical_boundary_paths,
+    CellBoundaryPathPlan,
+)
 from ...graph._gauge_transport import GaugeCovariantShiftPlan, GaugeStaplePlan
 from ...graph._matrix_gauge import MatrixGaugeLinkSpace
 from ...linalg import SpectralInterval
@@ -197,15 +201,12 @@ class SU3GaugeGeometry(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Distributed decomposition and fermion boundary topology disagree."
                 )
-            canonical_edges = np.arange(
-                decomposition.site_count * decomposition.dimension,
-                dtype=np.int32,
-            ).reshape((decomposition.site_count, decomposition.dimension))
             if not np.array_equal(
-                np.asarray(transport.forward_edges), canonical_edges
+                np.sort(np.asarray(transport.forward_edges).reshape(-1)),
+                np.arange(link_space.num_edges),
             ) or not np.all(np.asarray(transport.forward_orientations) == 1):
                 raise ValueError(
-                    "Distributed QCD requires canonical site-major positive link routes."
+                    "Distributed QCD requires a bijection of positive canonical links."
                 )
             if not np.array_equal(
                 np.asarray(transport.forward_sites),
@@ -244,25 +245,36 @@ class SU3GaugeGeometry(StrictModule, NonTrainableState):
 
 
 def build_su3_gauge_geometry(
-    link_space: MatrixGaugeLinkSpace,
-    plaquettes: CellBoundaryPathPlan,
     fermion_boundary: LatticeBoundaryPhasePlan,
-    forward_sites: ArrayLike,
-    forward_edges: ArrayLike,
-    forward_orientations: ArrayLike,
     /,
     *,
     decomposition: LatticeDecompositionPlan | None = None,
     maximum_staples_per_link: int = 64,
 ) -> SU3GaugeGeometry:
-    """Build canonical native representation, covariant shifts, and staple plans."""
-    if not isinstance(link_space, MatrixGaugeLinkSpace):
-        raise TypeError("link_space must be MatrixGaugeLinkSpace.")
-    if not isinstance(link_space.group, SpecialUnitaryGroup) or (
-        link_space.group.dimension != 3
-    ):
-        raise TypeError("QCD geometry requires SpecialUnitaryGroup(3).")
-    representation = FundamentalGaugeRepresentation(link_space.group)
+    """Build the canonical periodic cubical SU(3) lattice and native route plans."""
+    if not isinstance(fermion_boundary, LatticeBoundaryPhasePlan):
+        raise TypeError("fermion_boundary must be LatticeBoundaryPhasePlan.")
+    if not all(fermion_boundary.topology.periodic):
+        raise ValueError("SU(3) gauge geometry requires periodic lattice axes.")
+    shape = fermion_boundary.topology.axis_sizes
+    if len(shape) < 2:
+        raise ValueError("SU(3) gauge geometry requires at least two lattice axes.")
+    cells = cubical_cell_complex(shape, periodic=True)
+    group = SpecialUnitaryGroup(3)
+    link_space = MatrixGaugeLinkSpace(cells.topology, group)
+    sites = np.arange(fermion_boundary.site_count, dtype=np.int32).reshape(shape)
+    forward_sites = np.stack(
+        tuple(np.roll(sites, -1, axis=axis).reshape(-1) for axis in range(len(shape))),
+        axis=1,
+    )
+    forward_edges = (
+        np.arange(link_space.num_edges, dtype=np.int32)
+        .reshape((len(shape), fermion_boundary.site_count))
+        .T
+    )
+    forward_orientations = np.ones_like(forward_edges)
+    plaquettes = _prepare_cubical_boundary_paths(cells)
+    representation = FundamentalGaugeRepresentation(group)
     transport = GaugeCovariantShiftPlan(
         link_space,
         representation,
@@ -378,7 +390,11 @@ def prepare_quenched_su3_recipe(
         distributed_gauge = None
         distributed_hmc = None
     else:
-        distributed_plan = DistributedGaugeTheoryPlan(decomposition, recipe.beta)
+        distributed_plan = DistributedGaugeTheoryPlan(
+            decomposition,
+            recipe.beta,
+            forward_edges=recipe.geometry.transport.forward_edges,
+        )
         distributed_gauge = distributed_plan.prepare()
         distributed_hmc = prepare_distributed_hmc(
             DistributedHMCPlan(
@@ -654,7 +670,11 @@ def prepare_wilson_clover_nf2_recipe(
         distributed_gauge = None
         distributed_rhmc = None
     else:
-        distributed_plan = DistributedGaugeTheoryPlan(decomposition, recipe.beta)
+        distributed_plan = DistributedGaugeTheoryPlan(
+            decomposition,
+            recipe.beta,
+            forward_edges=recipe.geometry.transport.forward_edges,
+        )
         distributed_gauge = distributed_plan.prepare()
         distributed_composition = DistributedRHMCPlan(distributed_plan, rhmc_plan)
         distributed_rhmc = prepare_distributed_rhmc(
@@ -968,7 +988,11 @@ def prepare_staggered_hisq_style_rhmc_recipe(
         distributed_gauge = None
         distributed_rhmc = None
     else:
-        distributed_plan = DistributedGaugeTheoryPlan(decomposition, recipe.beta)
+        distributed_plan = DistributedGaugeTheoryPlan(
+            decomposition,
+            recipe.beta,
+            forward_edges=recipe.geometry.transport.forward_edges,
+        )
         distributed_gauge = distributed_plan.prepare()
         distributed_composition = DistributedRHMCPlan(distributed_plan, rhmc_plan)
         distributed_rhmc = prepare_distributed_rhmc(

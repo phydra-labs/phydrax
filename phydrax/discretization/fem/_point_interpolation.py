@@ -18,6 +18,7 @@ from math import isfinite
 from typing import Any, assert_never, final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -30,10 +31,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._algebra import map_reference_values
+from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import ArraySpace
 from ...typing import parse
 from .._integration_domain import IntegrationDomain
-from .._reference_cell import FacetShape, reference_cell_topology
+from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from .._side_actions import (
     FacetTraceRule,
     PreparedTraceAction,
@@ -76,7 +79,7 @@ from ._reference_operator import (
 _SIMPLICES = ("triangle", "tetrahedron")
 
 
-def _scalar_basis_element(
+def _field_element(
     discretization: FiniteElementDiscretization,
     field_name: str,
     block_index: int,
@@ -84,13 +87,13 @@ def _scalar_basis_element(
 ) -> FiniteElementSpec:
     field_index = discretization._field_index(field_name)
     element = discretization.elements[field_index][block_index]
-    if (
-        element.conformity not in ("H1", "L2")
-        or element.mapping != "identity"
+    if element.form_basis is None and (
+        element.mapping != "identity"
         or element.value_shape
+        or element.value_spec.form_type.twist == "twisted"
     ):
         raise ValueError(
-            "FE point evaluation requires a scalar-basis identity-mapped H1 or L2 field."
+            "Mapped or twisted FE fields require canonical form-basis metadata."
         )
     return element
 
@@ -112,6 +115,9 @@ def finite_element_point_weights(
     inverse_jacobian: Array | None,
     derivative_axis: int | None,
     /,
+    *,
+    jacobian: Array | None = None,
+    transform: Array | None = None,
 ) -> Array:
     """Oriented basis values or physical basis derivatives at reference points.
 
@@ -120,17 +126,39 @@ def finite_element_point_weights(
     reference gradients.
     """
     basis, gradients = element.tabulate(reference_points)
+    if element.mapping != "identity" or element.value_spec.form_type.twist == "twisted":
+        if jacobian is None:
+            raise TypeError("Mapped point weights require a coordinate Jacobian.")
+        basis = map_reference_values(basis, element.value_spec, jacobian[:, None])
+        if derivative_axis is not None:
+            gradients = jnp.stack(
+                tuple(
+                    map_reference_values(
+                        gradients[..., axis], element.value_spec, jacobian[:, None]
+                    )
+                    for axis in range(element.topological_dimension)
+                ),
+                axis=-1,
+            )
     if derivative_axis is None:
         weights = basis
     else:
         if inverse_jacobian is None:
             raise TypeError("derivative_axis requires inverse_jacobian.")
-        weights = contract(
-            "plr,pr->pl", gradients, inverse_jacobian[:, :, derivative_axis]
+        flat = gradients.reshape(
+            (gradients.shape[0], gradients.shape[1], -1, gradients.shape[-1])
         )
-    return weights * orientation
+        weights = contract("plvr,pr->plv", flat, inverse_jacobian[:, :, derivative_axis])
+        weights = weights.reshape((*basis.shape[:2], *basis.shape[2:]))
+    if transform is not None:
+        flat = weights.reshape((weights.shape[0], weights.shape[1], -1))
+        weights = contract("plv,plj->pjv", flat, transform).reshape(weights.shape)
+    return weights * orientation.reshape(
+        (*orientation.shape, *((1,) * (weights.ndim - orientation.ndim)))
+    )
 
 
+@final
 class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     """Fixed FE point routes with an exact algebraic transpose scatter.
 
@@ -182,8 +210,10 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             raise ValueError(f"derivative_axis must be None or in [0, {dimension}).")
         if routes.ndim != 2 or routes.shape[0] == 0:
             raise ValueError("Interpolation routes must be a nonempty rank-2 array.")
-        if weights_.shape != routes.shape:
-            raise ValueError("Interpolation weights must match fixed route shape.")
+        if weights_.shape[:2] != routes.shape:
+            raise ValueError(
+                "Interpolation weights must match the fixed point/local axes."
+            )
         if positions.shape != (routes.shape[0], dimension):
             raise ValueError("Reference points must match interpolation count/dimension.")
         if dof_positions.shape != (field_space.shape[0], dimension):
@@ -198,14 +228,17 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Interpolation routes and geometric data must be finite/valid."
             )
-        # Values reproduce constants; derivatives annihilate them.
-        target = 1.0 if derivative_axis is None else 0.0
-        scale = 1.0 if derivative_axis is None else max(np.max(np.abs(weights_)), 1.0)
-        partition_defect = np.max(np.abs(np.sum(weights_, axis=1) - target)) / scale
-        if not isfinite(limit) or limit < 0.0 or partition_defect > limit:
-            raise ValueError(
-                "FE interpolation must reproduce constants within tolerance."
-            )
+        element = discretization.elements[discretization._field_index(name)][0]
+        if element.form_basis is None:
+            target = 1.0 if derivative_axis is None else 0.0
+            scale = 1.0 if derivative_axis is None else max(np.max(np.abs(weights_)), 1.0)
+            defect = np.max(np.abs(np.sum(weights_, axis=1) - target)) / scale
+            if not isfinite(limit) or limit < 0.0 or defect > limit:
+                raise ValueError(
+                    "FE interpolation must reproduce constants within tolerance."
+                )
+        elif not isfinite(limit) or limit < 0.0:
+            raise ValueError("Interpolation tolerance must be finite and nonnegative.")
         generated = canonical_fingerprint(
             {
                 "kind": "prepared-finite-element-point-interpolation",
@@ -226,8 +259,8 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         self.field_name = name
         self.dof_routes = jnp.asarray(routes)
         self.weights = jnp.asarray(weights_, dtype=dtype)
-        self.reference_positions = jnp.asarray(positions, dtype=dtype)
-        self.dof_reference_positions = jnp.asarray(dof_positions, dtype=dtype)
+        self.reference_positions = jnp.asarray(positions)
+        self.dof_reference_positions = jnp.asarray(dof_positions)
         self.derivative_axis = derivative_axis
         self.tolerance = limit
         self.prepared_id = identifier
@@ -246,17 +279,23 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
 
     @property
     def value_shape(self) -> tuple[int, ...]:
-        return self.field_space.shape[1:]
+        return self.weights.shape[2:] + self.field_space.shape[1:]
 
     def interpolate(self, coefficients: ArrayLike, /) -> Array:
         values = self.field_space.validate(coefficients)
-        return contract("ai,ai...->a...", self.weights, values[self.dof_routes])
+        if self.weights.ndim == 2:
+            return contract("ai,ai...->a...", self.weights, values[self.dof_routes])
+        return contract("aiv,ai->av", self.weights, values[self.dof_routes])
 
     def transpose_scatter(self, point_dual: ArrayLike, /) -> Array:
         dual = jnp.asarray(point_dual, dtype=self.weights.dtype)
         if dual.shape != (self.attachment_count, *self.value_shape):
             raise ValueError("Point dual must match attachment count and value shape.")
-        payload = contract("ai,a...->ai...", self.weights, dual)
+        payload = (
+            contract("ai,a...->ai...", self.weights, dual)
+            if self.weights.ndim == 2
+            else contract("aiv,av->ai", self.weights, dual)
+        )
         return (
             jnp.zeros(self.field_space.shape, dtype=payload.dtype)
             .at[self.dof_routes]
@@ -326,7 +365,7 @@ def prepare_finite_element_point_interpolation(
     if block not in dof_map.block_names:
         raise KeyError(f"Unknown FE block {block!r} for field {field_name!r}.")
     block_index = dof_map.block_names.index(block)
-    element = _scalar_basis_element(discretization, field_name, block_index)
+    element = _field_element(discretization, field_name, block_index)
     cells = np.asarray(cell_indices, dtype=np.int32)
     points = np.asarray(reference_points)
     cell_count = discretization.mesh.blocks[block_index].cell_count
@@ -350,7 +389,35 @@ def prepare_finite_element_point_interpolation(
         jnp.asarray(points),
         evaluation.inverse_jacobian,
         derivative_axis,
+        jacobian=evaluation.jacobian,
+        transform=dof_map.cell_transforms[block_index][cells],
     )
+    if element.form_basis is not None and derivative_axis is not None:
+        value_shape = weights.shape[2:]
+
+        def mapped(reference: Array, cell: Array, /) -> Array:
+            geometry = cell_map.evaluate(
+                realized.coordinates, cell[None], reference[None]
+            )
+            values = map_reference_values(
+                element.tabulate(reference[None])[0],
+                element.value_spec,
+                geometry.jacobian[:, None],
+            )[0]
+            transformed = contract(
+                "iv,ij->jv",
+                values.reshape((element.local_dof_count, -1)),
+                dof_map.cell_transforms[block_index][cell],
+            )
+            return transformed
+
+        gradient = jax.vmap(jax.jacfwd(mapped, argnums=0))(
+            jnp.asarray(points), jnp.asarray(cells)
+        )
+        weights = contract(
+            "plvr,pr->plv", gradient, evaluation.inverse_jacobian[:, :, derivative_axis]
+        )
+        weights = weights.reshape((cells.size, element.local_dof_count, *value_shape))
     routes = np.asarray(dof_map.cell_dofs[block_index])[cells]
     dof_positions = np.asarray(
         dof_map.evaluate_coordinates(discretization.mesh, realized.coordinates)
@@ -579,34 +646,49 @@ def prepare_finite_element_field_reconstruction(
         raise TypeError("discretization must be FiniteElementDiscretization.")
     field_index = discretization._field_index(field_name)
     dof_map = discretization.dof_maps[field_index]
+    whole_mesh = block_name is None and len(dof_map.block_names) > 1
     if block_name is None:
-        if len(dof_map.block_names) != 1:
-            raise ValueError("Multi-block FE fields require an explicit block_name.")
         block_index = 0
     else:
         if block_name not in dof_map.block_names:
             raise KeyError(f"Unknown FE block {block_name!r} for field {field_name!r}.")
         block_index = dof_map.block_names.index(block_name)
-    if len(dof_map.block_names) != 1:
-        raise ValueError(
-            "A field view covers one complete support; multi-block FE fields need one "
-            "view per block support."
-        )
-    element = _scalar_basis_element(discretization, field_name, block_index)
+    element = _field_element(discretization, field_name, block_index)
     realized = _realized_runtime(discretization, runtime)
-    cell_map = PreparedFiniteElementCellMap(discretization, block_index)
-    if locator is None:
-        if cell_map.coordinate_element.cell_kind not in _SIMPLICES:
+    if whole_mesh:
+        if any(
+            other.tabulator_id != element.tabulator_id
+            or other.degree != element.degree
+            or other.value_spec.value_spec_id != element.value_spec.value_spec_id
+            for other in discretization.elements[field_index]
+        ):
             raise ValueError(
-                f"Arbitrary-point evaluation on {cell_map.coordinate_element.cell_kind!r} "
-                "cells requires an explicit AbstractCellLocator inverse provider."
+                "A whole-support reconstruction requires one canonical reference field basis."
             )
+        cell_map = PreparedFiniteElementCellMap(discretization, None)
+        cell_dofs = jnp.concatenate(dof_map.cell_dofs, axis=0)
+        cell_transforms = jnp.concatenate(dof_map.cell_transforms, axis=0)
+        orientations = jnp.concatenate(dof_map.orientations, axis=0)
+    else:
+        cell_map = PreparedFiniteElementCellMap(discretization, block_index)
+        cell_dofs = dof_map.cell_dofs[block_index]
+        cell_transforms = dof_map.cell_transforms[block_index]
+        orientations = dof_map.orientations[block_index]
+    if locator is None:
+        kind = cell_map.coordinate_element.cell_kind
         policy = (
             SimplicialLocationPolicy(min(cell_map.cell_count, 16), 16, 1)
             if location_policy is None
             else location_policy
         )
-        locator = PreparedSimplicialCellLocator(cell_map, realized.coordinates, policy)
+        if kind in ("quadrilateral", "hexahedron") or kind.startswith("tensor:"):
+            from ._form_reconstruction import _TensorCellLocator
+
+            locator = _TensorCellLocator(cell_map, realized.coordinates, policy)
+        else:
+            locator = PreparedSimplicialCellLocator(
+                cell_map, realized.coordinates, policy
+            )
     elif not isinstance(locator, AbstractCellLocator):
         raise TypeError("locator must be an AbstractCellLocator or None.")
     elif locator.cell_map.cell_map_id != cell_map.cell_map_id or not np.array_equal(
@@ -650,7 +732,18 @@ def prepare_finite_element_field_reconstruction(
         )
     else:
         regularity = DerivativeRegularity.piecewise_smooth(continuity=continuity)
-    components = space.shape[1:]
+    scientific = element.value_spec.form_type
+    physical_spec = FormValueSpec(
+        FormType(
+            scientific.dimension,
+            scientific.degree,
+            twist=scientific.twist,
+            fiber_shape=scientific.fiber_shape,
+            ambient_dimension=discretization.mesh.ambient_dimension,
+        ),
+        proxy=element.value_spec.proxy,
+    )
+    components = physical_spec.value_shape + space.shape[1:]
     port = (
         ValuePort(
             str(field_name),
@@ -664,6 +757,7 @@ def prepare_finite_element_field_reconstruction(
             ),
             representation="finite-element-field",
             space_id=field_space_id,
+            form=physical_spec if element.form_basis is not None else None,
         )
         if value_port is None
         else value_port
@@ -672,15 +766,27 @@ def prepare_finite_element_field_reconstruction(
         raise TypeError("value_port must be a ValuePort or None.")
     if port.event_shape != components:
         raise ValueError("value_port event_shape must equal the FE component shape.")
-    kernel = FiniteElementFieldReconstructionKernel(
-        locator,
-        element,
-        dof_map.cell_dofs[block_index],
-        dof_map.orientations[block_index],
-        continuity=continuity,
-        global_dof_count=dof_map.global_dof_count,
-        field_space_id=field_space_id,
-    )
+    if element.form_basis is not None:
+        from ._form_reconstruction import FormFieldReconstructionKernel
+
+        kernel = FormFieldReconstructionKernel(
+            locator,
+            element,
+            cell_dofs,
+            cell_transforms,
+            global_dof_count=dof_map.global_dof_count,
+            field_space_id=field_space_id,
+        )
+    else:
+        kernel = FiniteElementFieldReconstructionKernel(
+            locator,
+            element,
+            cell_dofs,
+            orientations,
+            continuity=continuity,
+            global_dof_count=dof_map.global_dof_count,
+            field_space_id=field_space_id,
+        )
     return PreparedFieldReconstruction(
         kernel,
         support_geometry=geometry,
@@ -694,8 +800,6 @@ def prepare_finite_element_field_reconstruction(
         support_id=support_id,
     )
 
-
-_TANGENTIAL_DIMENSIONS = (2, 3)
 
 # Owner-facet corners spanned by the unit facet parameter axes.
 _FACET_AXIS_CORNERS: dict[FacetShape, tuple[int, ...]] = {
@@ -752,19 +856,8 @@ def _side_trace_field(
 ) -> tuple[int, ArraySpace]:
     """Validate the traced field and the requested trace quantity."""
     field_index = discretization._field_index(field_name)
-    for element in discretization.elements[field_index]:
-        if element.mapping != "identity" or element.value_shape:
-            raise ValueError(
-                "Side traces of Piola-mapped H(div)/H(curl) finite-element fields "
-                "are not prepared: their normal/tangential traces are facet-moment "
-                "maps of the Piola transform, not scalar-basis traces."
-            )
-        if element.conformity not in ("H1", "L2"):
-            raise ValueError(
-                "Side traces require identity-mapped scalar-basis H1 or L2 fields."
-            )
     space = _field_array_space(discretization, field_name)
-    components = space.shape[1:]
+    components = discretization.elements[field_index][0].value_shape + space.shape[1:]
     dimension = discretization.mesh.ambient_dimension
     if discretization.mesh.topological_dimension != dimension:
         raise ValueError(
@@ -780,8 +873,6 @@ def _side_trace_field(
                     f"{quantity!r} traces require a vector field with component "
                     f"shape ({dimension},)."
                 )
-            if quantity == "tangential" and dimension not in _TANGENTIAL_DIMENSIONS:
-                raise ValueError("Tangential traces require two or three dimensions.")
         case "conormal-flux":
             raise ValueError(
                 "Conormal fluxes are published by compiled physics owners through "
@@ -935,9 +1026,20 @@ def _side_parameters(
                 "Owner and neighbor local facets do not share their vertices; "
                 "periodic or nonconforming facets need an explicit transfer."
             )
-        corners = _facet_corner_parameters(shape)[[second.index(v) for v in first]]
-        axes = corners[list(_FACET_AXIS_CORNERS[shape])] - corners[0]
-        mapped[index] = corners[0] + owner[index] @ axes
+        reference_corners = _facet_corner_parameters(shape)
+        corners = reference_corners[[second.index(v) for v in first]]
+        if isinstance(shape, ReferenceCellTopology):
+            dimension = reference_corners.shape[1]
+            origin = int(np.flatnonzero(np.all(reference_corners == 0, axis=1))[0])
+            axis_corners = [
+                int(np.flatnonzero(np.all(reference_corners == axis, axis=1))[0])
+                for axis in np.eye(dimension, dtype=np.float64)
+            ]
+            axes = corners[axis_corners] - corners[origin]
+            mapped[index] = corners[origin] + owner[index] @ axes
+        else:
+            axes = corners[list(_FACET_AXIS_CORNERS[shape])] - corners[0]
+            mapped[index] = corners[0] + owner[index] @ axes
     return owner, mapped, weights, shapes
 
 
@@ -949,6 +1051,8 @@ def _facet_support_columns(element: FiniteElementSpec, local_facet: int, /) -> n
     L2 fields keep the local DOFs whose probe tabulation is not identically
     zero.
     """
+    if element.form_basis is not None:
+        return np.arange(element.local_dof_count, dtype=np.int32)
     shape = _reference_facet_shape(element.cell_kind, local_facet)
     probe, _ = FacetTraceRule(points=element.degree + 2).reference(shape)
     points, _ = reference_facet_embedding(element.cell_kind, local_facet, probe)
@@ -991,6 +1095,26 @@ def _facet_trace_degree(
     """
     if element.cell_kind == "pyramid" or coordinate_degree != 1:
         return None
+    if isinstance(shape, ReferenceCellTopology):
+        if shape.name.startswith("simplex:"):
+            return element.degree
+        reference = np.asarray(shape.vertices)
+        augmented = np.c_[reference, np.ones((reference.shape[0],))]
+        affine = np.linalg.lstsq(
+            augmented,
+            corners.transpose((1, 0, 2)).reshape((reference.shape[0], -1)),
+            rcond=None,
+        )[0]
+        represented = (
+            (augmented @ affine)
+            .reshape((reference.shape[0], corners.shape[0], corners.shape[2]))
+            .transpose((1, 0, 2))
+        )
+        if np.max(np.abs(represented - corners)) > 1e-12 * max(
+            np.max(np.abs(corners)), 1
+        ):
+            return None
+        return reference.shape[1] * element.degree
     match shape:
         case "point":
             return 0
@@ -1004,7 +1128,7 @@ def _facet_trace_degree(
                 return None
             return 2 * element.degree
         case _:
-            assert_never(shape)
+            raise ValueError(f"Unsupported facet shape {shape!r}.")
 
 
 def _side_geometry(
@@ -1043,7 +1167,7 @@ def _side_geometry(
         raise ValueError("A side cell has an invalid coordinate map at its facet.")
     physical = contract(
         "p,pri,pr->pi",
-        evaluation.determinant,
+        jnp.abs(evaluation.determinant),
         evaluation.inverse_jacobian,
         jnp.asarray(scaled.reshape((-1, dimension))),
     )
@@ -1065,15 +1189,29 @@ def _block_side_gathers(
     block_cells: np.ndarray,
     local: np.ndarray,
     reference: np.ndarray,
+    coordinates: Array,
     /,
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Per-facet global DOF gathers and oriented basis values on the support."""
     element = discretization.elements[field_index][block]
     dof_map = discretization.dof_maps[field_index]
     count, sites, dimension = reference.shape
-    tabulated = element.tabulate(jnp.asarray(reference.reshape((-1, dimension))))[0]
-    orientation = np.asarray(dof_map.orientations[block])[block_cells]
-    basis = np.asarray(tabulated).reshape((count, sites, -1)) * orientation[:, None, :]
+    points = jnp.asarray(reference.reshape((-1, dimension)))
+    cell_map = PreparedFiniteElementCellMap(discretization, block)
+    paired_cells = jnp.repeat(jnp.asarray(block_cells), sites)
+    evaluation = cell_map.evaluate(coordinates, paired_cells, points)
+    tabulated = finite_element_point_weights(
+        element,
+        jnp.asarray(dof_map.orientations[block])[paired_cells],
+        points,
+        evaluation.inverse_jacobian,
+        None,
+        jacobian=evaluation.jacobian,
+        transform=dof_map.cell_transforms[block][paired_cells],
+    )
+    basis = np.asarray(tabulated).reshape(
+        (count, sites, element.local_dof_count, *element.value_shape)
+    )
     routes = np.asarray(dof_map.cell_dofs[block])[block_cells]
     columns = {
         facet: _facet_support_columns(element, facet)
@@ -1149,6 +1287,7 @@ def _side_tabulation(
             block_cells[rows],
             local[rows],
             geometry.reference,
+            coordinates,
         )
         for row, gather, value in zip(rows, block_gathers, block_values, strict=True):
             gathers[row] = gather
@@ -1169,7 +1308,8 @@ def _side_tabulation(
     width = max(gather.size for gather in gathers)
     dofs = np.empty((count, width), dtype=np.int32)
     valid = np.zeros((count, width), dtype=np.bool_)
-    basis = np.zeros((count, sites, width))
+    value_shape = discretization.elements[field_index][0].value_shape
+    basis = np.zeros((count, sites, width, *value_shape), dtype=np.float64)
     for row, (gather, value) in enumerate(zip(gathers, values, strict=True)):
         # Padded slots repeat a real row of the facet and carry zero weight.
         dofs[row] = gather[0]
@@ -1193,6 +1333,22 @@ def _trace_route_weights(
 ) -> tuple[np.ndarray, tuple[int, ...]]:
     """Contracted route weights `(facets, sites, local, *value, *component)`."""
     dimension = normals.shape[-1]
+    if basis.ndim == 4:
+        match quantity:
+            case "normal":
+                return np.sum(basis * normals[:, :, None, :], axis=-1), ()
+            case "tangential" if dimension == 2:
+                tangent = np.stack((-normals[..., 1], normals[..., 0]), axis=-1)
+                return np.sum(basis * tangent[:, :, None, :], axis=-1), ()
+            case "tangential":
+                normal_part = np.sum(basis * normals[:, :, None, :], axis=-1)
+                return basis - normal_part[..., None] * normals[:, :, None, :], (
+                    dimension,
+                )
+            case "value" | "conormal-flux":
+                raise ValueError(f"{quantity!r} traces are not contracted routes.")
+            case _:
+                assert_never(quantity)
     match quantity:
         case "normal":
             return basis[..., None] * normals[:, :, None, :], ()
@@ -1215,6 +1371,20 @@ def _trace_route(
     /,
 ) -> SideGatherRoute:
     """Componentwise value route or normal-contracted vector route."""
+    if tabulation.basis.ndim > 3:
+        if quantity == "value":
+            weights, value_shape = tabulation.basis, tabulation.basis.shape[3:]
+        else:
+            weights, value_shape = _trace_route_weights(
+                tabulation.basis, tabulation.normals, quantity
+            )
+        return SideGatherRoute(
+            tabulation.dofs,
+            weights.astype(space.dtype),
+            coefficient_shape=space.shape,
+            mode="contracted",
+            value_shape=value_shape,
+        )
     if quantity == "value":
         return SideGatherRoute(
             tabulation.dofs,
@@ -1276,9 +1446,9 @@ def prepare_finite_element_side_trace(
 ) -> PreparedTraceAction:
     """Prepare the exact trace of one FE field on selected exterior/interior facets.
 
-    Supports identity-mapped scalar-basis H1 and L2 fields of any degree
-    (simplex Lagrange, tensor GLL spectral elements, prisms) on multi-block
-    meshes. Sites are the owner cell's local-facet rule points, shared by the
+    Supports scalar and compatible polynomial form fields of every degree on
+    simplex and tensor-product blocks. Piola values use the actual side runtime.
+    Sites are the owner cell's local-facet rule points, shared by the
     `"owner"` and `"neighbor"` sides of an interior facet; normals point out of
     the traced side cell and weights are the physical facet measure. `"value"`
     traces act componentwise; `"normal"` (`u . n`) and `"tangential"`
@@ -1319,7 +1489,7 @@ def prepare_finite_element_side_trace(
             rule_weights,
             tabulation,
         )
-    exact_degrees = [rule.exact_degree(shape) for shape in sorted(set(shapes))]
+    exact_degrees = [rule.exact_degree(shape) for shape in set(shapes)]
     known_exact = [degree for degree in exact_degrees if degree is not None]
     descriptor = SideActionDescriptor(
         owner_id=discretization.prepared_id,
@@ -1337,14 +1507,31 @@ def prepare_finite_element_side_trace(
             min(known_exact) if len(known_exact) == len(exact_degrees) else None
         ),
     )
+    element = discretization.elements[field_index][0]
+    form = None
+    if element.form_basis is not None:
+        dimension = discretization.mesh.ambient_dimension
+        twist = element.value_spec.form_type.twist
+        if quantity == "normal" or (quantity == "tangential" and dimension == 2):
+            form = FormValueSpec(
+                FormType(dimension - 1, dimension - 1, twist=twist), proxy="density"
+            )
+        elif quantity == "tangential":
+            form = FormValueSpec(
+                FormType(dimension - 1, 1, twist=twist, ambient_dimension=dimension),
+                proxy="circulation",
+            )
+        else:
+            form = element.value_spec
     return PreparedTraceAction(
         descriptor,
         _trace_route(tabulation, space, quantity),
         space,
-        sites=sites.astype(space.dtype),
-        weights=weights.astype(space.dtype),
-        normals=tabulation.normals.astype(space.dtype),
+        sites=sites,
+        weights=weights,
+        normals=tabulation.normals,
         support_rows=np.unique(tabulation.dofs[tabulation.valid]),
+        form=form,
     )
 
 
@@ -1522,7 +1709,7 @@ def prepare_finite_element_side_gradient(
     _, parameters, rule_weights, shapes = _side_parameters(
         discretization, selection, rule
     )
-    exact = [rule.exact_degree(shape) for shape in sorted(set(shapes))]
+    exact = [rule.exact_degree(shape) for shape in set(shapes)]
     known = [degree for degree in exact if degree is not None]
     rows = _side_gradient_rows(
         discretization,

@@ -6,7 +6,7 @@
 from typing import Any
 
 import phydrax as phx
-from phydrax.discretization import CochainFieldSpec
+from phydrax.exterior import FormTwist, FormType
 from phydrax.nn.operator import (
     OperatorClassificationSpec,
     OperatorFieldSpec,
@@ -79,9 +79,7 @@ def test_operator_field_ports_scenario_2() -> None:
         {"component_names": ("x", "y", "z")},
         {"representation": "generic_channels"},
         {
-            "cochain": CochainFieldSpec(
-                1, cell_orientation="signed", sampling="cell_integral"
-            )
+            "form_type": FormType(3, 1, fiber_shape=(3,)),
         },
     ]:
         assert (
@@ -117,16 +115,11 @@ def test_operator_field_ports_scenario_2() -> None:
 
 
 def test_cochain_declaration_identifies_the_field_space() -> None:
-    def flux(degree: int, side: str = "primal") -> OperatorFieldSpec:
+    def flux(degree: int, twist: FormTwist = "untwisted") -> OperatorFieldSpec:
         return OperatorFieldSpec(
             "flux",
-            cochain=CochainFieldSpec(
-                degree,
-                # ty: ignore[invalid-argument-type]
-                complex_side=side,
-                cell_orientation="signed",
-                sampling="cell_integral",
-            ),
+            form_type=FormType(3, degree, twist=twist),
+            representation="cochain",
         )
 
     edge = flux(1).value_port()
@@ -134,7 +127,7 @@ def test_cochain_declaration_identifies_the_field_space() -> None:
     assert edge.space_id is not None
     assert edge.space_id == flux(1).value_port().space_id
     assert edge.space_id != flux(2).value_port().space_id
-    assert edge.space_id != flux(1, "dual").value_port().space_id
+    assert edge.space_id != flux(1, "twisted").value_port().space_id
     assert edge.variance == "neutral"
 
 

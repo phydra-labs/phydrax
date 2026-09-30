@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final, TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,6 +16,7 @@ from jaxtyping import PyTree
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._complex import ComplexBoundary
 from ...linalg import (
     AbstractLinearOperator,
     AbstractPreconditioner,
@@ -23,8 +26,16 @@ from ...linalg import (
     PreconditionerProperties,
     SubspaceCorrectionTerm,
 )
+from ...linalg._complexes import coordinate_operator, coordinate_space
+from ...linalg._operators import adjoint, AdjointLinearOperator, IdentityLinearOperator
+from ...sparse import EdgeRelation, SparseCoordinateOperator
 
 
+if TYPE_CHECKING:
+    from ._de_rham import FiniteElementDeRhamComplex
+
+
+@final
 class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
     interpolation: AbstractLinearOperator
     anterpolation: AbstractLinearOperator
@@ -68,7 +79,63 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    def from_complex(
+        cls,
+        complex: FiniteElementDeRhamComplex,
+        degree: int,
+        /,
+        *,
+        boundary: ComplexBoundary = "absolute",
+    ) -> LowOrderAuxiliaryOperatorPlan:
+        """Prepare canonical low-order inclusion and its coordinate adjoint."""
+        from ._de_rham import FiniteElementDeRhamComplex
 
+        if not isinstance(complex, FiniteElementDeRhamComplex):
+            raise TypeError("complex must be a FiniteElementDeRhamComplex.")
+        if complex.order <= 1:
+            raise ValueError(
+                "A low-order auxiliary plan requires order greater than one."
+            )
+        low = FiniteElementDeRhamComplex(
+            complex.mesh,
+            family=complex.family,
+            order=1,
+            twist=complex.primal_twist,
+        )
+
+        def restriction(
+            realization: FiniteElementDeRhamComplex,
+        ) -> AbstractLinearOperator:
+            full = coordinate_space(realization.hilbert_complex().space(degree))
+            active = realization.active_indices(degree, boundary=boundary)
+            reduced = coordinate_space(
+                realization.hilbert_complex(boundary=boundary).space(degree)
+            )
+            relation = EdgeRelation(
+                active,
+                jnp.arange(active.size, dtype=jnp.int32),
+                source_size=full.size,
+                target_size=reduced.size,
+            )
+            return SparseCoordinateOperator(
+                relation,
+                jnp.ones((active.size,), dtype=jnp.float64),
+                source=full,
+                target=reduced,
+                operator_id=f"{realization.realization_id}:auxiliary-restriction:{degree}:{boundary}",
+            )
+
+        inclusion = coordinate_operator(low.transfer(complex).maps[degree])
+        prolongation = restriction(complex) @ inclusion @ adjoint(restriction(low))
+        return cls(
+            adjoint(prolongation),
+            prolongation,
+            jnp.ones((prolongation.target.size,), dtype=jnp.float64),
+        )
+
+
+@final
 class LowOrderAuxiliaryPreconditioner(AbstractPreconditioner):
     plan: LowOrderAuxiliaryOperatorPlan
     low_order_preconditioner: AbstractPreconditioner
@@ -139,6 +206,7 @@ def low_order_auxiliary_preconditioner_builder(
     /,
     *,
     properties: PreconditionerProperties | None = None,
+    smoother: AbstractPreconditioner | AbstractPreconditionerBuilder | None = None,
 ) -> AdditiveSubspaceCorrectionBuilder:
     """Build the weighted auxiliary correction on the generic linalg substrate."""
     if not isinstance(plan, LowOrderAuxiliaryOperatorPlan):
@@ -157,15 +225,20 @@ def low_order_auxiliary_preconditioner_builder(
         space=high_space,
         operator_id=f"low-order-auxiliary-weight/{plan.plan_id}",
     )
-    term = SubspaceCorrectionTerm(
-        plan.interpolation @ weighting,
-        weighting @ plan.anterpolation,
-        low_order_solver,
-    )
-    return AdditiveSubspaceCorrectionBuilder(
-        (term,),
-        properties=properties,
-    )
+    prolongation = weighting @ plan.anterpolation
+    if (
+        isinstance(plan.interpolation, AdjointLinearOperator)
+        and plan.interpolation.operator is plan.anterpolation
+    ):
+        restriction = adjoint(prolongation)
+    else:
+        restriction = plan.interpolation @ weighting
+    term = SubspaceCorrectionTerm(restriction, prolongation, low_order_solver)
+    terms = (term,)
+    if smoother is not None:
+        identity = IdentityLinearOperator(high_space)
+        terms = (SubspaceCorrectionTerm(identity, identity, smoother), term)
+    return AdditiveSubspaceCorrectionBuilder(terms, properties=properties)
 
 
 __all__ = [

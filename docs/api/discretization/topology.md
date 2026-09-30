@@ -43,11 +43,22 @@ filtrations, and persistence live in [`phydrax.topology`](../topology/index.md).
 
 ---
 
-::: phydrax.discretization.CochainFieldSpec
+::: phydrax.discretization.AbstractCellDeRhamComplex
 
----
+::: phydrax.discretization.DiagonalHodge
 
-::: phydrax.discretization.CochainBoundaryPolicy
+::: phydrax.discretization.SparseHodge
+
+`CochainDiscretization(topology, hodges, /, *, boundary_masks=None,
+coordinates=None, primal_measures=None, dual_measures=None, key=None,
+numeric_revision=None, time=0.0, differentials=None)` binds topology to
+metric-only Hodges. Use `boundary="absolute"` or `boundary="relative"` on
+calculus calls. Relative operators restrict to active coordinates, invert the
+restricted pairing, and zero-extend the result; they never mask a full inverse.
+
+Form metadata is declared by `phydrax.exterior.FormType`. Obtain a degree's vector
+space with `complex.hilbert_complex(boundary="absolute").space(k)`.
+See [exterior complexes](../exterior/complexes.md).
 
 ## Distributed halos and fixed topology epochs
 

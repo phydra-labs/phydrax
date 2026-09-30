@@ -8,9 +8,10 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import optax
 from jax import Array
 from jaxtyping import PyTree
+
+from phydrax.optim._adam import adam
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import canonical_fingerprint
@@ -95,7 +96,7 @@ def fit_flow_to_data(
         ),
         TrainingKernelSpec(
             OptaxUpdateRule(
-                optax.adam(rate),
+                adam(rate),
                 rule_id=canonical_fingerprint(
                     {"kind": "fit-flow-to-data-adam", "learning_rate": rate.hex()}
                 ),

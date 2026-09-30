@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-from itertools import combinations
-
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..exterior._basis import exterior_indices
 from ._chart import CoordinateChart
 from ._complex import (
     AlmostComplexStructure,
@@ -29,7 +28,7 @@ from ._validation import validate_metric
 class _FundamentalFormCoefficients(StrictModule):
     metric: RiemannianMetric
     complex_structure: AlmostComplexStructure
-    indices: tuple[tuple[int, int], ...]
+    indices: tuple[tuple[int, ...], ...]
 
     def __init__(
         self,
@@ -39,7 +38,7 @@ class _FundamentalFormCoefficients(StrictModule):
     ) -> None:
         self.metric = metric
         self.complex_structure = complex_structure
-        self.indices = tuple(combinations(range(metric.chart.dimension), 2))
+        self.indices = exterior_indices(metric.chart.dimension, 2)
 
     def __call__(self, coordinates: Array, /) -> Array:
         matrix = self.metric(coordinates) @ self.complex_structure(coordinates)
@@ -48,11 +47,11 @@ class _FundamentalFormCoefficients(StrictModule):
 
 class _RicciFormCoefficients(StrictModule):
     structure: KahlerStructure
-    indices: tuple[tuple[int, int], ...]
+    indices: tuple[tuple[int, ...], ...]
 
     def __init__(self, structure: KahlerStructure, /) -> None:
         self.structure = structure
-        self.indices = tuple(combinations(range(structure.metric.chart.dimension), 2))
+        self.indices = exterior_indices(structure.metric.chart.dimension, 2)
 
     def __call__(self, coordinates: Array, /) -> Array:
         matrix = ricci_tensor(

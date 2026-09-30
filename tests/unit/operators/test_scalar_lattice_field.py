@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -36,7 +37,7 @@ def test_phi4_contracts() -> None:
     field = jnp.linspace(-0.8, 1.1, cochain.cell_counts[0])
     derivative = cochain.exterior_derivative(0, field)
     expected = 0.5 * 1.3 * jnp.vdot(
-        derivative, cochain.apply_hodge(1, derivative)
+        derivative, cochain.hodge_star(1, derivative)
     ) + jnp.sum(cochain.dual_measures[0] * (-0.35 * field**2 + 0.225 * field**4))
 
     direction = jnp.cos(jnp.arange(field.size, dtype=field.dtype))
@@ -132,17 +133,21 @@ def test_phi4_contracts() -> None:
         )
 
     cochain = _cochain((4,))
-    dense_hodge = phx.discretization.CochainDiscretization(
+    sparse_hodge = phx.discretization.CochainDiscretization(
         cochain.topology,
-        cochain.hodge_stars,
-        hodge_matrices=(
-            None,
-            jnp.diag(cochain.hodge_stars[1]),
+        (
+            cochain.hodges[0],
+            phx.discretization.SparseHodge(
+                np.arange(cochain.cell_counts[1], dtype=np.int32),
+                np.arange(cochain.cell_counts[1], dtype=np.int32),
+                cochain.hodge_diagonal(1),
+                cochain.cell_counts[1],
+            ),
         ),
         primal_measures=cochain.primal_measures,
         dual_measures=cochain.dual_measures,
         coordinates=cochain.coordinates,
     )
-    dense_action = phx.operators.path_integral.Phi4LatticeAction(dense_hodge)
+    sparse_action = phx.operators.path_integral.Phi4LatticeAction(sparse_hodge)
     with pytest.raises(ValueError, match="diagonal"):
-        phx.operators.path_integral.prepare_local_phi4_action(dense_action)
+        phx.operators.path_integral.prepare_local_phi4_action(sparse_action)

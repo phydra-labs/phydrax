@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import product
-from typing import Literal
+from typing import final, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,14 +21,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior import FormType, FormValueSpec
 from ...linalg import (
     ArraySpace,
     DenseLinearOperator,
-    determinant_small_linear,
     LinearSystem,
-    SmallLinearSolvePlan,
     solve,
-    solve_small_linear,
 )
 from .._reference_cell import reference_cell_topology
 from ._high_order import (
@@ -498,205 +496,6 @@ class NIrregularMortarPlan(StrictModule, NonTrainableState):
         )
 
 
-class TensorCompatibleFamily(StrictModule, NonTrainableState):
-    kind: Literal["Hcurl", "Hdiv"] = eqx.field(static=True)
-    cell_kind: Literal["quadrilateral", "hexahedron"] = eqx.field(static=True)
-    degree: int = eqx.field(static=True)
-    component_degrees: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    local_dof_count: int = eqx.field(static=True)
-    mapping: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        kind: Literal["Hcurl", "Hdiv"],
-        cell_kind: Literal["quadrilateral", "hexahedron"],
-        degree: int,
-        /,
-    ) -> None:
-        p = int(degree)
-        dimension = 2 if cell_kind == "quadrilateral" else 3
-        if kind not in ("Hcurl", "Hdiv") or p < 1:
-            raise ValueError("Compatible tensor families require Hcurl/Hdiv and p >= 1.")
-        if kind == "Hcurl":
-            degrees = tuple(
-                tuple(p - 1 if axis == component else p for axis in range(dimension))
-                for component in range(dimension)
-            )
-            mapping = "covariant_piola"
-        else:
-            degrees = tuple(
-                tuple(p if axis == component else p - 1 for axis in range(dimension))
-                for component in range(dimension)
-            )
-            mapping = "contravariant_piola"
-        self.kind = kind
-        self.cell_kind = cell_kind
-        self.degree = p
-        self.component_degrees = degrees
-        self.local_dof_count = sum(
-            int(np.prod(np.asarray(value) + 1)) for value in degrees
-        )
-        self.mapping = mapping
-
-    def tabulate(self, points: ArrayLike, /) -> Array:
-        points_ = jnp.asarray(points)
-        dimension = points_.shape[-1]
-        blocks = []
-        for component, degrees in enumerate(self.component_degrees):
-            exponents = tuple(product(*(range(value + 1) for value in degrees)))
-            scalar = jnp.stack(
-                [
-                    jnp.prod(points_ ** jnp.asarray(exponent), axis=-1)
-                    for exponent in exponents
-                ],
-                axis=-1,
-            )
-            vector = (
-                jnp.zeros(
-                    scalar.shape + (dimension,),
-                    dtype=scalar.dtype,
-                )
-                .at[..., component]
-                .set(scalar)
-            )
-            blocks.append(vector)
-        return jnp.concatenate(blocks, axis=-2)
-
-
-def tensor_hcurl_family(
-    cell_kind: Literal["quadrilateral", "hexahedron"],
-    degree: int,
-    /,
-) -> TensorCompatibleFamily:
-    return TensorCompatibleFamily("Hcurl", cell_kind, degree)
-
-
-def tensor_hdiv_family(
-    cell_kind: Literal["quadrilateral", "hexahedron"],
-    degree: int,
-    /,
-) -> TensorCompatibleFamily:
-    return TensorCompatibleFamily("Hdiv", cell_kind, degree)
-
-
-class TensorDeRhamComplex(StrictModule, NonTrainableState):
-    degree: int = eqx.field(static=True)
-    dimension: int = eqx.field(static=True)
-    gradient: Array
-    curl: Array
-    divergence: Array
-    grad_curl_defect: Array
-    curl_div_defect: Array
-    complex_id: str = eqx.field(static=True)
-
-    def __init__(self, degree: int, dimension: int, /) -> None:
-        p = int(degree)
-        d = int(dimension)
-        if p < 1 or d not in (2, 3):
-            raise ValueError("Tensor de Rham complexes require p >= 1 and dimension 2/3.")
-        derivative = np.zeros((p, p + 1))
-        for power in range(1, p + 1):
-            derivative[power - 1, power] = power
-
-        def kron_factors(factors: Sequence[np.ndarray]) -> np.ndarray:
-            result = factors[0]
-            for factor in factors[1:]:
-                result = np.kron(result, factor)
-            return result
-
-        identity_p = np.eye(p + 1)
-        identity_m = np.eye(p)
-        grad_blocks = []
-        for axis in range(d):
-            factors = [identity_p] * d
-            factors[axis] = derivative
-            grad_blocks.append(kron_factors(factors))
-        gradient = np.concatenate(grad_blocks, axis=0)
-        if d == 2:
-            dx = np.kron(derivative, np.eye(p))
-            dy = np.kron(np.eye(p), derivative)
-            curl = np.concatenate((-dy, dx), axis=1)
-            divergence = curl
-            grad_curl = curl @ gradient
-            curl_div = np.zeros((1, 1))
-        else:
-            edge_sizes = [p * (p + 1) * (p + 1)] * 3
-            face_sizes = [(p + 1) * p * p] * 3
-            curl = np.zeros((sum(face_sizes), sum(edge_sizes)))
-            # Component 0: d_y E_z - d_z E_y
-            dy_ez = kron_factors((identity_p, derivative, identity_m))
-            dz_ey = kron_factors((identity_p, identity_m, derivative))
-            curl[0 : face_sizes[0], edge_sizes[0] + edge_sizes[1] :] = dy_ez
-            curl[
-                0 : face_sizes[0], edge_sizes[0] : edge_sizes[0] + edge_sizes[1]
-            ] = -dz_ey
-            # Component 1: d_z E_x - d_x E_z
-            dz_ex = kron_factors((identity_m, identity_p, derivative))
-            dx_ez = kron_factors((derivative, identity_p, identity_m))
-            start = face_sizes[0]
-            curl[start : start + face_sizes[1], : edge_sizes[0]] = dz_ex
-            curl[start : start + face_sizes[1], edge_sizes[0] + edge_sizes[1] :] = -dx_ez
-            # Component 2: d_x E_y - d_y E_x
-            dx_ey = kron_factors((derivative, identity_m, identity_p))
-            dy_ex = kron_factors((identity_m, derivative, identity_p))
-            start += face_sizes[1]
-            curl[start:, edge_sizes[0] : edge_sizes[0] + edge_sizes[1]] = dx_ey
-            curl[start:, : edge_sizes[0]] = -dy_ex
-            div_blocks = (
-                kron_factors((derivative, identity_m, identity_m)),
-                kron_factors((identity_m, derivative, identity_m)),
-                kron_factors((identity_m, identity_m, derivative)),
-            )
-            divergence = np.concatenate(div_blocks, axis=1)
-            grad_curl = curl @ gradient
-            curl_div = divergence @ curl
-        self.degree = p
-        self.dimension = d
-        self.gradient = jnp.asarray(gradient)
-        self.curl = jnp.asarray(curl)
-        self.divergence = jnp.asarray(divergence)
-        self.grad_curl_defect = jnp.asarray(np.max(np.abs(grad_curl), initial=0.0))
-        self.curl_div_defect = jnp.asarray(np.max(np.abs(curl_div), initial=0.0))
-        self.complex_id = canonical_fingerprint(
-            {
-                "kind": "tensor-de-rham-complex",
-                "degree": p,
-                "dimension": d,
-                "gradient": list(gradient.shape),
-                "curl": list(curl.shape),
-                "divergence": list(divergence.shape),
-            }
-        )
-
-
-class TensorPiolaMap(StrictModule, NonTrainableState):
-    mapping: Literal["covariant", "contravariant"] = eqx.field(static=True)
-
-    def __init__(self, mapping: Literal["covariant", "contravariant"], /) -> None:
-        if mapping not in ("covariant", "contravariant"):
-            raise ValueError("Piola mapping must be covariant or contravariant.")
-        self.mapping = mapping
-
-    def apply(self, jacobian: ArrayLike, values: ArrayLike, /) -> Array:
-        matrix = jnp.asarray(jacobian)
-        value = jnp.asarray(values)
-        dimension = matrix.shape[-1]
-        small_plan = SmallLinearSolvePlan(dimension)
-        if self.mapping == "covariant":
-            result = solve_small_linear(
-                small_plan,
-                jnp.swapaxes(matrix, -1, -2),
-                value,
-            )
-            return eqx.error_if(
-                result.value,
-                jnp.any(~result.successful),
-                "Covariant Piola map is singular.",
-            )
-        determinant = determinant_small_linear(small_plan, matrix)
-        return ein.contract("...ij,...j->...i", matrix, value) / determinant[..., None]
-
-
 def _shifted_jacobi(
     degree: int, alpha: float, beta: float, values: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -770,6 +569,7 @@ def _pyramid_modal_tabulation(
     )
 
 
+@final
 class HybridReferenceFamily(StrictModule, NonTrainableState):
     """Anisotropic prism and arbitrary-order rational pyramid family."""
 
@@ -1004,7 +804,10 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
             self.degree,
             self.nodes,
             tuple(tuple(tuple(values) for values in dimension) for dimension in entities),
-            conformity=conformity,
+            value_spec=FormValueSpec(
+                FormType(topology.dimension, 0, twist="untwisted"), proxy="scalar"
+            ),
+            continuity="conforming" if conformity == "H1" else "discontinuous",
             representation="point_value",
             tabulator=self.tabulate_with_gradients,
             tabulator_id=self.family_id,
@@ -1033,221 +836,6 @@ class LevelSetCutQuadrature(StrictModule, NonTrainableState):
         self.weights = selected
         self.active = active
         self.volume_fraction = jnp.sum(selected) / jnp.sum(weights_)
-
-
-class TensorDeRhamTransferPlan(StrictModule, NonTrainableState):
-    source: TensorDeRhamComplex
-    target: TensorDeRhamComplex
-    h1_prolongation: Array
-    hcurl_prolongation: Array
-    hdiv_prolongation: Array
-    l2_prolongation: Array
-    commuting_gradient_error: Array
-    commuting_curl_error: Array
-    commuting_divergence_error: Array
-
-    def __init__(
-        self, source: TensorDeRhamComplex, target: TensorDeRhamComplex, /
-    ) -> None:
-        if source.dimension != target.dimension or source.degree > target.degree:
-            raise ValueError(
-                "Compatible p transfer requires equal dimensions and nested degree."
-            )
-
-        def tensor_embedding(
-            source_degrees: tuple[int, ...], target_degrees: tuple[int, ...]
-        ) -> np.ndarray:
-            source_indices = tuple(
-                product(*(range(value + 1) for value in source_degrees))
-            )
-            target_indices = tuple(
-                product(*(range(value + 1) for value in target_degrees))
-            )
-            target_position = {value: index for index, value in enumerate(target_indices)}
-            matrix = np.zeros((len(target_indices), len(source_indices)))
-            for column, exponent in enumerate(source_indices):
-                matrix[target_position[exponent], column] = 1.0
-            return matrix
-
-        def block_embedding(
-            source_components: Sequence[tuple[int, ...]],
-            target_components: Sequence[tuple[int, ...]],
-        ) -> np.ndarray:
-            source_widths = [
-                int(np.prod(np.asarray(value) + 1)) for value in source_components
-            ]
-            target_widths = [
-                int(np.prod(np.asarray(value) + 1)) for value in target_components
-            ]
-            matrix = np.zeros((sum(target_widths), sum(source_widths)))
-            source_offset = 0
-            target_offset = 0
-            for source_degrees, target_degrees, source_width, target_width in zip(
-                source_components,
-                target_components,
-                source_widths,
-                target_widths,
-                strict=True,
-            ):
-                matrix[
-                    target_offset : target_offset + target_width,
-                    source_offset : source_offset + source_width,
-                ] = tensor_embedding(source_degrees, target_degrees)
-                source_offset += source_width
-                target_offset += target_width
-            return matrix
-
-        source_p = source.degree
-        target_p = target.degree
-        dimension = source.dimension
-        h1 = tensor_embedding((source_p,) * dimension, (target_p,) * dimension)
-        hcurl_source = [
-            tuple(
-                source_p - 1 if axis == component else source_p
-                for axis in range(dimension)
-            )
-            for component in range(dimension)
-        ]
-        hcurl_target = [
-            tuple(
-                target_p - 1 if axis == component else target_p
-                for axis in range(dimension)
-            )
-            for component in range(dimension)
-        ]
-        hcurl = block_embedding(hcurl_source, hcurl_target)
-        if dimension == 2:
-            hdiv = hcurl
-            l2 = tensor_embedding(
-                (source_p - 1, source_p - 1),
-                (target_p - 1, target_p - 1),
-            )
-        else:
-            hdiv_source = [
-                tuple(
-                    source_p if axis == component else source_p - 1 for axis in range(3)
-                )
-                for component in range(3)
-            ]
-            hdiv_target = [
-                tuple(
-                    target_p if axis == component else target_p - 1 for axis in range(3)
-                )
-                for component in range(3)
-            ]
-            hdiv = block_embedding(hdiv_source, hdiv_target)
-            l2 = tensor_embedding(
-                (source_p - 1,) * 3,
-                (target_p - 1,) * 3,
-            )
-        self.source = source
-        self.target = target
-        self.h1_prolongation = jnp.asarray(h1)
-        self.hcurl_prolongation = jnp.asarray(hcurl)
-        self.hdiv_prolongation = jnp.asarray(hdiv)
-        self.l2_prolongation = jnp.asarray(l2)
-        self.commuting_gradient_error = jnp.asarray(
-            np.max(
-                np.abs(
-                    np.asarray(target.gradient) @ h1 - hcurl @ np.asarray(source.gradient)
-                ),
-                initial=0.0,
-            )
-        )
-        curl_target = l2 if dimension == 2 else hdiv
-        curl_error = np.max(
-            np.abs(
-                np.asarray(target.curl) @ hcurl - curl_target @ np.asarray(source.curl)
-            ),
-            initial=0.0,
-        )
-        self.commuting_curl_error = jnp.asarray(curl_error)
-        if dimension == 2:
-            divergence_error = curl_error
-        else:
-            divergence_error = np.max(
-                np.abs(
-                    np.asarray(target.divergence) @ hdiv
-                    - l2 @ np.asarray(source.divergence)
-                ),
-                initial=0.0,
-            )
-        self.commuting_divergence_error = jnp.asarray(divergence_error)
-
-
-class CompatibleTraceConstraint(StrictModule, NonTrainableState):
-    representation: Literal["tangential", "normal"] = eqx.field(static=True)
-    prolongation: Array
-
-    def __init__(
-        self,
-        representation: Literal["tangential", "normal"],
-        master_nodes: ArrayLike,
-        side_nodes: ArrayLike,
-        /,
-    ) -> None:
-        if representation not in ("tangential", "normal"):
-            raise ValueError("Compatible trace representation must be tangential/normal.")
-        self.representation = representation
-        self.prolongation = tensor_trace_interpolation(master_nodes, side_nodes)
-
-    def expand(self, values: ArrayLike, orientation: ArrayLike, /) -> Array:
-        value = jnp.asarray(values)
-        orientation_ = jnp.asarray(orientation)
-        result = self.prolongation @ value
-        return result * orientation_.reshape(
-            orientation_.shape + (1,) * (result.ndim - orientation_.ndim)
-        )
-
-
-class CompatibleMortarPlan(StrictModule, NonTrainableState):
-    left_projection: Array
-    right_projection: Array
-    commuting_error: Array
-
-    def __init__(
-        self,
-        left_trace: CompatibleTraceConstraint,
-        right_trace: CompatibleTraceConstraint,
-        differential_left: ArrayLike,
-        differential_right: ArrayLike,
-        /,
-    ) -> None:
-        left = np.asarray(left_trace.prolongation)
-        right = np.asarray(right_trace.prolongation)
-        d_left = np.asarray(differential_left)
-        d_right = np.asarray(differential_right)
-        if left.shape[0] != right.shape[0]:
-            raise ValueError("Compatible mortar projections need a common mortar width.")
-        self.left_projection = jnp.asarray(left)
-        self.right_projection = jnp.asarray(right)
-        self.commuting_error = jnp.asarray(
-            np.max(np.abs(left @ d_left - right @ d_right), initial=0.0)
-        )
-
-
-class CompatibleAuxiliaryMultigrid(StrictModule, NonTrainableState):
-    injection: Array
-    auxiliary_inverse: Array
-
-    def __init__(self, injection: ArrayLike, auxiliary_operator: ArrayLike, /) -> None:
-        injection_ = np.asarray(injection)
-        operator = np.asarray(auxiliary_operator)
-        if injection_.ndim != 2 or operator.shape != (
-            injection_.shape[1],
-            injection_.shape[1],
-        ):
-            raise ValueError("Compatible auxiliary hierarchy shapes are invalid.")
-        self.injection = jnp.asarray(injection_)
-        self.auxiliary_inverse = jnp.asarray(
-            np.linalg.solve(operator, np.eye(operator.shape[0], dtype=operator.dtype))
-        )
-
-    def apply(self, residual: ArrayLike, /) -> Array:
-        value = jnp.asarray(residual)
-        return self.injection @ (
-            self.auxiliary_inverse @ (jnp.swapaxes(self.injection, -1, -2) @ value)
-        )
 
 
 class HybridRefinementPlan(StrictModule, NonTrainableState):
@@ -1439,9 +1027,6 @@ def physical_mass_projection(
 __all__ = [
     "AnisotropicHPattern",
     "compact_hp_forest",
-    "CompatibleAuxiliaryMultigrid",
-    "CompatibleMortarPlan",
-    "CompatibleTraceConstraint",
     "ConservativeMovingInterfaceTransfer",
     "GeometryOrderAdaptation",
     "HybridMortarPlan",
@@ -1449,12 +1034,6 @@ __all__ = [
     "HybridReferenceFamily",
     "LevelSetCutQuadrature",
     "NIrregularMortarPlan",
-    "TensorCompatibleFamily",
-    "TensorDeRhamComplex",
-    "TensorDeRhamTransferPlan",
-    "TensorPiolaMap",
-    "tensor_hcurl_family",
-    "tensor_hdiv_family",
     "UnfittedAggregationPlan",
     "refine_anisotropic_hp_cells",
     "physical_mass_projection",

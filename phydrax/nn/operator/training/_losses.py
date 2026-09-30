@@ -28,6 +28,7 @@ from ....graph import (
     CochainMetricReduction,
     CochainResidualProgram,
 )
+from ....graph._cochain_ops import _cochain_riesz
 from ....typing import PRNGKey
 from ..data import (
     OperatorBatch,
@@ -315,7 +316,11 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
             if binding.field not in task.field_by_name:
                 raise KeyError(f"Unknown task field {binding.field!r}.")
             task_field = task.field_by_name[binding.field]
-            if task_field.cochain != expected:
+            if (
+                task_field.form_type is None
+                or task_field.representation != "cochain"
+                or task_field.form_type.form_type_id != expected.form_type_id
+            ):
                 raise ValueError(
                     f"Task field {binding.field!r} cochain semantics do not match the residual program."
                 )
@@ -442,6 +447,14 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
         if "hodge_star" not in graph.nodes:
             raise ValueError("Cochain residual topology requires Hodge-star metadata.")
         metric = jnp.asarray(graph.nodes["hodge_star"], dtype=squared.dtype)
+        metric_energy = None
+        if self.reduction != "graph_mean":
+            weighted = _cochain_riesz(graph, residual, output_spec.degree)
+            metric_energy = jnp.real(jnp.conj(residual) * weighted)
+            if metric_energy.ndim > 1:
+                metric_energy = jnp.sum(
+                    metric_energy, axis=tuple(range(1, metric_energy.ndim))
+                )
         positions = jnp.arange(cell_degree.shape[0], dtype=jnp.int32)
         ends = jnp.cumsum(jnp.asarray(graph.n_node, dtype=jnp.int32))
         graph_index = jnp.searchsorted(ends, positions, side="right").astype(jnp.int32)
@@ -466,6 +479,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
             reduction=self.reduction,
             entity_mask=active,
             segment_weight=segment_weight,
+            metric_energy=metric_energy,
         )
         return jnp.asarray(self.weight, dtype=value.dtype) * value
 

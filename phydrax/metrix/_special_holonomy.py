@@ -17,10 +17,10 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..exterior._basis import exterior_indices, wedge_sign
 from ._chart import CoordinateChart
 from ._curvature import ricci_tensor
-from ._exterior_basis import exterior_indices
-from ._forms import DifferentialForm, exterior_derivative, hodge_star, wedge
+from ._forms import DifferentialForm, exterior_derivative, hodge_star, to_untwisted, wedge
 from ._kahler import KahlerStructure, validate_kahler_structure
 from ._metric import euclidean_metric, RiemannianMetric
 from .algebra import AlgebraProductPlan, OctonionAlgebraSpec
@@ -61,6 +61,13 @@ class LocalSUNStructure(StrictModule):
         if holomorphic_volume.degree != complex_dimension:
             raise ValueError(
                 "Holomorphic volume form degree must equal the complex dimension."
+            )
+        if (
+            holomorphic_volume.form_type.twist != "untwisted"
+            or holomorphic_volume.form_type.fiber_shape
+        ):
+            raise ValueError(
+                "A holomorphic volume form must be untwisted and scalar-valued."
             )
         bidegree = (int(volume_bidegree[0]), int(volume_bidegree[1]))
         if bidegree != (complex_dimension, 0):
@@ -216,15 +223,6 @@ def validate_local_su_structure(
     return report
 
 
-def _permutation_sign(values: tuple[int, ...], /) -> int:
-    inversions = sum(
-        values[left] > values[right]
-        for left in range(len(values))
-        for right in range(left + 1, len(values))
-    )
-    return -1 if inversions % 2 else 1
-
-
 def _dense_three_form(coefficients: Array, /) -> Array:
     indices = exterior_indices(7, 3)
     source_positions: list[int] = []
@@ -234,7 +232,10 @@ def _dense_three_form(coefficients: Array, /) -> Array:
         for ordered in permutations(axes):
             source_positions.append(source)
             output_positions.append(ordered[0] * 49 + ordered[1] * 7 + ordered[2])
-            signs.append(_permutation_sign(ordered))
+            signs.append(
+                wedge_sign((ordered[0],), ordered[1:])
+                * wedge_sign((ordered[1],), (ordered[2],))
+            )
     source_array = jnp.asarray(source_positions, dtype=jnp.int32)
     output_array = jnp.asarray(output_positions, dtype=jnp.int32)
     sign_array = jnp.asarray(signs, dtype=coefficients.dtype)
@@ -286,6 +287,11 @@ class LocalG2Structure(StrictModule):
             raise ValueError("A local G2 structure requires a seven-dimensional chart.")
         if associative_form.degree != 3:
             raise ValueError("A local G2 associative form must have degree three.")
+        if (
+            associative_form.form_type.twist != "untwisted"
+            or associative_form.form_type.fiber_shape
+        ):
+            raise ValueError("A G2 associative form must be untwisted and scalar-valued.")
         if not metric.chart.compatible_with(associative_form.chart):
             raise ValueError("G2 metric and associative-form charts must match.")
         if orientation not in (-1, 1):
@@ -295,10 +301,8 @@ class LocalG2Structure(StrictModule):
         self.orientation = int(orientation)
 
     def coassociative_form(self) -> DifferentialForm:
-        return hodge_star(
-            self.associative_form,
-            self.metric,
-            orientation=self.orientation,
+        return to_untwisted(
+            hodge_star(self.associative_form, self.metric), self.orientation
         )
 
 
@@ -415,10 +419,9 @@ class OctonionG2Bridge(StrictModule):
         )
 
     def coassociative_differential_form(self) -> DifferentialForm:
-        return hodge_star(
-            self.associative_differential_form(),
-            self.metric,
-            orientation=self.orientation,
+        return to_untwisted(
+            hodge_star(self.associative_differential_form(), self.metric),
+            self.orientation,
         )
 
     def local_structure(self) -> LocalG2Structure:

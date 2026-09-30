@@ -23,6 +23,7 @@ from phydrax._trainable import (
     partition_parameters,
     require_parameter_roles,
 )
+from phydrax.optim import adam
 
 
 def _array_count(tree: Any, /) -> int:
@@ -65,8 +66,8 @@ def _resource_benchmark(
     adapter_fixed = subspace.frozen
     inputs = jr.normal(jr.key(2), (batch_size, dimension))
     targets = jr.normal(jr.key(3), (batch_size, dimension))
-    dense_optimizer = optax.adam(1e-3)
-    adapter_optimizer = optax.adam(1e-3)
+    dense_optimizer = adam(1e-3)
+    adapter_optimizer = adam(1e-3)
     dense_state = dense_optimizer.init(dense_parameters)
     adapter_state = adapter_optimizer.init(adapter_parameters)
 

@@ -266,7 +266,10 @@ def _constraint_state(problem: EigenproblemLike, /) -> tuple[Array, Array]:
     if constraints is None or constraints.capacity == 0:
         empty = jnp.zeros((space.size, 0), dtype=_coordinate_dtype(space))
         return empty, empty
-    mask = jnp.arange(constraints.capacity) < constraints.dimension
+    mask = (
+        jnp.arange(constraints.capacity, dtype=constraints.dimension.dtype)
+        < constraints.dimension
+    )
     basis = jnp.where(mask[None, :], constraints.basis, 0)
     metric_basis = _metric_coordinate_columns(problem, basis)
     gram_diagonal = jax.vmap(
@@ -531,7 +534,7 @@ def _project_initial_columns(
     rank: Array,
     /,
 ) -> tuple[Array, Array]:
-    mask = jnp.arange(basis.shape[1]) < rank
+    mask = jnp.arange(basis.shape[1], dtype=rank.dtype) < rank
     coefficients = jax.vmap(
         lambda column: _coordinate_inner(space, column, metric_vector),
         in_axes=1,

@@ -104,10 +104,9 @@ def test_closure_platform_scenario_1() -> None:
     assert certificate.disposition is CertificateDisposition.PASS
     assert certificate.cells
     from phydrax.discretization import iga
-    from phydrax.discretization.iga._compatible import SplineDeRhamComplex
 
     grid = iga.BSplineGrid.open_uniform(2, 2)
-    complex_ = SplineDeRhamComplex((grid, grid))
+    complex_ = iga.SplineDeRhamComplex((grid, grid))
 
     np.testing.assert_allclose(complex_.d_squared_defects, 0.0, atol=1.0e-13)
     from phydrax.discretization.iga._adaptive import DWREstimate, QoICertificate

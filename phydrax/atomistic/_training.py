@@ -12,10 +12,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
+
+from phydrax.optim._adam import adam
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._doc import DOC_KEY0
@@ -612,7 +613,7 @@ def _training_kernel(
         ),
         TrainingKernelSpec(
             OptaxUpdateRule(
-                optax.adam(policy.learning_rate),
+                adam(policy.learning_rate),
                 rule_id=f"atomistic-training:{policy.continuation_id}",
             ),
             context="fit_atomistic_potential",

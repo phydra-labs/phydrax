@@ -15,7 +15,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import optax
 
 import phydrax as phx
 from phydrax._trainable import (
@@ -23,6 +22,7 @@ from phydrax._trainable import (
     partition_parameters,
     require_parameter_roles,
 )
+from phydrax.optim import adam
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,7 +318,7 @@ def run_pinn_model_benchmark(
     initial_gradient = eqx.filter_grad(objective)(parameters)
     _, initial_first, initial_second = _pointwise_derivatives(model, interior)
 
-    optimizer = optax.adam(float(learning_rate))
+    optimizer = adam(float(learning_rate))
     optimizer_state = optimizer.init(parameters)
 
     @eqx.filter_jit
@@ -551,7 +551,7 @@ def run_multifidelity_pinn_benchmark(
         evaluation_terms=(low_validation.term,),
     ).solve(
         num_iter=int(low_steps),
-        optim=optax.adam(float(learning_rate)),
+        optim=adam(float(learning_rate)),
         seed=seed,
         log_every=0,
     )
@@ -591,7 +591,7 @@ def run_multifidelity_pinn_benchmark(
     )
     trained = stage.training_solver.solve(
         num_iter=int(target_steps),
-        optim=optax.adam(float(learning_rate)),
+        optim=adam(float(learning_rate)),
         seed=seed + 2,
         log_every=0,
     )

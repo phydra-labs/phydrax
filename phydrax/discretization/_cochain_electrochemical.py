@@ -167,9 +167,13 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
         )
         rates = []
         for species in range(self.species_count):
-            rates.append(self.bridge.cochain.codifferential(1, flux[:, species]))
+            rates.append(
+                self.bridge.cochain.codifferential(
+                    1, flux[:, species], boundary="absolute"
+                )
+            )
         rate = jnp.stack(rates, axis=-1)
-        weights = self.bridge.cochain.hodge_stars[0].astype(concentration.dtype)
+        weights = self.bridge.cochain.hodge_diagonal(0).astype(concentration.dtype)
         mass_defect = jnp.sum(weights[:, None] * rate, axis=0)
         consuming = rate < 0.0
         restriction = jnp.min(
@@ -182,7 +186,7 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
         electrochemical_difference = (
             electrochemical[self.head_indices] - electrochemical[self.tail_indices]
         )
-        edge_weights = self.bridge.cochain.hodge_stars[1].astype(concentration.dtype)
+        edge_weights = self.bridge.cochain.hodge_diagonal(1).astype(concentration.dtype)
         dissipation = -jnp.sum(edge_weights[:, None] * flux * electrochemical_difference)
         scale = jnp.maximum(
             jnp.sum(weights[:, None] * jnp.abs(rate), axis=0),

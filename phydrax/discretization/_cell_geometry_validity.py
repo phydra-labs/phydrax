@@ -317,11 +317,20 @@ def _tetrahedron_children() -> tuple[np.ndarray, ...]:
 
 
 def _simplex_child_maps(dimension: int, /) -> tuple[np.ndarray, np.ndarray]:
-    children = (
-        tuple(np.asarray(value) for value in _TRIANGLE_CHILDREN)
-        if dimension == 2
-        else _tetrahedron_children()
-    )
+    if dimension == 2:
+        children = tuple(np.asarray(value) for value in _TRIANGLE_CHILDREN)
+    elif dimension == 3:
+        children = _tetrahedron_children()
+    elif dimension > 0:
+        vertices = np.eye(dimension + 1, dimension, k=-1, dtype=np.float64)
+        midpoint = 0.5 * (vertices[0] + vertices[1])
+        first = vertices.copy()
+        second = vertices.copy()
+        first[1] = midpoint
+        second[0] = midpoint
+        children = (first, second)
+    else:
+        raise ValueError("Simplex subdivision requires positive dimension.")
     origins = np.stack([child[0] for child in children])
     matrices = np.stack([(child[1:] - child[0]).T for child in children])
     return origins, matrices

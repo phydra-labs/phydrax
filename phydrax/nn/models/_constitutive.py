@@ -12,6 +12,7 @@ from jax import Array
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...linalg._compound import compound_matrix
 from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._input_convex import ConvexActivation, InputConvexNetwork
@@ -44,25 +45,22 @@ class DeformationGradientMinors(StrictModule):
     def cofactor(self, deformation_gradient: Array, /) -> Array:
         """Return the cofactor matrix without inversion or determinant division."""
         gradient = self._validate(deformation_gradient)
-        if self.dimension == 2:
-            first = jnp.stack((gradient[..., 1, 1], -gradient[..., 1, 0]), axis=-1)
-            second = jnp.stack((-gradient[..., 0, 1], gradient[..., 0, 0]), axis=-1)
-            return jnp.stack((first, second), axis=-2)
-        first_column = jnp.cross(gradient[..., :, 1], gradient[..., :, 2])
-        second_column = jnp.cross(gradient[..., :, 2], gradient[..., :, 0])
-        third_column = jnp.cross(gradient[..., :, 0], gradient[..., :, 1])
-        return jnp.stack((first_column, second_column, third_column), axis=-1)
+        routes = jnp.arange(self.dimension - 1, -1, -1, dtype=jnp.int32)
+        induced = compound_matrix(gradient, self.dimension - 1)
+        complements = jnp.take(jnp.take(induced, routes, axis=-2), routes, axis=-1)
+        axes = jnp.arange(self.dimension, dtype=jnp.int32)
+        signs = jnp.where((axes[:, None] + axes[None, :]) % 2, -1, 1).astype(
+            gradient.dtype
+        )
+        signs = signs.reshape(
+            (*(1 for _ in gradient.shape[:-2]), self.dimension, self.dimension)
+        )
+        return complements * signs
 
     def determinant(self, deformation_gradient: Array, /) -> Array:
         """Return the determinant from polynomial minors."""
         gradient = self._validate(deformation_gradient)
-        cofactor = self.cofactor(gradient)
-        if self.dimension == 2:
-            return (
-                gradient[..., 0, 0] * gradient[..., 1, 1]
-                - gradient[..., 0, 1] * gradient[..., 1, 0]
-            )
-        return jnp.sum(gradient[..., :, 0] * cofactor[..., :, 0], axis=-1)
+        return compound_matrix(gradient, self.dimension)[..., 0, 0]
 
     def __call__(self, deformation_gradient: Array, /) -> Array:
         """Pack ``(F, cof(F), det(F))`` into the lifted polyconvex coordinates."""

@@ -23,6 +23,12 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._cell_complex import cubical_cell_complex
+from ...discretization._oriented_path import (
+    _prepare_lattice_plane_paths,
+    ordered_path_transport,
+    OrientedEdgePathPlan,
+)
 from ...graph._gauge_transport import GaugeCovariantShiftPlan
 from ...linalg import (
     ArraySpace,
@@ -75,59 +81,12 @@ def _adjoint(value: Array, /) -> Array:
     return jnp.swapaxes(jnp.conj(value), -1, -2)
 
 
-def _shift_site_field(value: Array, displacement: Sequence[int], /) -> Array:
-    shifted = value
-    for axis, amount in enumerate(displacement):
-        if amount:
-            shifted = jnp.roll(shifted, -int(amount), axis=axis)
-    return shifted
-
-
-def _oriented_structured_link(
-    links: Array,
-    axis: int,
-    direction: int,
-    offset: tuple[int, ...],
-    /,
-) -> tuple[Array, tuple[int, ...]]:
-    next_offset = list(offset)
-    if direction > 0:
-        factor = _shift_site_field(links[..., axis, :, :], offset)
-        next_offset[axis] += 1
-    else:
-        next_offset[axis] -= 1
-        factor = _adjoint(_shift_site_field(links[..., axis, :, :], tuple(next_offset)))
-    return factor, tuple(next_offset)
-
-
-def _oriented_plaquette(
-    links: Array,
-    first_axis: int,
-    first_direction: int,
-    second_axis: int,
-    second_direction: int,
-    /,
-) -> Array:
-    dimension = links.ndim - 3
-    offset = (0,) * dimension
-    identity = jnp.eye(links.shape[-1], dtype=links.dtype)
-    value = jnp.broadcast_to(identity, links.shape[:dimension] + identity.shape)
-    for axis, direction in (
-        (first_axis, first_direction),
-        (second_axis, second_direction),
-        (first_axis, -first_direction),
-        (second_axis, -second_direction),
-    ):
-        factor, offset = _oriented_structured_link(links, axis, direction, offset)
-        value = contract("...ij,...jk->...ik", value, factor)
-    return value
-
-
 class HypercubicGaugeObservablePlan(StrictModule, NonTrainableState):
     """Observable geometry for structured ``site..., direction, color, color`` links."""
 
     group: SpecialUnitaryGroup
     lattice_spacing: Array
+    plane_paths: tuple[tuple[OrientedEdgePathPlan, ...], ...]
     lattice_shape: tuple[int, ...] = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     color_components: int = eqx.field(static=True)
@@ -158,12 +117,27 @@ class HypercubicGaugeObservablePlan(StrictModule, NonTrainableState):
             raise ValueError("color_components must be at least two.")
         if maximum <= 0 or prod(shape) > maximum:
             raise ValueError("Gauge-observable lattice exceeds maximum_sites.")
-        topology = (
-            canonical_fingerprint(
-                {"kind": "periodic-hypercubic-topology", "axis_sizes": shape}
-            )
-            if topology_id is None
-            else _identifier(topology_id, "topology_id")
+        cells = cubical_cell_complex(shape, periodic=True)
+        topology = cells.topology.topology_id
+        if (
+            topology_id is not None
+            and _identifier(topology_id, "topology_id") != topology
+        ):
+            raise ValueError("topology_id must identify the canonical cubical lattice.")
+        site_ids = np.arange(prod(shape), dtype=np.int32).reshape(shape)
+        forward_sites = np.stack(
+            tuple(
+                np.roll(site_ids, -1, axis=axis).reshape(-1) for axis in range(len(shape))
+            ),
+            axis=1,
+        )
+        forward_edges = (
+            np.arange(prod(shape) * len(shape), dtype=np.int32)
+            .reshape((len(shape), prod(shape)))
+            .T
+        )
+        plane_paths = _prepare_lattice_plane_paths(
+            cells.topology, forward_sites, forward_edges, np.ones_like(forward_edges)
         )
         field_space = (
             canonical_fingerprint(
@@ -191,6 +165,7 @@ class HypercubicGaugeObservablePlan(StrictModule, NonTrainableState):
         )
         self.group = group
         self.lattice_spacing = jnp.asarray(spacing)
+        self.plane_paths = plane_paths
         self.lattice_shape = shape
         self.dimension = len(shape)
         self.color_components = colors
@@ -238,14 +213,17 @@ def hypercubic_plaquette_holonomies(
     if not isinstance(plan, HypercubicGaugeObservablePlan):
         raise TypeError("plan must be HypercubicGaugeObservablePlan.")
     values = plan.validate(links)
+    native_links = (
+        values.reshape((-1, plan.dimension, plan.color_components, plan.color_components))
+        .transpose(1, 0, 2, 3)
+        .reshape((-1, plan.color_components, plan.color_components))
+    )
     return jnp.stack(
         tuple(
-            _oriented_plaquette(values, mu, 1, nu, 1)
-            for mu in range(plan.dimension)
-            for nu in range(mu + 1, plan.dimension)
+            ordered_path_transport(plane[0], native_links) for plane in plan.plane_paths
         ),
-        axis=plan.dimension,
-    )
+        axis=1,
+    ).reshape(plan.lattice_shape + (-1, plan.color_components, plan.color_components))
 
 
 def clover_field_strength(
@@ -257,20 +235,23 @@ def clover_field_strength(
     if not isinstance(plan, HypercubicGaugeObservablePlan):
         raise TypeError("plan must be HypercubicGaugeObservablePlan.")
     values = plan.validate(links)
+    native_links = (
+        values.reshape((-1, plan.dimension, plan.color_components, plan.color_components))
+        .transpose(1, 0, 2, 3)
+        .reshape((-1, plan.color_components, plan.color_components))
+    )
     identity = jnp.eye(plan.color_components, dtype=values.dtype)
     fields: list[Array] = []
-    for mu in range(plan.dimension):
-        for nu in range(mu + 1, plan.dimension):
-            clover = (
-                _oriented_plaquette(values, mu, 1, nu, 1)
-                + _oriented_plaquette(values, nu, 1, mu, -1)
-                + _oriented_plaquette(values, mu, -1, nu, -1)
-                + _oriented_plaquette(values, nu, -1, mu, 1)
-            )
-            field = (clover - _adjoint(clover)) / (8.0j * plan.lattice_spacing**2)
-            trace = jnp.trace(field, axis1=-2, axis2=-1) / plan.color_components
-            fields.append(field - trace[..., None, None] * identity)
-    return jnp.stack(tuple(fields), axis=plan.dimension)
+    for plane in plan.plane_paths:
+        clover = ordered_path_transport(plane[0], native_links)
+        for path in plane[1:]:
+            clover = clover + ordered_path_transport(path, native_links)
+        field = (clover - _adjoint(clover)) / (8.0j * plan.lattice_spacing**2)
+        trace = jnp.trace(field, axis1=-2, axis2=-1) / plan.color_components
+        fields.append(field - trace[..., None, None] * identity)
+    return jnp.stack(tuple(fields), axis=1).reshape(
+        plan.lattice_shape + (-1, plan.color_components, plan.color_components)
+    )
 
 
 def clover_topological_charge(
@@ -302,44 +283,6 @@ def clover_topological_charge(
     return density, charge
 
 
-def _routed_plaquette(
-    transport: GaugeCovariantShiftPlan,
-    links: Array,
-    first_axis: int,
-    first_direction: int,
-    second_axis: int,
-    second_direction: int,
-    /,
-) -> Array:
-    group = transport.representation.group
-    sites = jnp.arange(transport.site_count, dtype=jnp.int32)
-    identity = group.identity(dtype=links.dtype)
-    holonomy = jnp.broadcast_to(identity, (transport.site_count,) + identity.shape)
-    for axis, direction in (
-        (first_axis, first_direction),
-        (second_axis, second_direction),
-        (first_axis, -first_direction),
-        (second_axis, -second_direction),
-    ):
-        if direction > 0:
-            edges = transport.forward_edges[sites, axis]
-            orientations = transport.forward_orientations[sites, axis]
-            next_sites = transport.forward_sites[sites, axis]
-        else:
-            edges = transport.backward_edges[sites, axis]
-            orientations = transport.backward_orientations[sites, axis]
-            next_sites = transport.backward_sites[sites, axis]
-        factors = links[edges]
-        oriented = jnp.where(
-            (orientations > 0)[..., None, None],
-            factors,
-            group.inverse(factors),
-        )
-        holonomy = contract("...ij,...jk->...ik", holonomy, oriented)
-        sites = next_sites
-    return holonomy
-
-
 def routed_clover_field_strength(
     transport: GaugeCovariantShiftPlan,
     links: ArrayLike,
@@ -369,17 +312,13 @@ def routed_clover_field_strength(
         raise ValueError("Routed clover field exceeds maximum_field_bytes.")
     identity = jnp.eye(colors, dtype=values.dtype)
     fields: list[Array] = []
-    for mu in range(transport.dimension):
-        for nu in range(mu + 1, transport.dimension):
-            clover = (
-                _routed_plaquette(transport, values, mu, 1, nu, 1)
-                + _routed_plaquette(transport, values, nu, 1, mu, -1)
-                + _routed_plaquette(transport, values, mu, -1, nu, -1)
-                + _routed_plaquette(transport, values, nu, -1, mu, 1)
-            )
-            field = (clover - _adjoint(clover)) / (8.0j * spacing**2)
-            trace = jnp.trace(field, axis1=-2, axis2=-1) / colors
-            fields.append(field - trace[:, None, None] * identity[None, :, :])
+    for plane in transport.plane_paths:
+        clover = ordered_path_transport(plane[0], values)
+        for path in plane[1:]:
+            clover = clover + ordered_path_transport(path, values)
+        field = (clover - _adjoint(clover)) / (8.0j * spacing**2)
+        trace = jnp.trace(field, axis1=-2, axis2=-1) / colors
+        fields.append(field - trace[:, None, None] * identity[None, :, :])
     return jnp.stack(tuple(fields), axis=1)
 
 
@@ -501,6 +440,7 @@ def measure_hypercubic_gauge_observables(
     /,
     *,
     measure_topology: bool = True,
+    beta: float = 1.0,
 ) -> GaugeObservableResult:
     """Measure plaquette/action density and, when supported, clover topology."""
     values = plan.validate(links)
@@ -509,7 +449,10 @@ def measure_hypercubic_gauge_observables(
         jnp.real(jnp.trace(plaquettes, axis1=-2, axis2=-1)) / plan.color_components
     )
     mean_plaquette = jnp.mean(normalized_traces)
-    action_density = jnp.mean(1.0 - normalized_traces)
+    coupling = float(beta)
+    if not np.isfinite(coupling) or coupling < 0.0:
+        raise ValueError("beta must be finite and non-negative.")
+    action_density = coupling * jnp.mean(1.0 - normalized_traces)
     if not measure_topology:
         density = None
         charge = None
@@ -536,6 +479,7 @@ def measure_hypercubic_gauge_observables(
             "kind": "hypercubic-gauge-observable-result",
             "plan": plan.plan_id,
             "topology_status": topology_status,
+            "beta": coupling,
         }
     )
     return GaugeObservableResult(

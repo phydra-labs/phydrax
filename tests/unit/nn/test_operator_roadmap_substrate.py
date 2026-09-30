@@ -32,6 +32,9 @@ from phydrax.equations import (
     PDEProblemIR,
     tokenize_pde_ir,
 )
+from phydrax.equations._ir import PDERepresentation
+from phydrax.equations._tokens import PDE_OPERATOR_VOCABULARY, PDE_TOKEN_ATTRIBUTES
+from phydrax.exterior import FormType, FormValueSpec
 from phydrax.nn.operator import (
     AnchorQuerySamplingPolicy,
     CallbackOperatorCaseSource,
@@ -641,7 +644,6 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution() -> N
     )
 
     payload = pde_ir_to_json(problem)
-    assert "schema_version" not in payload
     restored = pde_ir_from_json(payload)
     assert restored == problem
     assert pde_ir_to_json(equivalent) == payload
@@ -683,6 +685,152 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution() -> N
     )
     assert isinstance(term, ResidualPenalty)
     assert jnp.allclose(term.loss({"u": u}), 1.0)
+
+
+@pytest.mark.parametrize(
+    ("form", "representation", "components"),
+    [
+        (FormValueSpec(FormType(3, 0), proxy="scalar"), "scalar", 1),
+        (
+            FormValueSpec(FormType(3, 1, twist="twisted"), proxy="circulation"),
+            "pseudovector",
+            3,
+        ),
+        (FormValueSpec(FormType(3, 2), proxy="flux"), "pseudovector", 3),
+        (
+            FormValueSpec(FormType(3, 3, twist="twisted"), proxy="density"),
+            "scalar",
+            1,
+        ),
+        (
+            FormValueSpec(
+                FormType(3, 1, fiber_shape=(2, 3), ambient_dimension=4),
+                proxy="components",
+            ),
+            "tensor",
+            24,
+        ),
+    ],
+    ids=["zero", "twisted-circulation", "flux", "twisted-density", "embedded-fiber"],
+)
+def test_pde_form_round_trip_and_token_identity(
+    form: FormValueSpec, representation: PDERepresentation, components: int
+) -> None:
+    problem = PDEProblemIR(
+        coordinates=tuple(PDECoordinate(name, "space") for name in ("x", "y", "z")),
+        fields=(
+            PDEField(
+                "u",
+                representation=representation,
+                components=components,
+                coordinates=("x", "y", "z"),
+                form=form,
+            ),
+        ),
+    )
+    restored = pde_ir_from_json(pde_ir_to_json(problem))
+    restored_form = restored.fields[0].form
+    assert restored_form is not None
+    assert restored_form.value_spec_id == form.value_spec_id
+    assert pde_ir_hash(restored) == pde_ir_hash(problem)
+    tokens = tokenize_pde_ir(restored, dimension_basis=())
+    attributes = tokens.attribute[tokens.mask].tolist()
+    scalars = tokens.scalar[tokens.mask].tolist()
+    decoded = {
+        name: [
+            scalar
+            for attribute, scalar in zip(attributes, scalars, strict=True)
+            if attribute == PDE_TOKEN_ATTRIBUTES.index(name)
+        ]
+        for name in PDE_TOKEN_ATTRIBUTES
+    }
+    assert decoded["form_dimension"] == [form.form_type.dimension]
+    assert decoded["form_degree"] == [form.form_type.degree]
+    assert decoded[f"form_twist_{form.form_type.twist}"] == [0.0]
+    assert decoded["form_fiber_rank"] == [len(form.form_type.fiber_shape)]
+    assert decoded["form_fiber_extent"] == list(form.form_type.fiber_shape)
+    assert decoded["form_ambient_dimension"] == [form.form_type.ambient_dimension]
+    assert decoded[f"form_proxy_{form.proxy}"] == [0.0]
+
+
+def test_pde_restore_refuses_missing_form_identity() -> None:
+    problem = PDEProblemIR(coordinates=(), fields=(PDEField("u"),))
+    payload = json.loads(pde_ir_to_json(problem))
+    del payload["fields"][0]["form"]
+    with pytest.raises(ValueError, match="form"):
+        phx.equations.pde_ir_from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        PDEExpression("exterior_derivative", (PDEExpression.field("u"),)),
+        PDEExpression("codifferential", (PDEExpression.field("u"),)),
+        PDEExpression("hodge_star", (PDEExpression.field("u"),)),
+        PDEExpression("wedge", (PDEExpression.field("u"), PDEExpression.field("u"))),
+        PDEExpression(
+            "interior_product", (PDEExpression.field("v"), PDEExpression.field("u"))
+        ),
+        PDEExpression(
+            "lie_derivative", (PDEExpression.field("v"), PDEExpression.field("u"))
+        ),
+        PDEExpression("trace", (PDEExpression.field("u"),), region="wall"),
+    ],
+    ids=["d", "delta", "star", "wedge", "interior", "lie", "trace"],
+)
+def test_exterior_expression_round_trip_and_token_operator(
+    expression: PDEExpression,
+) -> None:
+    problem = PDEProblemIR(
+        coordinates=tuple(PDECoordinate(name, "space") for name in ("x", "y", "z")),
+        fields=(
+            PDEField(
+                "u",
+                representation="tensor",
+                components=3,
+                coordinates=("x", "y", "z"),
+                form=FormValueSpec(FormType(3, 1), proxy="components"),
+            ),
+            PDEField("v", representation="vector", components=3),
+        ),
+        equations=(PDEEquation("balance", expression),),
+        regions=(phx.equations.PDERegion("wall", "boundary", ("x", "y")),),
+    )
+    restored = pde_ir_from_json(pde_ir_to_json(problem))
+    assert restored.equations[0].lhs == expression
+    tokens = tokenize_pde_ir(restored, dimension_basis=())
+    assert PDE_OPERATOR_VOCABULARY.index(expression.op) in tokens.operator[tokens.mask]
+
+
+def test_matrix_wedge_preserves_order_and_product_metadata() -> None:
+    form = FormValueSpec(FormType(3, 1, fiber_shape=(2, 2)), proxy="components")
+    fields = tuple(
+        PDEField(
+            name,
+            representation="tensor",
+            components=12,
+            coordinates=("x", "y", "z"),
+            form=form,
+        )
+        for name in ("a", "b")
+    )
+    forward = PDEExpression.field("a").wedge(PDEExpression.field("b"), product="matrix")
+    reverse = PDEExpression.field("b").wedge(PDEExpression.field("a"), product="matrix")
+    problem = PDEProblemIR(
+        coordinates=tuple(PDECoordinate(name, "space") for name in ("x", "y", "z")),
+        fields=fields,
+        equations=(PDEEquation("balance", forward),),
+    )
+    reversed_problem = PDEProblemIR(
+        coordinates=problem.coordinates,
+        fields=fields,
+        equations=(PDEEquation("balance", reverse),),
+    )
+    restored = pde_ir_from_json(pde_ir_to_json(problem))
+    assert restored.equations[0].lhs == forward
+    assert pde_ir_hash(problem) != pde_ir_hash(reversed_problem)
+    tokens = tokenize_pde_ir(restored, dimension_basis=())
+    assert PDE_TOKEN_ATTRIBUTES.index("product_matrix") in tokens.attribute[tokens.mask]
 
 
 def test_pde_numeric_metadata_rejects_nonfinite_during_construction() -> None:

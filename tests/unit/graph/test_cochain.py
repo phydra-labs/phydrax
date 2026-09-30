@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -12,10 +13,46 @@ import pytest
 import phydrax as phx
 
 
+def _triangle_lower(vertices: Any, faces: Any) -> phx.graph.CochainComplexIR:
+    topology = phx.discretization.polygonal_cell_complex(faces, None, len(vertices))
+    hodges = phx.discretization.simplicial_dual_hodges(
+        topology, vertices, dual="barycentric"
+    )
+    geometry, _ = phx.discretization.simplicial_cell_geometry(topology)
+    coordinates = tuple(
+        jnp.mean(jnp.asarray(vertices)[cells], axis=1) for cells in geometry
+    )
+    realization = phx.discretization.CochainDiscretization(
+        topology,
+        hodges,
+        boundary_masks=tuple(
+            entities.subset("boundary").mask for entities in topology.entity_sets
+        ),
+        coordinates=coordinates,
+    )
+    return phx.graph.CochainComplexIR(realization)
+
+
+def _reorient_lower(
+    base: phx.graph.CochainComplexIR, signs: Any
+) -> phx.graph.CochainComplexIR:
+    realization = base.discretization
+    return phx.graph.CochainComplexIR(
+        phx.discretization.CochainDiscretization(
+            phx.discretization.reorient_cell_complex(realization.topology, signs),
+            realization.hodges,
+            boundary_masks=realization.boundary_masks,
+            coordinates=realization.coordinates,
+            primal_measures=realization.primal_measures,
+            dual_measures=realization.dual_measures,
+        )
+    )
+
+
 def _square_complex() -> Any:
     vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
-    return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    return _triangle_lower(vertices, faces)
 
 
 def _annulus_complex() -> Any:
@@ -26,7 +63,7 @@ def _annulus_complex() -> Any:
         + [(index, 4 + (index + 1) % 4, 4 + index) for index in range(4)],
         dtype=np.int32,
     )
-    return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    return _triangle_lower(vertices, faces)
 
 
 def _degree_values(complex_ir: Any, degree: Any, values: Any) -> Any:
@@ -40,29 +77,16 @@ def _degree_slice(complex_ir: Any, degree: Any) -> Any:
     return slice(start, start + complex_ir.cell_counts[degree])
 
 
-def test_triangle_mesh_cochain_complex_has_exact_incidence_and_metric_graph() -> None:
+def test_lowered_graph_preserves_oriented_boundary_and_metric_adjoint() -> None:
     complex_ir = _square_complex()
-    boundary_1 = complex_ir.incidences[0].scipy_matrix()
-    boundary_2 = complex_ir.incidences[1].scipy_matrix()
-
-    assert complex_ir.cell_counts == (4, 5, 2)
-    assert isinstance(
-        complex_ir.discretization,
-        phx.discretization.CochainDiscretization,
+    b1 = complex_ir.discretization.topology.incidences[0].scipy_boundary().toarray()
+    b2 = complex_ir.discretization.topology.incidences[1].scipy_boundary().toarray()
+    assert np.array_equal(b1 @ b2, np.zeros((4, 2)))
+    values = _degree_values(complex_ir, 0, jnp.asarray([0.0, 1.0, 3.0, 2.0]))
+    differentiated = phx.graph.cochain_exterior_derivative(complex_ir.graph, values, 0)
+    np.testing.assert_allclose(
+        differentiated[_degree_slice(complex_ir, 1)], b1.T @ np.asarray(values[:4])
     )
-    assert complex_ir.discretization.cell_counts == complex_ir.cell_counts
-    assert len(complex_ir.discretization.field_spaces) == 3
-    assert (
-        complex_ir.discretization.topology.topology_id == complex_ir.incidence_fingerprint
-    )
-    assert complex_ir.graph.num_nodes == 11
-    assert complex_ir.graph.num_edges == 32
-    assert np.array_equal((boundary_1 @ boundary_2).toarray(), np.zeros((4, 2)))
-    assert all(np.all(np.asarray(star) > 0.0) for star in complex_ir.hodge_stars)
-    assert np.count_nonzero(np.asarray(complex_ir.boundary_masks[0])) == 4
-    assert np.count_nonzero(np.asarray(complex_ir.boundary_masks[1])) == 4
-    assert np.count_nonzero(np.asarray(complex_ir.boundary_masks[2])) == 0
-    complex_ir.validate()
 
 
 def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy() -> None:
@@ -82,8 +106,8 @@ def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy(
     left_inner_product = jnp.sum(star * derivative * one_form)
     right_inner_product = jnp.sum(star * zero_form * codifferential)
 
-    lower = phx.graph.cochain_hodge_laplacian(graph, one_form, 1, component="lower")
-    upper = phx.graph.cochain_hodge_laplacian(graph, one_form, 1, component="upper")
+    lower = phx.graph.cochain_hodge_laplacian(graph, one_form, 1, part="lower")
+    upper = phx.graph.cochain_hodge_laplacian(graph, one_form, 1, part="upper")
     complete = phx.graph.cochain_hodge_laplacian(graph, one_form, 1)
     energy = jnp.sum(star * one_form * complete)
 
@@ -93,7 +117,7 @@ def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy(
     assert energy >= -1e-12
 
 
-def test_graphir_dec_wrappers_match_functional_operators() -> None:
+def test_graphir_dec_wrappers_apply_oriented_incidence_and_weighted_laplacian() -> None:
     complex_ir = _square_complex()
     values = _degree_values(complex_ir, 0, jnp.asarray([0.0, 1.0, 2.0, 3.0]))
     graph = complex_ir.graph.replace(
@@ -112,18 +136,20 @@ def test_graphir_dec_wrappers_match_functional_operators() -> None:
         output_key="laplacian",
     )(graph)
 
-    assert jnp.allclose(
-        differentiated.nodes["gradient"],
-        phx.graph.cochain_exterior_derivative(graph, values, 0),
+    b1 = jnp.asarray(
+        complex_ir.discretization.topology.incidences[0].scipy_boundary().toarray()
     )
-    assert jnp.allclose(
-        laplacian.nodes["laplacian"],
-        phx.graph.cochain_hodge_laplacian(graph, values, 0),
-    )
+    weights = complex_ir.discretization.hodge_diagonal(1)
+    expected_d = b1.T @ values[:4]
+    expected_delta_d = (
+        b1 @ (weights * expected_d)
+    ) / complex_ir.discretization.hodge_diagonal(0)
+    assert jnp.allclose(differentiated.nodes["gradient"][4:9], expected_d)
+    assert jnp.allclose(laplacian.nodes["laplacian"][:4], expected_delta_d)
 
 
 def test_harmonic_preprocessing_recovers_disconnected_and_annulus_betti_numbers() -> None:
-    disconnected = phx.graph.triangle_mesh_to_cochain_complex(
+    disconnected = _triangle_lower(
         np.asarray(
             [
                 [0.0, 0.0],
@@ -138,25 +164,48 @@ def test_harmonic_preprocessing_recovers_disconnected_and_annulus_betti_numbers(
     )
     annulus = _annulus_complex()
 
-    disconnected_harmonics = phx.graph.compute_harmonic_subspace(
-        disconnected, max_modes=4
+    disconnected_harmonics = tuple(
+        phx.exterior.validate_harmonic_cohomology(disconnected.discretization, k)[0]
+        for k in range(3)
     )
-    absolute = phx.graph.compute_harmonic_subspace(annulus, max_modes=4)
-    relative = phx.graph.compute_harmonic_subspace(
-        annulus,
-        boundary_policy="relative",
-        max_modes=4,
+    absolute = tuple(
+        phx.exterior.validate_harmonic_cohomology(annulus.discretization, k)[0]
+        for k in range(3)
     )
-
-    assert disconnected_harmonics.ranks == (2, 0, 0)
-    assert absolute.ranks == (1, 1, 0)
-    assert relative.ranks == (0, 1, 1)
+    relative = tuple(
+        phx.exterior.validate_harmonic_cohomology(
+            annulus.discretization, k, boundary="relative"
+        )[0]
+        for k in range(3)
+    )
+    disconnected_graph = phx.graph.CochainComplexIR(
+        disconnected.discretization, harmonic=disconnected_harmonics
+    ).graph
+    absolute_graph = phx.graph.CochainComplexIR(
+        annulus.discretization, harmonic=absolute
+    ).graph
+    relative_graph = phx.graph.CochainComplexIR(
+        annulus.discretization, boundary="relative", harmonic=relative
+    ).graph
+    assert jnp.array_equal(
+        disconnected_graph.globals["harmonic_rank"],
+        jnp.asarray([[2, 0, 0]], dtype=jnp.int32),
+    )
+    assert jnp.array_equal(
+        absolute_graph.globals["harmonic_rank"], jnp.asarray([[1, 1, 0]], dtype=jnp.int32)
+    )
+    assert jnp.array_equal(
+        relative_graph.globals["harmonic_rank"], jnp.asarray([[0, 1, 1]], dtype=jnp.int32)
+    )
 
 
 def test_harmonic_projection_is_metric_orthogonal_idempotent_and_laplacian_null() -> None:
     base = _annulus_complex()
-    harmonics = phx.graph.compute_harmonic_subspace(base, max_modes=3)
-    complex_ir = base.with_harmonic_subspace(harmonics)
+    harmonics = tuple(
+        phx.exterior.validate_harmonic_cohomology(base.discretization, k)[0]
+        for k in range(3)
+    )
+    complex_ir = phx.graph.CochainComplexIR(base.discretization, harmonic=harmonics)
     graph = complex_ir.graph
     one_form = _degree_values(
         complex_ir,
@@ -167,14 +216,14 @@ def test_harmonic_projection_is_metric_orthogonal_idempotent_and_laplacian_null(
     projected = phx.graph.cochain_harmonic_projection(graph, one_form, 1)
     projected_twice = phx.graph.cochain_harmonic_projection(graph, projected, 1)
     residual = phx.graph.cochain_hodge_laplacian(graph, projected, 1)
-    basis = harmonics.bases[1][:, : harmonics.ranks[1]]
-    metric = complex_ir.hodge_stars[1]
+    basis = harmonics[1].basis
+    metric = complex_ir.discretization.hodge_diagonal(1)
 
     assert jnp.allclose(projected_twice, projected, atol=1e-10)
     assert jnp.allclose(residual, 0.0, atol=1e-9)
     assert jnp.allclose(
         basis.T @ (metric[:, None] * basis),
-        jnp.eye(harmonics.ranks[1]),
+        jnp.eye(harmonics[1].dimension),
         atol=1e-9,
     )
 
@@ -182,11 +231,11 @@ def test_harmonic_projection_is_metric_orthogonal_idempotent_and_laplacian_null(
 def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian() -> None:
     complex_ir = _square_complex()
     signs = (
-        np.asarray([1.0, -1.0, 1.0, -1.0]),
+        np.ones((4,), dtype=np.float64),
         np.asarray([-1.0, 1.0, -1.0, 1.0, -1.0]),
         np.asarray([1.0, -1.0]),
     )
-    reoriented = phx.graph.reorient_cochain_complex(complex_ir, signs)
+    reoriented = _reorient_lower(complex_ir, signs)
     zero_form = jnp.asarray([0.2, -0.5, 0.7, 1.3])
     one_form = jnp.asarray([0.4, -0.1, 0.8, -0.3, 0.6])
     packed_zero = _degree_values(complex_ir, 0, zero_form)
@@ -194,12 +243,12 @@ def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian() -
     reoriented_zero = _degree_values(
         reoriented,
         0,
-        phx.graph.reorient_cochain(zero_form, signs[0]),
+        phx.discretization.reorient_cochain(zero_form, signs[0], cell_axis=0),
     )
     reoriented_one = _degree_values(
         reoriented,
         1,
-        phx.graph.reorient_cochain(one_form, signs[1]),
+        phx.discretization.reorient_cochain(one_form, signs[1], cell_axis=0),
     )
 
     derivative = phx.graph.cochain_exterior_derivative(complex_ir.graph, packed_zero, 0)
@@ -217,19 +266,23 @@ def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian() -
 
     assert jnp.allclose(
         transformed_derivative[_degree_slice(reoriented, 1)],
-        phx.graph.reorient_cochain(derivative[_degree_slice(complex_ir, 1)], signs[1]),
+        phx.discretization.reorient_cochain(
+            derivative[_degree_slice(complex_ir, 1)], signs[1], cell_axis=0
+        ),
         atol=1e-12,
     )
     assert jnp.allclose(
         transformed_codifferential[_degree_slice(reoriented, 0)],
-        phx.graph.reorient_cochain(
-            codifferential[_degree_slice(complex_ir, 0)], signs[0]
+        phx.discretization.reorient_cochain(
+            codifferential[_degree_slice(complex_ir, 0)], signs[0], cell_axis=0
         ),
         atol=1e-12,
     )
     assert jnp.allclose(
         transformed_laplacian[_degree_slice(reoriented, 1)],
-        phx.graph.reorient_cochain(laplacian[_degree_slice(complex_ir, 1)], signs[1]),
+        phx.discretization.reorient_cochain(
+            laplacian[_degree_slice(complex_ir, 1)], signs[1], cell_axis=0
+        ),
         atol=1e-12,
     )
 
@@ -243,13 +296,13 @@ def test_relative_boundary_policy_masks_boundary_cochains() -> None:
         complex_ir.graph,
         zero_form,
         0,
-        boundary_policy="relative",
+        boundary="relative",
     )
     relative_codifferential = phx.graph.cochain_codifferential(
         complex_ir.graph,
         one_form,
         1,
-        boundary_policy="relative",
+        boundary="relative",
     )
 
     assert jnp.allclose(relative_derivative, 0.0)
@@ -270,7 +323,7 @@ def _centered_square_complex() -> Any:
         [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]],
         dtype=np.int32,
     )
-    return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    return _triangle_lower(vertices, faces)
 
 
 def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets() -> None:
@@ -348,234 +401,205 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets() -> No
     assert jnp.allclose(jnp.asarray(trajectory_batch["t"].data), 0.5)
 
 
-def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata() -> None:
-    complex_ir = _square_complex()
-    domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.SampleLayout((("graph",),))
-    all_cells = domain.component({"graph": phx.domain.Nodes()}).sample(
-        phx.domain.PointSampling(complex_ir.num_cells, layout=structure)
+def test_graph_builder_returns_metric_realization_with_weighted_path_laplacian() -> None:
+    graph = phx.graph.GraphIR(
+        nodes=jnp.zeros((3, 1)),
+        edges={"conductance": jnp.asarray([2.5, 2.5, 3.25, 3.25])},
+        senders=jnp.asarray([0, 1, 1, 2], dtype=jnp.int32),
+        receivers=jnp.asarray([1, 0, 2, 1], dtype=jnp.int32),
+        n_node=jnp.asarray([3], dtype=jnp.int32),
+        n_edge=jnp.asarray([4], dtype=jnp.int32),
     )
-    zero_spec = phx.discretization.CochainFieldSpec(
-        0,
-        cell_orientation="invariant",
-        sampling="point_value",
-    )
-    one_spec = phx.discretization.CochainFieldSpec(
-        1,
-        cell_orientation="signed",
-        sampling="cell_integral",
-    )
-
-    @domain.Function("graph")
-    def raw(cell: Any) -> Any:
-        return 1.0 + cell["local_index"]
-
-    zero_form = phx.domain.as_cochain_field(raw, zero_spec)
-    another_zero_form = phx.domain.as_cochain_field(2.0 * raw, zero_spec)
-    one_form = phx.domain.as_cochain_field(raw, one_spec)
-    values = zero_form(all_cells).data
-    degree = all_cells["graph"]["cell_dim"].data
-
-    assert jnp.all(values[degree != 0] == 0.0)
-    assert phx.domain.cochain_field_spec(3.0 * zero_form - another_zero_form) == zero_spec
-    with pytest.raises(ValueError, match="no declared cochain field semantics"):
-        phx.domain.cochain_field_spec(zero_form + one_form)
-
-
-def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators() -> None:
-    complex_ir = _square_complex()
-    domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.SampleLayout((("graph",),))
-    all_cells = domain.component({"graph": phx.domain.Nodes()}).sample(
-        phx.domain.PointSampling(complex_ir.num_cells, layout=structure)
-    )
-    edge_batch = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
-        phx.domain.PointSampling(complex_ir.cell_counts[1], layout=structure)
-    )
-    face_batch = domain.component({"graph": phx.domain.CochainCells(2)}).sample(
-        phx.domain.PointSampling(complex_ir.cell_counts[2], layout=structure)
-    )
-    zero_spec = phx.discretization.CochainFieldSpec(
-        0,
-        cell_orientation="invariant",
-        sampling="point_value",
-    )
-
-    @domain.Function("graph")
-    def raw(cell: Any) -> Any:
-        return 0.25 + cell["local_index"]
-
-    zero_form = phx.domain.as_cochain_field(raw, zero_spec)
-    derivative = phx.operators.cochain_exterior_derivative(zero_form)
-    second_derivative = phx.operators.cochain_exterior_derivative(derivative)
-    laplacian = phx.operators.cochain_hodge_laplacian(zero_form)
-    packed = zero_form(all_cells).data
-    expected_derivative = phx.graph.cochain_exterior_derivative(
-        complex_ir.graph,
-        packed,
-        0,
-    )
-    expected_laplacian = phx.graph.cochain_hodge_laplacian(
-        complex_ir.graph,
-        packed,
-        0,
-    )
-    edge_indices = edge_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data
-    vertex_batch = domain.component({"graph": phx.domain.CochainCells(0)}).sample(
-        phx.domain.PointSampling(complex_ir.cell_counts[0], layout=structure)
-    )
-    vertex_indices = vertex_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data
-
-    assert phx.domain.cochain_field_spec(derivative).degree == 1
-    assert phx.domain.cochain_field_spec(second_derivative).degree == 2
+    realization = phx.graph.graph_to_cochain_complex(graph, edge_weight_key="conductance")
+    values = jnp.asarray([0, 1, 4], dtype=jnp.int32)
+    expected = jnp.asarray([-2.5, -7.25, 9.75])
+    assert jnp.allclose(realization.hodge_laplacian(0, values), expected)
+    lower = phx.graph.CochainComplexIR(realization)
+    packed = _degree_values(lower, 0, values)
     assert jnp.allclose(
-        jnp.asarray(derivative(edge_batch).data), expected_derivative[edge_indices]
-    )
-    assert jnp.allclose(jnp.asarray(second_derivative(face_batch).data), 0.0, atol=1e-12)
-    assert jnp.allclose(
-        jnp.asarray(laplacian(vertex_batch).data), expected_laplacian[vertex_indices]
+        phx.graph.cochain_hodge_laplacian(lower.graph, packed, 0)[:3], expected
     )
 
 
-def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation() -> None:
-    complex_ir = _square_complex()
-    signs = (
-        np.asarray([1.0, -1.0, 1.0, -1.0]),
-        np.asarray([-1.0, 1.0, -1.0, 1.0, -1.0]),
-        np.asarray([1.0, -1.0]),
+def test_full_gram_graph_action_survives_batch_padding_and_unbatch() -> None:
+    topology = phx.discretization.polygonal_cell_complex(
+        jnp.asarray([[0, 1, 2]], dtype=jnp.int32), None, 3
     )
-    reoriented = phx.graph.reorient_cochain_complex(complex_ir, signs)
-    values = jnp.asarray([0.4, -0.1, 0.8, -0.3, 0.6])
-    transformed_values = phx.graph.reorient_cochain(values, signs[1])
-    one_spec = phx.discretization.CochainFieldSpec(
-        1,
-        cell_orientation="signed",
-        sampling="cell_integral",
+    gram = np.asarray([[2.0, 0.3, 0.0], [0.3, 3.0, 0.4], [0.0, 0.4, 4.0]])
+    rows, columns = np.triu_indices(3)
+    realization = phx.discretization.CochainDiscretization(
+        topology,
+        (
+            phx.discretization.SparseHodge(rows, columns, gram[rows, columns], 3),
+            phx.discretization.DiagonalHodge(jnp.asarray([1.5, 2.0, 2.5])),
+            phx.discretization.DiagonalHodge(jnp.ones((1,))),
+        ),
     )
-    structure = phx.domain.SampleLayout((("graph",),))
-
-    def laplacian_values(bundle: Any, coefficients: Any) -> Any:
-        domain = phx.domain.GraphDomain(bundle.graph)
-
-        @domain.Function("graph")
-        def raw(cell: Any) -> Any:
-            index = jnp.where(cell["cell_dim"] == 1, cell["local_index"], 0)
-            return coefficients[index]
-
-        one_form = phx.domain.as_cochain_field(raw, one_spec)
-        batch = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
-            phx.domain.PointSampling(bundle.cell_counts[1], layout=structure)
+    graph = phx.graph.CochainComplexIR(realization).graph
+    derivative = np.asarray(topology.incidences[0].scipy_boundary().toarray()).T
+    expected = np.linalg.solve(gram, derivative.T @ np.diag([1.5, 2.0, 2.5]) @ derivative)
+    first = np.asarray([1.0, -2.0, 0.75])
+    second = np.asarray([-0.5, 0.3, 1.25])
+    values = jnp.concatenate(
+        (
+            jnp.asarray(first),
+            jnp.zeros(4),
+            jnp.asarray(second),
+            jnp.zeros(4),
+            jnp.zeros(2),
         )
-        return phx.operators.cochain_hodge_laplacian(one_form)(batch).data
-
-    original = laplacian_values(complex_ir, values)
-    transformed = laplacian_values(reoriented, transformed_values)
-
-    assert jnp.allclose(
-        transformed,
-        phx.graph.reorient_cochain(original, signs[1]),
-        atol=1e-12,
+    )
+    batched = phx.graph.batch_graphs((graph, graph))
+    padded = phx.graph.pad_with_graphs(
+        batched, n_node=16, n_edge=batched.num_edges, n_graph=3
+    )
+    actual = eqx.filter_jit(phx.graph.cochain_hodge_laplacian)(padded, values, 0)
+    np.testing.assert_allclose(actual[:3], expected @ first, rtol=1e-11, atol=1e-12)
+    np.testing.assert_allclose(actual[7:10], expected @ second, rtol=1e-11, atol=1e-12)
+    np.testing.assert_array_equal(actual[14:], np.zeros(2))
+    restored = phx.graph.unbatch_graph(phx.graph.unpad_with_graphs(padded))[1]
+    restored_action = phx.graph.cochain_hodge_laplacian(restored, values[7:14], 0)
+    np.testing.assert_allclose(
+        restored_action[:3], expected @ second, rtol=1e-11, atol=1e-12
+    )
+    assert (
+        restored.cochain_bindings[0].discretization.prepared_id == realization.prepared_id
     )
 
 
-def test_cochain_metric_reductions_ignore_padding_and_compose_segment_weights() -> None:
-    values = jnp.asarray([1.0, 3.0, 1000.0, 2.0])
-    metric = jnp.asarray([1.0, 3.0, 1000.0, 2.0])
-    graph_index = jnp.asarray([0, 0, -1, 1], dtype=jnp.int32)
-    active = jnp.asarray([True, True, False, True])
-
-    graph_mean = phx.graph.cochain_metric_reduce(
-        values,
-        metric,
-        graph_index,
-        n_graph=2,
-        reduction="graph_mean",
-        entity_mask=active,
+def test_native_graph_codifferential_preserves_nonconvergence_evidence() -> None:
+    topology = phx.discretization.polygonal_cell_complex(
+        jnp.asarray([[0, 1, 2]], dtype=jnp.int32), None, 3
     )
-    metric_mean = phx.graph.cochain_metric_reduce(
-        values,
-        metric,
-        graph_index,
-        n_graph=2,
-        reduction="metric_mean",
-        entity_mask=active,
+    gram = np.asarray([[2.0, 0.3, 0.0], [0.3, 3.0, 0.4], [0.0, 0.4, 4.0]])
+    rows, columns = np.triu_indices(3)
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=0.0, max_steps=1),
+        failure=phx.linalg.FailurePolicy("status"),
     )
-    metric_sum = phx.graph.cochain_metric_reduce(
-        values,
-        metric,
-        graph_index,
-        n_graph=2,
-        reduction="metric_sum",
-        entity_mask=active,
+    owner = phx.discretization.CochainDiscretization(
+        topology,
+        (
+            phx.discretization.SparseHodge(
+                rows, columns, gram[rows, columns], 3, policy=policy
+            ),
+            phx.discretization.DiagonalHodge(jnp.ones(3)),
+            phx.discretization.DiagonalHodge(jnp.ones(1)),
+        ),
     )
-    weighted_sum = phx.graph.cochain_metric_reduce(
-        values,
-        metric,
-        graph_index,
-        n_graph=2,
-        reduction="metric_sum",
-        segment_weight=jnp.asarray([2.0, 2.0, 1000.0, 4.0]),
-        entity_mask=active,
-    )
-
-    assert jnp.allclose(graph_mean, 2.0)
-    assert jnp.allclose(metric_mean, 2.25)
-    assert jnp.allclose(metric_sum, 7.0)
-    assert jnp.allclose(weighted_sum, 18.0)
+    graph = phx.graph.CochainComplexIR(owner).graph
+    edges = jnp.asarray([1.0, -2.0, 0.75])
+    rhs = jnp.asarray(topology.incidences[0].scipy_boundary().toarray()) @ edges
+    space = owner.hilbert_complex().space(0)
+    if not isinstance(space, phx.linalg.ArraySpace):
+        raise TypeError("The cell realization must prepare a native array space.")
+    pairing = space.pairing
+    if not isinstance(pairing, phx.linalg.OperatorPairing):
+        raise TypeError("A coupled sparse metric must prepare an operator pairing.")
+    if pairing.prepared_inverse is None:
+        raise ValueError("A coupled sparse metric inverse must be prepared.")
+    result = phx.linalg.solve(pairing.prepared_inverse, rhs)
+    assert not bool(result.successful)
+    assert int(result.status) == int(phx.linalg.LinearSolveStatus.MAXIMUM_STEPS_REACHED)
+    values = jnp.concatenate((jnp.zeros(3), edges, jnp.zeros(1)))
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        eqx.filter_jit(phx.graph.cochain_codifferential)(
+            graph, values, 1
+        ).block_until_ready()
 
 
-@pytest.mark.parametrize(
-    ("measure", "expected"),
-    [
-        ("time_integral_average", 1.5),
-        ("time_integral_sum", 3.0),
-    ],
-)
-def test_cochain_residual_constraint_composes_graph_and_time_measures(
-    measure: Any,
-    expected: Any,
-) -> None:
-    complex_ir = _square_complex()
-    base = phx.domain.GraphTrajectoryDatasetDomain(
-        (complex_ir.graph, complex_ir.graph),
-        jnp.asarray([2, 3], dtype=jnp.int32),
-        dt=1.0,
-        measure=measure,
+def test_graph_lowering_embedding_identity_refuses_foreign_harmonic_frame() -> None:
+    base = _square_complex().discretization
+    shifted = phx.discretization.CochainDiscretization(
+        base.topology,
+        base.hodges,
+        boundary_masks=base.boundary_masks,
+        coordinates=tuple(
+            None if coordinates is None else coordinates + 1.0
+            for coordinates in base.coordinates
+        ),
     )
-    domain = base.with_layout(base.layout_for_batch_size(2, multiple=4))
-    component = domain.component(
-        {
-            "graph": phx.domain.CochainCells(0),
-            "t": phx.domain.Interior(),
-        }
+    assert (
+        phx.graph.CochainComplexIR(base).fingerprint
+        != phx.graph.CochainComplexIR(shifted).fingerprint
     )
-    structure = phx.domain.SampleLayout((("graph", "t"),))
-    zero_spec = phx.discretization.CochainFieldSpec(
+    harmonic = phx.exterior.validate_harmonic_cohomology(base, 0)[0]
+    with pytest.raises(ValueError):
+        phx.graph.CochainComplexIR(shifted, harmonic=(harmonic, None, None))
+
+
+def test_lowering_preserves_multiaxis_routes_and_inactive_cells() -> None:
+    vertices = phx.discretization.EntitySet(
+        "vertices",
         0,
-        cell_orientation="invariant",
-        sampling="point_value",
+        jnp.arange(3, dtype=jnp.int32),
+        active_mask=jnp.asarray([True, False, True]),
     )
-
-    @domain.Function("graph", "t")
-    def unit_residual(cell: Any, time: Any) -> Any:
-        return jnp.ones_like(time) + 0.0 * cell["local_index"]
-
-    residual = phx.domain.as_cochain_field(unit_residual, zero_spec)
-    batch = domain.points_from_case_time(
-        [0, 1],
-        [0.5, 1.0],
-        component=component,
-        structure=structure,
+    edges = phx.discretization.EntitySet("edges", 1, jnp.arange(1, dtype=jnp.int32))
+    incidence = phx.discretization.OrientedIncidence(
+        1,
+        vertices,
+        edges,
+        phx.sparse.EdgeRelation(
+            jnp.asarray([0, 2], dtype=jnp.int32),
+            jnp.asarray([0, 0], dtype=jnp.int32),
+            source_size=3,
+            target_size=1,
+        ),
+        jnp.asarray([-1.0, 1.0]),
     )
-    constraint = phx.terms.CochainResidualTerm(
-        component=component,
-        residual=lambda functions: functions["u"],
-        fields=("u",),
-        sampling=phx.domain.PointSampling(2, layout=structure),
-        reduction="graph_mean",
+    realization = phx.discretization.CochainDiscretization(
+        phx.discretization.CellComplexTopology((vertices, edges), (incidence,)),
+        (
+            phx.discretization.DiagonalHodge(jnp.ones((3,))),
+            phx.discretization.DiagonalHodge(jnp.ones((1,))),
+        ),
     )
-
+    lower = phx.graph.CochainComplexIR(realization)
+    values = jnp.asarray([[1.0, 2.0], [100.0, 200.0], [4.0, 8.0], [0.0, 0.0]])
     assert jnp.allclose(
-        constraint.loss({"u": residual}, batch=batch),
-        expected,
+        phx.graph.cochain_exterior_derivative(lower.graph, values, 0),
+        jnp.asarray([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [3.0, 6.0]]),
+    )
+    assert jnp.allclose(
+        phx.graph.cochain_hodge_laplacian(lower.graph, values, 0),
+        jnp.asarray([[-3.0, -6.0], [0.0, 0.0], [3.0, 6.0], [0.0, 0.0]]),
+    )
+    block = phx.nn.operator.architectures.TopologicalCochainBlock(
+        2,
+        (0, 1),
+        dimension=1,
+        residual_scale=0.0,
+        routes=phx.nn.operator.architectures.TopologicalRouteConfig(
+            exterior_derivative=False,
+            codifferential=False,
+            lower_laplacian=False,
+            upper_laplacian=False,
+        ),
+    )
+    padded = phx.graph.pad_with_graphs(
+        lower.graph, n_node=6, n_edge=lower.graph.num_edges, n_graph=2
+    )
+    padded_values = jnp.concatenate((values, jnp.zeros((2, 2))))
+    expected = np.asarray([[1.0, 2.0], [0.0, 0.0], [4.0, 8.0], [0.0, 0.0]])
+    np.testing.assert_array_equal(block(padded, padded_values)[:4], expected)
+    restored = phx.graph.unpad_with_graphs(padded)
+    np.testing.assert_array_equal(block(restored, values), expected)
+
+
+def test_graph_harmonic_projection_preserves_complex_field_coefficients() -> None:
+    realization = _annulus_complex().discretization
+    harmonic = phx.exterior.validate_harmonic_cohomology(realization, 1)[0]
+    lower = phx.graph.CochainComplexIR(realization, harmonic=(None, harmonic, None))
+    coefficients = jnp.linspace(
+        -1.0, 1.0, realization.cell_counts[1]
+    ) + 1j * jnp.linspace(0.0, 2.0, realization.cell_counts[1])
+    field = _degree_values(lower, 1, coefficients)
+    projected = phx.graph.cochain_harmonic_projection(lower.graph, field, 1)
+    basis = harmonic.basis
+    expected = basis @ (basis.conj().T @ (realization.hodge_diagonal(1) * coefficients))
+    assert jnp.allclose(projected[_degree_slice(lower, 1)], expected, atol=1e-10)
+    assert jnp.allclose(
+        phx.graph.cochain_hodge_laplacian(lower.graph, projected, 1), 0.0, atol=1e-9
     )

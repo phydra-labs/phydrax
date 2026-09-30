@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast, TypeAlias
+from typing import Any, cast, final, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,11 +17,23 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import FiniteVolumeDiscretization
+from ...linalg import (
+    FunctionLinearOperator,
+    LinearSolvePolicy,
+    LinearSolveResult,
+    LinearSystem,
+    OperatorPairing,
+    OperatorProperties,
+    PCG,
+    prepare,
+    PyTreeSpace,
+    solve,
+    TolerancePolicy,
+)
 from ...solver._mac_ale import MACALEGeometryPlan, MACALEStageGeometry
 
 
 FaceTuple = tuple[Array, ...]
-_TupleCGCarry: TypeAlias = tuple[FaceTuple, FaceTuple, FaceTuple, Array, Array, Array]
 _ArrayCGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
@@ -39,18 +51,8 @@ def _cell_to_vertices(value: Array, periodic: tuple[bool, bool], /) -> Array:
     return result
 
 
-def _tuple_dot(left: FaceTuple, right: FaceTuple, /) -> Array:
-    return jnp.asarray(
-        sum(jnp.real(jnp.vdot(a, b)) for a, b in zip(left, right, strict=True))
-    )
-
-
 def _tuple_add(left: FaceTuple, scale: Array, right: FaceTuple, /) -> FaceTuple:
     return tuple(a + scale * b for a, b in zip(left, right, strict=True))
-
-
-def _tuple_scale(scale: Array, value: FaceTuple, /) -> FaceTuple:
-    return tuple(scale * component for component in value)
 
 
 class GraphALEStageArguments(StrictModule):
@@ -70,12 +72,34 @@ class GraphSurfaceGeometryEvidence(StrictModule):
     surface_id: str = eqx.field(static=True)
 
 
+@final
 class MappedHodgeSolveResult(StrictModule):
     velocity: FaceTuple
-    residual_norm: Array
-    iterations: Array
-    finite: Array
-    converged: Array
+    linear_result: LinearSolveResult
+
+    @property
+    def residual_norm(self) -> Array:
+        return self.linear_result.diagnostics.residual_norm
+
+    @property
+    def iterations(self) -> Array:
+        return self.linear_result.diagnostics.iterations
+
+    @property
+    def finite(self) -> Array:
+        return self.linear_result.diagnostics.finite
+
+    @property
+    def converged(self) -> Array:
+        return self.linear_result.diagnostics.converged
+
+    @property
+    def status(self) -> Array:
+        return self.linear_result.status
+
+    @property
+    def successful(self) -> Array:
+        return self.linear_result.successful
 
 
 class SurfaceKinematicResult(StrictModule):
@@ -94,6 +118,7 @@ class FreeSurfaceALEState(StrictModule):
     scalar_content: dict[str, Array]
 
 
+@final
 class FreeSurfaceALEStateView(StrictModule):
     eta: Array
     velocity: FaceTuple
@@ -101,6 +126,7 @@ class FreeSurfaceALEStateView(StrictModule):
     geometry: MACALEStageGeometry
     kinetic_energy: Array
     volume: Array
+    hodge_result: MappedHodgeSolveResult
     view_id: str = eqx.field(static=True)
 
 
@@ -173,6 +199,7 @@ class GraphSurfaceALEPlan(StrictModule, NonTrainableState):
         return PreparedGraphSurfaceALE(self)
 
 
+@final
 class PreparedGraphSurfaceALE(StrictModule):
     """Prepared graph-to-vertex map and compatible kinematic/Hodge operators."""
 
@@ -180,6 +207,8 @@ class PreparedGraphSurfaceALE(StrictModule):
     ale: MACALEGeometryPlan
     horizontal_area: Array
     bottom_vertices: Array
+    hodge_coordinates: PyTreeSpace
+    hodge_policy: LinearSolvePolicy
     surface_id: str = eqx.field(static=True)
 
     def __init__(self, plan: GraphSurfaceALEPlan, /) -> None:
@@ -236,6 +265,24 @@ class PreparedGraphSurfaceALE(StrictModule):
         self.ale = ale
         self.horizontal_area = horizontal_area
         self.bottom_vertices = bottom_vertices
+        self.hodge_coordinates = PyTreeSpace(
+            tuple(
+                jax.ShapeDtypeStruct(value.shape, value.dtype)
+                for value in reference.face_measures
+            ),
+            space_id=canonical_fingerprint(
+                {"kind": "graph-surface-face-coordinates", "plan": plan.plan_id}
+            ),
+        )
+        self.hodge_policy = LinearSolvePolicy(
+            PCG(),
+            tolerance=TolerancePolicy(
+                relative=plan.tolerance,
+                absolute=plan.tolerance,
+                max_steps=plan.maximum_iterations,
+            ),
+            require_device_binding=True,
+        )
         self.surface_id = canonical_fingerprint(
             {"kind": "prepared-graph-surface-ale", "plan": plan.plan_id}
         )
@@ -327,6 +374,87 @@ class PreparedGraphSurfaceALE(StrictModule):
             values
         )
 
+    def hodge_operator(
+        self,
+        geometry: MACALEStageGeometry,
+        /,
+        *,
+        free_mask: FaceTuple | None = None,
+    ) -> FunctionLinearOperator:
+        """Energy Hessian in Euclidean face coordinates.
+
+        A restriction is ``P M P + (I-P)``: the inactive identity keeps native
+        CG positive definite without replacing the restricted inverse by a
+        masked full inverse. Numerical geometry and masks remain dynamic.
+        """
+        if geometry.reference.prepared_id != self.plan.reference.prepared_id:
+            raise ValueError("Mapped Hodge geometry belongs to another reference.")
+        mask = None
+        if free_mask is not None:
+            mask = geometry.validate_velocity(free_mask)
+            invalid = jnp.any(
+                jnp.stack(tuple(jnp.any((value != 0) & (value != 1)) for value in mask))
+            )
+            mask = eqx.error_if(mask, invalid, "free_mask must contain only zero or one.")
+
+        def action(value: FaceTuple) -> FaceTuple:
+            if mask is None:
+                return self.apply_hodge(geometry, value)
+            restricted = tuple(
+                jnp.where(active != 0, component, 0.0)
+                for component, active in zip(value, mask, strict=True)
+            )
+            image = self.apply_hodge(geometry, restricted)
+            return tuple(
+                jnp.where(active != 0, mapped, component)
+                for mapped, component, active in zip(image, value, mask, strict=True)
+            )
+
+        return FunctionLinearOperator(
+            action,
+            source=self.hodge_coordinates,
+            target=self.hodge_coordinates,
+            transpose_action=action,
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "construction",
+                },
+            ),
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "graph-surface-energy-hodge",
+                    "surface": self.surface_id,
+                    "layout": geometry.geometry_layout_id,
+                    "restricted": free_mask is not None,
+                }
+            ),
+        )
+
+    def hodge_pairing(self, geometry: MACALEStageGeometry, /) -> OperatorPairing:
+        """Metric-only Riesz pairing with a native prepared CG inverse."""
+        operator = self.hodge_operator(geometry)
+        return OperatorPairing(
+            operator,
+            prepared_inverse=prepare(LinearSystem(operator), self.hodge_policy),
+            pairing_id=canonical_fingerprint(
+                {"kind": "graph-surface-energy-pairing", "operator": operator.operator_id}
+            ),
+        )
+
+    def hodge_space(self, geometry: MACALEStageGeometry, /) -> PyTreeSpace:
+        """Face-tuple Hilbert space paired by the mapped kinetic energy."""
+        pairing = self.hodge_pairing(geometry)
+        return PyTreeSpace(
+            self.hodge_coordinates.structure(),
+            pairing=pairing,
+            space_id=canonical_fingerprint(
+                {"kind": "graph-surface-energy-space", "pairing": pairing.pairing_id}
+            ),
+        )
+
     def inverse_hodge(
         self,
         geometry: MACALEStageGeometry,
@@ -335,64 +463,20 @@ class PreparedGraphSurfaceALE(StrictModule):
         *,
         free_mask: FaceTuple | None = None,
     ) -> MappedHodgeSolveResult:
-        target = tuple(jnp.asarray(value) for value in momentum)
-        mask = (
-            tuple(jnp.ones_like(value) for value in target)
-            if free_mask is None
-            else tuple(jnp.asarray(value, dtype=target[0].dtype) for value in free_mask)
-        )
-
-        def apply(value: FaceTuple) -> FaceTuple:
-            masked = tuple(v * m for v, m in zip(value, mask, strict=True))
-            image = self.apply_hodge(geometry, masked)
-            return tuple(v * m for v, m in zip(image, mask, strict=True))
-
-        value = tuple(jnp.zeros_like(component) for component in target)
-        residual = tuple(t * m for t, m in zip(target, mask, strict=True))
-        direction = residual
-        norm = _tuple_dot(residual, residual)
-        threshold = self.plan.tolerance**2 * jnp.maximum(norm, 1.0)
-        active = norm > threshold
-        failed = jnp.asarray(False)
-
-        def body(_: Array, state: _TupleCGCarry) -> _TupleCGCarry:
-            current, residual_, direction_, norm_, active_, failed_ = state
-            image = apply(direction_)
-            denominator = _tuple_dot(direction_, image)
-            valid = active_ & jnp.isfinite(denominator) & (denominator > 0.0)
-            alpha = jnp.where(valid, norm_ / denominator, 0.0)
-            next_value = _tuple_add(current, alpha, direction_)
-            next_residual = _tuple_add(residual_, -alpha, image)
-            next_norm = _tuple_dot(next_residual, next_residual)
-            running = valid & (next_norm > threshold)
-            beta = jnp.where(running & (norm_ > 0.0), next_norm / norm_, 0.0)
-            next_direction = _tuple_add(next_residual, beta, direction_)
-            return (
-                next_value,
-                next_residual,
-                next_direction,
-                next_norm,
-                running,
-                failed_ | (active_ & ~valid),
+        target = geometry.validate_velocity(momentum)
+        operator = self.hodge_operator(geometry, free_mask=free_mask)
+        if free_mask is not None:
+            target = tuple(
+                jnp.where(active != 0, component, 0.0)
+                for component, active in zip(target, free_mask, strict=True)
             )
-
-        value, residual, _, norm, active, failed = jax.lax.fori_loop(
-            0,
-            self.plan.maximum_iterations,
-            body,
-            (value, residual, direction, norm, active, failed),
+        result = solve(
+            prepare(LinearSystem(operator), self.hodge_policy),
+            target,
         )
-        residual_norm = jnp.sqrt(norm)
-        finite = jnp.all(
-            jnp.stack(tuple(jnp.all(jnp.isfinite(v)) for v in value))
-        ) & jnp.isfinite(residual_norm)
-        converged = ~active & ~failed & finite
         return MappedHodgeSolveResult(
-            velocity=value,
-            residual_norm=residual_norm,
-            iterations=jnp.asarray(self.plan.maximum_iterations, dtype=jnp.int32),
-            finite=finite,
-            converged=converged,
+            velocity=geometry.validate_velocity(result.value),
+            linear_result=result,
         )
 
     def top_volume_flux(

@@ -29,9 +29,10 @@ For labeled PDE functions, `intrinsic_dalembertian` preserves the ordinary
 `DomainFunction` dependency and batching conventions.
 
 The form convention includes the metric index in both Hodge-square and
-codifferential signs. Consequently, for a scalar `f`,
-`hodge_laplacian(DifferentialForm(f, ...), metric)` evaluates `−□f` on Lorentzian
-spacetime. The labeled `domain_codifferential` and `domain_hodge_laplacian` adapters
+codifferential signs. For a scalar f, construct the zero-form with explicit
+one-component coefficients `[f]`; `hodge_laplacian(form, metric)` evaluates −□f
+on Lorentzian spacetime without an orientation argument. The labeled
+`domain_codifferential` and `domain_hodge_laplacian` adapters
 preserve the same convention. See [Differential forms](forms.md) for the complete
 sign identities.
 

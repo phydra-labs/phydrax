@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 import phydrax.ein as ein
+from phydrax.optim._adam import adam
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._model import AbstractArrayModel
@@ -372,7 +373,7 @@ def fit_probabilistic_level_set_stefan(
         raise ValueError("steps must be nonnegative.")
     if not isinstance(model, ProbabilisticLevelSetStefan):
         raise TypeError("model must be ProbabilisticLevelSetStefan.")
-    transformation = optax.adam(1.0e-3) if optimizer is None else optimizer
+    transformation = adam(1.0e-3) if optimizer is None else optimizer
     kernel = prepare_training_kernel(
         model,
         (

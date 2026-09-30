@@ -227,12 +227,10 @@ def qualify() -> dict[str, object]:
         jnp.max(jnp.abs(diffusion.apply(jnp.ones((diffusion.cell_count,)))))
     )
     cochain = phx.discretization.CutCellCochainPlan(cut).prepare()
-    complex_topology = cochain.topology.topology
+    complex_topology = cochain.topology
     edge = jnp.linspace(-0.2, 0.3, complex_topology.entities(1).count)
-    divergence_of_curl = (
-        complex_topology.incidences[2]
-        .exterior_derivative()
-        .mv(complex_topology.incidences[1].exterior_derivative().mv(edge))
+    divergence_of_curl = cochain.exterior_derivative(
+        2, cochain.exterior_derivative(1, edge)
     )
     chain_defect = float(jnp.max(jnp.abs(divergence_of_curl), initial=0.0))
     cochain_plan = phx.discretization.CutCellCochainPlan(cut)
@@ -394,7 +392,7 @@ def qualify() -> dict[str, object]:
         "moving_space_time_ledger": bool(moving_result.accepted),
         "multiple_topology_events": bool(localized_result.accepted)
         and len(localized_result.localization.event_times) >= 2,
-        "cochain_topology_transfer": cochain_transfer.evidence.valid,
+        "cochain_topology_transfer": bool(cochain_transfer.evidence.valid),
         "frozen_history_derivative": bool(derivative_result.evidence.valid),
         "distributed_roundtrip": bool(jnp.array_equal(distributed_roundtrip, content)),
         "process_local_global_array": bool(
@@ -434,7 +432,7 @@ def qualify() -> dict[str, object]:
             "cochain_transfer_id": cochain_transfer.plan_id,
             "mortar_flux_plan_id": mortar_flux.plan_id,
             "localized_event_evidence_id": localized_result.localization.evidence_id,
-            "cochain_state_id": cochain.state_id,
+            "cochain_realization_id": cochain.realization_id,
             "distributed_partition_id": distributed.partition_id,
             "signature_cache_id": cache_result.state.cache_id,
             "maximum_cut_face_closure_defect": cut.evidence.maximum_face_closure_defect,

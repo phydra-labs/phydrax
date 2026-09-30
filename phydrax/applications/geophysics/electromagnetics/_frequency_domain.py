@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,9 +19,73 @@ from phydrax import ein
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....discretization import CellMesh, TetrahedralConnectivity, TetrahedralNedelecSpace
+from ....discretization import CellMesh, TetrahedralConnectivity
+from ....discretization.fem._de_rham import FiniteElementDeRhamComplex
+from ....exterior._complex import ComplexBoundary
+from ....linalg._complexes import coordinate_operator, coordinate_space
 
 
+def _material_stiffness(
+    complex: FiniteElementDeRhamComplex,
+    coefficient: Array,
+    /,
+    *,
+    boundary: ComplexBoundary = "absolute",
+) -> la.AbstractLinearOperator:
+    differential = coordinate_operator(
+        complex.hilbert_complex(boundary=boundary).differential(1)
+    )
+    metric = complex.constitutive_operator(2, coefficient, boundary=boundary)
+    return la.assemble_sparse(la.adjoint(differential) @ metric @ differential)
+
+
+def _hx_preconditioner(
+    complex: FiniteElementDeRhamComplex,
+    surrogate: la.AbstractLinearOperator,
+    /,
+) -> la.AbstractPreconditioner:
+    hilbert = complex.hilbert_complex(boundary="relative")
+    interpolation = coordinate_operator(
+        complex.vector_interpolation(1, boundary="relative")
+    )
+    scalar = la.assemble_sparse(la.stiffness_form(hilbert, 0) + la.mass_form(hilbert, 0))
+    scalar_diagonal = la.assemble_diagonal(scalar)
+    potential = la.DiagonalPreconditioner(
+        scalar_diagonal,
+        space=coordinate_space(hilbert.space(0)),
+        positive_definite=True,
+    )
+    components = complex.dimension
+    vector = la.DiagonalPreconditioner(
+        jnp.repeat(scalar_diagonal, components),
+        space=interpolation.source,
+        positive_definite=True,
+    )
+    smoother = la.DiagonalPreconditioner(
+        la.assemble_diagonal(surrogate),
+        space=surrogate.source,
+        positive_definite=True,
+    )
+    builder = la.hiptmair_xu_preconditioner_builder(
+        hilbert,
+        1,
+        vector_interpolation=complex.vector_interpolation(1, boundary="relative"),
+        vector_builder=vector,
+        potential_builder=potential,
+        smoother=smoother,
+    )
+    return builder.prepare(surrogate, materialization=la.MaterializationPolicy())
+
+
+def _complex_action(operator: la.AbstractLinearOperator, values: ArrayLike, /) -> Array:
+    field = jnp.asarray(values)
+    dtype = coordinate_space(operator.source).dtype
+    return operator.mv(jnp.real(field).astype(dtype)) + 1j * operator.mv(
+        jnp.imag(field).astype(dtype)
+    )
+
+
+@final
 class ConductiveEMMaterial(StrictModule):
     conductivity_S_m: Array
     permittivity_F_m: Array
@@ -63,6 +128,7 @@ class ConductiveEMMaterial(StrictModule):
         )
 
 
+@final
 class FrequencyDomainEMSurvey(StrictModule, NonTrainableState):
     electric_current_functionals: Array
     receiver_functionals: Array
@@ -113,6 +179,7 @@ class FrequencyDomainEMSurvey(StrictModule, NonTrainableState):
         )
 
 
+@final
 class FrequencyDomainEMResult(StrictModule):
     angular_frequencies: Array
     observations: Array
@@ -122,6 +189,7 @@ class FrequencyDomainEMResult(StrictModule):
     successful: Array
 
 
+@final
 class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
     """3D tetrahedral H(curl) conductive Maxwell with PEC outer boundary.
 
@@ -131,7 +199,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
     explicitly supplied background material and primary field.
     """
 
-    space: TetrahedralNedelecSpace
+    complex: FiniteElementDeRhamComplex
     survey: FrequencyDomainEMSurvey
     free_edges: Array
     reduced_space: la.ArraySpace
@@ -139,10 +207,12 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
-        space = TetrahedralNedelecSpace(mesh)
+        complex = FiniteElementDeRhamComplex(
+            mesh, family="trimmed", order=1, coefficient_dtype=jnp.complex128
+        )
         if not isinstance(survey, FrequencyDomainEMSurvey):
             raise TypeError("Frequency-domain EM requires FrequencyDomainEMSurvey.")
-        if survey.electric_current_functionals.shape[1] != space.edge_count:
+        if survey.electric_current_functionals.shape[1] != complex.cell_counts[1]:
             raise ValueError("Frequency-domain EM survey does not match H(curl) edges.")
         connectivity = mesh.connectivity
         if not isinstance(connectivity, TetrahedralConnectivity):
@@ -154,7 +224,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
         free = np.flatnonzero(~boundary)
         if free.size == 0:
             raise ValueError("Frequency-domain EM mesh has no interior H(curl) edges.")
-        self.space, self.survey = space, survey
+        self.complex, self.survey = complex, survey
         self.free_edges = jnp.asarray(free, dtype=jnp.int32)
         self.reduced_space = la.ArraySpace((free.size,), dtype=jnp.complex128)
         self.policy = la.LinearSolvePolicy(
@@ -165,7 +235,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "frequency-domain-em-plan",
-                "hcurl": space.space_id,
+                "hcurl": complex.realization_id,
                 "survey": survey.survey_id,
                 "boundary": "pec",
             }
@@ -175,17 +245,20 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
         self, angular_frequency: Array, material: ConductiveEMMaterial
     ) -> tuple[la.FunctionLinearOperator, Callable[[ArrayLike], Array]]:
         omega = angular_frequency
+        stiffness = _material_stiffness(self.complex, material.inverse_permeability_m_H)
+        permittivity = self.complex.constitutive_operator(1, material.permittivity_F_m)
+        conductivity = self.complex.constitutive_operator(1, material.conductivity_S_m)
 
         def full_action(field: ArrayLike) -> Array:
             return (
-                self.space.curl_curl_action(field, material.inverse_permeability_m_H)
-                - omega**2 * self.space.mass_action(field, material.permittivity_F_m)
-                - 1j * omega * self.space.mass_action(field, material.conductivity_S_m)
+                _complex_action(stiffness, field)
+                - omega**2 * _complex_action(permittivity, field)
+                - 1j * omega * _complex_action(conductivity, field)
             )
 
         def reduced_action(values: Array) -> Array:
             full = (
-                jnp.zeros((self.space.edge_count,), dtype=values.dtype)
+                jnp.zeros((self.complex.cell_counts[1],), dtype=values.dtype)
                 .at[self.free_edges]
                 .set(values)
             )
@@ -199,7 +272,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
                 {
                     "kind": "conductive-frequency-em-operator",
                     "plan": self.plan_id,
-                    "omega": float(np.asarray(omega)),
+                    "binding": "frequency",
                 }
             ),
         ), full_action
@@ -223,7 +296,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
         )
         if not isinstance(material, ConductiveEMMaterial):
             raise TypeError("Frequency-domain EM material is invalid.")
-        if material.conductivity_S_m.shape[0] != self.space.cell_count:
+        if material.conductivity_S_m.shape[0] != self.complex.cell_counts[3]:
             raise ValueError("Frequency-domain EM material does not match mesh cells.")
         primary = None if primary_electric is None else jnp.asarray(primary_electric)
         if (primary is None) != (background_material is None):
@@ -233,7 +306,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
         if primary is not None and primary.shape != (
             frequencies.size,
             self.survey.electric_current_functionals.shape[0],
-            self.space.edge_count,
+            self.complex.cell_counts[1],
         ):
             raise ValueError("Primary EM fields have wrong frequency/source/edge shape.")
         observation_rows, field_rows, residual_rows, power_rows, success_rows = (
@@ -245,6 +318,46 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
         )
         for frequency_index, omega in enumerate(frequencies):
             operator, full_action = self._operator(omega, material)
+            stiffness = _material_stiffness(
+                self.complex, material.inverse_permeability_m_H, boundary="relative"
+            )
+            epsilon = self.complex.constitutive_operator(
+                1, material.permittivity_F_m, boundary="relative"
+            )
+            sigma = self.complex.constitutive_operator(1, material.conductivity_S_m)
+
+            relative_sigma = self.complex.constitutive_operator(
+                1, material.conductivity_S_m, boundary="relative"
+            )
+            surrogate_sum = stiffness + omega**2 * epsilon + omega * relative_sigma
+            surrogate_sum = eqx.tree_at(
+                lambda value: value.properties,
+                surrogate_sum,
+                la.OperatorProperties(
+                    self_adjoint=True,
+                    positive_definite=True,
+                    evidence={"positive_definite": "construction"},
+                ),
+            )
+            surrogate = la.assemble_sparse(surrogate_sum)
+            native_inverse = _hx_preconditioner(self.complex, surrogate)
+
+            def complex_inverse(values: Array) -> Array:
+                return native_inverse.apply(values)
+
+            inverse = la.OperatorPreconditioner(
+                la.FunctionLinearOperator(
+                    complex_inverse,
+                    source=self.reduced_space,
+                    target=self.reduced_space,
+                    operator_id=self.plan_id + ":complex-surrogate-inverse",
+                )
+            )
+            policy = eqx.tree_at(
+                lambda value: value.preconditioning,
+                self.policy,
+                la.PreconditioningPolicy(inverse),
+            )
             background_action = None
             if background_material is not None:
                 _, background_action = self._operator(omega, background_material)
@@ -272,15 +385,15 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
                         primary_field
                     )
                 rhs = rhs_full[self.free_edges]
-                result = la.solve(la.LinearSystem(operator), rhs, policy=self.policy)
+                result = la.solve(la.LinearSystem(operator), rhs, policy=policy)
                 secondary = (
-                    jnp.zeros((self.space.edge_count,), dtype=result.value.dtype)
+                    jnp.zeros((self.complex.cell_counts[1],), dtype=result.value.dtype)
                     .at[self.free_edges]
                     .set(result.value)
                 )
                 field = secondary if primary_field is None else primary_field + secondary
                 residual = operator.mv(result.value) - rhs
-                conduction = self.space.mass_action(field, material.conductivity_S_m)
+                conduction = _complex_action(sigma, field)
                 power = 0.5 * jnp.real(jnp.vdot(field, conduction))
                 fields.append(field)
                 residuals.append(jnp.sqrt(jnp.real(jnp.vdot(residual, residual))))

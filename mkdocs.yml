@@ -478,6 +478,7 @@ nav:
         - Solver evidence gates: "guides_solver_evidence.md"
         - Omniphysics implementation program: "guides_omniphysics_program.md"
         - Differential operators: "guides_differential.md"
+        - Exterior calculus: "guides_exterior_calculus.md"
         - Exact PDE trial spaces: "guides_exact_trial_spaces.md"
         - Clifford fields and monogenic trial spaces: "guides_clifford_fields.md"
         - Holomorphic potential fields: "guides_holomorphic_potentials.md"
@@ -729,6 +730,10 @@ nav:
             - Components: "api/domain/components.md"
             - Functions: "api/domain/functions.md"
             - Domain decomposition: "api/domain/decomposition.md"
+        - Exterior calculus:
+            - Overview: "api/exterior/index.md"
+            - Complexes and Hodges: "api/exterior/complexes.md"
+            - Chains, products, and traces: "api/exterior/bridges.md"
         - Metrix:
             - Overview: "api/metrix/index.md"
             - Relativity geometry: "api/metrix/relativity.md"

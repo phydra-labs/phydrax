@@ -34,10 +34,10 @@ def _basis(graph: Any) -> Any:
         edge_weight_key="conductance",
         node_measure="uniform",
     )
-    return phx.graph.cochain_laplacian_eigenbasis(
+    return phx.exterior.hodge_laplacian_eigenbasis(
         complex_ir,
         0,
-        num_modes=3,
+        count=3,
     )
 
 

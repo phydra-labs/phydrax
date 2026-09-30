@@ -20,10 +20,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import OrientedEdgePathPlan
+from ...discretization._oriented_path import ordered_path_transport
 from ...graph._matrix_gauge import (
     gauge_transform_links,
     MatrixGaugeLinkSpace,
-    path_holonomy,
 )
 from ...metrix import SpecialUnitaryGroup, UnitaryGroup
 from ...metrix._gauge_representation import (
@@ -329,7 +329,7 @@ def gauge_covariant_wigner_transform(
         ~jnp.all(jnp.isfinite(weights)),
         "Wigner path weights must be finite.",
     )
-    holonomy = path_holonomy(plan.link_space, link_values, plan.paths)
+    holonomy = ordered_path_transport(plan.paths, link_values)
     wilson = plan.representation.matrix(holonomy)
     transported = contract("pij,pjk->pik", wilson, bilocal)
     wigner = contract("qp,p,pij->qij", phases, weights, transported)

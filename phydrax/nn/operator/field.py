@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TypeAlias
 
 import jax.numpy as jnp
 from jax import Array
@@ -13,7 +13,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._model import ValuePort
 from ..._strict import StrictModule
-from ...discretization import CochainFieldSpec
+from ...exterior._form_type import FormType
 from ...typing import parse
 from ...units import DIMENSIONLESS, DimensionSignature
 from .._utils import _get_size
@@ -28,6 +28,7 @@ from .representations import (
 OperatorFieldRole: TypeAlias = Literal["source", "target", "both"]
 
 
+@final
 class OperatorFieldSpec(StrictModule):
     """Static physical semantics for one named operator field."""
 
@@ -42,7 +43,7 @@ class OperatorFieldSpec(StrictModule):
     dimension: DimensionSignature
     scale: tuple[float, ...]
     offset: tuple[float, ...]
-    cochain: CochainFieldSpec | None
+    form_type: FormType | None
     tensor_layout: TensorFieldLayout | None
     clifford_layout: CliffordGradeRepresentation | None
     required: bool
@@ -62,7 +63,7 @@ class OperatorFieldSpec(StrictModule):
         dimension: DimensionSignature = DIMENSIONLESS,
         scale: float | Sequence[float] = 1.0,
         offset: float | Sequence[float] = 0.0,
-        cochain: CochainFieldSpec | None = None,
+        form_type: FormType | None = None,
         tensor_layout: TensorFieldLayout | None = None,
         clifford_layout: CliffordGradeRepresentation | None = None,
         required: bool = True,
@@ -72,11 +73,13 @@ class OperatorFieldSpec(StrictModule):
             raise ValueError("Operator field name must not be empty.")
         role = parse(role, OperatorFieldRole, "role")
         channel_count = _get_size(channels)
+        if form_type is not None and not isinstance(form_type, FormType):
+            raise TypeError("form_type must be a FormType or None.")
         if representation is None:
-            if clifford_layout is not None:
-                resolved_representation: OperatorFieldRepresentation = (
-                    "clifford_multivector"
-                )
+            if form_type is not None:
+                resolved_representation: OperatorFieldRepresentation = "cochain"
+            elif clifford_layout is not None:
+                resolved_representation = "clifford_multivector"
             elif tensor_layout is not None:
                 resolved_representation = "tensor"
             elif channels == "scalar":
@@ -139,18 +142,25 @@ class OperatorFieldSpec(StrictModule):
                 raise ValueError(
                     "Clifford packed width must equal the declared field channel count."
                 )
-            if tensor_layout is not None or cochain is not None:
+            if tensor_layout is not None or form_type is not None:
                 raise ValueError(
                     "Clifford fields cannot also declare tensor or cochain layouts."
                 )
             clifford_layout.validate_affine_normalization(scales, offsets)
         elif resolved_representation == "clifford_multivector":
             raise ValueError("Clifford multivector fields require a clifford_layout.")
-        if cochain is not None and not isinstance(cochain, CochainFieldSpec):
-            raise TypeError("cochain must be a CochainFieldSpec or None.")
+        if resolved_representation == "cochain" and form_type is None:
+            raise ValueError("Cochain representation requires an explicit form_type.")
+        if resolved_representation == "cochain" and form_type is not None:
+            fiber_channels = 1
+            for extent in form_type.fiber_shape:
+                fiber_channels *= extent
+            if fiber_channels != channel_count:
+                raise ValueError("Cochain channels must equal the form_type fiber size.")
         if (
-            cochain is not None
-            and cochain.cell_orientation == "signed"
+            form_type is not None
+            and resolved_representation == "cochain"
+            and (form_type.degree > 0 or form_type.twist == "twisted")
             and any(value != 0.0 for value in offsets)
         ):
             raise ValueError(
@@ -186,7 +196,7 @@ class OperatorFieldSpec(StrictModule):
                 or not dimension.is_dimensionless
                 or scales != (1.0,)
                 or offsets != (0.0,)
-                or cochain is not None
+                or form_type is not None
                 or tensor_layout is not None
                 or clifford_layout is not None
             ):
@@ -206,7 +216,7 @@ class OperatorFieldSpec(StrictModule):
         self.dimension = dimension
         self.scale = scales
         self.offset = offsets
-        self.cochain = cochain
+        self.form_type = form_type
         self.tensor_layout = tensor_layout
         self.clifford_layout = clifford_layout
         self.required = bool(required)
@@ -289,14 +299,16 @@ class OperatorFieldSpec(StrictModule):
                 variance = "covariant"
             case _:
                 variance = "neutral"
-        structures = (self.cochain, self.tensor_layout, self.clifford_layout)
+        structures = (self.form_type, self.tensor_layout, self.clifford_layout)
         space_id = (
             None
             if all(structure is None for structure in structures)
             else canonical_fingerprint(
                 {
                     "kind": "operator-field-space",
-                    "cochain": None if self.cochain is None else self.cochain.to_dict(),
+                    "form_type": None
+                    if self.form_type is None
+                    else self.form_type.to_dict(),
                     "tensor_layout": (
                         None
                         if self.tensor_layout is None
@@ -342,7 +354,7 @@ class OperatorFieldSpec(StrictModule):
             "dimension": self.dimension.to_dict(),
             "scale": list(self.scale),
             "offset": list(self.offset),
-            "cochain": None if self.cochain is None else self.cochain.to_dict(),
+            "form_type": None if self.form_type is None else self.form_type.to_dict(),
             "tensor_layout": (
                 None if self.tensor_layout is None else self.tensor_layout.to_dict()
             ),
@@ -367,7 +379,7 @@ class OperatorFieldSpec(StrictModule):
             "dimension",
             "scale",
             "offset",
-            "cochain",
+            "form_type",
             "tensor_layout",
             "clifford_layout",
             "required",
@@ -400,10 +412,10 @@ class OperatorFieldSpec(StrictModule):
             dimension=DimensionSignature.from_dict(raw_dimension),
             scale=value.get("scale", 1.0),
             offset=value.get("offset", 0.0),
-            cochain=(
+            form_type=(
                 None
-                if value.get("cochain") is None
-                else CochainFieldSpec.from_dict(value["cochain"])
+                if value["form_type"] is None
+                else FormType.from_dict(value["form_type"])
             ),
             tensor_layout=(
                 None

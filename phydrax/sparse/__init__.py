@@ -43,6 +43,9 @@ from ._key_groups import (
 from ._linear import LinearAction, SparseCoordinateOperator, SparseLinearMap
 from ._local_tensor import ElementTensorOperator, scatter_local
 from ._ops import (
+    block_linear_adjoint_apply,
+    block_linear_apply,
+    block_linear_transpose_apply,
     gather_routes,
     linear_adjoint_apply,
     linear_apply,
@@ -56,6 +59,9 @@ from ._relation import EdgeRelation, RowRelation, SparseRelation
 
 
 __all__ = [
+    "block_linear_adjoint_apply",
+    "block_linear_apply",
+    "block_linear_transpose_apply",
     "KeyGroupEvidence",
     "KeyGroupLookup",
     "KeyGroupPlan",

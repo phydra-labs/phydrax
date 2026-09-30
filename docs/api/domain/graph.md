@@ -186,10 +186,10 @@ cells of one degree from the node representation of a canonical cochain
 complex. Selection remains local to each graph in dataset and trajectory
 batches and excludes padded nodes.
 
-`as_cochain_field` attaches a `CochainFieldSpec` to a graph-backed
-`DomainFunction` and masks every other degree to zero. `cochain_field_spec`
-recovers that declaration for validation by DEC operators, constraints, and
-hard enforcement.
+`as_cochain_field(field, form_type, /, *, representation)` declares a canonical
+`phydrax.exterior.FormType` on a graph-backed `DomainFunction`, with the value
+representation stated separately. Degree, twist and realization identity are
+checked by DEC operators, constraints and hard enforcement.
 
 ::: phydrax.domain.CochainCells
     options:
@@ -200,9 +200,6 @@ hard enforcement.
 
 ::: phydrax.domain.as_cochain_field
 
----
-
-::: phydrax.domain.cochain_field_spec
 
 ## Explicit Graph Subsets
 

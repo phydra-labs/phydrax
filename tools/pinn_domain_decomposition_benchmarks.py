@@ -19,6 +19,7 @@ import optax
 
 import phydrax as phx
 from phydrax._trainable import partition_parameters
+from phydrax.optim import adam
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -118,7 +119,7 @@ def _run_global(
     started = time.perf_counter()
     trained = solver.solve(
         num_iter=iterations,
-        optim=optax.adam(1.0e-3),
+        optim=adam(1.0e-3),
         seed=seed,
         keep_best=False,
         log_every=0,
@@ -197,7 +198,7 @@ def _run_partition_of_unity(
     started = time.perf_counter()
     result = phx.solver.solve_functional_decomposition(
         prepared,
-        optax.adam(1.0e-3),
+        adam(1.0e-3),
         seed=seed,
         keep_best=False,
         log_every=0,

@@ -1,5 +1,5 @@
 {
-  "catalog_id": "88d17133c9a848aff3895dc38f84b3ecdac7ab8f67b9e01258028c25252008cd",
+  "catalog_id": "51acb2f64641eca5c4e3f0693ee2a4df0fc24051e65ab9dcb5ae3a4fa238a5c7",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -13979,6 +13979,28 @@
         "umbrella-platform-broader-than-qualified-tuples"
       ],
       "owner": "phydrax.electrohydrodynamics",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.exterior-calculus",
+      "declaration_id": "afc80bb1525e24cb3b1d17d24c580b6598842baa42f364498ef731115e227b42",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_exterior_calculus.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.exterior",
       "profiles": [],
       "public_symbols": []
     },

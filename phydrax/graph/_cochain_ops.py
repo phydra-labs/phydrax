@@ -2,273 +2,231 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Sparse metric discrete-exterior-calculus operators on :class:`GraphIR`."""
+"""Graph-coordinate execution of the prepared native cochain calculus."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal, TypeAlias
+from collections.abc import Callable, Mapping
+from math import prod
+from typing import Any, final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
-from jax import Array, core as jax_core
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..sparse import EdgeRelation, gather_routes, linear_apply, route_reduce
+from ..discretization._cochain import CochainDiscretization
+from ..exterior._complex import ComplexBoundary
+from ..linalg import apply_real_map_componentwise
+from ..linalg._complexes import HodgeLaplacianPart
 from ..typing import parse
-from ._cochain import CochainBoundaryKind, CochainBoundaryPolicy
+from ._cochain_execution import _cochain_metric_valid
 from ._ir import GraphIR
 
 
-HodgeLaplacianComponent: TypeAlias = Literal["lower", "upper", "complete"]
-
-
-def _cochain_payload(graph: GraphIR, /) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+def _cochain_payload(graph: GraphIR, /) -> Mapping[str, Any]:
     if not isinstance(graph, GraphIR):
         raise TypeError("Metric cochain operators require a GraphIR.")
-    if not isinstance(graph.nodes, Mapping) or not isinstance(graph.edges, Mapping):
-        raise ValueError("Metric cochain operators require named node and edge payloads.")
-    required_nodes = {"cell_dim", "hodge_star", "boundary"}
-    required_edges = {
-        "cochain_incidence",
-        "incidence_degree",
-        "incidence_direction",
-        "incidence_sign",
-    }
-    if not required_nodes.issubset(graph.nodes):
-        raise ValueError("GraphIR node payload is missing canonical cochain metadata.")
-    if not required_edges.issubset(graph.edges):
-        raise ValueError("GraphIR edge payload is missing canonical incidence metadata.")
-    if graph.senders is None or graph.receivers is None:
-        raise ValueError("Metric cochain operators require explicit incidence indices.")
-    return graph.nodes, graph.edges
+    if not isinstance(graph.nodes, Mapping) or "cell_dim" not in graph.nodes:
+        raise ValueError("Metric cochain operators require named cell metadata.")
+    if not graph.cochain_bindings:
+        raise ValueError("GraphIR has no prepared native cochain realization.")
+    return graph.nodes
 
 
-def _node_count(graph: GraphIR, nodes: Mapping[str, Any], /) -> int:
-    return jnp.asarray(nodes["cell_dim"]).shape[0]
-
-
-def _reshape_coefficient(coefficient: Array, values: Array, /) -> Array:
-    return coefficient.reshape((coefficient.shape[0],) + (1,) * (values.ndim - 1))
-
-
-def _active_nodes(
+def _apply_native(
     graph: GraphIR,
-    nodes: Mapping[str, Any],
-    degree: int,
-    boundary_policy: CochainBoundaryPolicy,
+    values: ArrayLike,
+    source_degree: int,
+    target_degree: int,
+    action: Callable[[CochainDiscretization, Array], Array],
     /,
 ) -> Array:
-    active = jnp.asarray(nodes["cell_dim"]) == int(degree)
-    if boundary_policy.kind == "relative":
-        active = active & ~jnp.asarray(nodes["boundary"], dtype=jnp.bool_)
-    if graph.node_mask is not None:
-        active = active & graph.node_mask
-    return active
-
-
-def _forward_incidence_mask(
-    graph: GraphIR,
-    edges: Mapping[str, Any],
-    incidence_degree: int,
-    active_nodes: Array,
-    /,
-) -> Array:
-    assert graph.senders is not None
-    assert graph.receivers is not None
-    mask = (
-        jnp.asarray(edges["cochain_incidence"], dtype=jnp.bool_)
-        & (jnp.asarray(edges["incidence_direction"]) == 1)
-        & (jnp.asarray(edges["incidence_degree"]) == int(incidence_degree))
-        & active_nodes[graph.senders]
-        & active_nodes[graph.receivers]
-    )
-    if graph.edge_mask is not None:
-        mask = mask & graph.edge_mask
-    return mask
-
-
-def _incidence_relation(
-    graph: GraphIR,
-    node_count: int,
-    valid: Array,
-    /,
-) -> EdgeRelation:
-    return graph.edge_relation(node_count=node_count).with_valid(valid)
-
-
-def _validate_values(values: Any, node_count: int, /) -> Array:
+    nodes = _cochain_payload(graph)
     array = jnp.asarray(values)
-    if array.ndim == 0 or array.shape[0] != node_count:
+    count = jnp.asarray(nodes["cell_dim"]).shape[0]
+    if array.ndim == 0 or array.shape[0] != count:
         raise ValueError(
-            f"Cochain values require leading graph-node size {node_count}; got {array.shape}."
+            f"Cochain values require leading graph-node size {count}; got {array.shape}."
         )
-    return array
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype(jnp.float64)
+    output = None
+    for binding in graph.cochain_bindings:
+        realization = binding.discretization
+        realization._degree(source_degree)
+        realization._degree(target_degree)
+        source_start = binding.degree_start(source_degree)
+        source_end = source_start + realization.cell_counts[source_degree]
+        local = array[source_start:source_end]
+        if graph.node_mask is not None:
+            mask = graph.node_mask[source_start:source_end]
+            local = jnp.where(
+                mask.reshape(mask.shape + (1,) * (array.ndim - 1)), local, 0
+            )
+        if array.ndim == 1:
+            result = action(realization, local)
+        else:
+            flat = local.reshape((local.shape[0], prod(array.shape[1:])))
+            result = jax.vmap(
+                lambda vector: action(realization, vector), in_axes=1, out_axes=1
+            )(flat).reshape((realization.cell_counts[target_degree],) + array.shape[1:])
+        if output is None:
+            output = jnp.zeros(array.shape, dtype=result.dtype)
+        if graph.graph_mask is not None:
+            result = jnp.where(graph.graph_mask[binding.graph_index], result, 0)
+        target_start = binding.degree_start(target_degree)
+        target_end = target_start + realization.cell_counts[target_degree]
+        output = output.at[target_start:target_end].set(result)
+    assert output is not None
+    if graph.node_mask is not None:
+        output = jnp.where(
+            graph.node_mask.reshape((count,) + (1,) * (array.ndim - 1)), output, 0
+        )
+    return eqx.error_if(
+        output,
+        ~_cochain_metric_valid(graph.cochain_bindings),
+        "Native cochain pairing must remain finite and positive definite.",
+    )
 
 
 def cochain_exterior_derivative(
     graph: GraphIR,
-    values: Any,
+    values: ArrayLike,
     degree: int,
     /,
     *,
-    boundary_policy: CochainBoundaryKind = "absolute",
+    boundary: ComplexBoundary = "absolute",
 ) -> Array:
-    """Apply ``d_degree = B_(degree+1)^T`` to full graph-node cochain values."""
-    nodes, edges = _cochain_payload(graph)
-    source_degree = int(degree)
-    if source_degree < 0:
-        raise ValueError("Exterior derivative degree must be non-negative.")
-    policy = CochainBoundaryPolicy(boundary_policy)
-    array = _validate_values(values, _node_count(graph, nodes))
-    source_active = _active_nodes(graph, nodes, source_degree, policy)
-    target_active = _active_nodes(graph, nodes, source_degree + 1, policy)
-    route_active = source_active | target_active
-    mask = _forward_incidence_mask(graph, edges, source_degree + 1, route_active)
-    node_count = _node_count(graph, nodes)
-    relation = _incidence_relation(graph, node_count, mask)
-    signs = jnp.asarray(edges["incidence_sign"], dtype=array.dtype)
-    output = linear_apply(relation, signs, array)
-    target_shape = (target_active.shape[0],) + (1,) * (array.ndim - 1)
-    return jnp.where(target_active.reshape(target_shape), output, 0)
+    """Apply the native ``d_degree`` in graph coordinates."""
+    policy = parse(boundary, ComplexBoundary, "boundary")
+    return _apply_native(
+        graph,
+        values,
+        degree,
+        degree + 1,
+        lambda owner, local: owner.exterior_derivative(degree, local, boundary=policy),
+    )
 
 
 def cochain_codifferential(
     graph: GraphIR,
-    values: Any,
+    values: ArrayLike,
     degree: int,
     /,
     *,
-    boundary_policy: CochainBoundaryKind = "absolute",
+    boundary: ComplexBoundary = "absolute",
 ) -> Array:
-    """Apply ``δ_degree = M_(degree-1)^-1 B_degree M_degree``."""
-    nodes, edges = _cochain_payload(graph)
-    source_degree = int(degree)
-    if source_degree <= 0:
-        raise ValueError("Codifferential degree must be positive.")
-    policy = CochainBoundaryPolicy(boundary_policy)
-    array = _validate_values(values, _node_count(graph, nodes))
-    lower_active = _active_nodes(graph, nodes, source_degree - 1, policy)
-    upper_active = _active_nodes(graph, nodes, source_degree, policy)
-    route_active = lower_active | upper_active
-    mask = _forward_incidence_mask(graph, edges, source_degree, route_active)
-    node_count = _node_count(graph, nodes)
-    relation = _incidence_relation(graph, node_count, mask)
-    signs = jnp.asarray(edges["incidence_sign"], dtype=array.dtype)
-    star = jnp.asarray(nodes["hodge_star"], dtype=array.dtype)
-    weighted = array * _reshape_coefficient(star, array)
-    accumulated = linear_apply(relation.transpose(), signs, weighted)
-    inverse_star = jnp.where(star > 0, 1.0 / star, 0.0)
-    output = accumulated * inverse_star.reshape(
-        (inverse_star.shape[0],) + (1,) * (array.ndim - 1)
+    """Apply the native positive Hilbert adjoint, including full sparse Gram solves."""
+    policy = parse(boundary, ComplexBoundary, "boundary")
+    return _apply_native(
+        graph,
+        values,
+        degree,
+        degree - 1,
+        lambda owner, local: owner.codifferential(degree, local, boundary=policy),
     )
-    target_shape = (lower_active.shape[0],) + (1,) * (array.ndim - 1)
-    return jnp.where(lower_active.reshape(target_shape), output, 0)
 
 
 def cochain_hodge_laplacian(
     graph: GraphIR,
-    values: Any,
+    values: ArrayLike,
     degree: int,
     /,
     *,
-    component: HodgeLaplacianComponent = "complete",
-    boundary_policy: CochainBoundaryKind = "absolute",
+    part: HodgeLaplacianPart = "complete",
+    boundary: ComplexBoundary = "absolute",
 ) -> Array:
-    """Apply a lower, upper, or complete metric Hodge Laplacian."""
-    component = parse(component, HodgeLaplacianComponent, "component")
-    nodes, _ = _cochain_payload(graph)
-    resolved_degree = int(degree)
-    if resolved_degree < 0:
-        raise ValueError("Hodge Laplacian degree must be non-negative.")
-    array = _validate_values(values, _node_count(graph, nodes))
-    output = jnp.zeros_like(array)
-    if component in ("lower", "complete") and resolved_degree > 0:
-        lowered = cochain_codifferential(
-            graph,
-            array,
-            resolved_degree,
-            boundary_policy=boundary_policy,
-        )
-        output = output + cochain_exterior_derivative(
-            graph,
-            lowered,
-            resolved_degree - 1,
-            boundary_policy=boundary_policy,
-        )
-    if component in ("upper", "complete"):
-        raised = cochain_exterior_derivative(
-            graph,
-            array,
-            resolved_degree,
-            boundary_policy=boundary_policy,
-        )
-        output = output + cochain_codifferential(
-            graph,
-            raised,
-            resolved_degree + 1,
-            boundary_policy=boundary_policy,
-        )
-    return output
+    """Apply the native degree-valid split or complete Hodge Laplacian."""
+    policy = parse(boundary, ComplexBoundary, "boundary")
+    part = parse(part, HodgeLaplacianPart, "part")
+    return _apply_native(
+        graph,
+        values,
+        degree,
+        degree,
+        lambda owner, local: owner.hodge_laplacian(
+            degree, local, part=part, boundary=policy
+        ),
+    )
+
+
+def _cochain_riesz(graph: GraphIR, values: ArrayLike, degree: int, /) -> Array:
+    """Apply the full native metric, never its graph display diagonal."""
+    return _apply_native(
+        graph,
+        values,
+        degree,
+        degree,
+        lambda owner, local: owner.hodge_star(degree, local),
+    )
 
 
 def cochain_harmonic_projection(
     graph: GraphIR,
-    values: Any,
+    values: ArrayLike,
     degree: int,
     /,
     *,
-    boundary_policy: CochainBoundaryKind = "absolute",
+    boundary: ComplexBoundary = "absolute",
 ) -> Array:
-    """Apply the basis-independent metric projector onto ``ker(Δ_degree)``."""
-    nodes, _ = _cochain_payload(graph)
-    if "harmonic_basis" not in nodes or not isinstance(graph.globals, Mapping):
-        raise ValueError("GraphIR has no precomputed harmonic subspace.")
-    if (
-        "harmonic_rank" not in graph.globals
-        or "harmonic_boundary_policy" not in graph.globals
-    ):
-        raise ValueError("GraphIR harmonic metadata is incomplete.")
-    policy = CochainBoundaryPolicy(boundary_policy)
-    boundary_code = jnp.asarray(graph.globals["harmonic_boundary_policy"])
-    expected_code = 0 if policy.kind == "absolute" else 1
-    if not isinstance(boundary_code, jax_core.Tracer) and bool(
-        jnp.any(boundary_code != expected_code)
-    ):
-        raise ValueError("Harmonic subspace uses a different boundary policy.")
-    array = _validate_values(values, _node_count(graph, nodes))
-    original_shape = array.shape
-    flat = array.reshape((array.shape[0], -1))
-    basis = jnp.asarray(nodes["harmonic_basis"], dtype=array.dtype)[:, int(degree), :]
-    graph_ids = jnp.repeat(
-        jnp.arange(graph.num_graphs, dtype=jnp.int32),
-        graph.n_node,
-        total_repeat_length=array.shape[0],
+    """Project with native harmonic evidence and the native full Gram pairing."""
+    nodes = _cochain_payload(graph)
+    policy = parse(boundary, ComplexBoundary, "boundary")
+    array = jnp.asarray(values)
+    count = jnp.asarray(nodes["cell_dim"]).shape[0]
+    if array.ndim == 0 or array.shape[0] != count:
+        raise ValueError("Harmonic values must align with graph nodes.")
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype(jnp.float64)
+    output = None
+    for binding in graph.cochain_bindings:
+        owner = binding.discretization
+        owner._degree(degree)
+        if binding.boundary != policy:
+            raise ValueError("Harmonic subspace uses a different boundary policy.")
+        harmonic = binding.harmonic[degree]
+        if harmonic is None:
+            raise ValueError(
+                "GraphIR has no precomputed harmonic subspace at this degree."
+            )
+        start = binding.degree_start(degree)
+        indices = owner.active_indices(degree, boundary=policy)
+        local = array[start + indices]
+        if graph.node_mask is not None:
+            mask = graph.node_mask[start + indices]
+            local = jnp.where(
+                mask.reshape(mask.shape + (1,) * (array.ndim - 1)), local, 0
+            )
+        local = eqx.error_if(
+            local, ~harmonic.valid, "Native harmonic evidence is invalid."
+        )
+        space = owner.hilbert_complex(boundary=policy).space(degree)
+
+        def project(vector: Array) -> Array:
+            return apply_real_map_componentwise(
+                lambda value: harmonic.project(space, value), vector
+            )
+
+        if array.ndim == 1:
+            projected = project(local)
+        else:
+            projected = jax.vmap(project, in_axes=1, out_axes=1)(
+                local.reshape((local.shape[0], prod(array.shape[1:])))
+            ).reshape(local.shape)
+        if output is None:
+            output = jnp.zeros(array.shape, dtype=projected.dtype)
+        if graph.graph_mask is not None:
+            projected = jnp.where(graph.graph_mask[binding.graph_index], projected, 0)
+        output = output.at[start + indices].set(projected)
+    assert output is not None
+    return eqx.error_if(
+        output,
+        ~_cochain_metric_valid(graph.cochain_bindings),
+        "Native cochain pairing must remain finite and positive definite.",
     )
-    # Graph membership routes every cell onto its graph; padded cells are inert.
-    membership = EdgeRelation(
-        jnp.arange(array.shape[0], dtype=jnp.int32),
-        graph_ids,
-        source_size=array.shape[0],
-        target_size=graph.num_graphs,
-        valid=graph.node_mask,
-    )
-    graph_cells = membership.transpose()
-    ranks = jnp.asarray(graph.globals["harmonic_rank"])[:, int(degree)]
-    cell_ranks = gather_routes(graph_cells, ranks)
-    mode_ids = jnp.arange(basis.shape[1], dtype=jnp.int32)
-    mode_mask = mode_ids[None, :] < cell_ranks[:, None]
-    basis = jnp.where(mode_mask, basis, 0)
-    star = jnp.asarray(nodes["hodge_star"], dtype=array.dtype)
-    weighted = basis[:, :, None] * star[:, None, None] * flat[:, None, :]
-    coefficients = route_reduce(membership, weighted)
-    projected = jnp.sum(
-        basis[:, :, None] * gather_routes(graph_cells, coefficients),
-        axis=1,
-    )
-    active = _active_nodes(graph, nodes, int(degree), policy)
-    projected = jnp.where(active[:, None], projected, 0)
-    return projected.reshape(original_shape)
 
 
 def _replace_node_output(
@@ -282,13 +240,14 @@ def _replace_node_output(
     return graph.replace(nodes={**graph.nodes, output_key: values}, validate=False)
 
 
+@final
 class CochainExteriorDerivative(StrictModule):
     """GraphIR wrapper for a metric exterior derivative."""
 
     degree: int = eqx.field(static=True)
     input_key: str = eqx.field(static=True)
     output_key: str = eqx.field(static=True)
-    boundary_policy: CochainBoundaryKind = eqx.field(static=True)
+    boundary: ComplexBoundary = eqx.field(static=True)
 
     def __init__(
         self,
@@ -297,12 +256,13 @@ class CochainExteriorDerivative(StrictModule):
         *,
         input_key: str,
         output_key: str,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> None:
+        boundary_ = parse(boundary, ComplexBoundary, "boundary")
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)
-        self.boundary_policy = CochainBoundaryPolicy(boundary_policy).kind
+        self.boundary = boundary_
 
     def __call__(self, graph: GraphIR, /) -> GraphIR:
         if not isinstance(graph.nodes, Mapping) or self.input_key not in graph.nodes:
@@ -311,18 +271,19 @@ class CochainExteriorDerivative(StrictModule):
             graph,
             graph.nodes[self.input_key],
             self.degree,
-            boundary_policy=self.boundary_policy,
+            boundary=self.boundary,
         )
         return _replace_node_output(graph, self.output_key, values)
 
 
+@final
 class CochainCodifferential(StrictModule):
     """GraphIR wrapper for a metric codifferential."""
 
     degree: int = eqx.field(static=True)
     input_key: str = eqx.field(static=True)
     output_key: str = eqx.field(static=True)
-    boundary_policy: CochainBoundaryKind = eqx.field(static=True)
+    boundary: ComplexBoundary = eqx.field(static=True)
 
     def __init__(
         self,
@@ -331,12 +292,13 @@ class CochainCodifferential(StrictModule):
         *,
         input_key: str,
         output_key: str,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> None:
+        boundary_ = parse(boundary, ComplexBoundary, "boundary")
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)
-        self.boundary_policy = CochainBoundaryPolicy(boundary_policy).kind
+        self.boundary = boundary_
 
     def __call__(self, graph: GraphIR, /) -> GraphIR:
         if not isinstance(graph.nodes, Mapping) or self.input_key not in graph.nodes:
@@ -345,19 +307,20 @@ class CochainCodifferential(StrictModule):
             graph,
             graph.nodes[self.input_key],
             self.degree,
-            boundary_policy=self.boundary_policy,
+            boundary=self.boundary,
         )
         return _replace_node_output(graph, self.output_key, values)
 
 
+@final
 class CochainHodgeLaplacian(StrictModule):
     """GraphIR wrapper for a split or complete metric Hodge Laplacian."""
 
     degree: int = eqx.field(static=True)
     input_key: str = eqx.field(static=True)
     output_key: str = eqx.field(static=True)
-    component: HodgeLaplacianComponent = eqx.field(static=True)
-    boundary_policy: CochainBoundaryKind = eqx.field(static=True)
+    part: HodgeLaplacianPart = eqx.field(static=True)
+    boundary: ComplexBoundary = eqx.field(static=True)
 
     def __init__(
         self,
@@ -366,15 +329,16 @@ class CochainHodgeLaplacian(StrictModule):
         *,
         input_key: str,
         output_key: str,
-        component: HodgeLaplacianComponent = "complete",
-        boundary_policy: CochainBoundaryKind = "absolute",
+        part: HodgeLaplacianPart = "complete",
+        boundary: ComplexBoundary = "absolute",
     ) -> None:
-        component = parse(component, HodgeLaplacianComponent, "component")
+        part = parse(part, HodgeLaplacianPart, "part")
+        boundary_ = parse(boundary, ComplexBoundary, "boundary")
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)
-        self.component = component
-        self.boundary_policy = CochainBoundaryPolicy(boundary_policy).kind
+        self.part = part
+        self.boundary = boundary_
 
     def __call__(self, graph: GraphIR, /) -> GraphIR:
         if not isinstance(graph.nodes, Mapping) or self.input_key not in graph.nodes:
@@ -383,19 +347,20 @@ class CochainHodgeLaplacian(StrictModule):
             graph,
             graph.nodes[self.input_key],
             self.degree,
-            component=self.component,
-            boundary_policy=self.boundary_policy,
+            part=self.part,
+            boundary=self.boundary,
         )
         return _replace_node_output(graph, self.output_key, values)
 
 
+@final
 class CochainHarmonicProjection(StrictModule):
     """GraphIR wrapper for exact metric harmonic projection."""
 
     degree: int = eqx.field(static=True)
     input_key: str = eqx.field(static=True)
     output_key: str = eqx.field(static=True)
-    boundary_policy: CochainBoundaryKind = eqx.field(static=True)
+    boundary: ComplexBoundary = eqx.field(static=True)
 
     def __init__(
         self,
@@ -404,12 +369,13 @@ class CochainHarmonicProjection(StrictModule):
         *,
         input_key: str,
         output_key: str,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> None:
+        boundary_ = parse(boundary, ComplexBoundary, "boundary")
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)
-        self.boundary_policy = CochainBoundaryPolicy(boundary_policy).kind
+        self.boundary = boundary_
 
     def __call__(self, graph: GraphIR, /) -> GraphIR:
         if not isinstance(graph.nodes, Mapping) or self.input_key not in graph.nodes:
@@ -418,7 +384,7 @@ class CochainHarmonicProjection(StrictModule):
             graph,
             graph.nodes[self.input_key],
             self.degree,
-            boundary_policy=self.boundary_policy,
+            boundary=self.boundary,
         )
         return _replace_node_output(graph, self.output_key, values)
 
@@ -428,7 +394,6 @@ __all__ = [
     "CochainExteriorDerivative",
     "CochainHarmonicProjection",
     "CochainHodgeLaplacian",
-    "HodgeLaplacianComponent",
     "cochain_codifferential",
     "cochain_exterior_derivative",
     "cochain_harmonic_projection",

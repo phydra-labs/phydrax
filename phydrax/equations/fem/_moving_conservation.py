@@ -28,13 +28,13 @@ from ...discretization.fem._geometry_quality import (
 )
 from ...discretization.finite_volume._riemann import NumericalFluxResult
 from ...linalg import (
+    compound_matrix,
     DenseLinearOperator,
     FactorizationPolicy,
     factorize,
-    inverse_small_linear,
     OperatorProperties,
-    SmallLinearSolvePlan,
 )
+from ._operators import _cell_inverse_and_determinant
 from ._trace_routes import PreparedDGTraceRoute
 
 
@@ -174,19 +174,21 @@ def finite_element_ale_metric_evidence(
         velocity_gradient_reference = ein.contract(
             "qid,cia->cqad", gradients, velocity, backend="jax"
         )
-        current_inverse = inverse_small_linear(
-            SmallLinearSolvePlan(current_jacobian.shape[-1]), current_jacobian
+        current_inverse, current_determinant, current_successful = (
+            _cell_inverse_and_determinant(current_jacobian)
         )
-        next_inverse = inverse_small_linear(
-            SmallLinearSolvePlan(next_jacobian.shape[-1]), next_jacobian
-        )
+        next_determinant = compound_matrix(next_jacobian, next_jacobian.shape[-1])[
+            ..., 0, 0
+        ]
         inverse = eqx.error_if(
-            current_inverse.value,
-            jnp.any(~current_inverse.successful),
-            "Current ALE geometry Jacobian is singular.",
+            current_inverse,
+            jnp.any(
+                ~current_successful
+                | ~jnp.isfinite(next_determinant)
+                | (next_determinant == 0.0)
+            ),
+            "ALE geometry Jacobian is singular.",
         )
-        current_determinant = current_inverse.determinant
-        next_determinant = next_inverse.determinant
         velocity_gradient = ein.contract(
             "cqad,cqdb->cqab",
             velocity_gradient_reference,

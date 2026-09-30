@@ -11,6 +11,33 @@ Phydrax owns distribution evolution and does not mirror upstream optimizer APIs.
 A workflow accepts an external optimizer only when it has an explicit adapter
 for that optimizer family.
 
+## Adam
+
+`phydrax.optim.adam(learning_rate, *, b1=0.9, b2=0.999, eps=1e-8)` is the
+canonical Optax-compatible Adam transform used by native workflows. Initialization
+and update accept the Optax keyword contracts, `init(params=...)` and
+`update(updates=..., state=..., params=...)`.
+
+Each leaf's moment arithmetic and bias corrections use an explicit static
+precision policy, independent of JAX's promotion lattice: float16 and bfloat16
+leaves retain float32 moments, while float32, float64, complex64, and complex128
+retain their corresponding precision. Complex
+first moments are complex; second moments accumulate the real squared magnitude
+`real(g)**2 + imag(g)**2`. Bias corrections use
+`-expm1(count * log(decay))` (one for zero decay), avoiding subtraction of a decay
+rounded to one in half precision. Learning-rate scaling is applied before the
+final explicit conversion to the gradient leaf's dtype.
+
+The state remains a two-element Optax chain containing `ScaleByAdamState` and
+`EmptyState`; its scalar step counter remains int32. A zero gradient history
+produces finite zero updates, including for float16 and bfloat16. Learning rates
+must be finite and nonnegative, decays must lie in `[0, 1)`, and epsilon must be
+finite and positive. This transform does not refuse low-precision leaves or
+silently change the returned update dtype.
+
+::: phydrax.optim.adam
+
+
 ## Finite exhaustive search
 
 `FiniteAxis` and `FiniteProductSpace` represent an explicit, array-backed finite
@@ -2231,6 +2258,16 @@ scalar, least-squares, and composite iterative methods. Operator fitting
 accepts supplied Optax-compatible transformations, including SOAP.
 Resumable `fit_operator` runs require a stable `optimizer_id` whenever the transformation
 is supplied externally so checkpoint identity does not depend on an opaque Python object.
+
+`phydrax.optim.adam(learning_rate, /, *, b1=0.9, b2=0.999, eps=1e-8)`
+is the canonical strict-dtype Adam transformation used by native defaults and
+`StochasticAdam`. It retains the ordinary Adam equations, Optax-compatible chain
+state and int32 update count while explicitly converting count to moment dtype
+for bias correction. This avoids implicit integer/floating promotion under strict
+JAX without changing optimizer semantics.
+
+::: phydrax.optim.adam
+
 
 An explicit `ParameterSubspace` may be supplied to `FunctionalSolver.solve` or
 `fit_operator`. In the initial contract this restriction is supported only by

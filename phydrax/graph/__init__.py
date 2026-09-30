@@ -20,10 +20,8 @@ from ._abelian_gauge import (
     abelian_gauge_transform,
     abelian_maxwell_action,
     abelian_maxwell_residual,
-    AbelianBridgeReport,
     AbelianGaugeDiagnostics,
     AbelianMaxwellOperator,
-    project_abelian_gauge_field,
     validate_abelian_gauge_system,
 )
 from ._architectures import MeshGraphNet, MeshGraphNetBlock, RowMLP
@@ -33,22 +31,10 @@ from ._charged_scalar_gauge import (
     ChargedScalarGaugePlan,
 )
 from ._cochain import (
-    cochain_complex_from_incidences,
-    cochain_complex_from_simplicial,
     CochainComplexIR,
-    CochainIncidence,
     graph_to_cochain_complex,
     GraphEdgeSemantics,
-    HarmonicSubspace,
-    reorient_cochain,
-    reorient_cochain_complex,
-    triangle_mesh_to_cochain_complex,
-)
-from ._cochain_field import CochainField
-from ._cochain_homology import (
-    cochain_harmonic_kernel_certificate,
-    HodgeHomologyReport,
-    validate_hodge_homology,
+    GraphNodeMeasure,
 )
 from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
 from ._cochain_ops import (
@@ -60,24 +46,8 @@ from ._cochain_ops import (
     CochainExteriorDerivative,
     CochainHarmonicProjection,
     CochainHodgeLaplacian,
-    HodgeLaplacianComponent,
 )
 from ._cochain_residual import CochainResidualProgram
-from ._cochain_spectrum import (
-    cochain_hodge_sector_spectra,
-    cochain_laplacian_eigenbasis,
-    CochainHodgeSectorSpectra,
-    CochainLaplacianComponent,
-    compute_harmonic_subspace,
-)
-from ._continuous_bridge import (
-    ContinuousCochainBridge,
-    ContinuousCochainProjection,
-    integrate_form_to_cochain,
-    OrientedCellParameterization,
-    StokesValidationReport,
-    validate_stokes_bridge,
-)
 from ._data import Batch, Data
 from ._derived import (
     line_graph,
@@ -117,12 +87,6 @@ from ._geometry import (
     radius_query_graph,
 )
 from ._graph import ensure_graph, Graph, graph_counts, is_graph_like
-from ._harmonic_classes import (
-    CochainTransferCertificate,
-    HarmonicClassFrame,
-    prepare_harmonic_class_frame,
-)
-from ._hodge_tracking import HodgeSubspaceTracking
 from ._hypergraph import (
     hypergraph_to_bipartite_graph,
     HypergraphBipartiteGraph,
@@ -173,7 +137,6 @@ from ._matrix_gauge import (
     closed_path_trace,
     gauge_transform_links,
     MatrixGaugeLinkSpace,
-    path_holonomy,
 )
 from ._mesh import (
     mesh_cotangent_weights,
@@ -184,10 +147,6 @@ from ._mesh import (
     mesh_vertex_normals,
     MeshCotangentLaplacian,
     MeshLaplacianSign,
-)
-from ._metric_assembly import (
-    assemble_metric_cochain_complex,
-    MetricCochainAssembly,
 )
 from ._models import (
     DeepSets,
@@ -278,9 +237,7 @@ from ._query_batch import (
     QueryNeighborhoodEvidence,
 )
 from ._simplicial import (
-    FormDegree,
     SimplicialComplexGraph,
-    SimplicialHodgeLaplacian,
     triangle_mesh_to_simplicial_graph,
 )
 from ._spectral import (
@@ -433,42 +390,21 @@ __all__ = [
     "spectral_discretization_from_graph",
     "spectral_discretization_from_triangle_mesh",
     "GraphEdgeSemantics",
+    "GraphNodeMeasure",
     "CochainMetricReduction",
     "CochainResidualProgram",
-    "CochainHodgeSectorSpectra",
-    "CochainLaplacianComponent",
     "CochainComplexIR",
-    "CochainIncidence",
-    "HarmonicSubspace",
-    "cochain_complex_from_incidences",
-    "cochain_complex_from_simplicial",
-    "compute_harmonic_subspace",
-    "HodgeHomologyReport",
-    "cochain_harmonic_kernel_certificate",
-    "validate_hodge_homology",
-    "CochainTransferCertificate",
-    "HarmonicClassFrame",
-    "HodgeSubspaceTracking",
-    "prepare_harmonic_class_frame",
     "graph_to_cochain_complex",
-    "reorient_cochain",
-    "reorient_cochain_complex",
-    "triangle_mesh_to_cochain_complex",
     "CochainCodifferential",
     "CochainExteriorDerivative",
     "CochainHarmonicProjection",
     "CochainHodgeLaplacian",
-    "cochain_hodge_sector_spectra",
-    "cochain_laplacian_eigenbasis",
-    "HodgeLaplacianComponent",
     "cochain_codifferential",
     "cochain_metric_reduce",
     "cochain_exterior_derivative",
     "cochain_harmonic_projection",
     "cochain_hodge_laplacian",
-    "FormDegree",
     "SimplicialComplexGraph",
-    "SimplicialHodgeLaplacian",
     "triangle_mesh_to_simplicial_graph",
     "RelationalGraphConvolution",
     "node_type_ids",
@@ -542,30 +478,18 @@ __all__ = [
     "query_graph_from_edges",
     "radius_graph",
     "radius_query_graph",
-    "assemble_metric_cochain_complex",
-    "MetricCochainAssembly",
-    "ContinuousCochainBridge",
-    "ContinuousCochainProjection",
-    "OrientedCellParameterization",
-    "StokesValidationReport",
-    "integrate_form_to_cochain",
-    "validate_stokes_bridge",
     "MatrixGaugeLinkSpace",
     "closed_path_trace",
     "gauge_transform_links",
-    "path_holonomy",
-    "AbelianBridgeReport",
     "AbelianGaugeDiagnostics",
     "AbelianMaxwellOperator",
     "ChargedGaugeEvidence",
     "ChargedGaugeState",
     "ChargedScalarGaugePlan",
-    "CochainField",
     "abelian_current_continuity",
     "abelian_curvature",
     "abelian_gauge_transform",
     "abelian_maxwell_action",
     "abelian_maxwell_residual",
-    "project_abelian_gauge_field",
     "validate_abelian_gauge_system",
 ]

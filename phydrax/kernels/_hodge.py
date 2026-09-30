@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import final
 
 import equinox as eqx
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..exterior._spectra import HodgeSectorSpectra
 from ._algebra import AmplitudeKernel, SumKernel
 from ._base import AbstractPositiveDefiniteKernel
 from ._finite_feature import (
@@ -20,16 +21,21 @@ from ._finite_feature import (
 from ._spectral import AbstractSpectralMultiplier, SpectralFeatureKernel
 
 
-class CochainHodgeSpectralKernel(AbstractFiniteFeatureKernel):
-    """Finite covariance sum over selected harmonic, exact, and coexact sectors."""
+@final
+class HodgeSpectralKernel(AbstractFiniteFeatureKernel):
+    """Finite covariance over harmonic, exact and coexact coefficient sectors.
+
+    Queries use full realization coefficient IDs: each sector's ``index_offset``
+    plus its row index, not topology entity indices or physical point samples.
+    """
 
     kernel: AbstractPositiveDefiniteKernel
-    spectra: Any
+    spectra: HodgeSectorSpectra
     sector_names: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
-        spectra: Any,
+        spectra: HodgeSectorSpectra,
         /,
         *,
         harmonic_multiplier: AbstractSpectralMultiplier | None = None,
@@ -40,10 +46,8 @@ class CochainHodgeSpectralKernel(AbstractFiniteFeatureKernel):
         coexact_amplitude: ArrayLike = 1.0,
         normalize_sectors: bool = True,
     ) -> None:
-        from ..graph._cochain_spectrum import CochainHodgeSectorSpectra
-
-        if not isinstance(spectra, CochainHodgeSectorSpectra):
-            raise TypeError("spectra must be a CochainHodgeSectorSpectra.")
+        if not isinstance(spectra, HodgeSectorSpectra):
+            raise TypeError("spectra must be a HodgeSectorSpectra.")
         declarations = (
             (
                 "harmonic",
@@ -111,9 +115,9 @@ class CochainHodgeSpectralKernel(AbstractFiniteFeatureKernel):
     def kernel_id(self) -> str:
         sectors = "+".join(self.sector_names)
         return (
-            f"CochainHodgeSpectralKernel[degree={self.spectra.degree};"
-            f"sectors={sectors};boundary={self.spectra.boundary_policy}]"
+            f"HodgeSpectralKernel[{self.spectra.realization_id};degree={self.spectra.degree};"
+            f"sectors={sectors};boundary={self.spectra.boundary};{self.kernel.kernel_id}]"
         )
 
 
-__all__ = ["CochainHodgeSpectralKernel"]
+__all__ = ["HodgeSpectralKernel"]

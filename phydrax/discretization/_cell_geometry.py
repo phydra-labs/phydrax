@@ -127,15 +127,30 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
 
     @classmethod
     def affine(cls, mesh: CellMesh, /) -> CellGeometrySpec:
+        from .fem._form_elements import form_element
         from .fem._reference import lagrange_element
 
         elements: dict[str, CellGeometryElement] = {}
         for block in mesh.blocks:
-            elements[block.name] = (
-                CellVertexGeometryElement(block.cell_kind, block.arity)
-                if block.cell_kind in ("polygon", "polyhedron")
-                else lagrange_element(block.cell_kind, 1)
-            )
+            if block.cell_kind in ("polygon", "polyhedron"):
+                element = CellVertexGeometryElement(block.cell_kind, block.arity)
+            elif ":" in block.cell_kind:
+                family = (
+                    "tensor-trimmed"
+                    if block.cell_kind.startswith("tensor:")
+                    else "trimmed"
+                )
+                element = form_element(
+                    block.cell_kind,
+                    0,
+                    1,
+                    family=family,
+                    twist="untwisted",
+                    proxy="scalar",
+                )
+            else:
+                element = lagrange_element(block.cell_kind, 1)
+            elements[block.name] = element
         return cls(
             elements,
             {block.name: block.vertices for block in mesh.blocks},

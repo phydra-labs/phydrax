@@ -794,8 +794,8 @@ def _projection_elements(
         if (
             element.family not in _LAGRANGE_FAMILIES
             or element.cell_kind not in _SIMPLEX_KINDS.values()
-            or element.mapping != "identity"
-            or element.value_shape
+            or element.value_spec.form_type.degree != 0
+            or element.value_spec.proxy != "scalar"
         ):
             raise ValueError(
                 "L2 projection supports scalar Lagrange elements on triangles and "

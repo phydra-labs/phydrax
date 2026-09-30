@@ -13,11 +13,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import optax
 from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
+from phydrax.optim._adam import adam
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....domain import DomainFunction, HyperRectangle, PointwiseEvaluator, TimeInterval
@@ -233,7 +233,7 @@ def fit_calorimeter_flow(
     initial = float(evaluation.loss({"velocity": function}, key=evaluation_key))
     solved = FunctionalSolver(functions={"velocity": function}, terms=(training,)).solve(
         num_iter=steps,
-        optim=optax.adam(rate),
+        optim=adam(rate),
         jit=True,
         keep_best=False,
         log_every=0,

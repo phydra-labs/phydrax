@@ -79,12 +79,19 @@ class PatchwiseDifferentialForm(StrictModule):
             raise TypeError("cover must be an AtlasCover.")
         if len(forms) != len(cover.atlas.charts):
             raise ValueError("One differential form is required per chart.")
-        degree = forms[0].degree
+        if not forms or not isinstance(forms[0], DifferentialForm):
+            raise TypeError("local_forms must contain DifferentialForm objects.")
+        form_type = forms[0].form_type
         for chart, form in zip(cover.atlas.charts, forms, strict=True):
             if not isinstance(form, DifferentialForm):
                 raise TypeError("local_forms must contain DifferentialForm objects.")
-            if form.degree != degree or not chart.compatible_with(form.chart):
-                raise ValueError("Patchwise forms must share degree and chart identity.")
+            if (
+                form.form_type.form_type_id != form_type.form_type_id
+                or not chart.compatible_with(form.chart)
+            ):
+                raise ValueError(
+                    "Patchwise forms must share form type and chart identity."
+                )
         self.cover = cover
         self.local_forms = forms
 

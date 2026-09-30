@@ -80,5 +80,5 @@ def test_cochain_hodge_uses_shared_complexified_real_action() -> None:
     space = cochain.field_spaces[0].vector_space
     expected = space.riesz(jnp.real(value)) + 1j * space.riesz(jnp.imag(value))
 
-    assert jnp.array_equal(cochain.apply_hodge(0, value), expected)
-    assert jnp.allclose(cochain.solve_hodge(0, expected), value)
+    assert jnp.array_equal(cochain.hodge_star(0, value), expected)
+    assert jnp.allclose(cochain.inverse_hodge_star(0, expected), value)

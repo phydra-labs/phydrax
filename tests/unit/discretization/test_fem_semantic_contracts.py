@@ -59,14 +59,6 @@ def test_fem_semantic_contracts_scenario_1() -> None:
         "point_value",
         "point_value",
     )
-    assert (
-        phx.discretization.raviart_thomas_element("triangle").representation
-        == "flux_moment"
-    )
-    assert (
-        phx.discretization.nedelec_element("triangle").representation
-        == "circulation_moment"
-    )
     discretization = phx.discretization.FiniteElementPlan(
         _triangle_mesh(),
         phx.discretization.FiniteElementFieldSpec(

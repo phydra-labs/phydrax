@@ -335,6 +335,13 @@ def _research_platform_declarations() -> tuple[CapabilityDeclaration, ...]:
             "finite-controls-do-not-establish-continuum-physics",
         ),
         (
+            "platform.exterior-calculus",
+            "phydrax.exterior",
+            "analytic-control",
+            "docs/guides_exterior_calculus.md",
+            "realizations-beyond-qualified-scenarios-not-claimed",
+        ),
+        (
             "platform.finance",
             "phydrax.finance",
             "research",

@@ -1,0 +1,1616 @@
+{
+  "cases": [
+    {
+      "actions": [
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.022361,
+            "lowering_seconds": 0.009822875
+          },
+          "compiler": {
+            "argument_bytes": 1000,
+            "bytes_accessed": 5024,
+            "flops": 300,
+            "generated_code_bytes": 0,
+            "output_bytes": 2424,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000473792,
+            "mean_seconds": 0.0004526045,
+            "median_seconds": 0.0004526045,
+            "min_seconds": 0.000431417,
+            "samples_seconds": [
+              0.000473792,
+              0.000431417
+            ],
+            "std_seconds": 2.1187499999999993e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.022116458,
+            "lowering_seconds": 0.004177333
+          },
+          "compiler": {
+            "argument_bytes": 11200,
+            "bytes_accessed": 33432,
+            "flops": 6000,
+            "generated_code_bytes": 0,
+            "output_bytes": 2424,
+            "source": "jax-compiled",
+            "temporary_bytes": 7200,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 7.7208e-05,
+            "mean_seconds": 6.7333e-05,
+            "median_seconds": 6.7333e-05,
+            "min_seconds": 5.7458e-05,
+            "samples_seconds": [
+              5.7458e-05,
+              7.7208e-05
+            ],
+            "std_seconds": 9.875e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.023176916,
+            "lowering_seconds": 0.010681667
+          },
+          "compiler": {
+            "argument_bytes": 5800,
+            "bytes_accessed": 6824,
+            "flops": 1050,
+            "generated_code_bytes": 0,
+            "output_bytes": 1024,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 1.4210854715202004e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000477667,
+            "mean_seconds": 0.00047024999999999996,
+            "median_seconds": 0.00047024999999999996,
+            "min_seconds": 0.000462833,
+            "samples_seconds": [
+              0.000477667,
+              0.000462833
+            ],
+            "std_seconds": 7.416999999999987e-06
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.036773042,
+            "lowering_seconds": 0.036484
+          },
+          "compiler": {
+            "argument_bytes": 16000,
+            "bytes_accessed": 54130,
+            "flops": 13041,
+            "generated_code_bytes": 0,
+            "output_bytes": 1024,
+            "source": "jax-compiled",
+            "temporary_bytes": 9736,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 1.4210854715202004e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000102458,
+            "mean_seconds": 9.40835e-05,
+            "median_seconds": 9.40835e-05,
+            "min_seconds": 8.5709e-05,
+            "samples_seconds": [
+              0.000102458,
+              8.5709e-05
+            ],
+            "std_seconds": 8.3745e-06
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.022320125,
+            "lowering_seconds": 0.01050125
+          },
+          "compiler": {
+            "argument_bytes": 2400,
+            "bytes_accessed": 6904,
+            "flops": 960,
+            "generated_code_bytes": 0,
+            "output_bytes": 1944,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000469917,
+            "mean_seconds": 0.0004446255,
+            "median_seconds": 0.0004446255,
+            "min_seconds": 0.000419334,
+            "samples_seconds": [
+              0.000469917,
+              0.000419334
+            ],
+            "std_seconds": 2.5291499999999993e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.021186917,
+            "lowering_seconds": 0.004689959
+          },
+          "compiler": {
+            "argument_bytes": 18720,
+            "bytes_accessed": 48512,
+            "flops": 9600,
+            "generated_code_bytes": 0,
+            "output_bytes": 1944,
+            "source": "jax-compiled",
+            "temporary_bytes": 11520,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 7.05e-05,
+            "mean_seconds": 6.96875e-05,
+            "median_seconds": 6.96875e-05,
+            "min_seconds": 6.8875e-05,
+            "samples_seconds": [
+              6.8875e-05,
+              7.05e-05
+            ],
+            "std_seconds": 8.125000000000062e-07
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.032485042,
+            "lowering_seconds": 0.014353833
+          },
+          "compiler": {
+            "argument_bytes": 6240,
+            "bytes_accessed": 8664,
+            "flops": 1640,
+            "generated_code_bytes": 0,
+            "output_bytes": 2424,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 7.105427357601002e-15,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.0004875,
+            "mean_seconds": 0.000470625,
+            "median_seconds": 0.000470625,
+            "min_seconds": 0.00045375,
+            "samples_seconds": [
+              0.0004875,
+              0.00045375
+            ],
+            "std_seconds": 1.687499999999999e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.041569625,
+            "lowering_seconds": 0.034086333
+          },
+          "compiler": {
+            "argument_bytes": 22560,
+            "bytes_accessed": 87534,
+            "flops": 20700,
+            "generated_code_bytes": 0,
+            "output_bytes": 2424,
+            "source": "jax-compiled",
+            "temporary_bytes": 15432,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 7.105427357601002e-15,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.00010725,
+            "mean_seconds": 9.8875e-05,
+            "median_seconds": 9.8875e-05,
+            "min_seconds": 9.05e-05,
+            "samples_seconds": [
+              0.00010725,
+              9.05e-05
+            ],
+            "std_seconds": 8.375e-06
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.015560542,
+            "lowering_seconds": 0.009026791
+          },
+          "compiler": {
+            "argument_bytes": 1920,
+            "bytes_accessed": 2840,
+            "flops": 384,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 8.881784197001252e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000674833,
+            "mean_seconds": 0.0005860625,
+            "median_seconds": 0.0005860625,
+            "min_seconds": 0.000497292,
+            "samples_seconds": [
+              0.000497292,
+              0.000674833
+            ],
+            "std_seconds": 8.877050000000001e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.021419208,
+            "lowering_seconds": 0.003976042
+          },
+          "compiler": {
+            "argument_bytes": 8448,
+            "bytes_accessed": 19616,
+            "flops": 3840,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 4608,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 8.881784197001252e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 8.2667e-05,
+            "mean_seconds": 7.9021e-05,
+            "median_seconds": 7.9021e-05,
+            "min_seconds": 7.5375e-05,
+            "samples_seconds": [
+              7.5375e-05,
+              8.2667e-05
+            ],
+            "std_seconds": 3.6459999999999986e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.023601084,
+            "lowering_seconds": 0.013678625
+          },
+          "compiler": {
+            "argument_bytes": 2944,
+            "bytes_accessed": 4888,
+            "flops": 624,
+            "generated_code_bytes": 0,
+            "output_bytes": 1944,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000573,
+            "mean_seconds": 0.0005381455,
+            "median_seconds": 0.0005381455,
+            "min_seconds": 0.000503291,
+            "samples_seconds": [
+              0.000573,
+              0.000503291
+            ],
+            "std_seconds": 3.4854500000000023e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.038328584,
+            "lowering_seconds": 0.034117208
+          },
+          "compiler": {
+            "argument_bytes": 9472,
+            "bytes_accessed": 40294,
+            "flops": 8368,
+            "generated_code_bytes": 0,
+            "output_bytes": 1944,
+            "source": "jax-compiled",
+            "temporary_bytes": 6216,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 9.6375e-05,
+            "mean_seconds": 9.02915e-05,
+            "median_seconds": 9.02915e-05,
+            "min_seconds": 8.4208e-05,
+            "samples_seconds": [
+              9.6375e-05,
+              8.4208e-05
+            ],
+            "std_seconds": 6.083499999999997e-06
+          }
+        }
+      ],
+      "count_per_axis": 4,
+      "dimension": 3,
+      "entity_counts": [
+        125,
+        300,
+        240,
+        64
+      ],
+      "estimated_preparation_bytes": 89181,
+      "incidence_routes": 1944,
+      "periodic": false,
+      "preparation_seconds": 6.940057292,
+      "retained_bytes": 182924
+    },
+    {
+      "actions": [
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.021679917,
+            "lowering_seconds": 0.00867225
+          },
+          "compiler": {
+            "argument_bytes": 512,
+            "bytes_accessed": 2584,
+            "flops": 192,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000410583,
+            "mean_seconds": 0.0004019165,
+            "median_seconds": 0.0004019165,
+            "min_seconds": 0.00039325,
+            "samples_seconds": [
+              0.000410583,
+              0.00039325
+            ],
+            "std_seconds": 8.66650000000001e-06
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.020461375,
+            "lowering_seconds": 0.0045515
+          },
+          "compiler": {
+            "argument_bytes": 7040,
+            "bytes_accessed": 21280,
+            "flops": 3840,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 4608,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 5.8584e-05,
+            "mean_seconds": 5.6417e-05,
+            "median_seconds": 5.6417e-05,
+            "min_seconds": 5.425e-05,
+            "samples_seconds": [
+              5.425e-05,
+              5.8584e-05
+            ],
+            "std_seconds": 2.1670000000000014e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.01953675,
+            "lowering_seconds": 0.0096725
+          },
+          "compiler": {
+            "argument_bytes": 3584,
+            "bytes_accessed": 4120,
+            "flops": 576,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 1.4210854715202004e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000447333,
+            "mean_seconds": 0.0004274585,
+            "median_seconds": 0.0004274585,
+            "min_seconds": 0.000407584,
+            "samples_seconds": [
+              0.000447333,
+              0.000407584
+            ],
+            "std_seconds": 1.98745e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.0393305,
+            "lowering_seconds": 0.034739625
+          },
+          "compiler": {
+            "argument_bytes": 10112,
+            "bytes_accessed": 33894,
+            "flops": 8320,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 6216,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 1.4210854715202004e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000175916,
+            "mean_seconds": 0.0001366875,
+            "median_seconds": 0.0001366875,
+            "min_seconds": 9.7459e-05,
+            "samples_seconds": [
+              0.000175916,
+              9.7459e-05
+            ],
+            "std_seconds": 3.92285e-05
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.023100916,
+            "lowering_seconds": 0.010177875
+          },
+          "compiler": {
+            "argument_bytes": 1536,
+            "bytes_accessed": 4120,
+            "flops": 768,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000437,
+            "mean_seconds": 0.0004141045,
+            "median_seconds": 0.0004141045,
+            "min_seconds": 0.000391209,
+            "samples_seconds": [
+              0.000437,
+              0.000391209
+            ],
+            "std_seconds": 2.2895499999999998e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.018954292,
+            "lowering_seconds": 0.003921583
+          },
+          "compiler": {
+            "argument_bytes": 14592,
+            "bytes_accessed": 38432,
+            "flops": 7680,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 9216,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000176791,
+            "mean_seconds": 0.00014970800000000002,
+            "median_seconds": 0.00014970800000000002,
+            "min_seconds": 0.000122625,
+            "samples_seconds": [
+              0.000176791,
+              0.000122625
+            ],
+            "std_seconds": 2.7082999999999998e-05
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.025197333,
+            "lowering_seconds": 0.011054125
+          },
+          "compiler": {
+            "argument_bytes": 4608,
+            "bytes_accessed": 10264,
+            "flops": 1088,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 1536,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 7.105427357601002e-15,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000454875,
+            "mean_seconds": 0.000434729,
+            "median_seconds": 0.000434729,
+            "min_seconds": 0.000414583,
+            "samples_seconds": [
+              0.000454875,
+              0.000414583
+            ],
+            "std_seconds": 2.0145999999999993e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.032020333,
+            "lowering_seconds": 0.033389334
+          },
+          "compiler": {
+            "argument_bytes": 17664,
+            "bytes_accessed": 67734,
+            "flops": 16512,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 12360,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 7.105427357601002e-15,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000103583,
+            "mean_seconds": 9.61665e-05,
+            "median_seconds": 9.61665e-05,
+            "min_seconds": 8.875e-05,
+            "samples_seconds": [
+              0.000103583,
+              8.875e-05
+            ],
+            "std_seconds": 7.416499999999999e-06
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.017903459,
+            "lowering_seconds": 0.008438541
+          },
+          "compiler": {
+            "argument_bytes": 1536,
+            "bytes_accessed": 2584,
+            "flops": 384,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000504416,
+            "mean_seconds": 0.00047918700000000006,
+            "median_seconds": 0.00047918700000000006,
+            "min_seconds": 0.000453958,
+            "samples_seconds": [
+              0.000504416,
+              0.000453958
+            ],
+            "std_seconds": 2.5229000000000012e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.0215205,
+            "lowering_seconds": 0.004260583
+          },
+          "compiler": {
+            "argument_bytes": 8064,
+            "bytes_accessed": 19232,
+            "flops": 3840,
+            "generated_code_bytes": 0,
+            "output_bytes": 536,
+            "source": "jax-compiled",
+            "temporary_bytes": 4608,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 8.8375e-05,
+            "mean_seconds": 8.568749999999999e-05,
+            "median_seconds": 8.568749999999999e-05,
+            "min_seconds": 8.3e-05,
+            "samples_seconds": [
+              8.3e-05,
+              8.8375e-05
+            ],
+            "std_seconds": 2.6874999999999976e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.02018675,
+            "lowering_seconds": 0.008807083
+          },
+          "compiler": {
+            "argument_bytes": 2560,
+            "bytes_accessed": 4120,
+            "flops": 512,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000517542,
+            "mean_seconds": 0.00048239599999999995,
+            "median_seconds": 0.00048239599999999995,
+            "min_seconds": 0.00044725,
+            "samples_seconds": [
+              0.000517542,
+              0.00044725
+            ],
+            "std_seconds": 3.514599999999998e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.040539292,
+            "lowering_seconds": 0.02012675
+          },
+          "compiler": {
+            "argument_bytes": 9088,
+            "bytes_accessed": 37990,
+            "flops": 8320,
+            "generated_code_bytes": 0,
+            "output_bytes": 1560,
+            "source": "jax-compiled",
+            "temporary_bytes": 6216,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000111792,
+            "mean_seconds": 9.866700000000001e-05,
+            "median_seconds": 9.866700000000001e-05,
+            "min_seconds": 8.5542e-05,
+            "samples_seconds": [
+              0.000111792,
+              8.5542e-05
+            ],
+            "std_seconds": 1.3125e-05
+          }
+        }
+      ],
+      "count_per_axis": 4,
+      "dimension": 3,
+      "entity_counts": [
+        64,
+        192,
+        192,
+        64
+      ],
+      "estimated_preparation_bytes": 66048,
+      "incidence_routes": 1536,
+      "periodic": true,
+      "preparation_seconds": 1.413925458,
+      "retained_bytes": 165988
+    },
+    {
+      "actions": [
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.018871958,
+            "lowering_seconds": 0.011817375
+          },
+          "compiler": {
+            "argument_bytes": 5832,
+            "bytes_accessed": 31776,
+            "flops": 1944,
+            "generated_code_bytes": 0,
+            "output_bytes": 15576,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000497417,
+            "mean_seconds": 0.0004554795,
+            "median_seconds": 0.0004554795,
+            "min_seconds": 0.000413542,
+            "samples_seconds": [
+              0.000413542,
+              0.000497417
+            ],
+            "std_seconds": 4.193750000000001e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.019390083,
+            "lowering_seconds": 0.005235917
+          },
+          "compiler": {
+            "argument_bytes": 71928,
+            "bytes_accessed": 215816,
+            "flops": 38880,
+            "generated_code_bytes": 0,
+            "output_bytes": 15576,
+            "source": "jax-compiled",
+            "temporary_bytes": 46656,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 7.8334e-05,
+            "mean_seconds": 7.481299999999999e-05,
+            "median_seconds": 7.481299999999999e-05,
+            "min_seconds": 7.1292e-05,
+            "samples_seconds": [
+              7.8334e-05,
+              7.1292e-05
+            ],
+            "std_seconds": 3.5210000000000024e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.022057,
+            "lowering_seconds": 0.010625458
+          },
+          "compiler": {
+            "argument_bytes": 36936,
+            "bytes_accessed": 42792,
+            "flops": 6318,
+            "generated_code_bytes": 0,
+            "output_bytes": 5856,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 5.684341886080802e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000480709,
+            "mean_seconds": 0.0004797715,
+            "median_seconds": 0.0004797715,
+            "min_seconds": 0.000478834,
+            "samples_seconds": [
+              0.000478834,
+              0.000480709
+            ],
+            "std_seconds": 9.37500000000016e-07
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.042783792,
+            "lowering_seconds": 0.033263791
+          },
+          "compiler": {
+            "argument_bytes": 103032,
+            "bytes_accessed": 346592,
+            "flops": 84365,
+            "generated_code_bytes": 0,
+            "output_bytes": 5856,
+            "source": "jax-compiled",
+            "temporary_bytes": 62280,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 5.684341886080802e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000116958,
+            "mean_seconds": 0.0001062915,
+            "median_seconds": 0.0001062915,
+            "min_seconds": 9.5625e-05,
+            "samples_seconds": [
+              0.000116958,
+              9.5625e-05
+            ],
+            "std_seconds": 1.0666500000000004e-05
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.021973916,
+            "lowering_seconds": 0.011840541
+          },
+          "compiler": {
+            "argument_bytes": 15552,
+            "bytes_accessed": 47832,
+            "flops": 6912,
+            "generated_code_bytes": 0,
+            "output_bytes": 13848,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000584375,
+            "mean_seconds": 0.0005609790000000001,
+            "median_seconds": 0.0005609790000000001,
+            "min_seconds": 0.000537583,
+            "samples_seconds": [
+              0.000584375,
+              0.000537583
+            ],
+            "std_seconds": 2.3396000000000018e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.020900375,
+            "lowering_seconds": 0.004117667
+          },
+          "compiler": {
+            "argument_bytes": 133056,
+            "bytes_accessed": 347360,
+            "flops": 69120,
+            "generated_code_bytes": 0,
+            "output_bytes": 13848,
+            "source": "jax-compiled",
+            "temporary_bytes": 82944,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000194292,
+            "mean_seconds": 0.00015606299999999999,
+            "median_seconds": 0.00015606299999999999,
+            "min_seconds": 0.000117834,
+            "samples_seconds": [
+              0.000194292,
+              0.000117834
+            ],
+            "std_seconds": 3.8228999999999996e-05
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.031779083,
+            "lowering_seconds": 0.013747167
+          },
+          "compiler": {
+            "argument_bytes": 43200,
+            "bytes_accessed": 58776,
+            "flops": 10800,
+            "generated_code_bytes": 0,
+            "output_bytes": 15576,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 2.842170943040401e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000477083,
+            "mean_seconds": 0.00047308349999999996,
+            "median_seconds": 0.00047308349999999996,
+            "min_seconds": 0.000469084,
+            "samples_seconds": [
+              0.000469084,
+              0.000477083
+            ],
+            "std_seconds": 3.999500000000008e-06
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.038456667,
+            "lowering_seconds": 0.034229917
+          },
+          "compiler": {
+            "argument_bytes": 160704,
+            "bytes_accessed": 619572,
+            "flops": 148840,
+            "generated_code_bytes": 0,
+            "output_bytes": 15576,
+            "source": "jax-compiled",
+            "temporary_bytes": 110664,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 2.842170943040401e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000114958,
+            "mean_seconds": 0.0001073955,
+            "median_seconds": 0.0001073955,
+            "min_seconds": 9.9833e-05,
+            "samples_seconds": [
+              0.000114958,
+              9.9833e-05
+            ],
+            "std_seconds": 7.562500000000001e-06
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.015308459,
+            "lowering_seconds": 0.009315291
+          },
+          "compiler": {
+            "argument_bytes": 13824,
+            "bytes_accessed": 21528,
+            "flops": 3072,
+            "generated_code_bytes": 0,
+            "output_bytes": 4120,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 8.881784197001252e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000430875,
+            "mean_seconds": 0.000428354,
+            "median_seconds": 0.000428354,
+            "min_seconds": 0.000425833,
+            "samples_seconds": [
+              0.000425833,
+              0.000430875
+            ],
+            "std_seconds": 2.521000000000012e-06
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.020424458,
+            "lowering_seconds": 0.003959583
+          },
+          "compiler": {
+            "argument_bytes": 66048,
+            "bytes_accessed": 155168,
+            "flops": 30720,
+            "generated_code_bytes": 0,
+            "output_bytes": 4120,
+            "source": "jax-compiled",
+            "temporary_bytes": 36864,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 8.881784197001252e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000169,
+            "mean_seconds": 0.000140917,
+            "median_seconds": 0.000140917,
+            "min_seconds": 0.000112834,
+            "samples_seconds": [
+              0.000112834,
+              0.000169
+            ],
+            "std_seconds": 2.8082999999999995e-05
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.024766375,
+            "lowering_seconds": 0.010983458
+          },
+          "compiler": {
+            "argument_bytes": 22016,
+            "bytes_accessed": 35864,
+            "flops": 4544,
+            "generated_code_bytes": 0,
+            "output_bytes": 13848,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000494667,
+            "mean_seconds": 0.000493896,
+            "median_seconds": 0.000493896,
+            "min_seconds": 0.000493125,
+            "samples_seconds": [
+              0.000494667,
+              0.000493125
+            ],
+            "std_seconds": 7.709999999999965e-07
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.037294583,
+            "lowering_seconds": 0.034181625
+          },
+          "compiler": {
+            "argument_bytes": 74240,
+            "bytes_accessed": 312772,
+            "flops": 66752,
+            "generated_code_bytes": 0,
+            "output_bytes": 13848,
+            "source": "jax-compiled",
+            "temporary_bytes": 49224,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000115041,
+            "mean_seconds": 0.00010677049999999999,
+            "median_seconds": 0.00010677049999999999,
+            "min_seconds": 9.85e-05,
+            "samples_seconds": [
+              0.000115041,
+              9.85e-05
+            ],
+            "std_seconds": 8.270500000000002e-06
+          }
+        }
+      ],
+      "count_per_axis": 8,
+      "dimension": 3,
+      "entity_counts": [
+        729,
+        1944,
+        1728,
+        512
+      ],
+      "estimated_preparation_bytes": 616437,
+      "incidence_routes": 13872,
+      "periodic": false,
+      "preparation_seconds": 6.871667,
+      "retained_bytes": 1387868
+    },
+    {
+      "actions": [
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.020634042,
+            "lowering_seconds": 0.009978458
+          },
+          "compiler": {
+            "argument_bytes": 4096,
+            "bytes_accessed": 20504,
+            "flops": 1536,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000459125,
+            "mean_seconds": 0.00045891650000000003,
+            "median_seconds": 0.00045891650000000003,
+            "min_seconds": 0.000458708,
+            "samples_seconds": [
+              0.000459125,
+              0.000458708
+            ],
+            "std_seconds": 2.0850000000000317e-07
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.019257042,
+            "lowering_seconds": 0.004139042
+          },
+          "compiler": {
+            "argument_bytes": 56320,
+            "bytes_accessed": 170016,
+            "flops": 30720,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 36864,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000122334,
+            "mean_seconds": 0.00011683400000000001,
+            "median_seconds": 0.00011683400000000001,
+            "min_seconds": 0.000111334,
+            "samples_seconds": [
+              0.000122334,
+              0.000111334
+            ],
+            "std_seconds": 5.500000000000005e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.019615375,
+            "lowering_seconds": 0.009721333
+          },
+          "compiler": {
+            "argument_bytes": 28672,
+            "bytes_accessed": 32792,
+            "flops": 4608,
+            "generated_code_bytes": 0,
+            "output_bytes": 4120,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 2.842170943040401e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000467125,
+            "mean_seconds": 0.000463167,
+            "median_seconds": 0.000463167,
+            "min_seconds": 0.000459209,
+            "samples_seconds": [
+              0.000459209,
+              0.000467125
+            ],
+            "std_seconds": 3.958000000000005e-06
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.03512025,
+            "lowering_seconds": 0.036674708
+          },
+          "compiler": {
+            "argument_bytes": 80896,
+            "bytes_accessed": 270788,
+            "flops": 66560,
+            "generated_code_bytes": 0,
+            "output_bytes": 4120,
+            "source": "jax-compiled",
+            "temporary_bytes": 49224,
+            "unavailable_reason": null
+          },
+          "degree": 0,
+          "maximum_error": 2.842170943040401e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000105625,
+            "mean_seconds": 9.9146e-05,
+            "median_seconds": 9.9146e-05,
+            "min_seconds": 9.2667e-05,
+            "samples_seconds": [
+              0.000105625,
+              9.2667e-05
+            ],
+            "std_seconds": 6.4790000000000035e-06
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.022993375,
+            "lowering_seconds": 0.009680041
+          },
+          "compiler": {
+            "argument_bytes": 12288,
+            "bytes_accessed": 32792,
+            "flops": 6144,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000482875,
+            "mean_seconds": 0.0004705,
+            "median_seconds": 0.0004705,
+            "min_seconds": 0.000458125,
+            "samples_seconds": [
+              0.000482875,
+              0.000458125
+            ],
+            "std_seconds": 1.2375000000000016e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.022982875,
+            "lowering_seconds": 0.004017917
+          },
+          "compiler": {
+            "argument_bytes": 116736,
+            "bytes_accessed": 307232,
+            "flops": 61440,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 73728,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 4.440892098500626e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000139875,
+            "mean_seconds": 0.000132375,
+            "median_seconds": 0.000132375,
+            "min_seconds": 0.000124875,
+            "samples_seconds": [
+              0.000124875,
+              0.000139875
+            ],
+            "std_seconds": 7.4999999999999926e-06
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.02738775,
+            "lowering_seconds": 0.01184425
+          },
+          "compiler": {
+            "argument_bytes": 36864,
+            "bytes_accessed": 81944,
+            "flops": 8704,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 12288,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 1.4210854715202004e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000540416,
+            "mean_seconds": 0.0004968745,
+            "median_seconds": 0.0004968745,
+            "min_seconds": 0.000453333,
+            "samples_seconds": [
+              0.000540416,
+              0.000453333
+            ],
+            "std_seconds": 4.354150000000003e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.036708958,
+            "lowering_seconds": 0.03421525
+          },
+          "compiler": {
+            "argument_bytes": 141312,
+            "bytes_accessed": 541520,
+            "flops": 132096,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 98376,
+            "unavailable_reason": null
+          },
+          "degree": 1,
+          "maximum_error": 1.4210854715202004e-14,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.00012575,
+            "mean_seconds": 0.000113917,
+            "median_seconds": 0.000113917,
+            "min_seconds": 0.000102084,
+            "samples_seconds": [
+              0.00012575,
+              0.000102084
+            ],
+            "std_seconds": 1.1833e-05
+          }
+        },
+        {
+          "action": "d_stencil",
+          "compilation": {
+            "compilation_seconds": 0.018570125,
+            "lowering_seconds": 0.008929292
+          },
+          "compiler": {
+            "argument_bytes": 12288,
+            "bytes_accessed": 20504,
+            "flops": 3072,
+            "generated_code_bytes": 0,
+            "output_bytes": 4120,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 8.881784197001252e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000618833,
+            "mean_seconds": 0.0005519374999999999,
+            "median_seconds": 0.0005519374999999999,
+            "min_seconds": 0.000485042,
+            "samples_seconds": [
+              0.000485042,
+              0.000618833
+            ],
+            "std_seconds": 6.689549999999998e-05
+          }
+        },
+        {
+          "action": "d_routes",
+          "compilation": {
+            "compilation_seconds": 0.021912792,
+            "lowering_seconds": 0.004069542
+          },
+          "compiler": {
+            "argument_bytes": 64512,
+            "bytes_accessed": 153632,
+            "flops": 30720,
+            "generated_code_bytes": 0,
+            "output_bytes": 4120,
+            "source": "jax-compiled",
+            "temporary_bytes": 36864,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 8.881784197001252e-16,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000188833,
+            "mean_seconds": 0.0001338955,
+            "median_seconds": 0.0001338955,
+            "min_seconds": 7.8958e-05,
+            "samples_seconds": [
+              0.000188833,
+              7.8958e-05
+            ],
+            "std_seconds": 5.493750000000001e-05
+          }
+        },
+        {
+          "action": "delta_stencil",
+          "compilation": {
+            "compilation_seconds": 0.021525834,
+            "lowering_seconds": 0.009421458
+          },
+          "compiler": {
+            "argument_bytes": 20480,
+            "bytes_accessed": 32792,
+            "flops": 4096,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 0,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000527583,
+            "mean_seconds": 0.000496083,
+            "median_seconds": 0.000496083,
+            "min_seconds": 0.000464583,
+            "samples_seconds": [
+              0.000527583,
+              0.000464583
+            ],
+            "std_seconds": 3.149999999999998e-05
+          }
+        },
+        {
+          "action": "delta_routes",
+          "compilation": {
+            "compilation_seconds": 0.035111792,
+            "lowering_seconds": 0.020741
+          },
+          "compiler": {
+            "argument_bytes": 72704,
+            "bytes_accessed": 303556,
+            "flops": 66560,
+            "generated_code_bytes": 0,
+            "output_bytes": 12312,
+            "source": "jax-compiled",
+            "temporary_bytes": 49224,
+            "unavailable_reason": null
+          },
+          "degree": 2,
+          "maximum_error": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000126666,
+            "mean_seconds": 0.00011041600000000001,
+            "median_seconds": 0.00011041600000000001,
+            "min_seconds": 9.4166e-05,
+            "samples_seconds": [
+              0.000126666,
+              9.4166e-05
+            ],
+            "std_seconds": 1.6249999999999995e-05
+          }
+        }
+      ],
+      "count_per_axis": 8,
+      "dimension": 3,
+      "entity_counts": [
+        512,
+        1536,
+        1536,
+        512
+      ],
+      "estimated_preparation_bytes": 528384,
+      "incidence_routes": 12288,
+      "periodic": true,
+      "preparation_seconds": 1.031997125,
+      "retained_bytes": 1322852
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "69f95889ed04f420d4ad5e34b397657e1354bbefed315716892cb0f3e2008579",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "5c940577508b41d5101873bdad61ee9453c1082e6be5e04a4405e1a3f4e15fc6",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "76291b84fc4e15f12f8e277f4914bf597f4025f56258c6ca709b5e7fdbb32a64",
+    "evidence_schema": {
+      "fields": [
+        "actions",
+        "count_per_axis",
+        "dimension",
+        "entity_counts",
+        "estimated_preparation_bytes",
+        "incidence_routes",
+        "periodic",
+        "preparation_seconds",
+        "retained_bytes"
+      ],
+      "signature": "f185edf796458c69e374848d47b0b6cc216c1c72ced1a01e81c63998553984bb"
+    },
+    "fingerprint": "f6c7893ecc55ee11b991da590a1c183913650bb6ae610ad9a179433bf3026871",
+    "source_build_fingerprint": "40df69dad62864dc4350289acc2f9401edb9869d53795485b8e788087cbd26c2"
+  }
+}

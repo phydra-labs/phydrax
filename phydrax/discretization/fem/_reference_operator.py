@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, assert_never, get_args, Literal, TypeAlias
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,8 +18,9 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import compound_matrix
 from ...typing import parse
-from .._reference_cell import FacetShape, reference_cell_topology
+from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from ._high_order import ReferenceNodalFamily, TensorProductTabulation
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec
@@ -107,6 +108,10 @@ def _reference_facet_shape(cell_kind: str, facet_index: int, /) -> FacetShape:
         raise ValueError(
             f"facet_index must be a local facet of {cell_kind!r} in [0, {len(facets)})."
         )
+    if topology.dimension > 1 and cell_kind.startswith("simplex:"):
+        return reference_cell_topology(f"simplex:{topology.dimension - 1}")
+    if topology.dimension > 1 and cell_kind.startswith("tensor:"):
+        return reference_cell_topology(f"tensor:{topology.dimension - 1}")
     match len(facets[facet_index]):
         case 1:
             return "point"
@@ -122,59 +127,56 @@ def _reference_facet_shape(cell_kind: str, facet_index: int, /) -> FacetShape:
 
 def _facet_corner_parameters(shape: FacetShape, /) -> np.ndarray:
     """Host unit-facet parameters of the facet corners in their vertex order."""
+    if isinstance(shape, ReferenceCellTopology):
+        return np.asarray(shape.vertices, dtype=np.float64)
     corners = _FACET_CORNER_PARAMETERS[shape]
     return np.asarray(corners, dtype=np.float64).reshape((len(corners), -1))
+
+
+def _facet_parameterization(
+    shape: FacetShape, corners: Array, parameter: Array, /
+) -> tuple[Array, Array]:
+    """Return facet points and full-dimensional tangent Jacobians."""
+    dimension = parameter.shape[-1]
+    if corners.shape[-1] != dimension + 1:
+        raise ValueError("Facet corners must have codimension one.")
+    if corners.shape[0] == dimension + 1:
+        directions = corners[1:] - corners[0]
+        points = corners[0] + parameter @ directions
+        tangents = jnp.broadcast_to(
+            directions.T, (parameter.shape[0], dimension + 1, dimension)
+        )
+        return points, tangents
+    if corners.shape[0] != 2**dimension:
+        raise ValueError("Tensor facets require one corner for every parameter vertex.")
+    bits = jnp.asarray(_facet_corner_parameters(shape), dtype=parameter.dtype)
+    factors = jnp.where(
+        bits[None, :, :] > 0.5, parameter[:, None, :], 1.0 - parameter[:, None, :]
+    )
+    values = jnp.prod(factors, axis=-1)
+    derivatives = []
+    for axis in range(dimension):
+        others = tuple(index for index in range(dimension) if index != axis)
+        derivative = (2.0 * bits[None, :, axis] - 1.0) * jnp.prod(
+            factors[..., jnp.asarray(others, dtype=jnp.int32)], axis=-1
+        )
+        derivatives.append(derivative)
+    gradient = jnp.stack(derivatives, axis=-1)
+    return values @ corners, ein.contract("qva,vd->qda", gradient, corners)
 
 
 def _facet_frame(
     shape: FacetShape, corners: Array, parameter: Array, /
 ) -> tuple[Array, Array]:
-    """Embedded points and unoriented parameter-scaled normals of one facet."""
-    match shape:
-        case "point":
-            count = parameter.shape[0]
-            points = jnp.broadcast_to(corners[0], (count, corners.shape[1]))
-            return points, jnp.ones((count, 1), dtype=points.dtype)
-        case "edge":
-            t = parameter[:, 0]
-            tangent = corners[1] - corners[0]
-            points = (1.0 - t[:, None]) * corners[0] + t[:, None] * corners[1]
-            normal = jnp.asarray((tangent[1], -tangent[0]))
-            return points, jnp.broadcast_to(normal, points.shape)
-        case "triangle":
-            first = parameter[:, 0]
-            second = parameter[:, 1]
-            points = (
-                (1.0 - first - second)[:, None] * corners[0]
-                + first[:, None] * corners[1]
-                + second[:, None] * corners[2]
-            )
-            normal = jnp.cross(corners[1] - corners[0], corners[2] - corners[0])
-            return points, jnp.broadcast_to(normal, points.shape)
-        case "quadrilateral":
-            u = parameter[:, 0]
-            v = parameter[:, 1]
-            points = (
-                ((1.0 - u) * (1.0 - v))[:, None] * corners[0]
-                + (u * (1.0 - v))[:, None] * corners[1]
-                + (u * v)[:, None] * corners[2]
-                + ((1.0 - u) * v)[:, None] * corners[3]
-            )
-            tangent_u = (
-                -(1.0 - v)[:, None] * corners[0]
-                + (1.0 - v)[:, None] * corners[1]
-                + v[:, None] * corners[2]
-                - v[:, None] * corners[3]
-            )
-            tangent_v = (
-                -(1.0 - u)[:, None] * corners[0]
-                - u[:, None] * corners[1]
-                + u[:, None] * corners[2]
-                + (1.0 - u)[:, None] * corners[3]
-            )
-            return points, jnp.cross(tangent_u, tangent_v)
-        case _:
-            assert_never(shape)
+    """Embedded points and parameter-scaled codimension-one cofactor normals."""
+    points, tangents = _facet_parameterization(shape, corners, parameter)
+    dimension = corners.shape[-1]
+    minors = compound_matrix(tangents, dimension - 1)[..., :, 0]
+    signs = jnp.asarray(
+        1 - 2 * (np.arange(dimension, dtype=np.int32) % 2), dtype=minors.dtype
+    )
+    normals = jnp.flip(minors, axis=-1) * signs
+    return points, normals
 
 
 def reference_facet_embedding(
@@ -203,7 +205,9 @@ def reference_facet_embedding(
     # The orientation is a static property of the reference topology; evaluate
     # it eagerly at the facet centroid even while tracing.
     with jax.ensure_compile_time_eval():
-        corners = jnp.asarray(tuple(topology.vertices[index] for index in vertex_ids))
+        corners = jnp.asarray(
+            tuple(topology.vertices[index] for index in vertex_ids), dtype=jnp.float64
+        )
         center = _facet_corner_parameters(shape).mean(axis=0, keepdims=True)
         _, center_normal = _facet_frame(shape, corners, jnp.asarray(center))
         vertices = np.asarray(topology.vertices, dtype=np.float64)
@@ -235,10 +239,11 @@ def _map_face_rule(
     /,
 ) -> tuple[Array, Array, Array]:
     shape = _reference_facet_shape(cell_kind, facet_index)
-    if shape == "triangle" and data.cell != "triangle":
-        raise ValueError("Triangular faces require triangle reference rules.")
-    if shape != "triangle" and (shape != "quadrilateral" or data.cell != "quadrilateral"):
-        raise ValueError("Quadrilateral faces require quadrilateral reference rules.")
+    expected = shape.name if isinstance(shape, ReferenceCellTopology) else shape
+    if data.cell != expected:
+        raise ValueError(
+            f"Facet reference rule must use the canonical cell {expected!r}."
+        )
     points, normals = reference_facet_embedding(cell_kind, facet_index, data.points)
     scales = jnp.linalg.norm(normals, axis=-1)
     return points, jnp.asarray(data.weights) * scales, normals / scales[:, None]

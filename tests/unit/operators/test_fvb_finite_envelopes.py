@@ -1,16 +1,19 @@
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax.discretization import CellMesh
 from phydrax.discretization.fem import (
     prepare_maxwell_mortar_interface_trace_3d,
     prepare_scalar_mortar_interface_trace_3d,
 )
+from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
 from phydrax.discretization.vem import (
     adapt_virtual_element_p,
     CurvedVirtualElementEdge,
     VirtualElementAdaptivityPolicy,
     VirtualElementEpoch,
 )
+from phydrax.linalg import ArraySpace
 from phydrax.operators.integral.layer_potential import (
     prepare_displacement_discontinuity_3d,
 )
@@ -26,20 +29,39 @@ def test_fvb_finite_envelopes_scenario_1() -> None:
     scalar = prepare_scalar_mortar_interface_trace_3d(
         mass, mass, coverage_fraction=1.0, orientation_margin=1.0, geometric_residual=0.0
     )
+    complex = FiniteElementDeRhamComplex(
+        CellMesh.from_tetrahedra(
+            np.asarray(
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                dtype=np.float64,
+            ),
+            np.asarray([[0, 1, 2, 3]], dtype=np.int32),
+        ),
+        family="trimmed",
+        order=1,
+    )
+    maxwell_mass = np.concatenate((mass, np.zeros((2, 4), dtype=np.float64)), axis=1)
     maxwell = prepare_maxwell_mortar_interface_trace_3d(
-        mass,
-        mass,
+        maxwell_mass,
+        maxwell_mass,
         coverage_fraction=1.0,
         orientation_margin=1.0,
         geometric_residual=0.0,
         commuting_defect=0.0,
+        volume_complex=complex,
+        boundary_space=ArraySpace(
+            (2,),
+            dtype=complex.hilbert_complex().space(1).structure().dtype,
+            space_id="mortar-contract-boundary",
+        ),
     )
     x = jnp.asarray([0.3, -0.2])
     y = jnp.asarray([0.4, 0.7])
     assert jnp.allclose(jnp.vdot(y, scalar.trace.mv(x)), jnp.vdot(scalar.load.mv(y), x))
+    maxwell_x = jnp.concatenate((x, jnp.zeros(4, dtype=x.dtype)))
     assert jnp.allclose(
-        jnp.vdot(y, maxwell.tangential_trace.mv(x)),
-        jnp.vdot(maxwell.boundary_load.mv(y), x),
+        jnp.vdot(y, maxwell.tangential_trace.mv(maxwell_x)),
+        jnp.vdot(maxwell.boundary_load.mv(y), maxwell_x),
     )
     coupled = prepare_scalar_nonmatching_fem_bem_3d(jnp.eye(2), jnp.eye(2), scalar)
     coupled_result = coupled.solve(jnp.asarray([1.0, 0.0]), jnp.asarray([0.0, 1.0]))

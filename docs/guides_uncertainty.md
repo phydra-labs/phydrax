@@ -2294,10 +2294,10 @@ complex_ir = phx.graph.graph_to_cochain_complex(
     graph,
     edge_weight_key="conductance",
 )
-spectrum = phx.graph.cochain_laplacian_eigenbasis(
+spectrum = phx.exterior.hodge_laplacian_eigenbasis(
     complex_ir,
     0,
-    num_modes=3,
+    count=3,
 )
 kernel = phx.kernels.AmplitudeKernel(
     phx.kernels.SpectralFeatureKernel(
@@ -2306,7 +2306,7 @@ kernel = phx.kernels.AmplitudeKernel(
     ),
     0.2,
 )
-entities = complex_ir.cell_entities(0)
+entities = jnp.arange(complex_ir.topology.entities(0).count, dtype=jnp.int32)
 observed_entities = entities[:2]
 observations = jnp.asarray([0.1, -0.1])
 model_values = jnp.zeros_like(observations)

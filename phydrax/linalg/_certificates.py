@@ -45,7 +45,7 @@ def _subspace_residuals(operator: AbstractLinearOperator, subspace: Any, /) -> A
     capacity = subspace.capacity
     if capacity == 0:
         return jnp.zeros((0,), dtype=jnp.asarray(0.0).dtype)
-    mask = jnp.arange(capacity) < subspace.dimension
+    mask = jnp.arange(capacity, dtype=subspace.dimension.dtype) < subspace.dimension
     columns = jnp.where(mask[None, :], subspace.basis, 0)
     real_dtype = columns.real.dtype
     floor = jnp.finfo(real_dtype).tiny
@@ -127,11 +127,13 @@ class KernelCertificate(StrictModule):
             if left is None
             else _subspace_residuals(adjoint(operator), left)
         )
-        right_mask = jnp.arange(right.capacity) < right.dimension
+        right_mask = (
+            jnp.arange(right.capacity, dtype=right.dimension.dtype) < right.dimension
+        )
         left_mask = (
             jnp.zeros((0,), dtype=jnp.bool_)
             if left is None
-            else jnp.arange(left.capacity) < left.dimension
+            else jnp.arange(left.capacity, dtype=left.dimension.dtype) < left.dimension
         )
         valid = (
             jnp.all(jnp.isfinite(right_residuals))

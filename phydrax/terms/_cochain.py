@@ -16,13 +16,13 @@ from jax.typing import ArrayLike
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
 from phydrax.domain.graph import (
-    cochain_field_spec,
+    as_cochain_field,
+    cochain_form_type,
     CochainCells,
     GRAPH_ENTITY_INDEX_KEY,
     GRAPH_GRAPH_INDEX_KEY,
     graph_trajectory_default_quadrature_total_weight,
     GraphBatch,
-    with_cochain_field_spec,
 )
 
 from .._doc import DOC_KEY0
@@ -184,8 +184,8 @@ def cochain_residual_field(
             raise TypeError(f"Program input {name!r} is not a DomainFunction.")
         if field.domain.labels != base.domain.labels:
             raise ValueError("All cochain residual fields must share one domain.")
-        actual = cochain_field_spec(field)
-        if actual != expected:
+        actual = cochain_form_type(field)
+        if actual.form_type_id != expected.form_type_id:
             raise ValueError(
                 f"Program input {name!r} semantics do not match its declared schema."
             )
@@ -201,7 +201,9 @@ def cochain_residual_field(
         func=_ProgramDomainOutput(program, normalized, output_name),
         metadata={},
     )
-    return with_cochain_field_spec(result, program.output_specs[output_name])
+    return as_cochain_field(
+        result, program.output_specs[output_name], representation="cochain"
+    )
 
 
 class CochainResidualTerm(AbstractSamplingTerm):
@@ -387,7 +389,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         residual = self.residual(functions)
         if not isinstance(residual, DomainFunction):
             raise TypeError("Cochain residual factories must return a DomainFunction.")
-        spec = cochain_field_spec(residual)
+        spec = cochain_form_type(residual)
         if spec.degree != self.degree:
             raise ValueError(
                 f"Residual degree {spec.degree} does not match CochainCells degree {self.degree}."

@@ -200,3 +200,45 @@ def test_maxwell_form_residuals_reject_wrong_degrees_and_metric_family() -> None
             # ty: ignore[invalid-argument-type]
             riemannian,
         )
+
+
+def test_maxwell_residuals_refuse_twisted_or_matrix_field_strength_and_sources() -> None:
+    domain, chart, metric = _spacetime()
+
+    @domain.Function("x")
+    def coefficients(x: Any) -> Any:
+        del x
+        return jnp.zeros((6,))
+
+    field = phx.operators.DomainDifferentialForm(coefficients, chart=chart, degree=2)
+    with pytest.raises(ValueError, match="untwisted"):
+        phx.operators.domain_maxwell_residuals(
+            phx.operators.domain_to_twisted(field, 1), metric
+        )
+
+    @domain.Function("x")
+    def matrix_coefficients(x: Any) -> Any:
+        del x
+        return jnp.zeros((6, 2, 2))
+
+    matrix_field = phx.operators.DomainDifferentialForm(
+        matrix_coefficients, chart=chart, degree=2, fiber_shape=(2, 2)
+    )
+    with pytest.raises(ValueError, match="scalar-fiber"):
+        phx.operators.domain_maxwell_residuals(matrix_field, metric)
+
+    @domain.Function("x")
+    def current_coefficients(x: Any) -> Any:
+        del x
+        return jnp.zeros((4,))
+
+    electric = phx.operators.DomainDifferentialForm(
+        current_coefficients, chart=chart, degree=1, twist="twisted"
+    )
+    magnetic = phx.operators.DomainDifferentialForm(
+        current_coefficients, chart=chart, degree=3, twist="twisted"
+    )
+    with pytest.raises(ValueError, match="electric_current"):
+        phx.operators.domain_maxwell_residuals(field, metric, electric_current=electric)
+    with pytest.raises(ValueError, match="magnetic_current"):
+        phx.operators.domain_maxwell_residuals(field, metric, magnetic_current=magnetic)

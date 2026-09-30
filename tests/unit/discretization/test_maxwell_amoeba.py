@@ -82,9 +82,14 @@ def test_maxwell_amoeba_scenario_1() -> None:
         atol=1e-15,
         rtol=0.0,
     )
-    bloch = phx.solver.maxwell.BlochCochainCalculus(bridge, jnp.asarray([0.2, -0.1, 0.3]))
-    np.testing.assert_allclose(bloch.chain_residual(0, values), 0.0, atol=2e-12)
-    np.testing.assert_allclose(jnp.abs(bloch.phases), 1.0, atol=2e-12)
+    bloch = phx.exterior.bloch_coefficient_system(
+        phx.discretization.cubical_cell_complex((3, 3, 3), periodic=True),
+        jnp.asarray([0.2, -0.1, 0.3]),
+        periods=jnp.ones((3,)),
+    )
+    np.testing.assert_allclose(
+        bloch.chain_residual(0, values.astype(jnp.complex128)), 0.0, atol=2e-12
+    )
     bridge = phx.discretization.StructuredCochainBridge(_grid((2, 2, 2)))
     layout = phx.solver.maxwell.MaxwellCochainLayout(bridge)
     n1 = bridge.cochain.cell_counts[1]
@@ -100,8 +105,8 @@ def test_maxwell_amoeba_scenario_1() -> None:
             electric,
             magnetic,
             None,
-            bridge.cochain.hodge_stars[1],
-            bridge.cochain.hodge_stars[2],
+            bridge.cochain.hodge_diagonal(1),
+            bridge.cochain.hodge_diagonal(2),
         )
         > 0.0
     )
@@ -141,8 +146,8 @@ def test_maxwell_amoeba_scenario_1() -> None:
             electric,
             magnetic,
             None,
-            bridge.cochain.hodge_stars[1],
-            bridge.cochain.hodge_stars[2],
+            bridge.cochain.hodge_diagonal(1),
+            bridge.cochain.hodge_diagonal(2),
         )
         < 0.0
     )
@@ -197,48 +202,11 @@ def test_maxwell_amoeba_scenario_2() -> None:
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
     tetrahedra = jnp.asarray([[0, 1, 2, 3]])
-    hodge = phx.solver.maxwell.tetrahedral_maxwell_hodge(vertices, tetrahedra)
-    assert hodge.quality.passed
-    assert hodge.quality.minimum_volume > 0.0
-    edge_values = jnp.arange(
-        hodge.cochain.cell_counts[1],
-        dtype=hodge.electric_mass.dtype,
-    )
-    face_values = jnp.arange(
-        hodge.cochain.cell_counts[2],
-        dtype=hodge.magnetic_mass.dtype,
-    )
-    np.testing.assert_allclose(
-        hodge.cochain.apply_hodge(1, edge_values),
-        hodge.electric_mass @ edge_values,
-    )
-    np.testing.assert_allclose(
-        hodge.cochain.apply_hodge(2, face_values),
-        hodge.magnetic_mass @ face_values,
-    )
-    expected_codifferential = jnp.linalg.solve(
-        hodge.electric_mass,
-        hodge.cochain.topology.incidences[1]
-        .exterior_derivative()
-        .transpose_mv(hodge.magnetic_mass @ face_values),
-    )
-    np.testing.assert_allclose(
-        hodge.cochain.codifferential(2, face_values),
-        expected_codifferential,
-        rtol=1e-10,
-        atol=1e-10,
-    )
-    assert (
-        jnp.linalg.norm(hodge.electric_mass - jnp.diag(jnp.diag(hodge.electric_mass)))
-        > 0.0
-    )
-    np.testing.assert_allclose(
-        hodge.cochain.exterior_derivative(
-            1, hodge.cochain.exterior_derivative(0, jnp.arange(4.0))
-        ),
-        0.0,
-        atol=0.0,
-    )
+    mesh = phx.discretization.CellMesh.from_tetrahedra(vertices, tetrahedra)
+    quality = phx.meshing.evaluate_cell_quality(mesh)
+    np.testing.assert_allclose(quality.measures, jnp.asarray((1.0 / 6.0,)), atol=1e-12)
+    quality_report = phx.meshing.summarize_cell_quality(quality)
+    assert quality_report.sampled_invalid_count == 0
     axis = jnp.linspace(-1.0, 1.0, 5)
     x, y = jnp.meshgrid(axis, axis, indexing="ij")
     points = jnp.stack((x.reshape(-1), y.reshape(-1)), axis=1)

@@ -58,11 +58,11 @@
 
 ::: phydrax.topology.compute_rational_homology_basis
 
-::: phydrax.graph.HarmonicClassFrame
+::: phydrax.exterior.HarmonicClassFrame
 
 ::: phydrax.solver.HarmonicConstraint
 
-::: phydrax.graph.HodgeSubspaceTracking
+::: phydrax.exterior.HodgeSubspaceTracking
 
 ::: phydrax.topology.MergeTree
 
@@ -79,3 +79,16 @@
 ::: phydrax.topology.IntegralHomologyResult
 
 ::: phydrax.topology.compute_integral_homology
+
+## Exact cochain products
+
+`alexander_whitney_diagonal(topology, support, /)` and
+`serre_diagonal(cubical, /)` construct canonical oriented diagonals for simplicial
+and tensor-product cell complexes. Repeated periodic attaching occurrences retain
+their multiplicity. `cup_product` requires both operand topology identities to
+match the diagonal and reduces every product mod p before int64 accumulation.
+Sheaf restrictions are keyed by incidence occurrence, not only cell pair.
+
+::: phydrax.topology.alexander_whitney_diagonal
+
+::: phydrax.topology.serre_diagonal

@@ -12,11 +12,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax.domain import Domain, DomainFunction
+from phydrax.optim._adam import adam
 
 from .._strict import StrictModule
 from ..stochastic._bsde import _predictor_value, BSDEPathBatch, BSDEProblem
@@ -316,7 +316,7 @@ def solve_deep_splitting(
         raise ValueError("fixed_paths is valid only for fixed sampling.")
     interpolation = parse(interpolation, DeepSplittingInterpolation, "interpolation")
     if optim is None:
-        optim = optax.adam(1e-3)
+        optim = adam(1e-3)
     root_key = jr.key(int(seed))
     held_out_paths = (
         problem.sample(jr.fold_in(root_key, 200))

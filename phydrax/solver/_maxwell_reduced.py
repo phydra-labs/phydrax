@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparedTensorGrid
+from ..discretization._reduced_differences import backward_difference, forward_difference
 from ._maxwell_boundaries import MaxwellBoundaryPlan
 from ._maxwell_pml import (
     _graded_profile,
@@ -25,37 +26,6 @@ from ._maxwell_pml import (
     MaxwellCPMLPlan,
     MaxwellCPMLState,
 )
-
-
-# On a nonperiodic axis the stored layout holds the upper wall face and omits
-# the lower one. The backward difference reads ``value[-1] = 0`` (no flux or
-# tangential H through the lower wall) and the forward difference reads
-# ``value[N] = 0``; the pair is skew-adjoint (``forward = −backwardᵀ``), so the
-# curl update conserves energy exactly, ``div ∘ curl = 0`` holds per axis, and
-# the charge continuity of the particle transfer uses the same divergence as
-# Gauss's law.
-def _forward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
-    if periodic:
-        shifted = jnp.roll(value, -1, axis=axis)
-    else:
-        pad = [(0, 0)] * value.ndim
-        pad[axis] = (0, 1)
-        shifted = jnp.pad(
-            jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis), pad
-        )
-    return (shifted - value) / spacing
-
-
-def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
-    if periodic:
-        previous = jnp.roll(value, 1, axis=axis)
-    else:
-        pad = [(0, 0)] * value.ndim
-        pad[axis] = (1, 0)
-        previous = jnp.pad(
-            jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis), pad
-        )
-    return (value - previous) / spacing
 
 
 def _field_triple(
@@ -583,14 +553,14 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         ex, ey, _ = state.electric
         dx, dy = self.spacing
         return self.permittivity * (
-            _backward(ex, 0, dx, self.periodic[0])
-            + _backward(ey, 1, dy, self.periodic[1])
+            backward_difference(ex, 0, dx, self.periodic[0])
+            + backward_difference(ey, 1, dy, self.periodic[1])
         )
 
     def divergence_magnetic(self, state: CompatibleMaxwell2DState, /) -> Array:
         bx, by, _ = state.magnetic
         dx, dy = self.spacing
-        return _backward(bx, 0, dx, self.periodic[0]) + _backward(
+        return backward_difference(bx, 0, dx, self.periodic[0]) + backward_difference(
             by, 1, dy, self.periodic[1]
         )
 
@@ -622,10 +592,10 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         bx, by, bz = state.magnetic
         dx, dy = self.spacing
         pml_memory = state.pml_memory
-        d_y_ez = _forward(ez, 1, dy, self.periodic[1])
-        d_x_ez = _forward(ez, 0, dx, self.periodic[0])
-        d_x_ey = _forward(ey, 0, dx, self.periodic[0])
-        d_y_ex = _forward(ex, 1, dy, self.periodic[1])
+        d_y_ez = forward_difference(ez, 1, dy, self.periodic[1])
+        d_x_ez = forward_difference(ez, 0, dx, self.periodic[0])
+        d_x_ey = forward_difference(ey, 0, dx, self.periodic[0])
+        d_y_ex = forward_difference(ex, 1, dy, self.periodic[1])
         if self.pml is not None and pml_memory is not None:
             d_y_ez, pml_memory = self.pml.apply_magnetic_start(
                 d_y_ez, pml_memory, dt, axis=1, component=0
@@ -643,10 +613,10 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         half_by = by + 0.5 * dt * d_x_ez
         half_bz = bz - 0.5 * dt * (d_x_ey - d_y_ex)
         jx, jy, jz = current
-        d_y_bz = _backward(half_bz / self.permeability, 1, dy, self.periodic[1])
-        d_x_bz = _backward(half_bz / self.permeability, 0, dx, self.periodic[0])
-        d_x_by = _backward(half_by / self.permeability, 0, dx, self.periodic[0])
-        d_y_bx = _backward(half_bx / self.permeability, 1, dy, self.periodic[1])
+        d_y_bz = backward_difference(half_bz / self.permeability, 1, dy, self.periodic[1])
+        d_x_bz = backward_difference(half_bz / self.permeability, 0, dx, self.periodic[0])
+        d_x_by = backward_difference(half_by / self.permeability, 0, dx, self.periodic[0])
+        d_y_bx = backward_difference(half_bx / self.permeability, 1, dy, self.periodic[1])
         if self.pml is not None and pml_memory is not None:
             d_y_bz, pml_memory = self.pml.apply_electric(
                 d_y_bz, pml_memory, dt, axis=1, component=0
@@ -663,10 +633,10 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         next_ex = ex + dt / self.permittivity * (d_y_bz - jx)
         next_ey = ey + dt / self.permittivity * (-d_x_bz - jy)
         next_ez = ez + dt / self.permittivity * (d_x_by - d_y_bx - jz)
-        d_y_next_ez = _forward(next_ez, 1, dy, self.periodic[1])
-        d_x_next_ez = _forward(next_ez, 0, dx, self.periodic[0])
-        d_x_next_ey = _forward(next_ey, 0, dx, self.periodic[0])
-        d_y_next_ex = _forward(next_ex, 1, dy, self.periodic[1])
+        d_y_next_ez = forward_difference(next_ez, 1, dy, self.periodic[1])
+        d_x_next_ez = forward_difference(next_ez, 0, dx, self.periodic[0])
+        d_x_next_ey = forward_difference(next_ey, 0, dx, self.periodic[0])
+        d_y_next_ex = forward_difference(next_ex, 1, dy, self.periodic[1])
         if self.pml is not None and pml_memory is not None:
             d_y_next_ez, pml_memory = self.pml.apply_magnetic_end(
                 d_y_next_ez, pml_memory, dt, axis=1, component=0
@@ -923,8 +893,8 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         ex, ey, ez = state.electric
         bx, by, bz = state.magnetic
         pml_memory = state.pml_memory
-        d_x_ez = _forward(ez, 0, self.spacing, self.periodic[0])
-        d_x_ey = _forward(ey, 0, self.spacing, self.periodic[0])
+        d_x_ez = forward_difference(ez, 0, self.spacing, self.periodic[0])
+        d_x_ey = forward_difference(ey, 0, self.spacing, self.periodic[0])
         if self.pml is not None and pml_memory is not None:
             d_x_ez, pml_memory = self.pml.apply_magnetic_start(
                 d_x_ez, pml_memory, dt, axis=0, component=1
@@ -936,8 +906,12 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         half_bz = bz - 0.5 * dt * d_x_ey
         jx, jy, jz = current
         next_ex = ex - dt * jx / self.permittivity
-        d_x_bz = _backward(half_bz / self.permeability, 0, self.spacing, self.periodic[0])
-        d_x_by = _backward(half_by / self.permeability, 0, self.spacing, self.periodic[0])
+        d_x_bz = backward_difference(
+            half_bz / self.permeability, 0, self.spacing, self.periodic[0]
+        )
+        d_x_by = backward_difference(
+            half_by / self.permeability, 0, self.spacing, self.periodic[0]
+        )
         if self.pml is not None and pml_memory is not None:
             d_x_bz, pml_memory = self.pml.apply_electric(
                 d_x_bz, pml_memory, dt, axis=0, component=1
@@ -947,8 +921,8 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
             )
         next_ey = ey + dt / self.permittivity * (-d_x_bz - jy)
         next_ez = ez + dt / self.permittivity * (d_x_by - jz)
-        d_x_next_ez = _forward(next_ez, 0, self.spacing, self.periodic[0])
-        d_x_next_ey = _forward(next_ey, 0, self.spacing, self.periodic[0])
+        d_x_next_ez = forward_difference(next_ez, 0, self.spacing, self.periodic[0])
+        d_x_next_ey = forward_difference(next_ey, 0, self.spacing, self.periodic[0])
         if self.pml is not None and pml_memory is not None:
             d_x_next_ez, pml_memory = self.pml.apply_magnetic_end(
                 d_x_next_ez, pml_memory, dt, axis=0, component=1
@@ -958,7 +932,9 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
             )
         next_by = half_by + 0.5 * dt * d_x_next_ez
         next_bz = half_bz - 0.5 * dt * d_x_next_ey
-        charge = state.charge - dt * _backward(jx, 0, self.spacing, self.periodic[0])
+        charge = state.charge - dt * backward_difference(
+            jx, 0, self.spacing, self.periodic[0]
+        )
         next_electric = _apply_boundary_traces(
             (next_ex, next_ey, next_ez), self.boundaries, dt, electric=True
         )
@@ -976,7 +952,9 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         gauss = jnp.max(
             jnp.abs(
                 self.permittivity
-                * _backward(candidate.electric[0], 0, self.spacing, self.periodic[0])
+                * backward_difference(
+                    candidate.electric[0], 0, self.spacing, self.periodic[0]
+                )
                 - charge
             )
         )

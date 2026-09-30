@@ -12,20 +12,28 @@ adaptation cycles that stay inside one capacity bucket.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import product
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import adjoint, ArraySpace, transpose
+from ...linalg import (
+    adjoint,
+    ArraySpace,
+    ComplexMap,
+    ComplexMapEvidence,
+    dual_transpose,
+    HilbertComplex,
+)
 from ...sparse import (
     EdgeRelation,
     linear_apply,
@@ -33,17 +41,18 @@ from ...sparse import (
     route_reduce,
     SparseCoordinateOperator,
 )
+from .._cochain_hodge import CochainHodge, DiagonalHodge
 from .._transfer import TransferProperties
 from ..fem._topology_transfer import (
     FiniteElementTopologyTransfer,
     vertex_interpolation_transfer,
 )
+from ._entities import _active_operator
 from ._entity_transfer import (
     _pad_operator,
     _prolongation_routes,
     _scipy_matrix,
     CompatibleEntityTransfer,
-    CompatibleEntityTransferEvidence,
 )
 from ._forest import (
     _locate,
@@ -936,6 +945,7 @@ def _sparse_operator(
     )
 
 
+@final
 class ForestCochainComplex(StrictModule, NonTrainableState):
     """Constrained cubical cochain complex of one 2:1-balanced forest.
 
@@ -953,6 +963,7 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
     entity_valid: tuple[Array, ...]
     spaces: tuple[ArraySpace, ...]
     coboundaries: tuple[SparseCoordinateOperator, ...]
+    active_coboundaries: tuple[SparseCoordinateOperator, ...]
     entity_counts: tuple[int, ...] = eqx.field(static=True)
     nilpotency_defect: float = eqx.field(static=True)
     complex_id: str = eqx.field(static=True)
@@ -962,7 +973,7 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
         topology: ForestHierarchyTopology,
         /,
         *,
-        dtype: Any = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> None:
         if not isinstance(topology, ForestHierarchyTopology):
             raise TypeError("Forest cochain complexes require a forest topology.")
@@ -974,7 +985,23 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
         masters = _master_entities(topology, codec)
         counts = tuple(keys.size for keys in masters.keys)
         capacities = tuple(forest_capacity_bucket(count, 1) for count in counts)
-        spaces = tuple(ArraySpace((capacity,), dtype=dtype_) for capacity in capacities)
+        spaces = tuple(
+            ArraySpace(
+                (capacity,),
+                dtype=dtype_,
+                space_id=canonical_fingerprint(
+                    {
+                        "kind": "forest-storage-coordinates",
+                        "topology": topology.topology_id,
+                        "degree": degree,
+                        "capacity": capacity,
+                        "dtype": dtype_.str,
+                        "masters": array_tree_fingerprint(masters.keys[degree]),
+                    }
+                ),
+            )
+            for degree, capacity in enumerate(capacities)
+        )
         coboundaries = []
         for degree in range(dimension):
             upper_levels = masters.levels[degree + 1]
@@ -1074,6 +1101,25 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
                 "coboundaries": [operator.operator_id for operator in coboundaries],
             }
         )
+        active_spaces = tuple(
+            ArraySpace(
+                (count,),
+                dtype=dtype_,
+                space_id=canonical_fingerprint(
+                    {
+                        "kind": "forest-active-coordinates",
+                        "complex": self.complex_id,
+                        "degree": degree,
+                        "active_indices": np.arange(count, dtype=np.int32),
+                    }
+                ),
+            )
+            for degree, count in enumerate(counts)
+        )
+        self.active_coboundaries = tuple(
+            _active_operator(operator, active_spaces[degree], active_spaces[degree + 1])
+            for degree, operator in enumerate(coboundaries)
+        )
 
     def _masters(self, /) -> _MasterIndex:
         codec = _EntityKeyCodec(self.topology)
@@ -1112,13 +1158,65 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
             raise ValueError("Forest cochain degree is out of range.")
         return self.coboundaries[index]
 
+    def hilbert_complex(self, hodges: Sequence[CochainHodge], /) -> HilbertComplex:
+        """Metric Hilbert realization of the constrained master-entity complex.
+
+        Only master coordinates enter the spaces. Capacity padding therefore
+        cannot appear as harmonic modes, and a non-diagonal Hodge is restricted
+        before its inverse is prepared.
+        """
+        metrics = tuple(hodges)
+        if len(metrics) != len(self.spaces):
+            raise ValueError("Forest Hodges must cover every cochain degree.")
+        active_spaces: list[ArraySpace] = []
+        for degree, (metric, storage, count) in enumerate(
+            zip(metrics, self.spaces, self.entity_counts, strict=True)
+        ):
+            if metric.size != storage.size:
+                raise ValueError("Forest Hodge size must match its storage capacity.")
+            indices = np.arange(count, dtype=np.int32)
+            mask_id = canonical_fingerprint(
+                {
+                    "complex": self.complex_id,
+                    "degree": degree,
+                    "active_indices": indices,
+                }
+            )
+            space, _ = metric.restrict(indices).make_space(
+                space_id=mask_id,
+                dtype=storage.dtype,
+            )
+            active_spaces.append(space)
+        differentials = tuple(
+            SparseCoordinateOperator(
+                operator.relation,
+                operator.coefficients,
+                source=active_spaces[degree],
+                target=active_spaces[degree + 1],
+                operator_id=operator.operator_id,
+            )
+            for degree, operator in enumerate(self.active_coboundaries)
+        )
+        return HilbertComplex(
+            tuple(active_spaces),
+            differentials,
+            complex_id=canonical_fingerprint(
+                {
+                    "kind": "forest-hilbert-complex",
+                    "topology": self.complex_id,
+                    "spaces": [space.space_id for space in active_spaces],
+                    "pairings": [space.pairing.pairing_id for space in active_spaces],
+                }
+            ),
+        )
+
 
 def _cochain_extension(
     source: ForestCochainComplex,
     target: ForestCochainComplex,
     degree: int,
     /,
-) -> tuple[SparseCoordinateOperator, int]:
+) -> SparseCoordinateOperator:
     """Source-to-target master map of one degree by extension over the source."""
     source_masters = source._masters()
     target_masters = target._masters()
@@ -1134,7 +1232,7 @@ def _cochain_extension(
         target_masters.coordinates[degree],
         np.ones((count,), dtype=np.float64),
     )
-    operator = _sparse_operator(
+    return _sparse_operator(
         rows,
         columns,
         coefficients,
@@ -1142,9 +1240,9 @@ def _cochain_extension(
         target.spaces[degree],
         "forest-cochain-transfer",
     )
-    return operator, rows.size
 
 
+@final
 class ForestCochainTransfer(StrictModule, NonTrainableState):
     """Commuting cochain transfer between a forest complex and its refinement.
 
@@ -1160,6 +1258,8 @@ class ForestCochainTransfer(StrictModule, NonTrainableState):
     coarse: ForestCochainComplex
     fine: ForestCochainComplex
     transfers: tuple[CompatibleEntityTransfer, ...]
+    complex_map: ComplexMap
+    evidence: ComplexMapEvidence
     transfer_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1186,14 +1286,13 @@ class ForestCochainTransfer(StrictModule, NonTrainableState):
             _cochain_extension(fine, coarse, degree) for degree in range(dimension + 1)
         )
         prolongation_matrices = tuple(
-            _scipy_matrix(operator) for operator, _ in prolongations
+            _scipy_matrix(operator) for operator in prolongations
         )
-        restriction_matrices = tuple(
-            _scipy_matrix(operator) for operator, _ in restrictions
-        )
+        restriction_matrices = tuple(_scipy_matrix(operator) for operator in restrictions)
         coarse_d = tuple(_scipy_matrix(operator) for operator in coarse.coboundaries)
         fine_d = tuple(_scipy_matrix(operator) for operator in fine.coboundaries)
         tolerance = 1.0e-12
+        commuting_defects: list[float] = []
         transfers = []
         for degree in range(dimension + 1):
             count = coarse.entity_counts[degree]
@@ -1219,36 +1318,29 @@ class ForestCochainTransfer(StrictModule, NonTrainableState):
                 commuting_defect = float(np.max(np.abs(commutator.data), initial=0.0))
             else:
                 commuting_defect = 0.0
+            if degree < dimension:
+                commuting_defects.append(commuting_defect)
             if max(constant_defect, roundtrip_defect, commuting_defect) > tolerance:
                 raise ValueError(
                     "Forest cochain transfer failed constant/roundtrip/commuting qualification."
                 )
-            prolongation, prolongation_routes = prolongations[degree]
-            restriction, restriction_routes = restrictions[degree]
-            evidence = CompatibleEntityTransferEvidence(
-                degree,
-                prolongation_routes,
-                restriction_routes,
-                max(prolongation.relation.capacity, restriction.relation.capacity),
-                constant_defect,
-                roundtrip_defect,
-                commuting_defect,
-            )
+            prolongation = prolongations[degree]
+            restriction = restrictions[degree]
             transfers.append(
                 CompatibleEntityTransfer(
                     degree,
                     prolongation,
                     restriction,
-                    transpose(prolongation),
+                    dual_transpose(prolongation),
                     adjoint(prolongation),
-                    evidence,
+                    constant_defect,
+                    roundtrip_defect,
                     canonical_fingerprint(
                         {
                             "kind": "forest-cochain-degree-transfer",
                             "degree": degree,
                             "prolongation": prolongation.operator_id,
                             "restriction": restriction.operator_id,
-                            "evidence": evidence.evidence_id,
                         }
                     ),
                 )
@@ -1256,6 +1348,39 @@ class ForestCochainTransfer(StrictModule, NonTrainableState):
         self.coarse = coarse
         self.fine = fine
         self.transfers = tuple(transfers)
+        source = coarse.hilbert_complex(
+            tuple(
+                DiagonalHodge(jnp.ones(space.shape, dtype=jnp.float64))
+                for space in coarse.spaces
+            )
+        )
+        target = fine.hilbert_complex(
+            tuple(
+                DiagonalHodge(jnp.ones(space.shape, dtype=jnp.float64))
+                for space in fine.spaces
+            )
+        )
+        maps = tuple(
+            _active_operator(
+                value.prolongation, source.space(degree), target.space(degree)
+            )
+            for degree, value in enumerate(transfers)
+        )
+        self.complex_map = ComplexMap(
+            source,
+            target,
+            maps,
+            map_id=canonical_fingerprint(
+                {
+                    "kind": "forest-cochain-complex-map",
+                    "maps": [operator.operator_id for operator in maps],
+                }
+            ),
+        )
+        self.evidence = ComplexMapEvidence(
+            jnp.asarray(commuting_defects, dtype=jnp.float64),
+            jnp.asarray(True, dtype=jnp.bool_),
+        )
         self.transfer_id = canonical_fingerprint(
             {
                 "kind": "forest-cochain-transfer",

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,9 +15,24 @@ from ..._fingerprint import canonical_fingerprint
 from ..._polynomial._orthogonal import standard_vandermonde
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...exterior._form_type import FormType, FormValueSpec
 
 
-VirtualElementConformity: TypeAlias = Literal["H1", "Hdiv", "Hcurl", "L2"]
+def _family_value_spec(family: str, /) -> FormValueSpec:
+    """Scientific values represented by the qualified planar VEM projectors."""
+    match family:
+        case "ConformingH1" | "DiscontinuousL2":
+            # Discontinuous scalar polynomials are 0-forms, not densities.
+            return FormValueSpec(FormType(2, 0), proxy="scalar")
+        case "ConformingHdiv":
+            return FormValueSpec(FormType(2, 1, twist="twisted"), proxy="flux")
+        case "ConformingHcurl":
+            return FormValueSpec(FormType(2, 1), proxy="circulation")
+        case _:
+            raise ValueError(
+                "Virtual-element family must be ConformingH1, ConformingHdiv, "
+                "ConformingHcurl, or DiscontinuousL2."
+            )
 
 
 class VirtualElementSpec(StrictModule, NonTrainableState):
@@ -26,9 +40,8 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
 
     family: str = eqx.field(static=True)
     degree: int = eqx.field(static=True)
-    conformity: VirtualElementConformity = eqx.field(static=True)
+    value_spec: FormValueSpec = eqx.field(static=True)
     enhanced: bool = eqx.field(static=True)
-    value_shape: tuple[int, ...] = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
 
     def __init__(
@@ -37,56 +50,44 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         degree: int,
         /,
         *,
-        conformity: str = "H1",
+        value_spec: FormValueSpec,
         enhanced: bool = True,
-        value_shape: Sequence[int] = (),
     ) -> None:
         family_ = str(family)
         degree_ = int(degree)
-        conformity_ = str(conformity)
-        shape = tuple(value_shape)
-        if family_ in ("ConformingHdiv", "ConformingHcurl"):
-            if shape and shape != (2,):
-                raise ValueError(f"{family_} requires value_shape=(2,).")
-            shape = (2,)
-        elif family_ == "DiscontinuousL2" and shape:
-            raise ValueError("DiscontinuousL2 currently requires scalar values.")
-        families: dict[str, VirtualElementConformity] = {
-            "ConformingH1": "H1",
-            "ConformingHdiv": "Hdiv",
-            "ConformingHcurl": "Hcurl",
-            "DiscontinuousL2": "L2",
-        }
-        if family_ not in families:
+        expected = _family_value_spec(family_)
+        if not isinstance(value_spec, FormValueSpec):
+            raise TypeError("value_spec must be FormValueSpec.")
+        if value_spec.value_spec_id != expected.value_spec_id:
             raise ValueError(
-                "Virtual-element family must be ConformingH1, ConformingHdiv, ConformingHcurl, or DiscontinuousL2."
+                f"{family_} requires the qualified planar {expected.proxy} form "
+                f"with twist={expected.form_type.twist!r}."
             )
         if degree_ < 1:
             raise ValueError("Virtual-element degree must be positive.")
-        expected_conformity = families[family_]
-        if conformity_ == "H1" and family_ != "ConformingH1":
-            conformity_ = expected_conformity
-        if conformity_ != expected_conformity:
-            raise ValueError(f"{family_} requires conformity={expected_conformity!r}.")
         if not enhanced:
             raise ValueError("Virtual-element spaces require enhanced projections.")
-        if any(value <= 0 for value in shape):
-            raise ValueError("Virtual-element value dimensions must be positive.")
         self.family = family_
         self.degree = degree_
-        self.conformity = expected_conformity
+        self.value_spec = value_spec
         self.enhanced = True
-        self.value_shape = shape
         self.element_id = canonical_fingerprint(
             {
                 "kind": "virtual-element-spec",
                 "family": family_,
                 "degree": degree_,
-                "conformity": conformity_,
+                "value_spec": value_spec.value_spec_id,
                 "enhanced": True,
-                "value_shape": list(shape),
             }
         )
+
+    @property
+    def form_type(self) -> FormType:
+        return self.value_spec.form_type
+
+    @property
+    def value_shape(self) -> tuple[int, ...]:
+        return self.value_spec.value_shape
 
     @property
     def vertex_dofs_per_entity(self) -> int:
@@ -224,23 +225,27 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
 
 
 def conforming_h1_virtual_element(degree: int, /) -> VirtualElementSpec:
-    return VirtualElementSpec("ConformingH1", degree)
+    return VirtualElementSpec(
+        "ConformingH1", degree, value_spec=_family_value_spec("ConformingH1")
+    )
 
 
 def conforming_hdiv_virtual_element(degree: int, /) -> VirtualElementSpec:
     return VirtualElementSpec(
-        "ConformingHdiv", degree, conformity="Hdiv", value_shape=(2,)
+        "ConformingHdiv", degree, value_spec=_family_value_spec("ConformingHdiv")
     )
 
 
 def conforming_hcurl_virtual_element(degree: int, /) -> VirtualElementSpec:
     return VirtualElementSpec(
-        "ConformingHcurl", degree, conformity="Hcurl", value_shape=(2,)
+        "ConformingHcurl", degree, value_spec=_family_value_spec("ConformingHcurl")
     )
 
 
 def discontinuous_l2_virtual_element(degree: int, /) -> VirtualElementSpec:
-    return VirtualElementSpec("DiscontinuousL2", degree, conformity="L2")
+    return VirtualElementSpec(
+        "DiscontinuousL2", degree, value_spec=_family_value_spec("DiscontinuousL2")
+    )
 
 
 __all__ = [

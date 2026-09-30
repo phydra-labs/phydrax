@@ -1,6 +1,6 @@
 # Particle local solves and adaptive roots
 
-`SmallLinearSolvePlan` provides explicit batched 1×1, 2×2, and 3×3 solves with
+`SmallLinearSolvePlan` provides explicit batched 1×1, 2×2, 3×3, and 4×4 solves with
 determinant, rank, condition, residual, refinement work, status, and success.
 SPH first-order correction uses this substrate instead of forming a batch-global
 dense problem.

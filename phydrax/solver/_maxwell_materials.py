@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -17,7 +18,9 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import CochainDiscretization
 from ..ein import contract
+from ..exterior._complex import AbstractDeRhamComplex
 from ..linalg import (
+    AbstractVectorSpace,
     DenseLinearOperator,
     DenseLU,
     FailurePolicy,
@@ -109,7 +112,7 @@ class MatrixMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedMatrixMaxwellConstitutive:
@@ -119,11 +122,19 @@ class MatrixMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 def _metric_spectrum(
     name: str,
     matrix: Array,
-    metric: Array,
+    metric: Array | AbstractVectorSpace,
     /,
 ) -> tuple[np.ndarray, float, float]:
     host = np.asarray(matrix)
-    weight = np.asarray(metric)
+
+    def pair(column: Array) -> Array:
+        return _apply_hodge_metric(metric, column)
+
+    weight = np.asarray(
+        jax.vmap(pair, out_axes=1)(jnp.eye(matrix.shape[0], dtype=matrix.dtype))
+        if isinstance(metric, AbstractVectorSpace)
+        else metric
+    )
     count = weight.shape[0]
     if host.shape != (count, count) or weight.ndim not in (1, 2):
         raise ValueError(f"{name} matrix shape does not match its cochain degree.")
@@ -198,25 +209,25 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
     def __init__(
         self,
         plan: MatrixMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
         _, electric_minimum, electric_condition = _metric_spectrum(
             "electric",
             plan.electric_matrix,
-            cochain.hodge_metric(layout.electric_degree),
+            cochain.hilbert_complex(boundary="absolute").space(layout.electric_degree),
         )
         _, magnetic_minimum, magnetic_condition = _metric_spectrum(
             "magnetic",
             plan.magnetic_matrix,
-            cochain.hodge_metric(layout.magnetic_degree),
+            cochain.hilbert_complex(boundary="absolute").space(layout.magnetic_degree),
         )
         evidence_id = canonical_fingerprint(
             {
                 "kind": "maxwell-constitutive-evidence",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "electric_minimum": electric_minimum,
                 "magnetic_minimum": magnetic_minimum,
                 "electric_condition": electric_condition,
@@ -266,7 +277,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
             {
                 "kind": "prepared-matrix-maxwell-constitutive",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "evidence": evidence_id,
                 "layout": layout.layout_id,
             }
@@ -308,8 +319,8 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         del electric, magnetic, electric_star, magnetic_star
@@ -334,8 +345,8 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -352,8 +363,8 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -416,7 +427,7 @@ class ConductiveMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedConductiveMaxwellConstitutive:
@@ -451,7 +462,7 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
     def __init__(
         self,
         plan: ConductiveMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
@@ -489,7 +500,7 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
             {
                 "kind": "prepared-conductive-maxwell-constitutive",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -530,8 +541,8 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         self.validate_state(state)
@@ -570,8 +581,8 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -588,8 +599,8 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         return jnp.real(
@@ -746,7 +757,7 @@ class LorentzDrudeMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedLorentzDrudeMaxwellConstitutive:
@@ -844,7 +855,7 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
     def __init__(
         self,
         plan: LorentzDrudeMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
@@ -888,7 +899,7 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
             {
                 "kind": "prepared-lorentz-drude-maxwell",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -981,8 +992,8 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         del electric, magnetic
@@ -1002,8 +1013,8 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -1043,8 +1054,8 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         # d/dt of field plus oscillator energy is E·Ḋ + H·Ḃ minus pole damping.
@@ -1138,7 +1149,11 @@ class _VertexEdgeCoupling(StrictModule):
     electric_star: Array
     vertex_volume: Array
 
-    def __init__(self, cochain: CochainDiscretization, /) -> None:
+    def __init__(self, cochain: AbstractDeRhamComplex, /) -> None:
+        if not isinstance(cochain, CochainDiscretization):
+            raise TypeError(
+                "Magnetized plasma coupling requires a coordinate-bearing CochainDiscretization."
+            )
         incidence = cochain.topology.incidences[0]
         vertices, edges = cochain.coordinates[0], cochain.coordinates[1]
         if vertices is None or edges is None:
@@ -1147,12 +1162,8 @@ class _VertexEdgeCoupling(StrictModule):
         edge_points = np.asarray(edges)
         if vertex_points.shape[1] != 3:
             raise ValueError("Vertex-edge plasma coupling requires three dimensions.")
-        electric_star = cochain.hodge_metric(1)
-        vertex_volume = cochain.hodge_metric(0)
-        if electric_star.ndim != 1 or vertex_volume.ndim != 1:
-            raise ValueError(
-                "Magnetized plasma coupling requires diagonal Hodge metrics."
-            )
+        electric_star = cochain.hodge_diagonal(1)
+        vertex_volume = cochain.hodge_diagonal(0)
         relation = incidence.relation
         source = np.asarray(relation.source_indices)
         target = np.asarray(relation.target_indices)
@@ -1177,7 +1188,7 @@ class _VertexEdgeCoupling(StrictModule):
                 operator_id=canonical_fingerprint(
                     {
                         "kind": "maxwell-vertex-edge-average",
-                        "cochain": cochain.prepared_id,
+                        "cochain": cochain.realization_id,
                         "axis": axis,
                     }
                 ),
@@ -1310,7 +1321,7 @@ class MagnetizedColdPlasmaMaxwellConstitutivePlan(AbstractMaxwellConstitutivePla
 
     def prepare(
         self,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> PreparedMagnetizedColdPlasmaMaxwellConstitutive:
@@ -1402,7 +1413,7 @@ class PreparedMagnetizedColdPlasmaMaxwellConstitutive(
     def __init__(
         self,
         plan: MagnetizedColdPlasmaMaxwellConstitutivePlan,
-        cochain: CochainDiscretization,
+        cochain: AbstractDeRhamComplex,
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
@@ -1441,7 +1452,7 @@ class PreparedMagnetizedColdPlasmaMaxwellConstitutive(
             {
                 "kind": "prepared-magnetized-cold-plasma-maxwell",
                 "plan": plan.plan_id,
-                "cochain": cochain.prepared_id,
+                "cochain": cochain.realization_id,
                 "layout": layout.layout_id,
             }
         )
@@ -1528,8 +1539,8 @@ class PreparedMagnetizedColdPlasmaMaxwellConstitutive(
         electric: Array,
         magnetic: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         del electric, magnetic, electric_star, magnetic_star
@@ -1547,8 +1558,8 @@ class PreparedMagnetizedColdPlasmaMaxwellConstitutive(
         displacement: Array,
         magnetic_flux: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         electric = self.electric_field(displacement, state)
@@ -1570,8 +1581,8 @@ class PreparedMagnetizedColdPlasmaMaxwellConstitutive(
         displacement_rate: Array,
         magnetic_rate: Array,
         state: Any,
-        electric_star: Array,
-        magnetic_star: Array,
+        electric_star: Array | AbstractVectorSpace,
+        magnetic_star: Array | AbstractVectorSpace,
         /,
     ) -> Array:
         # d/dt |J|²/(2ε₀ωₚ²) = J·E_v − ν|J|²/(ε₀ωₚ²); the vertex/edge pair is

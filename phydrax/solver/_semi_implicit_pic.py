@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -35,6 +37,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ._cochain_pic_field import _structured_pic_bridge
 from ._maxwell import (
     CompatibleMaxwellState,
     MaxwellPrimaryState,
@@ -42,6 +45,7 @@ from ._maxwell import (
 )
 
 
+@final
 class _SemiImplicitFieldAction(StrictModule):
     response: PICParticleResponsePlan
     response_state: PICParticleResponseState
@@ -55,6 +59,7 @@ class _SemiImplicitFieldAction(StrictModule):
         return electric + self.theta_dt * response + self.theta_dt**2 * curl_curl
 
 
+@final
 class SemiImplicitPICState(StrictModule):
     particles: PICParticleState
     population: ParticlePopulationState
@@ -63,6 +68,7 @@ class SemiImplicitPICState(StrictModule):
     time: Array
 
 
+@final
 class SemiImplicitPICDiagnostics(StrictModule):
     linear_residual: Array
     linear_iterations: Array
@@ -74,6 +80,7 @@ class SemiImplicitPICDiagnostics(StrictModule):
     successful: Array
 
 
+@final
 class SemiImplicitPICResult(StrictModule):
     candidate_state: SemiImplicitPICState
     accepted_state: SemiImplicitPICState
@@ -82,6 +89,7 @@ class SemiImplicitPICResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+@final
 class SemiImplicitPICPlan(StrictModule, NonTrainableState):
     """Periodic nonrelativistic ECSIM response with a bounded GMRES field solve."""
 
@@ -109,7 +117,7 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
             raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
         if not isinstance(transfer, PreparedPICParticleCochainTransfer):
             raise TypeError("transfer must be a prepared PIC transfer.")
-        if transfer.bridge.bridge_id != maxwell.plan.bridge.bridge_id:
+        if transfer.bridge.bridge_id != _structured_pic_bridge(maxwell).bridge_id:
             raise ValueError("Semi-implicit PIC transfer and Maxwell bridge differ.")
         theta_ = float(theta)
         if theta_ < 0.5 or theta_ > 1.0:
@@ -152,7 +160,7 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
         velocity = state.particles.proper_velocity
         midpoint = state.particles.position + 0.5 * dt * velocity
         macrocharge = self.charge_model.macrocharge(state.population, state.charge)
-        magnetic = self.maxwell.magnetic_field(state.maxwell)
+        magnetic = self.maxwell.magnetic_flux(state.maxwell)
         response_state = self.response.prepare_state(
             midpoint,
             velocity,
@@ -163,12 +171,12 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
             dt,
         )
         known = self.response.known_current(response_state, macrocharge)
-        cochain = self.maxwell.plan.bridge.cochain
+        cochain = self.transfer.bridge.cochain
         theta_dt = self.theta * dt
         action = _SemiImplicitFieldAction(
             self.response, response_state, cochain, theta_dt
         )
-        electric_space = cochain.space(1).vector_space
+        electric_space = cochain.hilbert_complex().space(1)
         operator = FunctionLinearOperator(
             action,
             source=electric_space,

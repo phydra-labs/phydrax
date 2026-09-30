@@ -13,7 +13,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 from jax import Array
 from jaxtyping import Key
 
@@ -30,6 +29,7 @@ from phydrax.operators import (
     stochastic_trace_samples,
     StochasticTracePolicy,
 )
+from phydrax.optim import adam
 
 
 BenchmarkProblem = Literal[
@@ -747,7 +747,7 @@ def _deep_picard_record(
             sampling_plan=plan,
             num_picard_steps=1,
             inner_num_iter=inner_num_iter,
-            optim=optax.adam(0.01),
+            optim=adam(0.01),
             query_times=query_times,
             query_states=query_states,
             initial_source="current",
@@ -850,7 +850,7 @@ def _deep_bsde_record(
             initial_value_name="initial",
             control_name="control",
             num_iter=num_iter,
-            optim=optax.adam(0.05),
+            optim=adam(0.05),
             sampling_mode="resample",
             validation_paths=validation_paths,
             seed=seed,
@@ -939,7 +939,7 @@ def _deep_splitting_record(
             problem,
             value_name="value",
             inner_num_iter=inner_num_iter,
-            optim=optax.adam(0.05),
+            optim=adam(0.05),
             sampling_mode="fixed",
             fixed_paths=training_paths,
             validation_paths=validation_paths,

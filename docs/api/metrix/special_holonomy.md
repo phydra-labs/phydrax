@@ -28,6 +28,11 @@ form. Validation checks their algebraic compatibility and reports closure, coclo
 torsion freedom, and Ricci-flatness independently. It does not claim global holonomy,
 completeness, compactness, or topology.
 
+`LocalG2Structure` retains its explicit orientation. Its coassociative form is
+`to_untwisted(hodge_star(phi, metric), orientation)`; the Hodge operator itself is
+orientation-free and flips twist. This conversion is not a second sign convention.
+
+
 ---
 
 ## Infinitesimal automorphisms

@@ -779,11 +779,20 @@ def prepare_sparse_factorization(
         SparseLinearMap,
     )
 
-    storage_plan = (
-        _SparseStoragePlan(operator.relation)
-        if isinstance(operator, (SparseCoordinateOperator, SparseLinearMap))
-        else None
-    )
+    if (
+        isinstance(operator, SparseCoordinateOperator)
+        and operator._storage_plan is not None
+    ):
+        storage_plan = operator._storage_plan
+    elif isinstance(operator, (SparseCoordinateOperator, SparseLinearMap)):
+        storage_plan = _SparseStoragePlan(
+            operator.relation,
+            block_shape=operator.block_shape
+            if isinstance(operator, SparseCoordinateOperator)
+            else None,
+        )
+    else:
+        storage_plan = None
     storage_plan_arrays = (
         {}
         if storage_plan is None

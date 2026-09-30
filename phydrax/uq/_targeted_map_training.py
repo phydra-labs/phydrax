@@ -15,6 +15,8 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -246,7 +248,7 @@ def fit_targeted_free_energy_map(
         raise ValueError("Positive reverse_weight requires target_samples.")
     current = problem.mapping.bijector
     if optimizer is None:
-        optimizer_ = optax.adam(policy_.learning_rate)
+        optimizer_ = adam(policy_.learning_rate)
         rule_id = canonical_fingerprint(
             {
                 "kind": "targeted-map-training-adam",

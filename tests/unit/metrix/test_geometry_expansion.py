@@ -229,3 +229,23 @@ def test_sub_riemannian_control_metric_and_hamiltonian_rhs() -> None:
         lambda value: phx.metrix.sub_riemannian_hamiltonian_rhs(cometric, value)
     )
     assert jnp.all(jnp.isfinite(compiled(state)))
+
+
+@pytest.mark.parametrize(
+    ("left_component", "right_component", "sign"),
+    [(0, 5, 1), (1, 4, -1), (2, 3, 1)],
+)
+def test_chern_character_matrix_product_preserves_complement_signs(
+    left_component: int, right_component: int, sign: int
+) -> None:
+    first = 1.0j * jnp.asarray([[1.0, 0.0], [0.0, 2.0]])
+    second = 1.0j * jnp.asarray([[3.0, 1.0], [1.0, 4.0]])
+    curvature = jnp.zeros((6, 2, 2), dtype=first.dtype)
+    curvature = curvature.at[left_component].set(first)
+    curvature = curvature.at[right_component].set(second)
+    character = phx.metrix.chern_character_form(
+        curvature, 2, 4, source_id="analytic-constant-curvature"
+    )
+    # Tr(A B + B A) = -22; ch_2 = -Tr(F wedge F)/(8 pi^2).
+    expected = jnp.asarray([sign * 11.0 / (4.0 * jnp.pi**2)])
+    assert jnp.allclose(character.coefficients, expected, atol=1e-12)

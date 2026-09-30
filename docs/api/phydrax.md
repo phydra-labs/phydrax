@@ -18,6 +18,8 @@ authority, capability evidence) and explicit scientific value ports; see
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
   and approximation bundles/hierarchies
+- `phydrax.exterior`: canonical form types/proxies, exterior algebra and de Rham,
+  chain, trace, product and coefficient-system bridges ([API](exterior/index.md))
 - `phydrax.signal`: differentiable windows, framing, finite convolution, causal
   FIR state, periodic Fourier and fixed wavelet transforms, and finite/streaming
   polyphase rate conversion

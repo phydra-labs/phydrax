@@ -16,18 +16,66 @@ import phydrax as phx
 
 def run() -> dict[str, object]:
     start = perf_counter()
-    de_rham = phx.discretization.fem.TensorDeRhamComplex(5, 3)
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+                (1.0, 0.0, 1.0),
+                (1.0, 1.0, 1.0),
+                (0.0, 1.0, 1.0),
+            ),
+            dtype=jnp.float64,
+        ),
+        (
+            phx.discretization.CellBlock(
+                "hexahedra",
+                "hexahedron",
+                jnp.arange(8, dtype=jnp.int32)[None, :],
+            ),
+        ),
+    )
+    de_rham = phx.discretization.fem.FiniteElementDeRhamComplex(
+        mesh,
+        family="tensor-trimmed",
+        order=5,
+        twist="untwisted",
+    )
     de_rham_seconds = perf_counter() - start
+    counts = de_rham.cell_counts
+    scalar = jnp.arange(counts[0], dtype=jnp.float64)
+    circulation = jnp.arange(counts[1], dtype=jnp.float64)
+    curl_gradient_defect = float(
+        jnp.max(
+            jnp.abs(
+                de_rham.exterior_derivative(1, de_rham.exterior_derivative(0, scalar))
+            ),
+            initial=0.0,
+        )
+    )
+    divergence_curl_defect = float(
+        jnp.max(
+            jnp.abs(
+                de_rham.exterior_derivative(
+                    2, de_rham.exterior_derivative(1, circulation)
+                )
+            ),
+            initial=0.0,
+        )
+    )
     marker = phx.solver.RelaxedHPMarking(3, 0.1)
     weights = marker.weights(
-        jnp.asarray((1.0, 4.0, 2.0, 3.0)), jnp.ones((4,), dtype="bool")
+        jnp.asarray((1.0, 4.0, 2.0, 3.0)), jnp.ones((4,), dtype=jnp.bool_)
     )
     result = {
         "de_rham": {
             "degree": 5,
-            "gradient_shape": de_rham.gradient.shape,
-            "curl_gradient_defect": float(de_rham.grad_curl_defect),
-            "divergence_curl_defect": float(de_rham.curl_div_defect),
+            "gradient_shape": (counts[1], counts[0]),
+            "curl_gradient_defect": curl_gradient_defect,
+            "divergence_curl_defect": divergence_curl_defect,
             "construction_seconds": de_rham_seconds,
         },
         "relaxed_marking": {
@@ -36,8 +84,8 @@ def run() -> dict[str, object]:
         },
     }
     result["passed"] = bool(
-        result["de_rham"]["curl_gradient_defect"] <= 1.0e-12
-        and result["de_rham"]["divergence_curl_defect"] <= 1.0e-12
+        curl_gradient_defect <= 1.0e-12
+        and divergence_curl_defect <= 1.0e-12
         and float(jnp.sum(weights)) <= 3.0 + 1.0e-12
     )
     return result

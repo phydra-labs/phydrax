@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -15,6 +14,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg._compound import compound_matrix
 from ._blades import CliffordBladeLayout
 from ._isometries import MetricIsometryAction, MetricIsometryAuditSet
 from ._product import prepare_product
@@ -45,32 +45,23 @@ class CliffordOutermorphismPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Clifford outermorphism requires a union of complete grade supports."
             )
-        matrix = np.asarray(action.matrix)
-        representation = np.zeros(
-            (layout.blade_count, layout.blade_count), dtype=matrix.dtype
+        representation = jnp.zeros(
+            (layout.blade_count, layout.blade_count), dtype=action.matrix.dtype
         )
-        for output, (output_axes, output_grade) in enumerate(
-            zip(layout.axes, layout.grades)
-        ):
-            for source, (source_axes, source_grade) in enumerate(
-                zip(layout.axes, layout.grades)
-            ):
-                if output_grade != source_grade:
-                    continue
-                if output_grade == 0:
-                    representation[output, source] = 1.0
-                    continue
-                minor = matrix[np.ix_(output_axes, source_axes)]
-                representation[output, source] = np.linalg.det(minor)
+        for grade in sorted(set(layout.grades)):
+            positions = jnp.asarray(layout.grade_positions(grade), dtype=jnp.int32)
+            grade_action = compound_matrix(action.matrix, grade)
+            representation = representation.at[
+                positions[:, None], positions[None, :]
+            ].set(grade_action)
         self.action = action
         self.layout = layout
-        self.representation = jnp.asarray(representation)
+        self.representation = representation
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "clifford-outermorphism-plan",
                 "action": action.action_id,
                 "layout": layout.layout_id,
-                "representation": representation.tolist(),
             }
         )
 

@@ -5,9 +5,11 @@
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 
@@ -296,3 +298,53 @@ def test_triangle_mesh_exposes_one_canonical_oriented_support() -> None:
         np.zeros((3, 1)),
     )
     assert topology.entities(1).subset("boundary").mask.sum() == 3
+
+
+def test_traced_measure_updates_mass_without_changing_binding_identity() -> None:
+    @jax.jit
+    def prepare(weights: Array) -> phx.discretization.DiscreteMeasure:
+        return phx.discretization.DiscreteMeasure(
+            "volume", "mesh", "cells", weights, measure_id="geometry-binding"
+        )
+
+    first = prepare(jnp.asarray([2.0, 3.0]))
+    second = prepare(jnp.asarray([4.0, 5.0]))
+    assert first.measure_id == second.measure_id == "geometry-binding"
+    assert first.total_mass == pytest.approx(5.0)
+    assert second.total_mass == pytest.approx(9.0)
+    assert second.integrate(jnp.asarray([5.0, 7.0])) == pytest.approx(55.0)
+
+
+def test_measure_integral_differentiates_dynamic_weights() -> None:
+    def integral(weights: Array) -> Array:
+        measure = phx.discretization.DiscreteMeasure(
+            "volume", "mesh", "cells", weights, measure_id="geometry-binding"
+        )
+        return measure.integrate(jnp.asarray([5.0, 7.0]))
+
+    gradient = jax.jit(jax.grad(integral))(jnp.asarray([2.0, 3.0]))
+    np.testing.assert_allclose(gradient, [5.0, 7.0], rtol=0.0, atol=0.0)
+
+
+def test_traced_measure_refuses_undeclared_binding_identity() -> None:
+    @jax.jit
+    def mass(weights: Array) -> Array:
+        return phx.discretization.DiscreteMeasure(
+            "volume", "mesh", "cells", weights
+        ).total_mass
+
+    with pytest.raises(ValueError, match="explicit measure_id"):
+        mass(jnp.asarray([2.0, 3.0]))
+
+
+def test_traced_invalid_measure_exposes_failed_admission() -> None:
+    @jax.jit
+    def prepare(weights: Array) -> phx.discretization.DiscreteMeasure:
+        return phx.discretization.DiscreteMeasure(
+            "volume", "mesh", "cells", weights, measure_id="geometry-binding"
+        )
+
+    measure = prepare(jnp.asarray([-1.0, 3.0]))
+    assert not bool(measure.valid)
+    with pytest.raises(ValueError, match="non-negative"):
+        measure.admit()

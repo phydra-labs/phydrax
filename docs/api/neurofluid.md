@@ -34,9 +34,10 @@
 
 ## H(div) finite elements
 
-::: phydrax.discretization.tetrahedral_rt_element
+H(div) references use `form_element("tetrahedron", 2, order, family=...,
+twist="twisted", proxy="flux")`; trimmed and full select RT and BDM.
 
-::: phydrax.discretization.tetrahedral_bdm_element
+::: phydrax.discretization.fem.form_element
 
 ::: phydrax.equations.fem.HDivNormalBoundaryCondition
 

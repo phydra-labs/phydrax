@@ -52,10 +52,10 @@ def test_kernel_mean_bayesian_quadrature_scenario_1() -> None:
         n_node=jnp.asarray([3]),
         n_edge=jnp.asarray([4]),
     )
-    basis = phx.graph.cochain_laplacian_eigenbasis(
+    basis = phx.exterior.hodge_laplacian_eigenbasis(
         phx.graph.graph_to_cochain_complex(graph, edge_weight_key="conductance"),
         0,
-        num_modes=None,
+        count=None,
     )
     kernel = phx.kernels.SpectralFeatureKernel(
         basis, phx.kernels.MaternSpectralMultiplier(0.7, 1.5)

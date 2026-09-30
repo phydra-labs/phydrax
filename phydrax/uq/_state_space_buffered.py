@@ -16,6 +16,8 @@ import optax
 from jax import Array
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
@@ -313,7 +315,7 @@ def fit_buffered_state_space_variational(
             OptaxUpdateRule(
                 optax.chain(
                     optax.clip_by_global_norm(optimization.gradient_clip),
-                    optax.adam(optimization.learning_rate),
+                    adam(optimization.learning_rate),
                 ),
                 rule_id=canonical_fingerprint(
                     {

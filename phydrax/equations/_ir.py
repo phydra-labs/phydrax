@@ -8,10 +8,11 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from math import isfinite
 from numbers import Integral, Real
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TypeAlias
 
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 
+from ..exterior._form_type import FiberProduct, FormValueSpec
 from ..typing import parse
 
 
@@ -50,6 +51,13 @@ PDEExpressionOp: TypeAlias = Literal[
     "curl",
     "laplacian",
     "integral",
+    "exterior_derivative",
+    "codifferential",
+    "hodge_star",
+    "wedge",
+    "interior_product",
+    "lie_derivative",
+    "trace",
 ]
 
 
@@ -118,6 +126,7 @@ class PDECoordinate:
             object.__setattr__(self, "bounds", bounds)
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class PDEField:
     """Named unknown or observed field with physical representation metadata."""
@@ -129,6 +138,7 @@ class PDEField:
     dimension: DimensionSignature = DIMENSIONLESS
     scale: tuple[float, ...] = (1.0,)
     component_names: tuple[str, ...] = ()
+    form: FormValueSpec | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -156,6 +166,19 @@ class PDEField:
         if names and (len(names) != self.components or len(set(names)) != len(names)):
             raise ValueError("PDE field component names must uniquely cover components.")
         object.__setattr__(self, "component_names", names)
+        if self.form is not None:
+            if not isinstance(self.form, FormValueSpec):
+                raise TypeError("PDE field form must be a FormValueSpec.")
+            from ._validate import form_value_type
+
+            expected = form_value_type(self.form, self.dimension)
+            if (
+                self.components != expected.components
+                or self.representation != expected.representation
+            ):
+                raise ValueError(
+                    "PDE field representation and components must match its form proxy."
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +217,7 @@ class PDEParameter:
             object.__setattr__(self, "value", value)
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class PDEExpression:
     """One typed node in a validated, string-free PDE expression DAG."""
@@ -207,6 +231,7 @@ class PDEExpression:
     order: int = 1
     region: str | None = None
     dimension: DimensionSignature = DIMENSIONLESS
+    product: FiberProduct = "scalar"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "op", parse(self.op, PDEExpressionOp, "op"))
@@ -233,6 +258,10 @@ class PDEExpression:
         object.__setattr__(self, "order", order)
         if self.axis is not None:
             object.__setattr__(self, "axis", int(self.axis))
+        product = parse(self.product, FiberProduct, "product")
+        if self.op != "wedge" and product != "scalar":
+            raise ValueError("Only wedge accepts fiber-product metadata.")
+        object.__setattr__(self, "product", product)
 
     @classmethod
     def constant(
@@ -290,6 +319,31 @@ class PDEExpression:
 
     def integrate(self, region: str, /) -> "PDEExpression":
         return PDEExpression("integral", (self,), region=str(region))
+
+    def exterior_derivative(self, coordinate: str | None = None, /) -> "PDEExpression":
+        return PDEExpression("exterior_derivative", (self,), coordinate=coordinate)
+
+    def codifferential(self, coordinate: str | None = None, /) -> "PDEExpression":
+        return PDEExpression("codifferential", (self,), coordinate=coordinate)
+
+    def hodge_star(self) -> "PDEExpression":
+        return PDEExpression("hodge_star", (self,))
+
+    def wedge(
+        self, other: "PDEExpression", /, *, product: FiberProduct = "scalar"
+    ) -> "PDEExpression":
+        return PDEExpression("wedge", (self, other), product=product)
+
+    def interior_product(self, vector: "PDEExpression", /) -> "PDEExpression":
+        return PDEExpression("interior_product", (vector, self))
+
+    def lie_derivative(
+        self, vector: "PDEExpression", coordinate: str | None = None, /
+    ) -> "PDEExpression":
+        return PDEExpression("lie_derivative", (vector, self), coordinate=coordinate)
+
+    def trace(self, region: str, /) -> "PDEExpression":
+        return PDEExpression("trace", (self,), region=region)
 
     def component(self, axis: int, /) -> "PDEExpression":
         return PDEExpression("component", (self,), axis=int(axis))

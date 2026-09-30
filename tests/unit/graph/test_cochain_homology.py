@@ -10,57 +10,63 @@ import phydrax as phx
 from tests.unit.topology._fixtures import annulus_complex
 
 
-def test_cochain_homology_scenario_1() -> None:
-    complex_ir = annulus_complex()
-    harmonics, report = phx.graph.validate_hodge_homology(complex_ir, 1)
-
-    assert harmonics.ranks == (1, 1, 0)
-    assert report.exact_dimension == 1
-    assert report.harmonic_rank == 1
-    assert bool(report.ranks_match)
+@pytest.mark.parametrize(
+    ("degree", "boundary", "betti"),
+    [
+        (0, "absolute", 1),
+        (1, "absolute", 1),
+        (2, "absolute", 0),
+        (0, "relative", 0),
+        (1, "relative", 1),
+        (2, "relative", 1),
+    ],
+)
+def test_annulus_harmonic_dimension_matches_exact_topology(
+    degree: int, boundary: phx.exterior.ComplexBoundary, betti: int
+) -> None:
+    realization = annulus_complex()
+    harmonic, report = phx.exterior.validate_harmonic_cohomology(
+        realization, degree, boundary=boundary
+    )
+    assert harmonic.dimension == betti
+    assert report.exact_dimension == betti
     assert bool(report.complete)
-    assert float(jnp.max(report.kernel_residuals)) < 1e-8
-    complex_ir = annulus_complex()
-    harmonics, report = phx.graph.validate_hodge_homology(
-        complex_ir,
-        2,
-        boundary_policy="relative",
+    assert float(jnp.max(report.kernel_residuals, initial=0.0)) < 1e-8
+    assert (
+        harmonic.basis.shape[0]
+        == realization.hilbert_complex(boundary=boundary).space(degree).size
     )
 
-    assert harmonics.ranks == (0, 1, 1)
-    assert report.exact_dimension == 1
-    assert report.harmonic_rank == 1
-    assert bool(report.complete)
-    complex_ir = annulus_complex()
-    subspace, certificate, report = phx.graph.cochain_harmonic_kernel_certificate(
-        complex_ir,
-        1,
-    )
 
+def test_relative_harmonic_certificate_uses_only_active_coordinates() -> None:
+    realization = annulus_complex()
+    subspace, certificate, report = phx.exterior.harmonic_kernel_certificate(
+        realization, 1, boundary="relative"
+    )
     assert subspace.capacity == 1
-    assert int(subspace.dimension) == 1
+    assert subspace.space.size == int(
+        np.count_nonzero(~np.asarray(realization.boundary_masks[1]))
+    )
     assert certificate.complete
     assert bool(certificate.valid)
     assert bool(report.complete)
     assert np.max(np.asarray(certificate.right_residual_norms)) < 1e-8
-    complex_ir = annulus_complex()
-    relative = phx.graph.compute_harmonic_subspace(
-        complex_ir,
-        boundary_policy="relative",
-        max_modes=3,
+
+
+def test_harmonic_evidence_refuses_different_metric_or_boundary() -> None:
+    realization = annulus_complex()
+    relative, _ = phx.exterior.validate_harmonic_cohomology(
+        realization, 1, boundary="relative"
     )
-    with pytest.raises(ValueError, match="different boundary policy"):
-        phx.graph.validate_hodge_homology(
-            complex_ir,
-            1,
-            boundary_policy="absolute",
-            harmonic_subspace=relative,
-        )
-    left = annulus_complex()
-    right = phx.graph.triangle_mesh_to_cochain_complex(
-        np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
-        np.asarray([[0, 1, 2]], dtype=np.int32),
+    with pytest.raises(ValueError):
+        phx.exterior.validate_harmonic_cohomology(realization, 1, harmonic=relative)
+    altered = realization.with_metric(
+        tuple(
+            phx.discretization.DiagonalHodge(2 * realization.hodge_diagonal(k))
+            for k in range(realization.dimension + 1)
+        ),
+        numeric_revision="annulus-doubled-metric",
     )
-    harmonics = phx.graph.compute_harmonic_subspace(right, max_modes=3)
-    with pytest.raises(ValueError, match="different metric complex"):
-        phx.graph.validate_hodge_homology(left, 1, harmonic_subspace=harmonics)
+    harmonic, _ = phx.exterior.validate_harmonic_cohomology(altered, 1)
+    with pytest.raises(ValueError):
+        phx.exterior.validate_harmonic_cohomology(realization, 1, harmonic=harmonic)

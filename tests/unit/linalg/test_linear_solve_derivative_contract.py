@@ -300,3 +300,52 @@ def test_primal_factor_route_refuses_krylov_only_options(
 ) -> None:
     with pytest.raises(ValueError, match="route='primal-factors'"):
         construct()
+
+
+@pytest.mark.parametrize(
+    "method",
+    [phx.linalg.DenseLU(), phx.linalg.PCG(), phx.linalg.MINRES()],
+    ids=["dense-lu", "pcg", "minres"],
+)
+def test_complex_native_dense_solve_has_strict_dtype_jit_parameter_derivative(
+    method: phx.linalg.AbstractLinearMethod,
+) -> None:
+    """Complex implicit-root Krylov tangents retain real norm evidence."""
+    space = phx.linalg.ArraySpace(
+        (5,), dtype=jnp.complex128, space_id="complex-native:space"
+    )
+    rhs = jnp.asarray([1 + 2j, -2 + 1j, 3 - 4j, 2j, 5 + 1j], dtype=jnp.complex128)
+
+    def mapped(diagonal: jax.Array) -> jax.Array:
+        operator = phx.linalg.DenseLinearOperator(
+            jnp.diag(diagonal.astype(jnp.complex128)),
+            source=space,
+            target=space,
+            operator_id="complex-native:diagonal",
+            properties=phx.linalg.OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "construction",
+                },
+            ),
+        )
+        result = phx.linalg.solve(
+            phx.linalg.LinearSystem(operator, problem_id="complex-native:problem"),
+            rhs,
+            policy=phx.linalg.LinearSolvePolicy(method),
+        )
+        return space.flatten(result.value)
+
+    diagonal = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float64)
+    with jax.numpy_dtype_promotion("strict"):
+        np.testing.assert_allclose(
+            jax.jit(mapped)(diagonal),
+            rhs / diagonal.astype(jnp.complex128),
+            atol=1e-11,
+        )
+        expected = jnp.diag(-rhs / (diagonal**2).astype(jnp.complex128))
+        np.testing.assert_allclose(
+            jax.jit(jax.jacfwd(mapped))(diagonal), expected, atol=1e-10
+        )

@@ -14,8 +14,11 @@ import phydrax as phx
 def test_mesh_filtration_persistence_hodge_and_event_workflow() -> None:
     vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
     faces = np.asarray([[0, 1, 2]], dtype=np.int32)
-    complex_ir = phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
-    topology = complex_ir.discretization.topology
+    topology = phx.discretization.polygonal_cell_complex(faces, None, len(vertices))
+    hodges = phx.discretization.simplicial_dual_hodges(
+        topology, vertices, dual="barycentric"
+    )
+    realization = phx.discretization.CochainDiscretization(topology, hodges)
     complex = phx.topology.CellSubcomplex.full(topology)
     homology = phx.topology.compute_homology(
         complex,
@@ -36,7 +39,7 @@ def test_mesh_filtration_persistence_hodge_and_event_workflow() -> None:
     )
     diagram = persistence.diagram()
     packed = persistence.pack(4)
-    _, report = phx.graph.validate_hodge_homology(complex_ir, 0)
+    _, report = phx.exterior.validate_harmonic_cohomology(realization, 0)
 
     times = jnp.asarray([0.0, 0.25, 0.75, 1.5])
     zero_degree = diagram.degrees == 0

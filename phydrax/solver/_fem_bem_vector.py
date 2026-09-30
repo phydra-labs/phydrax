@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
-from typing import assert_never, Literal
+from typing import assert_never, final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
+import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -20,16 +22,24 @@ from .._differentiation import (
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_complex import TetrahedralConnectivity
+from ..discretization.bem._bc_dual import prepare_buffa_christiansen_dual_3d
+from ..discretization.bem._rwg import RWGSurfaceCurrentSpace3D
+from ..discretization.bem._surface_complex import OrientedTriangleSurfaceComplex3D
 from ..linalg import (
     AbstractLinearOperator,
     AbstractVectorSpace,
+    ArraySpace,
     BlockLinearOperator,
     BlockSpace,
+    coordinate_space,
     DifferentiationMode,
     DifferentiationPolicy,
+    DualSpace,
     estimate_operator_action_cost,
     FailurePolicy,
     FGMRES,
+    FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
@@ -42,6 +52,20 @@ from ..linalg import (
 from ..operators.integral.layer_potential._elasticity3d import (
     ElasticitySingleLayerDP0Galerkin3D,
 )
+from ..operators.integral.layer_potential._maxwell3d import MaxwellEFIEPolicy3D
+from ..operators.integral.layer_potential._maxwell_bc3d import (
+    prepare_maxwell_bc_efie_3d,
+    PreparedMaxwellBCEFIE3D,
+)
+from ._nonmatching_fem_bem3d import (
+    _prepare,
+    CoupledFEMBEMResult3D,
+    PreparedNonmatchingFEMBEM3D,
+)
+
+
+if TYPE_CHECKING:
+    from ..discretization.fem._de_rham import FiniteElementDeRhamComplex
 
 
 _PHYSICS = "static isotropic three-dimensional linear elasticity"
@@ -63,10 +87,6 @@ _NON_GOALS = (
     "anisotropic, heterogeneous, nonlinear, dynamic, or contact elasticity",
     "continuum certification or discretization-error estimation",
     "Maxwell coupling without an exact H(curl)-to-RWG tangential trace and dual map",
-)
-_MAXWELL_REJECTION = (
-    "Maxwell FEM-BEM is unavailable: the landed RWG surface space does not provide "
-    "an exact matching H(curl)-to-RWG tangential trace and dual conormal interface map."
 )
 _LOAD_ARGUMENTS = ("interior_load", "boundary_load")
 _FIXED_STRUCTURE_REFUSALS = {
@@ -122,6 +142,10 @@ class VectorFEMBEMSupportReport(StrictModule, NonTrainableState):
     rejected: tuple[str, ...] = eqx.field(static=True)
     continuum_certified: bool = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
+    matching_maxwell_supported: bool = eqx.field(static=True)
+    nonmatching_maxwell_supported: bool = eqx.field(static=True)
+    automatic_periodic_maxwell_supported: bool = eqx.field(static=True)
+    caller_built_periodic_maxwell_supported: bool = eqx.field(static=True)
 
 
 class ElasticityFEMBEMInterfaceQualification3D(StrictModule, NonTrainableState):
@@ -348,12 +372,17 @@ def vector_fem_bem_support_report() -> VectorFEMBEMSupportReport:
         "respect to the runtime loads interior_load and boundary_load at an "
         "accepted converged solve (NaN or error otherwise); the default mode "
         "'none' refuses load derivatives with derivative-unsupported",
+        "matching lowest-order tetrahedral Maxwell 3D: automatically constructed "
+        "outward tangential trace, exact RWG/BC dual conormal and genuine BC EFIE",
+        "nonmatching Maxwell 3D: caller-qualified FE mortar with its magnetic "
+        "conormal in the upper coupling and both block residuals",
+        "periodic Maxwell 3D: caller-built mortar/block route over bounded "
+        "periodic image operators; no automatic periodic interface construction",
     )
     rejected = (
-        _MAXWELL_REJECTION,
         "Automatic vector-H1 matching-interface trace preparation is unavailable; "
         "exact caller-prepared elasticity maps are required.",
-        "Stokes, dynamic elasticity, anisotropic elasticity, and nonmatching vector couplings are not implemented.",
+        "Stokes, dynamic elasticity, anisotropic elasticity, and nonmatching elasticity are not implemented.",
         "Static elasticity FEM-BEM derivatives with respect to A_sym (including the "
         "hypersingular term), the trace/conormal maps, the Kelvin kernel and Lame "
         "parameters, quadrature, and geometry are rejected; differentiation modes "
@@ -371,6 +400,10 @@ def vector_fem_bem_support_report() -> VectorFEMBEMSupportReport:
                 "continuum_certified": False,
             }
         ),
+        matching_maxwell_supported=True,
+        nonmatching_maxwell_supported=True,
+        automatic_periodic_maxwell_supported=False,
+        caller_built_periodic_maxwell_supported=True,
     )
 
 
@@ -795,5 +828,253 @@ __all__ = [
     "VectorFEMBEMSupportReport",
     "prepare_elasticity_fem_bem_3d",
     "solve_elasticity_fem_bem_3d",
+    "PreparedMatchingMaxwellFEMBEM3D",
+    "prepare_matching_maxwell_fem_bem_3d",
     "vector_fem_bem_support_report",
 ]
+
+
+@final
+class PreparedMatchingMaxwellFEMBEM3D(StrictModule, NonTrainableState):
+    """Automatic lowest-order tetrahedral volume-to-oriented-surface coupling."""
+
+    volume_complex: FiniteElementDeRhamComplex
+    boundary: PreparedMaxwellBCEFIE3D
+    rwg_trace: AbstractLinearOperator
+    dual_trace: AbstractLinearOperator
+    dual_conormal: AbstractLinearOperator
+    magnetic_conormal: AbstractLinearOperator
+    coupled: PreparedNonmatchingFEMBEM3D
+    prepared_id: str = eqx.field(static=True)
+
+    def solve(
+        self, interior_load: ArrayLike, boundary_load: ArrayLike, /
+    ) -> CoupledFEMBEMResult3D:
+        return self.coupled.solve(interior_load, boundary_load)
+
+
+def _matching_maxwell_surface(
+    complex: FiniteElementDeRhamComplex,
+) -> tuple[
+    OrientedTriangleSurfaceComplex3D, npt.NDArray[np.int32], npt.NDArray[np.int32]
+]:
+    connectivity = complex.mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity):
+        raise ValueError("Matching Maxwell requires a tetrahedral volume mesh.")
+    from ..discretization._boundary_complex import boundary_subcomplex
+
+    boundary = boundary_subcomplex(
+        complex.topology, boundary_mask=connectivity.boundary_faces
+    )
+    parents = np.asarray(boundary.parent_indices[2], dtype=np.int32)
+    points = np.asarray(complex.mesh.coordinates)
+    faces = np.asarray(connectivity.faces, dtype=np.int32)[parents].copy()
+    # Orient geometrically outward, including negatively parameterized cells.
+    cells = np.concatenate(
+        tuple(np.asarray(block.vertices) for block in complex.mesh.blocks)
+    )
+    centroids = np.mean(points[cells], axis=1)
+    cell_faces = np.asarray(connectivity.cell_faces)
+    owners = np.empty(complex.topology.entities(2).count, dtype=np.int32)
+    owners[cell_faces.reshape(-1)] = np.repeat(np.arange(cells.shape[0]), 4)
+    corners = points[faces]
+    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    inward = (
+        np.sum(normals * (centroids[owners[parents]] - corners.mean(axis=1)), axis=1)
+        > 0.0
+    )
+    faces[inward] = faces[inward][:, (0, 2, 1)]
+    vertices = np.unique(faces)
+    local_faces = np.searchsorted(vertices, faces).astype(np.int32)
+    return (
+        OrientedTriangleSurfaceComplex3D(points[vertices], local_faces),
+        vertices,
+        np.asarray(boundary.parent_indices[1], dtype=np.int32),
+    )
+
+
+def prepare_matching_maxwell_fem_bem_3d(
+    complex: FiniteElementDeRhamComplex,
+    interior_operator: AbstractLinearOperator,
+    /,
+    *,
+    wavenumber: ArrayLike,
+    wave_impedance: ArrayLike = 1.0,
+    boundary_policy: MaxwellEFIEPolicy3D | None = None,
+    policy: LinearSolvePolicy | None = None,
+    residual_tolerance: float = 1e-5,
+) -> PreparedMatchingMaxwellFEMBEM3D:
+    """Construct the exact matching trace, its dual conormal and solve artifact.
+
+    Only trimmed order-one tetrahedral FE complexes are admitted. Boundary
+    current coefficients are BC coefficients on the genuine barycentric space;
+    geometry/kernel accuracy retains the bounded refined RWG EFIE evidence.
+    The volume curl-curl/material operator is supplied as a native operator.
+    """
+    from ..discretization.fem._de_rham import FiniteElementDeRhamComplex
+    from ..exterior._traces import trace_map
+
+    if not isinstance(complex, FiniteElementDeRhamComplex):
+        raise TypeError("complex must be FiniteElementDeRhamComplex.")
+    if complex.dimension != 3 or complex.family != "trimmed" or complex.order != 1:
+        raise ValueError("Matching Maxwell requires trimmed order-one tetrahedral FE.")
+    if complex.primal_twist != "untwisted" or complex.mesh.coordinates.shape[1] != 3:
+        raise ValueError("Matching Maxwell requires untwisted electric forms in R3.")
+    if not isinstance(interior_operator, AbstractLinearOperator):
+        raise TypeError("interior_operator must be an AbstractLinearOperator.")
+    volume = complex.hilbert_complex().space(1)
+    if not isinstance(volume, ArraySpace):
+        raise TypeError("Matching Maxwell requires an array-valued FE edge space.")
+    if not (
+        interior_operator.source.compatible(volume)
+        or interior_operator.source.compatible(coordinate_space(volume))
+    ):
+        raise ValueError("Interior operator source must be the declared FE edge space.")
+    dtype = np.dtype(volume.structure().dtype)
+    if not np.issubdtype(dtype, np.complexfloating):
+        raise TypeError(
+            "Matching time-harmonic Maxwell requires complex FE coefficients."
+        )
+    surface, vertices, parent_edges = _matching_maxwell_surface(complex)
+    rwg = RWGSurfaceCurrentSpace3D(surface, coefficient_dtype=dtype)
+    bc = prepare_buffa_christiansen_dual_3d(rwg)
+    boundary = prepare_maxwell_bc_efie_3d(
+        bc,
+        wavenumber,
+        wave_impedance=wave_impedance,
+        policy=boundary_policy,
+    )
+    restriction = trace_map(complex).maps[1]
+    connectivity = complex.mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity):
+        raise ValueError("Matching Maxwell requires tetrahedral connectivity.")
+    edges = np.asarray(connectivity.edges)
+    lookup = {
+        tuple(edge): index for index, edge in enumerate(edges[parent_edges].tolist())
+    }
+    surface_edges = vertices[np.asarray(surface.edge_vertices)]
+    permutation = jnp.asarray(
+        [lookup[tuple(edge)] for edge in surface_edges.tolist()], dtype=jnp.int32
+    )
+    scale = -1.0 / surface.edge_lengths.astype(dtype)
+    trace_id = canonical_fingerprint(
+        {
+            "kind": "matching-maxwell-rwg-trace",
+            "map": restriction.operator_id,
+            "surface": surface.complex_id,
+        }
+    )
+
+    def trace_action(value: Array) -> Array:
+        restricted = restriction.target.flatten(
+            restriction.mv(restriction.source.unflatten(value))
+        )
+        return scale * restricted[permutation]
+
+    def trace_transpose(value: Array) -> Array:
+        restricted = (
+            jnp.zeros((restriction.target.size,), dtype=dtype)
+            .at[permutation]
+            .add(scale * value)
+        )
+        return restriction.source.flatten(
+            restriction.transpose_mv(restriction.target.unflatten(restricted))
+        )
+
+    rwg_trace = FunctionLinearOperator(
+        trace_action,
+        source=volume,
+        target=rwg.vector_space,
+        transpose_action=trace_transpose,
+        operator_id=trace_id,
+    )
+    cross = bc.cross_mass.matrix.astype(dtype)
+    dual_id = canonical_fingerprint(
+        {"kind": "matching-maxwell-dual-trace", "trace": trace_id, "bc": bc.space_id}
+    )
+
+    def dual_action(value: Array) -> Array:
+        return cross.T @ rwg_trace.mv(value)
+
+    def dual_transpose(value: Array) -> Array:
+        return rwg_trace.transpose_mv(cross @ value)
+
+    dual_trace = FunctionLinearOperator(
+        dual_action,
+        source=volume,
+        target=DualSpace(bc.vector_space),
+        transpose_action=dual_transpose,
+        operator_id=dual_id,
+    )
+
+    def conormal_action(value: Array) -> Array:
+        return jnp.conj(dual_transpose(jnp.conj(value)))
+
+    def conormal_transpose(value: Array) -> Array:
+        return jnp.conj(dual_action(jnp.conj(value)))
+
+    dual_conormal = FunctionLinearOperator(
+        conormal_action,
+        source=bc.vector_space,
+        target=DualSpace(volume),
+        transpose_action=conormal_transpose,
+        operator_id=f"{dual_id}:conormal",
+    )
+    magnetic_scale = (
+        1j * boundary.refined_efie.wavenumber * boundary.refined_efie.wave_impedance
+    )
+
+    def magnetic_load(value: Array) -> Array:
+        return magnetic_scale * dual_conormal.mv(boundary.magnetic_trace.mv(value))
+
+    def magnetic_load_transpose(value: Array) -> Array:
+        return magnetic_scale * boundary.magnetic_trace.transpose_mv(
+            dual_conormal.transpose_mv(value)
+        )
+
+    magnetic_conormal = FunctionLinearOperator(
+        magnetic_load,
+        source=bc.vector_space,
+        target=DualSpace(volume),
+        transpose_action=magnetic_load_transpose,
+        operator_id=f"{dual_id}:magnetic-conormal",
+    )
+
+    def forward_conormal(value: Array) -> Array:
+        return jnp.conj(magnetic_load_transpose(jnp.conj(value)))
+
+    def forward_conormal_transpose(value: Array) -> Array:
+        return jnp.conj(magnetic_load(jnp.conj(value)))
+
+    conormal_test = FunctionLinearOperator(
+        forward_conormal,
+        source=volume,
+        target=DualSpace(bc.vector_space),
+        transpose_action=forward_conormal_transpose,
+        operator_id=f"{dual_id}:magnetic-test",
+    )
+    coupled = _prepare(
+        interior_operator,
+        boundary.operator,
+        dual_trace,
+        conormal_test,
+        "matching-maxwell",
+        (
+            restriction.operator_id,
+            bc.evidence.evidence_id,
+            boundary.assembly_report.report_id,
+        ),
+        policy,
+        residual_tolerance,
+        boundary,
+    )
+    return PreparedMatchingMaxwellFEMBEM3D(
+        complex,
+        boundary,
+        rwg_trace,
+        dual_trace,
+        dual_conormal,
+        magnetic_conormal,
+        coupled,
+        coupled.prepared_id,
+    )

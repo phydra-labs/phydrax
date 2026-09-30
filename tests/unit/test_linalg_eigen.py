@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import scipy.linalg as spla
 
@@ -313,13 +314,14 @@ def test_linalg_eigen_scenario_1() -> None:
         policy=eigen.EigenSolvePolicy(eigen.DenseEigh(), count=3),
     )
     vectors = jnp.asarray(result.eigenvectors)
+    expected = spla.eigh(
+        np.asarray(paired_operator, dtype=np.float64),
+        np.asarray(paired_metric, dtype=np.float64),
+        eigvals_only=True,
+    )
 
     assert bool(result.successful)
-    assert jnp.allclose(
-        result.eigenvalues,
-        # ty: ignore[deprecated]
-        spla.eigh(pairing_weights[:, None] * operator.matrix, paired_metric)[0],
-    )
+    assert jnp.allclose(result.eigenvalues, expected)
     assert jnp.allclose(
         vectors.T @ paired_metric @ vectors,
         jnp.eye(3),
@@ -405,3 +407,116 @@ def test_dense_eigenvalue_derivatives_require_isolated_modes() -> None:
         policy=policy,
     )
     assert repeated.status == int(eigen.EigenSolveStatus.DIFFERENTIATION_REJECTED)
+
+
+def test_generalized_restart_preserves_metric_images_and_deflates_dependent_directions() -> (
+    None
+):
+    """A singular PSD stiffness and healthy noncommuting mass keep bounded Ritz values."""
+    size = 19
+    random = np.random.default_rng(1701)
+    stiffness_basis, _ = np.linalg.qr(random.normal(size=(size, size)))
+    mass_basis, _ = np.linalg.qr(random.normal(size=(size, size)))
+    stiffness = (
+        stiffness_basis
+        @ np.diag(np.concatenate((np.zeros(7), np.linspace(1.0, 12.0, 12))))
+        @ stiffness_basis.T
+    )
+    mass = mass_basis @ np.diag(np.linspace(0.04, 0.3, size)) @ mass_basis.T
+    space = la.ArraySpace(
+        (size,), dtype=jnp.float64, space_id="generalized-restart:coordinates"
+    )
+    operator = la.DenseLinearOperator(
+        jnp.asarray(stiffness),
+        source=space,
+        target=space,
+        properties=_self_adjoint_properties(),
+        operator_id="generalized-restart:stiffness",
+    )
+    metric = la.DenseLinearOperator(
+        jnp.asarray(mass),
+        source=space,
+        target=space,
+        properties=_self_adjoint_properties(positive_definite=True),
+        operator_id="generalized-restart:mass",
+    )
+    problem = eigen.GeneralizedEigenproblem(
+        operator, metric, problem_id="generalized-restart:pencil"
+    )
+    policy = eigen.EigenSolvePolicy(
+        eigen.RestartedLanczos(subspace_dimension=size),
+        count=1,
+        which="largest-algebraic",
+        max_steps=100,
+        key=jax.random.key(0),
+        tolerance=eigen.EigenTolerancePolicy(
+            relative=1e-8, absolute=1e-10, orthogonality=1e-7
+        ),
+    )
+    result = eigen.eigensolve(problem, policy=policy)
+    oracle_stiffness: np.ndarray[tuple[int, int], np.dtype[np.float64]] = np.asarray(
+        stiffness, dtype=np.float64
+    ).reshape((size, size))
+    oracle_mass: np.ndarray[tuple[int, int], np.dtype[np.float64]] = np.asarray(
+        mass, dtype=np.float64
+    ).reshape((size, size))
+    expected = spla.eigvalsh(oracle_stiffness, oracle_mass)[-1]
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.eigenvalues, [expected], rtol=1e-7, atol=1e-8)
+    np.testing.assert_allclose(
+        result.eigenvectors.T @ mass @ result.eigenvectors,
+        np.ones((1, 1)),
+        atol=1e-7,
+    )
+    assert bool(result.residual_norms[0] < 1e-6)
+
+
+def test_lobpcg_zero_mode_keeps_true_operator_and_metric_images() -> None:
+    """Small residual/direction differences must not amplify cached image roundoff."""
+    size = 64
+    indices = np.arange(size, dtype=np.int64)
+    gradient = np.zeros((size, size), dtype=np.float64)
+    gradient[indices, indices] = -1.0
+    gradient[indices, (indices + 1) % size] = 1.0
+    stiffness = 1000.0 * gradient.T @ np.diag(np.linspace(1.0, 2.0, size)) @ gradient
+    weights = np.linspace(1.0, 1.5, size)
+    space = la.ArraySpace((size,), dtype=jnp.float64, space_id="lobpcg-zero:coordinates")
+    operator = la.DenseLinearOperator(
+        jnp.asarray(stiffness),
+        source=space,
+        target=space,
+        properties=_self_adjoint_properties(),
+        operator_id="lobpcg-zero:stiffness",
+    )
+    metric = la.DiagonalLinearOperator(
+        jnp.asarray(weights),
+        space=space,
+        properties=_self_adjoint_properties(positive_definite=True),
+        operator_id="lobpcg-zero:mass",
+    )
+    preconditioner = la.DiagonalPreconditioner(
+        jnp.asarray(np.diag(stiffness)),
+        space=space,
+        positive_definite=True,
+    )
+    policy = eigen.EigenSolvePolicy(
+        eigen.LOBPCG(block_dimension=3),
+        count=3,
+        max_steps=1000,
+        key=jax.random.key(0),
+        tolerance=eigen.EigenTolerancePolicy(
+            relative=1e-9, absolute=1e-9, orthogonality=1e-9
+        ),
+        preconditioning=la.PreconditioningPolicy(preconditioner),
+    )
+    result = eigen.eigensolve(
+        eigen.GeneralizedEigenproblem(operator, metric), policy=policy
+    )
+    assert bool(result.successful)
+    basis = np.asarray(result.eigenvectors)
+    np.testing.assert_allclose(result.eigenvalues[0], 0, atol=1e-9)
+    assert np.linalg.norm(stiffness @ basis[:, 0]) < 1e-8
+    expected = np.ones((size,), dtype=np.float64) / np.sqrt(np.sum(weights))
+    np.testing.assert_allclose(
+        np.outer(basis[:, 0], basis[:, 0]), np.outer(expected, expected), atol=1e-8
+    )

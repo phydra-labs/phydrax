@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..typing import parse
+from ._assembly import assemble_sparse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._named_blocks import (
@@ -24,7 +25,11 @@ from ._named_blocks import (
     BlockRestrictionLinearOperator,
     select_block_operator,
 )
-from ._operators import AbstractLinearOperator, AdjointLinearOperator
+from ._operators import (
+    AbstractLinearOperator,
+    AdjointLinearOperator,
+    IdentityLinearOperator,
+)
 from ._preconditioner_properties import (
     _preconditioner_properties_payload,
     PreconditionerProperties,
@@ -36,7 +41,9 @@ from ._preconditioning import (
     AbstractPreconditionerBuilder,
     PreconditionerSource,
 )
+from ._properties import OperatorProperties
 from ._spaces import _coordinate_dtype
+from ._sparse_contract import AbstractSparseLinearOperator
 
 
 SubspaceCorrectionSweep: TypeAlias = Literal["forward", "backward", "symmetric"]
@@ -132,6 +139,11 @@ def _local_setup_operator(
     /,
 ) -> AbstractLinearOperator:
     restriction = term.restriction
+    if (
+        isinstance(restriction, IdentityLinearOperator)
+        and restriction is term.prolongation
+    ):
+        return setup_operator
     prolongation = term.prolongation
     if isinstance(restriction, BlockRestrictionLinearOperator) and isinstance(
         prolongation, BlockProlongationLinearOperator
@@ -141,7 +153,28 @@ def _local_setup_operator(
         return select_block_operator(
             setup_operator, restriction.selection, prolongation.selection
         )
-    return restriction @ setup_operator @ prolongation
+    operator = restriction @ setup_operator @ prolongation
+    if _structurally_adjoint_transfers(term):
+        self_adjoint = setup_operator.properties.certifies("self_adjoint")
+        positive = setup_operator.properties.certifies("positive_semidefinite")
+        properties = OperatorProperties(
+            self_adjoint=self_adjoint,
+            positive_semidefinite=positive,
+            evidence={
+                name: "transformed"
+                for name, claimed in (
+                    ("self_adjoint", self_adjoint),
+                    ("positive_semidefinite", positive),
+                )
+                if claimed
+            },
+        )
+        operator = eqx.tree_at(lambda value: value.properties, operator, properties)
+    if isinstance(prolongation, AbstractSparseLinearOperator) and isinstance(
+        setup_operator, AbstractSparseLinearOperator
+    ):
+        return assemble_sparse(operator)
+    return operator
 
 
 def _local_setup_operators(
@@ -215,6 +248,16 @@ def _resolved_properties(
     adjoint_transfers = all(_structurally_adjoint_transfers(term) for term in terms)
     if multiplicative_sweep is None:
         self_adjoint = linear and local_self_adjoint and adjoint_transfers
+        positive_definite = (
+            stationary
+            and self_adjoint
+            and all(value.certifies("positive_definite") for value in local_properties)
+            and any(
+                isinstance(term.prolongation, IdentityLinearOperator)
+                and term.restriction is term.prolongation
+                for term in terms
+            )
+        )
     else:
         self_adjoint = (
             multiplicative_sweep == "symmetric"
@@ -223,11 +266,13 @@ def _resolved_properties(
             and adjoint_transfers
             and setup_operator.properties.certifies("self_adjoint")
         )
+        positive_definite = False
     if supplied is None:
         claims = {
             "linear": linear,
             "stationary": stationary,
             "self_adjoint": self_adjoint,
+            "positive_definite": positive_definite,
         }
         return PreconditionerProperties(
             **claims,

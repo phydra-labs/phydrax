@@ -6,6 +6,13 @@ owners. It supplies no monolithic simulation object. Plans fix topology, capacit
 conventions, tolerances, and numerical policies; results retain candidate and accepted
 states plus orthogonal numerical/scientific evidence.
 
+Distributed cochain state carries canonical `form_type` and `realization_id`
+alongside its native component shards, `layout_id` and `distribution_id`.
+`PreparedNumericalRelativityDistributed.shard_cochain(bridge, form_type,
+packed_values)` requires scientific form metadata explicitly; it neither infers
+degree from shape nor discards the existing component sharding ownership.
+
+
 ## Z4c state and equations
 
 `Z4cState` is the canonical 25-channel component-first state:

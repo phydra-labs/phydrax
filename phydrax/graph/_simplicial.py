@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -9,18 +8,13 @@ import numpy as np
 
 from phydrax._strict import StrictModule
 
-from ..sparse import linear_apply
-from ..typing import parse
-from ._graph import ensure_graph
+from ..discretization._cell_complex import polygonal_cell_complex
+from ..discretization._topology import CellComplexTopology
 from ._ir import GraphIR
-from ._typed import edge_type_ids, node_type_ids
 
 
 if TYPE_CHECKING:
     from ..domain.graph import EdgeType, NodeType
-
-
-FormDegree: TypeAlias = Literal[0, 1, 2]
 
 
 def _validate_faces(faces: Any, num_vertices: int | None, /) -> tuple[np.ndarray, int]:
@@ -45,25 +39,6 @@ def _validate_faces(faces: Any, num_vertices: int | None, /) -> tuple[np.ndarray
     if np.any(faces_np >= n_vertex):
         raise ValueError("mesh_faces contain out-of-range vertex indices.")
     return faces_np, n_vertex
-
-
-def _triangle_edge_cells(faces: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    boundary = np.stack(
-        [
-            faces[:, [0, 1]],
-            faces[:, [1, 2]],
-            faces[:, [2, 0]],
-        ],
-        axis=1,
-    ).reshape((-1, 2))
-    canonical = np.sort(boundary, axis=1)
-    edge_vertices, inverse = np.unique(canonical, axis=0, return_inverse=True)
-    signs = np.where(boundary[:, 0] == canonical[:, 0], 1, -1).astype(np.float32)
-    return (
-        edge_vertices.astype(np.int32),
-        inverse.reshape((faces.shape[0], 3)).astype(np.int32),
-        signs.reshape((faces.shape[0], 3)),
-    )
 
 
 def _feature_array(name: str, value: Any, expected: int, /) -> jnp.ndarray:
@@ -118,14 +93,7 @@ def _combine_cell_features(
     return jnp.concatenate(parts, axis=0)
 
 
-def _as_feature_mapping(value: Any, /) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, Mapping):
-        return dict(value)
-    return {"features": value}
-
-
+@final
 class SimplicialComplexGraph(StrictModule):
     """A 2D simplicial complex encoded as a typed `GraphIR`.
 
@@ -135,6 +103,7 @@ class SimplicialComplexGraph(StrictModule):
     """
 
     graph: GraphIR
+    topology: CellComplexTopology
     vertex_cells: jnp.ndarray
     edge_cells: jnp.ndarray
     face_cells: jnp.ndarray
@@ -159,6 +128,7 @@ class SimplicialComplexGraph(StrictModule):
         graph: GraphIR,
         /,
         *,
+        topology: CellComplexTopology,
         vertex_cells: Any,
         edge_cells: Any,
         face_cells: Any,
@@ -178,7 +148,12 @@ class SimplicialComplexGraph(StrictModule):
         edge_to_face_type: int,
         face_to_edge_type: int,
     ) -> None:
+        if not isinstance(graph, GraphIR) or not isinstance(
+            topology, CellComplexTopology
+        ):
+            raise TypeError("Simplicial graph requires GraphIR and CellComplexTopology.")
         self.graph = graph
+        self.topology = topology
         self.vertex_cells = jnp.asarray(vertex_cells, dtype=jnp.int32)
         self.edge_cells = jnp.asarray(edge_cells, dtype=jnp.int32)
         self.face_cells = jnp.asarray(face_cells, dtype=jnp.int32)
@@ -255,7 +230,14 @@ def triangle_mesh_to_simplicial_graph(
 ) -> SimplicialComplexGraph:
     """Convert triangular faces into a signed simplicial-complex `GraphIR`."""
     faces, n_vertex = _validate_faces(mesh_faces, num_vertices)
-    edge_vertices, face_edges, face_edge_signs = _triangle_edge_cells(faces)
+    topology = polygonal_cell_complex(faces, None, n_vertex)
+    edge_vertices = np.asarray(topology.incidences[0].relation.source_indices).reshape(
+        (-1, 2)
+    )
+    face_edges = np.asarray(topology.incidences[1].relation.source_indices).reshape(
+        (-1, 3)
+    )
+    face_edge_signs = np.asarray(topology.incidences[1].signs).reshape((-1, 3))
     n_edge_cell = edge_vertices.shape[0]
     n_face = faces.shape[0]
     n_total = n_vertex + n_edge_cell + n_face
@@ -428,6 +410,7 @@ def triangle_mesh_to_simplicial_graph(
     )
     return SimplicialComplexGraph(
         graph,
+        topology=topology,
         vertex_cells=vertex_cells,
         edge_cells=edge_cells,
         face_cells=face_cells,
@@ -449,233 +432,7 @@ def triangle_mesh_to_simplicial_graph(
     )
 
 
-def _as_array(name: str, value: Any, /) -> jnp.ndarray:
-    arr = jnp.asarray(value, dtype=jnp.float64)
-    if arr.ndim == 0:
-        raise ValueError(f"{name} must have a leading cell axis.")
-    return arr
-
-
-def _node_field(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
-    if graph.nodes is None:
-        raise ValueError("SimplicialHodgeLaplacian requires node/cell features.")
-    if input_key is None:
-        if isinstance(graph.nodes, Mapping):
-            raise TypeError("mapping-valued simplicial-complex nodes require input_key.")
-        return _as_array("nodes", graph.nodes)
-    if not isinstance(graph.nodes, Mapping):
-        raise TypeError("input_key requires mapping-valued simplicial-complex nodes.")
-    if input_key not in graph.nodes:
-        raise KeyError(f"Graph nodes do not contain input_key {input_key!r}.")
-    return _as_array(f"nodes[{input_key!r}]", graph.nodes[input_key])
-
-
-def _edge_signs(graph: GraphIR, sign_key: str, /) -> jnp.ndarray:
-    if not isinstance(graph.edges, Mapping):
-        raise TypeError("SimplicialHodgeLaplacian requires mapping-valued graph edges.")
-    if sign_key not in graph.edges:
-        raise KeyError(f"Graph edges do not contain sign_key {sign_key!r}.")
-    return jnp.asarray(graph.edges[sign_key], dtype=jnp.float64).reshape((-1,))
-
-
-def _broadcast_weight(weight: jnp.ndarray, values: jnp.ndarray, /) -> jnp.ndarray:
-    while weight.ndim < values.ndim:
-        weight = jnp.expand_dims(weight, axis=-1)
-    return weight
-
-
-def _incidence_apply(
-    graph: GraphIR,
-    values: jnp.ndarray,
-    edge_type: int,
-    /,
-    *,
-    sign_key: str,
-    edge_type_key: str,
-) -> jnp.ndarray:
-    if graph.senders is None or graph.receivers is None:
-        raise ValueError("SimplicialHodgeLaplacian requires explicit senders/receivers.")
-    signs = _edge_signs(graph, sign_key)
-    incidence = graph.edge_relation(node_count=values.shape[0]).with_valid(
-        edge_type_ids(graph, type_key=edge_type_key) == int(edge_type)
-    )
-    return linear_apply(incidence, signs, values)
-
-
-def _mask_cell_type(
-    graph: GraphIR,
-    values: jnp.ndarray,
-    type_id: int,
-    /,
-    *,
-    node_type_key: str,
-) -> jnp.ndarray:
-    keep = node_type_ids(graph, type_key=node_type_key) == int(type_id)
-    if graph.node_mask is not None:
-        keep = keep & graph.node_mask
-    return values * _broadcast_weight(keep.astype(values.dtype), values)
-
-
-def _with_node_output(
-    graph: GraphIR, value: jnp.ndarray, output_key: str | None, /
-) -> Any:
-    if output_key is None:
-        return value
-    nodes = _as_feature_mapping(graph.nodes)
-    nodes[output_key] = value
-    return nodes
-
-
-class SimplicialHodgeLaplacian(StrictModule):
-    """Unweighted Hodge Laplacian on 0-, 1-, or 2-forms.
-
-    The operator reads a cell field from graph nodes and applies
-    `L_k = delta_{k+1} d_k + d_{k-1} delta_k` using signed incidence edges.
-    Results are written back to the selected cell degree; all other cells are
-    zero in the returned payload.
-    """
-
-    form_degree: FormDegree = eqx.field(static=True)
-    input_key: str | None = eqx.field(static=True)
-    output_key: str | None = eqx.field(static=True)
-    node_type_key: str = eqx.field(static=True)
-    edge_type_key: str = eqx.field(static=True)
-    sign_key: str = eqx.field(static=True)
-    vertex_type: int = eqx.field(static=True)
-    edge_type: int = eqx.field(static=True)
-    face_type: int = eqx.field(static=True)
-    vertex_to_edge_type: int = eqx.field(static=True)
-    edge_to_vertex_type: int = eqx.field(static=True)
-    edge_to_face_type: int = eqx.field(static=True)
-    face_to_edge_type: int = eqx.field(static=True)
-
-    def __init__(
-        self,
-        form_degree: FormDegree,
-        /,
-        *,
-        input_key: str | None = None,
-        output_key: str | None = None,
-        node_type_key: str = "type",
-        edge_type_key: str = "type",
-        sign_key: str = "incidence_sign",
-        vertex_type: int = 0,
-        edge_type: int = 1,
-        face_type: int = 2,
-        vertex_to_edge_type: int = 0,
-        edge_to_vertex_type: int = 1,
-        edge_to_face_type: int = 2,
-        face_to_edge_type: int = 3,
-    ) -> None:
-        self.form_degree = parse(form_degree, FormDegree, "form_degree")
-        self.input_key = input_key
-        self.output_key = output_key
-        self.node_type_key = str(node_type_key)
-        self.edge_type_key = str(edge_type_key)
-        self.sign_key = str(sign_key)
-        self.vertex_type = int(vertex_type)
-        self.edge_type = int(edge_type)
-        self.face_type = int(face_type)
-        self.vertex_to_edge_type = int(vertex_to_edge_type)
-        self.edge_to_vertex_type = int(edge_to_vertex_type)
-        self.edge_to_face_type = int(edge_to_face_type)
-        self.face_to_edge_type = int(face_to_edge_type)
-
-    def _d(self, graph: GraphIR, values: jnp.ndarray, edge_type: int, /) -> jnp.ndarray:
-        return _incidence_apply(
-            graph,
-            values,
-            edge_type,
-            sign_key=self.sign_key,
-            edge_type_key=self.edge_type_key,
-        )
-
-    def _delta(
-        self,
-        graph: GraphIR,
-        values: jnp.ndarray,
-        edge_type: int,
-        /,
-    ) -> jnp.ndarray:
-        return _incidence_apply(
-            graph,
-            values,
-            edge_type,
-            sign_key=self.sign_key,
-            edge_type_key=self.edge_type_key,
-        )
-
-    def __call__(self, graph: GraphIR) -> GraphIR:
-        graph = ensure_graph(graph, validate=False)
-        values = _node_field(graph, self.input_key)
-        num_cells = node_type_ids(graph, type_key=self.node_type_key).shape[0]
-        if values.shape[0] != num_cells:
-            raise ValueError(
-                "SimplicialHodgeLaplacian input leading axis must match graph cells."
-            )
-
-        if self.form_degree == 0:
-            x = _mask_cell_type(
-                graph,
-                values,
-                self.vertex_type,
-                node_type_key=self.node_type_key,
-            )
-            out = self._delta(
-                graph,
-                self._d(graph, x, self.vertex_to_edge_type),
-                self.edge_to_vertex_type,
-            )
-            out = _mask_cell_type(
-                graph, out, self.vertex_type, node_type_key=self.node_type_key
-            )
-        elif self.form_degree == 1:
-            x = _mask_cell_type(
-                graph,
-                values,
-                self.edge_type,
-                node_type_key=self.node_type_key,
-            )
-            lower = self._d(
-                graph,
-                self._delta(graph, x, self.edge_to_vertex_type),
-                self.vertex_to_edge_type,
-            )
-            upper = self._delta(
-                graph,
-                self._d(graph, x, self.edge_to_face_type),
-                self.face_to_edge_type,
-            )
-            out = _mask_cell_type(
-                graph,
-                lower + upper,
-                self.edge_type,
-                node_type_key=self.node_type_key,
-            )
-        else:
-            x = _mask_cell_type(
-                graph,
-                values,
-                self.face_type,
-                node_type_key=self.node_type_key,
-            )
-            out = self._d(
-                graph,
-                self._delta(graph, x, self.face_to_edge_type),
-                self.edge_to_face_type,
-            )
-            out = _mask_cell_type(
-                graph, out, self.face_type, node_type_key=self.node_type_key
-            )
-
-        return graph.replace(
-            nodes=_with_node_output(graph, out, self.output_key), validate=False
-        )
-
-
 __all__ = [
-    "FormDegree",
     "SimplicialComplexGraph",
-    "SimplicialHodgeLaplacian",
     "triangle_mesh_to_simplicial_graph",
 ]

@@ -22,6 +22,8 @@ import jax.random as jr
 import optax
 from jaxtyping import PyTree
 
+from phydrax.optim._adam import adam
+
 from ...._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ...._execution_runtime import ExecutionGroup
 from ...._fingerprint import canonical_fingerprint
@@ -1216,8 +1218,8 @@ def _resolve_operator_fit_optimizer(
     if optimizer is None:
         if learning_rate < 0.0:
             raise ValueError("learning_rate must be non-negative.")
-        optimizer = optax.adam(float(learning_rate))
-        resolved_optimizer_id = f"optax.adam:{float(learning_rate):.17g}"
+        optimizer = adam(float(learning_rate))
+        resolved_optimizer_id = f"phydrax.optim.adam:{float(learning_rate):.17g}"
     else:
         if not optimizer_id:
             raise ValueError("Custom optimizers require a stable optimizer_id.")

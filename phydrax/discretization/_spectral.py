@@ -7,9 +7,10 @@ from __future__ import annotations
 import hashlib
 import warnings
 from collections.abc import Sequence
-from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -28,6 +29,7 @@ from ..typing import parse
 
 if TYPE_CHECKING:
     from ..linalg import AbstractLinearOperator, TransformDiagonalRepresentation
+    from ..linalg.eigen import EigenSolveResult
 
 
 ModalTransformKind: TypeAlias = Literal["fourier", "sine", "cosine", "legendre"]
@@ -114,12 +116,46 @@ def _byte_limit(value: int, /, *, estimate: int, context: str) -> int:
     return limit
 
 
+def _modal_metric(
+    synthesis: np.ndarray,
+    weights: np.ndarray | None,
+    metric: AbstractLinearOperator | None,
+    /,
+) -> tuple[AbstractLinearOperator, np.ndarray]:
+    from ..linalg import AbstractLinearOperator, DiagonalLinearOperator
+
+    if metric is not None and weights is not None:
+        raise ValueError("Supply quadrature_weights or analysis_metric, not both.")
+    if metric is None:
+        if weights is None:
+            raise TypeError(
+                "A modal transform requires quadrature_weights or analysis_metric."
+            )
+        metric = DiagonalLinearOperator(weights)
+        return metric, weights[:, None] * synthesis
+    if not isinstance(metric, AbstractLinearOperator):
+        raise TypeError("analysis_metric must be an AbstractLinearOperator.")
+    points = synthesis.shape[0]
+    if metric.source.size != points or metric.target.size != points or metric.batch_shape:
+        raise ValueError(
+            "analysis_metric must be an unbatched square operator on modal coordinates."
+        )
+    weighted = np.asarray(
+        jax.vmap(metric.mv, in_axes=1, out_axes=1)(jnp.asarray(synthesis))
+    )
+    if weighted.shape != synthesis.shape or np.any(~np.isfinite(weighted)):
+        raise ValueError("analysis_metric must return finite modal coordinate vectors.")
+    return metric, weighted
+
+
+@final
 class ModalTransform(StrictModule, NonTrainableState):
     """Weighted analysis/synthesis transform independent of any operator."""
 
     analysis: Array
     synthesis: Array
-    quadrature_weights: Array
+    quadrature_weights: Array | None
+    analysis_metric: AbstractLinearOperator
     active_mask: Array
     mode_ids: tuple[str, ...] = eqx.field(static=True)
     orthonormality_residual: float = eqx.field(static=True)
@@ -129,22 +165,27 @@ class ModalTransform(StrictModule, NonTrainableState):
         self,
         analysis: ArrayLike,
         synthesis: ArrayLike,
-        quadrature_weights: ArrayLike,
+        quadrature_weights: ArrayLike | None = None,
         /,
         *,
         active_mask: ArrayLike | None = None,
         mode_ids: Sequence[str] | None = None,
         transform_id: str | None = None,
+        analysis_metric: AbstractLinearOperator | None = None,
     ) -> None:
         analysis_host = np.asarray(analysis)
         synthesis_host = np.asarray(synthesis)
-        weights_host = np.asarray(quadrature_weights, dtype=np.float64).reshape((-1,))
+        weights_host = (
+            None
+            if quadrature_weights is None
+            else np.asarray(quadrature_weights, dtype=np.float64).reshape((-1,))
+        )
         if analysis_host.ndim != 2 or synthesis_host.ndim != 2:
             raise ValueError("Modal transforms require rank-2 analysis and synthesis.")
         mode_count, point_count = analysis_host.shape
         if synthesis_host.shape != (point_count, mode_count):
             raise ValueError("Analysis and synthesis shapes must be exact transposes.")
-        if weights_host.shape != (point_count,):
+        if weights_host is not None and weights_host.shape != (point_count,):
             raise ValueError("quadrature_weights must contain one value per point.")
         active = (
             np.ones((point_count,), dtype=np.bool_)
@@ -156,11 +197,16 @@ class ModalTransform(StrictModule, NonTrainableState):
         if (
             np.any(~np.isfinite(analysis_host))
             or np.any(~np.isfinite(synthesis_host))
-            or np.any(~np.isfinite(weights_host[active]))
-            or np.any(weights_host[active] <= 0.0)
+            or (
+                weights_host is not None
+                and (
+                    np.any(~np.isfinite(weights_host[active]))
+                    or np.any(weights_host[active] <= 0.0)
+                )
+            )
         ):
             raise ValueError("Active modal transforms and weights must be finite.")
-        if np.any(weights_host[~active] != 0.0):
+        if weights_host is not None and np.any(weights_host[~active] != 0.0):
             raise ValueError("Inactive modal weights must be zero.")
         if np.any(synthesis_host[~active] != 0.0) or np.any(
             analysis_host[:, ~active] != 0.0
@@ -177,15 +223,22 @@ class ModalTransform(StrictModule, NonTrainableState):
             or len(set(modes)) != mode_count
         ):
             raise ValueError("mode_ids must contain one unique non-empty ID per mode.")
-        gram = synthesis_host.conj().T @ (weights_host[:, None] * synthesis_host)
-        residual = float(np.max(np.abs(gram - np.eye(mode_count))))
+        metric, weighted = _modal_metric(synthesis_host, weights_host, analysis_metric)
+        if analysis_metric is not None and not np.allclose(
+            analysis_host, weighted.conj().T, rtol=0.0, atol=1e-8
+        ):
+            raise ValueError(
+                "Modal analysis must be the synthesis adjoint under analysis_metric."
+            )
+        gram = synthesis_host.conj().T @ weighted
+        residual = float(np.max(np.abs(gram - np.eye(mode_count)), initial=0.0))
         identifier = (
             canonical_fingerprint(
                 {
                     "kind": "modal-transform",
                     "analysis": array_tree_fingerprint(analysis_host),
                     "synthesis": array_tree_fingerprint(synthesis_host),
-                    "weights": array_tree_fingerprint(weights_host),
+                    "metric": metric.operator_id,
                     "active": array_tree_fingerprint(active),
                     "mode_ids": list(modes),
                 }
@@ -197,7 +250,10 @@ class ModalTransform(StrictModule, NonTrainableState):
             raise ValueError("transform_id must be non-empty.")
         self.analysis = jnp.asarray(analysis_host)
         self.synthesis = jnp.asarray(synthesis_host)
-        self.quadrature_weights = jnp.asarray(weights_host)
+        self.quadrature_weights = (
+            None if weights_host is None else jnp.asarray(weights_host)
+        )
+        self.analysis_metric = metric
         self.active_mask = jnp.asarray(active)
         self.mode_ids = modes
         self.orthonormality_residual = residual
@@ -497,6 +553,7 @@ class TensorModalTransform(StrictModule, NonTrainableState):
         return result
 
 
+@final
 class SpectralDecomposition(StrictModule, NonTrainableState):
     """Convenience pairing of an independent modal transform and operator spectrum."""
 
@@ -506,9 +563,11 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
     synthesis: Array
     eigenvalues: Array
     group_ids: Array
-    quadrature_weights: Array
+    quadrature_weights: Array | None
+    analysis_metric: AbstractLinearOperator
     active_mask: Array
     report: LaplacianEigenbasisReport | None
+    eigen_solve: EigenSolveResult | None
     spectral_dimension: float | None = eqx.field(static=True)
     index_offset: int = eqx.field(static=True)
     decomposition_id: str = eqx.field(static=True)
@@ -523,16 +582,23 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         eigenvalues: Any | None = None,
         group_ids: Any | None = None,
         quadrature_weights: Any | None = None,
+        analysis_metric: AbstractLinearOperator | None = None,
         decomposition_id: str,
         active_mask: Any | None = None,
         spectral_dimension: float | None = None,
         index_offset: int = 0,
         report: LaplacianEigenbasisReport | None = None,
+        eigen_solve: EigenSolveResult | None = None,
         mode_ids: Sequence[str] | None = None,
         negative_eigenvalue_tolerance: float = 1e-10,
         orthonormality_tolerance: float = 1e-8,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
     ) -> None:
+        if eigen_solve is not None:
+            from ..linalg.eigen import EigenSolveResult
+
+            if not isinstance(eigen_solve, EigenSolveResult):
+                raise TypeError("eigen_solve must be an EigenSolveResult or None.")
         legacy = bool(eigenbasis)
         if legacy:
             if len(eigenbasis) != 3:
@@ -548,6 +614,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                     eigenvalues,
                     group_ids,
                     quadrature_weights,
+                    analysis_metric,
                 )
             ):
                 raise TypeError(
@@ -568,22 +635,27 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                     synthesis,
                     eigenvalues,
                     group_ids,
-                    quadrature_weights,
                 )
             ):
                 raise TypeError(
                     "Transform construction requires analysis, synthesis, eigenvalues, "
-                    "group_ids, and quadrature_weights."
+                    "group_ids, and quadrature_weights or analysis_metric."
                 )
-            analysis_host = np.asarray(analysis, dtype=np.float64)
-            synthesis_host = np.asarray(synthesis, dtype=np.float64)
+            analysis_host = np.asarray(analysis)
+            synthesis_host = np.asarray(synthesis)
             eigenvalues_host = np.asarray(eigenvalues, dtype=np.float64).reshape((-1,))
             groups_host = np.asarray(group_ids, dtype=np.int32).reshape((-1,))
-            quadrature_host = np.asarray(quadrature_weights, dtype=np.float64).reshape(
-                (-1,)
+            quadrature_host = (
+                None
+                if quadrature_weights is None
+                else np.asarray(quadrature_weights, dtype=np.float64).reshape((-1,))
             )
         modes = eigenvalues_host.size
-        points = quadrature_host.size
+        if synthesis_host.ndim != 2:
+            raise ValueError("Synthesis must have shape (coordinate, mode).")
+        points = synthesis_host.shape[0]
+        if quadrature_host is not None and quadrature_host.shape != (points,):
+            raise ValueError("quadrature_weights must contain one value per coordinate.")
         active = (
             np.ones((points,), dtype=np.bool_)
             if active_mask is None
@@ -601,6 +673,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                 quadrature_host,
                 active,
             )
+            if value is not None
         )
         _byte_limit(
             max_construction_bytes,
@@ -626,7 +699,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             np.any(~np.isfinite(analysis_host))
             or np.any(~np.isfinite(synthesis_host))
             or np.any(~np.isfinite(eigenvalues_host))
-            or np.any(~np.isfinite(quadrature_host))
+            or (quadrature_host is not None and np.any(~np.isfinite(quadrature_host)))
         ):
             raise ValueError(
                 "Spectral transforms, eigenvalues, and weights must be finite."
@@ -639,9 +712,9 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             raise ValueError("eigenvalues contain a materially negative value.")
         if np.any(np.diff(eigenvalues_host) < 0.0):
             raise ValueError("eigenvalues must be sorted nondecreasingly.")
-        if np.any(quadrature_host[active] <= 0.0):
+        if quadrature_host is not None and np.any(quadrature_host[active] <= 0.0):
             raise ValueError("Active spectral points require positive measure.")
-        if np.any(quadrature_host[~active] != 0.0):
+        if quadrature_host is not None and np.any(quadrature_host[~active] != 0.0):
             raise ValueError("Inactive spectral points must have zero measure.")
         if np.any(synthesis_host[~active] != 0.0):
             raise ValueError("Inactive eigenfunction rows must be zero.")
@@ -652,9 +725,27 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             0.0,
             eigenvalues_host,
         )
-        gram = synthesis_host.T @ (quadrature_host[:, None] * synthesis_host)
-        residual = float(np.max(np.abs(gram - np.eye(modes))))
+        modes_ = (
+            tuple(f"mode:{int(index_offset) + index}" for index in range(modes))
+            if mode_ids is None
+            else tuple(str(value) for value in mode_ids)
+        )
+        transform = ModalTransform(
+            analysis_host,
+            synthesis_host,
+            quadrature_host,
+            analysis_metric=analysis_metric,
+            active_mask=active,
+            mode_ids=modes_,
+        )
+        residual = transform.orthonormality_residual
+        if analysis_metric is not None and residual > orthogonality_tolerance:
+            raise ValueError("Eigenfunctions are not orthonormal under analysis_metric.")
         if legacy:
+            if quadrature_host is None:
+                raise ValueError(
+                    "A positional eigenbasis requires a probability measure."
+                )
             if not np.isclose(
                 np.sum(quadrature_host),
                 1.0,
@@ -725,24 +816,6 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Finite next-eigenvalue provenance must follow the spectrum."
                     )
-        modes_ = (
-            tuple(f"mode:{offset + index}" for index in range(modes))
-            if mode_ids is None
-            else tuple(str(value) for value in mode_ids)
-        )
-        if (
-            len(modes_) != modes
-            or any(not value for value in modes_)
-            or len(set(modes_)) != modes
-        ):
-            raise ValueError("mode_ids must contain one unique non-empty ID per mode.")
-        transform = ModalTransform(
-            analysis_host,
-            synthesis_host,
-            quadrature_host,
-            active_mask=active,
-            mode_ids=modes_,
-        )
         spectrum = OperatorSpectrum(
             transform,
             "laplacian",
@@ -760,8 +833,10 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         self.eigenvalues = spectrum.modal_values
         self.group_ids = spectrum.group_ids
         self.quadrature_weights = transform.quadrature_weights
+        self.analysis_metric = transform.analysis_metric
         self.active_mask = transform.active_mask
         self.report = spectrum.report
+        self.eigen_solve = eigen_solve
         self.spectral_dimension = spectrum.spectral_dimension
         self.index_offset = spectrum.index_offset
         self.decomposition_id = identifier
@@ -827,6 +902,10 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
 
     @property
     def probability_measure(self) -> Array:
+        if self.quadrature_weights is None:
+            raise ValueError(
+                "An operator Gram metric has no pointwise probability measure."
+            )
         return self.quadrature_weights
 
     @property

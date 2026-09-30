@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 from itertools import combinations
+from math import prod
+from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -15,12 +18,24 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..sparse import EdgeRelation, SparseLinearMap
-from ._cochain import CochainBoundaryKind, CochainDiscretization
+from ..exterior._complex import ComplexBoundary
+from ..exterior._form_type import FormTwist
+from ..linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
+    HilbertComplex,
+    HodgeLaplacianPart,
+    OperatorCapabilities,
+    OperatorProperties,
+)
+from ._cell_complex import cubical_cell_complex, CubicalCellComplex
+from ._cell_de_rham import AbstractCellDeRhamComplex
+from ._cochain import CochainDiscretization, DiagonalHodge
 from ._tensor_support import PreparedTensorGrid
-from ._topology import CellComplexTopology, EntitySet, OrientedIncidence
+from ._topology import CellComplexTopology
 
 
+@final
 class StructuredCochainResourcePolicy(StrictModule):
     """Host-preparation limits for combinatorial cubical cochains."""
 
@@ -51,15 +66,139 @@ class StructuredCochainResourcePolicy(StrictModule):
         self.maximum_preparation_bytes = maximum_preparation_bytes
 
 
-class StructuredCochainBridge(StrictModule, NonTrainableState):
+@final
+class StructuredDifferentialOperator(AbstractLinearOperator):
+    """Prepared cubical incidence action using tensor slices rather than routes."""
+
+    source: ArraySpace
+    target: ArraySpace
+    source_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    target_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    source_offsets: tuple[int, ...] = eqx.field(static=True)
+    target_offsets: tuple[int, ...] = eqx.field(static=True)
+    terms: tuple[tuple[tuple[int, int, int], ...], ...] = eqx.field(static=True)
+    periodic: tuple[bool, ...] = eqx.field(static=True)
+    axis: int | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        product: CubicalCellComplex,
+        degree: int,
+        /,
+        *,
+        source: ArraySpace,
+        target: ArraySpace,
+        axis: int | None = None,
+    ) -> None:
+        if degree < 0 or degree >= len(product.shape):
+            raise ValueError("Structured differential degree is invalid.")
+        if axis is not None and (axis < 0 or axis >= len(product.shape)):
+            raise ValueError("Structured differential axis is invalid.")
+        source_orientations = product.orientations[degree]
+        targets = product.orientations[degree + 1]
+        terms = tuple(
+            tuple(
+                (
+                    source_orientations.index(
+                        tuple(a for a in orientation if a != direction)
+                    ),
+                    direction,
+                    -1 if position % 2 else 1,
+                )
+                for position, direction in enumerate(orientation)
+                if axis is None or axis == direction
+            )
+            for orientation in targets
+        )
+        source_shapes = product.orientation_shapes[degree]
+        target_shapes = product.orientation_shapes[degree + 1]
+        if source.shape != (sum(prod(shape) for shape in source_shapes),):
+            raise ValueError("Structured differential source shape is invalid.")
+        if target.shape != (sum(prod(shape) for shape in target_shapes),):
+            raise ValueError("Structured differential target shape is invalid.")
+        self.source = source
+        self.target = target
+        self.source_shapes = source_shapes
+        self.target_shapes = target_shapes
+        self.source_offsets = product.orientation_offsets[degree]
+        self.target_offsets = product.orientation_offsets[degree + 1]
+        self.terms = terms
+        self.periodic = product.periodic
+        self.axis = axis
+        self.batch_shape = ()
+        self.properties = OperatorProperties()
+        self.capabilities = OperatorCapabilities(
+            transpose=True, adjoint=True, materialize=True
+        )
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "structured-differential",
+                "topology": product.topology.topology_id,
+                "degree": degree,
+                "axis": axis,
+            }
+        )
+
+    def mv(self, vector: ArrayLike, /) -> Array:
+        value = self.source.validate(jnp.asarray(vector))
+        components = tuple(
+            value[offset : offset + prod(shape)].reshape(shape)
+            for shape, offset in zip(self.source_shapes, self.source_offsets, strict=True)
+        )
+        output = []
+        for shape, terms in zip(self.target_shapes, self.terms, strict=True):
+            component = jnp.zeros(shape, dtype=value.dtype)
+            for block, axis, sign in terms:
+                source = components[block]
+                if self.periodic[axis]:
+                    difference = jnp.roll(source, -1, axis=axis) - source
+                else:
+                    lower = [slice(None)] * source.ndim
+                    upper = [slice(None)] * source.ndim
+                    lower[axis] = slice(0, -1)
+                    upper[axis] = slice(1, None)
+                    difference = source[tuple(upper)] - source[tuple(lower)]
+                component = component + sign * difference
+            output.append(component.reshape((-1,)))
+        return jnp.concatenate(tuple(output))
+
+    def transpose_mv(self, vector: ArrayLike, /) -> Array:
+        value = self.target.validate(jnp.asarray(vector))
+        output = [jnp.zeros(shape, dtype=value.dtype) for shape in self.source_shapes]
+        for shape, offset, terms in zip(
+            self.target_shapes, self.target_offsets, self.terms, strict=True
+        ):
+            component = value[offset : offset + prod(shape)].reshape(shape)
+            for block, axis, sign in terms:
+                if self.periodic[axis]:
+                    difference = jnp.roll(component, 1, axis=axis) - component
+                else:
+                    lower = [(0, 0)] * component.ndim
+                    upper = [(0, 0)] * component.ndim
+                    lower[axis] = (0, 1)
+                    upper[axis] = (1, 0)
+                    difference = jnp.pad(component, upper) - jnp.pad(component, lower)
+                output[block] = output[block] + sign * difference
+        return jnp.concatenate(tuple(component.reshape((-1,)) for component in output))
+
+    def adjoint_mv(self, vector: ArrayLike, /) -> Array:
+        return self.source.inverse_riesz(self.transpose_mv(self.target.riesz(vector)))
+
+    def _materialize(self, /) -> Array:
+        return jax.vmap(self.mv)(jnp.eye(self.source.size, dtype=self.source.dtype)).T
+
+
+@final
+class StructuredCochainBridge(AbstractCellDeRhamComplex, NonTrainableState):
     """Cartesian tensor entities assembled into one oriented cubical cochain complex."""
 
     grid: PreparedTensorGrid
     cochain: CochainDiscretization
+    product: CubicalCellComplex
     orientations: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     orientation_shapes: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     orientation_offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    directional_signs: tuple[tuple[Array, ...], ...]
+    directional_differentials: tuple[tuple[StructuredDifferentialOperator, ...], ...]
     bridge_id: str = eqx.field(static=True)
     resource_policy: StructuredCochainResourcePolicy = eqx.field(static=True)
     entity_counts: tuple[int, ...] = eqx.field(static=True)
@@ -109,10 +248,12 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         )
         coordinate_values = dimension * total_entities
         preparation_bytes = (
-            coordinate_values * np.dtype(np.float64).itemsize
-            + total_entities * (3 * np.dtype(np.float64).itemsize + 1)
+            coordinate_values
+            * (np.dtype(np.float64).itemsize + np.dtype(np.int32).itemsize)
+            + total_entities
+            * (3 * np.dtype(np.float64).itemsize + np.dtype(np.int64).itemsize + 1)
             + incidence_route_count
-            * (2 * np.dtype(np.int32).itemsize + np.dtype(np.float64).itemsize)
+            * (3 * np.dtype(np.int32).itemsize + np.dtype(np.float64).itemsize)
         )
         if total_entities > resource_policy.maximum_entities:
             raise ValueError(
@@ -137,23 +278,19 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                 f"required {preparation_bytes}, "
                 f"allowed {resource_policy.maximum_preparation_bytes}."
             )
-        shapes = []
-        offsets = []
-        entity_sets = []
+        product = cubical_cell_complex(
+            tuple(axis.point_coordinates.size for axis in grid.structured_axes),
+            periodic=tuple(axis.periodic for axis in grid.structured_axes),
+        )
         coordinates = []
         primal_measures = []
         dual_measures = []
         boundary_masks = []
-        index_maps = []
         for degree, degree_orientations in enumerate(orientation_values):
-            degree_shapes = []
-            degree_offsets = []
             coordinate_parts = []
             primal_parts = []
             dual_parts = []
             boundary_parts = []
-            index_map = {}
-            offset = 0
             for orientation in degree_orientations:
                 shape = tuple(
                     grid.structured_axes[axis].interval_centers.size
@@ -161,8 +298,6 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                     else grid.structured_axes[axis].point_coordinates.size
                     for axis in range(dimension)
                 )
-                degree_shapes.append(shape)
-                degree_offsets.append(offset)
                 mesh = np.meshgrid(
                     *tuple(
                         np.asarray(
@@ -177,15 +312,17 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                 coordinate_parts.append(
                     np.stack(tuple(value.reshape((-1,)) for value in mesh), axis=-1)
                 )
-                primal = np.ones(shape)
-                dual = np.ones(shape)
+                primal = np.ones(shape, dtype=np.float64)
+                dual = np.ones(shape, dtype=np.float64)
                 boundary = np.zeros(shape, dtype=np.bool_)
                 for axis in range(dimension):
                     structured_axis = grid.structured_axes[axis]
                     if axis in orientation:
                         measure = np.asarray(structured_axis.interval_widths)
                     else:
-                        measure = np.ones(structured_axis.point_coordinates.shape)
+                        measure = np.ones(
+                            structured_axis.point_coordinates.shape, dtype=np.float64
+                        )
                         dual_measure = np.asarray(structured_axis.point_measures)
                         reshape = [1] * dimension
                         reshape[axis] = dual_measure.size
@@ -200,116 +337,56 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                     reshape = [1] * dimension
                     reshape[axis] = measure.size
                     primal = primal * measure.reshape(reshape)
-                count = int(np.prod(shape))
-                for local, index in enumerate(np.ndindex(*shape)):
-                    index_map[(orientation, index)] = offset + local
-                offset += count
                 primal_parts.append(primal.reshape((-1,)))
                 dual_parts.append(dual.reshape((-1,)))
                 boundary_parts.append(boundary.reshape((-1,)))
-            shapes.append(tuple(degree_shapes))
-            offsets.append(tuple(degree_offsets))
-            count = offset
-            entity_sets.append(
-                EntitySet(
-                    f"structured_{degree}_cells",
-                    degree,
-                    np.arange(count, dtype=np.int64),
-                )
-            )
             coordinates.append(jnp.asarray(np.concatenate(coordinate_parts, axis=0)))
             primal_measures.append(jnp.asarray(np.concatenate(primal_parts)))
             dual_measures.append(jnp.asarray(np.concatenate(dual_parts)))
             boundary_masks.append(jnp.asarray(np.concatenate(boundary_parts)))
-            index_maps.append(index_map)
-        incidences = []
-        directional_signs = []
-        for degree in range(1, dimension + 1):
-            source_indices = []
-            target_indices = []
-            signs = []
-            route_axes = []
-            for orientation in orientation_values[degree]:
-                shape = shapes[degree][orientation_values[degree].index(orientation)]
-                for upper_index in np.ndindex(*shape):
-                    target = index_maps[degree][(orientation, upper_index)]
-                    for position, axis in enumerate(orientation):
-                        lower_orientation = tuple(
-                            value for value in orientation if value != axis
-                        )
-                        lower_index = list(upper_index)
-                        lower_index[axis] = upper_index[axis]
-                        upper_boundary_index = list(upper_index)
-                        lower_shape = shapes[degree - 1][
-                            orientation_values[degree - 1].index(lower_orientation)
-                        ]
-                        upper_boundary_index[axis] = (
-                            (upper_index[axis] + 1) % lower_shape[axis]
-                            if grid.structured_axes[axis].periodic
-                            else upper_index[axis] + 1
-                        )
-                        orientation_sign = -1.0 if position % 2 else 1.0
-                        source_indices.extend(
-                            (
-                                index_maps[degree - 1][
-                                    (lower_orientation, tuple(lower_index))
-                                ],
-                                index_maps[degree - 1][
-                                    (lower_orientation, tuple(upper_boundary_index))
-                                ],
-                            )
-                        )
-                        target_indices.extend((target, target))
-                        signs.extend((-orientation_sign, orientation_sign))
-                        route_axes.extend((axis, axis))
-            relation = EdgeRelation(
-                np.asarray(source_indices, dtype=np.int32),
-                np.asarray(target_indices, dtype=np.int32),
-                source_size=entity_sets[degree - 1].count,
-                target_size=entity_sets[degree].count,
-            )
-            incidences.append(
-                OrientedIncidence(
-                    degree,
-                    entity_sets[degree - 1],
-                    entity_sets[degree],
-                    relation,
-                    np.asarray(signs),
-                )
-            )
-            route_axes_array = np.asarray(route_axes, dtype=np.int32)
-            signs_array = np.asarray(signs)
-            directional_signs.append(
-                tuple(
-                    jnp.asarray(np.where(route_axes_array == axis, signs_array, 0.0))
-                    for axis in range(dimension)
-                )
-            )
-        topology = CellComplexTopology(entity_sets, incidences)
         hodge = tuple(
-            dual / primal
+            DiagonalHodge(dual / primal)
             for dual, primal in zip(dual_measures, primal_measures, strict=True)
         )
+        spaces = tuple(
+            ArraySpace((count,), dtype=coordinates[degree].dtype)
+            for degree, count in enumerate(entity_counts)
+        )
+        differentials = tuple(
+            StructuredDifferentialOperator(
+                product, degree, source=spaces[degree], target=spaces[degree + 1]
+            )
+            for degree in range(dimension)
+        )
+        directional_differentials = tuple(
+            tuple(
+                StructuredDifferentialOperator(
+                    product,
+                    degree,
+                    source=spaces[degree],
+                    target=spaces[degree + 1],
+                    axis=axis,
+                )
+                for axis in range(dimension)
+            )
+            for degree in range(dimension)
+        )
         cochain = CochainDiscretization(
-            topology,
+            product.topology,
             hodge,
             primal_measures=primal_measures,
             dual_measures=dual_measures,
             boundary_masks=boundary_masks,
             coordinates=coordinates,
-            plan_id=canonical_fingerprint(
-                {
-                    "kind": "structured-cochain-plan",
-                    "grid": grid.prepared_id,
-                }
-            ),
+            differentials=differentials,
         )
         self.grid = grid
         self.cochain = cochain
+        self.product = product
         self.orientations = orientation_values
-        self.orientation_shapes = tuple(shapes)
-        self.orientation_offsets = tuple(offsets)
-        self.directional_signs = tuple(directional_signs)
+        self.orientation_shapes = product.orientation_shapes
+        self.orientation_offsets = product.orientation_offsets
+        self.directional_differentials = directional_differentials
         self.resource_policy = resource_policy
         self.entity_counts = entity_counts
         self.incidence_route_count = incidence_route_count
@@ -325,6 +402,38 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
     @property
     def dimension(self) -> int:
         return len(self.grid.shape)
+
+    @property
+    def topology(self) -> CellComplexTopology:
+        return self.cochain.topology
+
+    @property
+    def boundary_masks(self) -> tuple[Array, ...]:
+        return self.cochain.boundary_masks
+
+    @property
+    def realization_id(self) -> str:
+        return self.bridge_id
+
+    @property
+    def primal_twist(self) -> FormTwist:
+        return self.cochain.primal_twist
+
+    def hilbert_complex(
+        self, /, *, boundary: ComplexBoundary = "absolute"
+    ) -> HilbertComplex:
+        return self.cochain.hilbert_complex(boundary=boundary)
+
+    def active_indices(
+        self, degree: int, /, *, boundary: ComplexBoundary = "absolute"
+    ) -> Array:
+        return self.cochain.active_indices(degree, boundary=boundary)
+
+    def hodge_star(self, degree: int, values: ArrayLike, /) -> Array:
+        return self.cochain.hodge_star(degree, values)
+
+    def inverse_hodge_star(self, degree: int, values: ArrayLike, /) -> Array:
+        return self.cochain.inverse_hodge_star(degree, values)
 
     def pack(self, degree: int, components: tuple[ArrayLike, ...], /) -> Array:
         degree_ = int(degree)
@@ -343,6 +452,8 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
 
     def unpack(self, degree: int, values: ArrayLike, /) -> tuple[Array, ...]:
         degree_ = int(degree)
+        if degree_ < 0 or degree_ > self.dimension:
+            raise ValueError("Cochain degree is outside the structured dimension.")
         value = jnp.asarray(values)
         expected = self.cochain.cell_counts[degree_]
         if value.shape != (expected,):
@@ -362,22 +473,39 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         values = tuple(jnp.asarray(component) for component in components)
         if self.dimension == 1:
             return self.pack(0, values)
-        if self.dimension == 2:
-            bx, by = values
-            measure_x, measure_y = self.unpack(1, self.cochain.primal_measures[1])
-            return self.pack(1, (-by * measure_x, bx * measure_y))
-        bx, by, bz = values
-        return self.pack_face_flux((bx, by, bz))
+        degree = self.dimension - 1
+        measures = self.unpack(degree, self.cochain.primal_measures[degree])
+        normal_axes = tuple(
+            next(axis for axis in range(self.dimension) if axis not in orientation)
+            for orientation in self.orientations[degree]
+        )
+        return self.pack(
+            degree,
+            tuple(
+                (-values[axis] if axis % 2 else values[axis]) * measure
+                for axis, measure in zip(normal_axes, measures, strict=True)
+            ),
+        )
 
     def unpack_normal_flux(self, values: ArrayLike, /) -> tuple[Array, ...]:
         """Recover Cartesian normal fields from codimension-one flux integrals."""
         if self.dimension == 1:
             return self.unpack(0, values)
-        if self.dimension == 2:
-            flux_x, flux_y = self.unpack(1, values)
-            measure_x, measure_y = self.unpack(1, self.cochain.primal_measures[1])
-            return (flux_y / measure_y, -flux_x / measure_x)
-        return self.unpack_face_flux(values)
+        degree = self.dimension - 1
+        fluxes = self.unpack(degree, values)
+        measures = self.unpack(degree, self.cochain.primal_measures[degree])
+        normal_blocks = tuple(
+            self.orientations[degree].index(
+                tuple(
+                    direction for direction in range(self.dimension) if direction != axis
+                )
+            )
+            for axis in range(self.dimension)
+        )
+        return tuple(
+            (-fluxes[block] if axis % 2 else fluxes[block]) / measures[block]
+            for axis, block in enumerate(normal_blocks)
+        )
 
     def pack_electromotive(
         self,
@@ -481,12 +609,12 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         values: ArrayLike,
         /,
         *,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> Array:
         return self.cochain.exterior_derivative(
             degree,
             values,
-            boundary_policy=boundary_policy,
+            boundary=boundary,
         )
 
     def directional_exterior_derivative(
@@ -496,7 +624,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         axis: int,
         /,
         *,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> Array:
         degree_ = int(degree)
         axis_ = int(axis)
@@ -504,28 +632,16 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             raise ValueError("Directional exterior derivative degree is invalid.")
         if axis_ < 0 or axis_ >= self.dimension:
             raise ValueError("Directional exterior derivative axis is invalid.")
-        _, value = self.cochain._values(degree_, values)
+        value = self.cochain._values(degree_, values)
         source = jnp.where(
-            self.cochain.active_mask(degree_, boundary_policy),
+            self.cochain.active_mask(degree_, boundary),
             value,
             0,
         )
-        incidence = self.cochain.topology.incidences[degree_]
-        operator = SparseLinearMap(
-            incidence.relation,
-            self.directional_signs[degree_][axis_],
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "directional-exterior-derivative",
-                    "bridge": self.bridge_id,
-                    "degree": degree_,
-                    "axis": axis_,
-                }
-            ),
-        )
+        operator = self.directional_differentials[degree_][axis_]
         output = operator.mv(source)
         return jnp.where(
-            self.cochain.active_mask(degree_ + 1, boundary_policy),
+            self.cochain.active_mask(degree_ + 1, boundary),
             output,
             0,
         )
@@ -536,13 +652,24 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         values: ArrayLike,
         /,
         *,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> Array:
         return self.cochain.codifferential(
             degree,
             values,
-            boundary_policy=boundary_policy,
+            boundary=boundary,
         )
+
+    def hodge_laplacian(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary: ComplexBoundary = "absolute",
+        part: HodgeLaplacianPart = "complete",
+    ) -> Array:
+        return self.cochain.hodge_laplacian(degree, values, boundary=boundary, part=part)
 
     def directional_codifferential(
         self,
@@ -551,7 +678,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         axis: int,
         /,
         *,
-        boundary_policy: CochainBoundaryKind = "absolute",
+        boundary: ComplexBoundary = "absolute",
     ) -> Array:
         degree_ = int(degree)
         axis_ = int(axis)
@@ -559,49 +686,27 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             raise ValueError("Directional codifferential degree is invalid.")
         if axis_ < 0 or axis_ >= self.dimension:
             raise ValueError("Directional codifferential axis is invalid.")
-        _, value = self.cochain._values(degree_, values)
+        value = self.cochain._values(degree_, values)
         source = jnp.where(
-            self.cochain.active_mask(degree_, boundary_policy),
+            self.cochain.active_mask(degree_, boundary),
             value,
             0,
         )
-        weighted = self.cochain.apply_hodge(degree_, source)
-        incidence = self.cochain.topology.incidences[degree_ - 1]
-        operator = SparseLinearMap(
-            incidence.relation,
-            self.directional_signs[degree_ - 1][axis_],
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "directional-codifferential-boundary",
-                    "bridge": self.bridge_id,
-                    "degree": degree_,
-                    "axis": axis_,
-                }
-            ),
-        )
-        output = self.cochain.solve_hodge(
+        weighted = self.cochain.hodge_star(degree_, source)
+        operator = self.directional_differentials[degree_ - 1][axis_]
+        output = self.cochain.inverse_hodge_star(
             degree_ - 1,
             operator.transpose_mv(weighted),
         )
         return jnp.where(
-            self.cochain.active_mask(degree_ - 1, boundary_policy),
+            self.cochain.active_mask(degree_ - 1, boundary),
             output,
             0,
         )
 
-    def laplace_de_rham(
-        self,
-        degree: int,
-        values: ArrayLike,
-        /,
-        *,
-        boundary_policy: CochainBoundaryKind = "absolute",
-    ) -> Array:
-        return self.cochain.laplace_de_rham(
-            degree,
-            values,
-            boundary_policy=boundary_policy,
-        )
 
-
-__all__ = ["StructuredCochainBridge"]
+__all__ = [
+    "StructuredCochainResourcePolicy",
+    "StructuredDifferentialOperator",
+    "StructuredCochainBridge",
+]
