@@ -718,6 +718,22 @@ decision, host evaluation and restore counts, and the host evidence IDs (the FMI
 session artifact). `examples/fmi_host_coupling.py` couples a compiled FMU zone to a
 native node on both routes.
 
+## Meshfree bulk–surface windows
+
+`MeshfreeComponent` publishes native point-cloud or intrinsic-surface
+reconstruction and capacity without pretending to have a facet trace.
+`SurfaceExchangeLaw` pairs a complete constant-reproducing bulk query with its
+exact coordinate transpose, preserving bulk loss and surface gain.
+`MeshfreeBulkSurfaceMethod` composes the existing conservative Langmuir solver
+with a positive deposition route and binds `FixedStepCouplingParticipant`.
+
+Host window boundaries relocate moving surface queries. Their sites remain
+frozen within the window; displacement, lag, and conservation are reported.
+No within-window geometry derivative is implied. A topology epoch separately
+transfers extensive histories atomically through native lifecycle owners.
+See [Meshfree solvers](guides_meshfree.md#bulk-surface-exchange) and
+`examples/meshfree_bulk_surface_exchange.py`.
+
 ## Statuses
 
 | Status | Meaning |

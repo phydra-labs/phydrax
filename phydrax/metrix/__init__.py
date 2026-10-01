@@ -33,6 +33,7 @@ from ._adm_geometry import (
 )
 from ._ambient import (
     ImmersedRiemannianManifoldAdapter,
+    LevelSetNormalProjectionResult,
     ManifoldTangentMeasureEvidence,
     RegularLevelSetManifold,
     RiemannianMapMeasureEvidence,
@@ -448,6 +449,7 @@ __all__ = [
     "level_set_graph_candidate",
     "prepare_atlas",
     "ImmersedRiemannianManifoldAdapter",
+    "LevelSetNormalProjectionResult",
     "ManifoldTangentMeasureEvidence",
     "RegularLevelSetManifold",
     "RiemannianMapMeasureEvidence",

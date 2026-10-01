@@ -1,0 +1,323 @@
+{
+  "config": {
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 2,
+    "max_points": 4096,
+    "neighbors": 12,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      25,
+      49
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "driver_dependencies": {
+    "benchmarks/meshfree_scaling.py": "57f1096341532a3a092111b49b429a83f4f40f1a3be0103424b62eb6daf9555c",
+    "examples/meshfree_conservative_diffusion.py": "ac6601588de0dcbbea26eddc98de44aad989350b0f6619e0ba72f17b370cfb66"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "2e56194408a119cee11c0caafa9a91afb7603c889cc9c3b53f840d67c06b4abb",
+    "evidence_schema": {
+      "fields": [
+        "config",
+        "driver_dependencies",
+        "environment",
+        "kind",
+        "precision",
+        "release_status",
+        "resource_measurement",
+        "rows"
+      ],
+      "signature": "3a65578e4ff170f34e1608a997b4023cca6f633d80792b9cf0a6f67b6afecea6"
+    },
+    "fingerprint": "c37ba3f55624c805ce06c542173e42ab9fc46ccff18f6039a1a77d70c356f88b",
+    "source_build_fingerprint": "995d7357ca54831b36b5eef1a76dc6f1d5ff24976d988c9c11408dcb114413de"
+  },
+  "kind": "meshfree-phase-benchmark",
+  "precision": "float64",
+  "release_status": "candidate",
+  "resource_measurement": {
+    "compiler_scope": "official executable estimates, not process resident memory",
+    "peak_resident_bytes": null,
+    "peak_status": "unavailable",
+    "reason": "No native peak-memory sampler is exposed by the benchmark runtime",
+    "retained_scope": "unique logical payload visible to runtime object walker"
+  },
+  "rows": [
+    {
+      "action_error": 4.440892098500626e-16,
+      "active_edges": 24,
+      "active_points": 25,
+      "capacity": 25,
+      "compiler": {
+        "argument_bytes": 200,
+        "bytes_accessed": 5448,
+        "flops": 266,
+        "generated_code_bytes": 0,
+        "output_bytes": 200,
+        "source": "jax-compiled-meshfree-consumer",
+        "temporary_bytes": 576,
+        "unavailable_reason": null
+      },
+      "conservation_defect": 0.0,
+      "diffusion_binding_seconds": 0.931008625,
+      "dimension": 2,
+      "domain": "explicit-union-of-Cartesian-nodal-control-volumes-with-incomplete-axial-neighborhood-Dirichlet-boundary",
+      "edge_capacity": 1200,
+      "first_output_bytes": 200,
+      "inactive_capacity": 0,
+      "metric_status": 0,
+      "moment_residual": 1.1102230246251565e-16,
+      "negative_weights": 0,
+      "oracle": "independent-host-NumPy edge flux accumulation and amount ledger",
+      "output_bytes": 200,
+      "phases": {
+        "adjoint": {
+          "compilation_seconds": 0.028351917,
+          "compiler": {
+            "argument_bytes": 200,
+            "bytes_accessed": 10272,
+            "flops": 557,
+            "generated_code_bytes": 0,
+            "output_bytes": 200,
+            "source": "jax-compiled-meshfree-adjoint",
+            "temporary_bytes": 1024,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.0001685,
+          "lowering_seconds": 0.040110584,
+          "status": "measured",
+          "warm": {
+            "count": 3,
+            "max_seconds": 3.0875e-05,
+            "mean_seconds": 2.870833333333333e-05,
+            "median_seconds": 2.8333e-05,
+            "min_seconds": 2.6917e-05,
+            "samples_seconds": [
+              3.0875e-05,
+              2.8333e-05,
+              2.6917e-05
+            ],
+            "std_seconds": 1.6374975487683086e-06
+          }
+        },
+        "assembly": {
+          "scope": "moment-symbolics,metric-solve,cochain-binding",
+          "seconds": 6.304469459,
+          "status": "measured"
+        },
+        "compilation": {
+          "seconds": 0.028868667,
+          "status": "measured"
+        },
+        "epoch-transition": {
+          "reason": "Not a phase of this native operation",
+          "status": "unavailable"
+        },
+        "first": {
+          "seconds": 0.000174375,
+          "status": "measured"
+        },
+        "hierarchy": {
+          "reason": "Not a phase of this native operation",
+          "status": "unavailable"
+        },
+        "lowering": {
+          "seconds": 0.056227333,
+          "status": "measured"
+        },
+        "neighbor": {
+          "seconds": 1.94013425,
+          "status": "measured"
+        },
+        "numeric-refresh": {
+          "seconds": 0.4487065,
+          "status": "measured"
+        },
+        "stencil": {
+          "reason": "Conservative edge moments do not build strong-form row stencils",
+          "status": "unavailable"
+        },
+        "warm": {
+          "count": 3,
+          "max_seconds": 3.325e-05,
+          "mean_seconds": 2.8694333333333338e-05,
+          "median_seconds": 2.7e-05,
+          "min_seconds": 2.5833e-05,
+          "samples_seconds": [
+            3.325e-05,
+            2.7e-05,
+            2.5833e-05
+          ],
+          "status": "measured",
+          "std_seconds": 3.2563830992204976e-06
+        }
+      },
+      "rank": 24,
+      "redundant_constraints": 21,
+      "reserved_working_set_bytes": 1439104,
+      "retained_bytes": 90657,
+      "seed": 0
+    },
+    {
+      "action_error": 1.7763568394002505e-15,
+      "active_edges": 60,
+      "active_points": 49,
+      "capacity": 49,
+      "compiler": {
+        "argument_bytes": 392,
+        "bytes_accessed": 12840,
+        "flops": 638,
+        "generated_code_bytes": 0,
+        "output_bytes": 392,
+        "source": "jax-compiled-meshfree-consumer",
+        "temporary_bytes": 1440,
+        "unavailable_reason": null
+      },
+      "conservation_defect": 1.1102230246251565e-16,
+      "diffusion_binding_seconds": 0.696092083,
+      "dimension": 2,
+      "domain": "explicit-union-of-Cartesian-nodal-control-volumes-with-incomplete-axial-neighborhood-Dirichlet-boundary",
+      "edge_capacity": 2352,
+      "first_output_bytes": 392,
+      "inactive_capacity": 0,
+      "metric_status": 0,
+      "moment_residual": 7.216449660063518e-16,
+      "negative_weights": 0,
+      "oracle": "independent-host-NumPy edge flux accumulation and amount ledger",
+      "output_bytes": 392,
+      "phases": {
+        "adjoint": {
+          "compilation_seconds": 0.031678084,
+          "compiler": {
+            "argument_bytes": 392,
+            "bytes_accessed": 24576,
+            "flops": 1325,
+            "generated_code_bytes": 0,
+            "output_bytes": 392,
+            "source": "jax-compiled-meshfree-adjoint",
+            "temporary_bytes": 2376,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.000198458,
+          "lowering_seconds": 0.039204167,
+          "status": "measured",
+          "warm": {
+            "count": 3,
+            "max_seconds": 3.4292e-05,
+            "mean_seconds": 3.202766666666667e-05,
+            "median_seconds": 3.1708e-05,
+            "min_seconds": 3.0083e-05,
+            "samples_seconds": [
+              3.4292e-05,
+              3.1708e-05,
+              3.0083e-05
+            ],
+            "std_seconds": 1.73312056386418e-06
+          }
+        },
+        "assembly": {
+          "scope": "moment-symbolics,metric-solve,cochain-binding",
+          "seconds": 4.732147416,
+          "status": "measured"
+        },
+        "compilation": {
+          "seconds": 0.03125625,
+          "status": "measured"
+        },
+        "epoch-transition": {
+          "reason": "Not a phase of this native operation",
+          "status": "unavailable"
+        },
+        "first": {
+          "seconds": 0.0001685,
+          "status": "measured"
+        },
+        "hierarchy": {
+          "reason": "Not a phase of this native operation",
+          "status": "unavailable"
+        },
+        "lowering": {
+          "seconds": 0.054159958,
+          "status": "measured"
+        },
+        "neighbor": {
+          "seconds": 1.78434225,
+          "status": "measured"
+        },
+        "numeric-refresh": {
+          "seconds": 0.55803475,
+          "status": "measured"
+        },
+        "stencil": {
+          "reason": "Conservative edge moments do not build strong-form row stencils",
+          "status": "unavailable"
+        },
+        "warm": {
+          "count": 3,
+          "max_seconds": 3.075e-05,
+          "mean_seconds": 2.8722e-05,
+          "median_seconds": 2.8958e-05,
+          "min_seconds": 2.6458e-05,
+          "samples_seconds": [
+            3.075e-05,
+            2.8958e-05,
+            2.6458e-05
+          ],
+          "status": "measured",
+          "std_seconds": 1.7601302982071155e-06
+        }
+      },
+      "rank": 60,
+      "redundant_constraints": 65,
+      "reserved_working_set_bytes": 1546624,
+      "retained_bytes": 240405,
+      "seed": 0
+    }
+  ],
+  "workload_id": "7adcdfa045c2563948ec50c24897478688bdbe428912374d854181dada538018"
+}

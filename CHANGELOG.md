@@ -3,6 +3,27 @@
 ## Unreleased
 
 ### Added
+- Prepared meshfree approximation in `phydrax.discretization.meshfree`: bounded
+  certified neighborhoods, batched GMLS/PHS-RBF-FD, enforced stencil admission,
+  sparse point-cloud elliptic solves, explicit hyperviscosity, and native
+  meshfree Galerkin hierarchy preparation.
+- Conservative graph metric preparation, intrinsic surface approximation,
+  extensive moving-surface IMEX execution, tangential shifting, deterministic
+  resampling, measured conservative/positive epoch transfers, capacity maps,
+  and native bulk–surface exchange publication.
+- Certified local constitutive edge laws, feature-coverage evidence, MODEL-bound
+  implicit nonlinear solves/training, and phase-separated meshfree qualification
+  drivers. Numerical implementation and scientific release remain distinct;
+  meshfree profiles are unreleased candidates.
+- Native bounded sparse row-rank profiles and projected coarse pseudoinverse
+  preconditioning. Sparse homogeneous conic directions remain matrix-free and
+  terminate against original-coordinate KKT/complementarity evidence.
+- Clean meshfree API cutover: local stencil policies/functionals replace the old
+  stencil wrapper, `PointDiffusionOperator` replaces dense dissipative matrices,
+  and `PointCloudPoissonPlan` replaces the dense Poisson helper. Unused point
+  conormal/distribution metadata and compatibility names are removed.
+- Negative-offset positive transforms are refused when they cannot certify
+  input-convex constitutive potentials.
 - Native exterior calculus in `phydrax.exterior`: explicit form degree, twist, fiber,
   and proxy semantics; shared exterior algebra; de Rham integration, Whitney chains,
   induced boundary traces, numerical form products, and coefficient systems.

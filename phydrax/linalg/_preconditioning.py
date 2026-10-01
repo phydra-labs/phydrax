@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..typing import parse
 from ._assembly import (
     assemble_diagonal,
@@ -58,6 +61,12 @@ from ._spaces import (
 )
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._structured_operators import LocalBlockDiagonalLinearOperator
+
+
+if TYPE_CHECKING:
+    from ._dense_pseudoinverse import DensePseudoinverseFactors
+    from ._policies import RankPolicy
+    from ._subspaces import LinearSubspace, NullspacePolicy
 
 
 PreconditioningSide: TypeAlias = Literal["auto", "left", "right"]
@@ -276,6 +285,269 @@ class DenseInversePreconditionerBuilder(AbstractPreconditionerBuilder):
         if not isinstance(preconditioner, BlockDiagonalPreconditioner):
             raise TypeError(
                 "Dense inverse refresh requires a BlockDiagonalPreconditioner."
+            )
+        return self.prepare(setup_operator, materialization=materialization)
+
+
+@final
+class ProjectedPseudoinversePreconditioner(AbstractPreconditioner, NonTrainableState):
+    """Bounded factored coarse solve with declared compatibility and gauge.
+
+    Factor rank, cutoff, conditioning and finiteness remain available in
+    ``factors``; kernel residuals record validation against the declared policy.
+    No row is removed or replaced, and no pseudoinverse matrix is constructed.
+    """
+
+    factors: DensePseudoinverseFactors
+    nullspace: NullspacePolicy
+    right_kernel: LinearSubspace
+    left_kernel: LinearSubspace
+    right_kernel_residual: Array
+    left_kernel_residual: Array
+    tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        setup_operator: AbstractLinearOperator,
+        factors: DensePseudoinverseFactors,
+        nullspace: NullspacePolicy,
+        properties: PreconditionerProperties,
+        right_kernel_residual: Array,
+        left_kernel_residual: Array,
+        tolerance: float,
+    ) -> None:
+        right, left = nullspace.right, nullspace.left
+        if right is None or left is None:
+            raise ValueError("Prepared projected coarse solve requires both kernels.")
+        identifier = canonical_fingerprint(
+            {
+                "kind": "projected-pseudoinverse-preconditioner",
+                "operator": setup_operator.operator_id,
+                "right": right.subspace_id,
+                "left": left.subspace_id,
+                "compatibility": nullspace.compatibility,
+                "gauge": nullspace.gauge,
+            }
+        )
+        self.space = setup_operator.source
+        self.factors = factors
+        self.nullspace = nullspace
+        self.right_kernel = right
+        self.left_kernel = left
+        self.properties = properties
+        self.right_kernel_residual = right_kernel_residual
+        self.left_kernel_residual = left_kernel_residual
+        self.tolerance = tolerance
+        self.preconditioner_id = identifier
+
+    def apply(
+        self,
+        residual: Any,
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> Any:
+        from ._dense_pseudoinverse import apply_pseudoinverse
+
+        coordinates = self.space.flatten(residual)
+        incompatible = self.left_kernel.project_coordinates(coordinates)
+        if self.nullspace.compatibility == "error":
+            coordinates = eqx.error_if(
+                coordinates,
+                jnp.linalg.norm(incompatible)
+                > self.tolerance * (1 + jnp.linalg.norm(coordinates)),
+                "Coarse residual is incompatible with the declared left nullspace.",
+            )
+        compatible = coordinates - incompatible
+        value = apply_pseudoinverse(self.factors, compatible)
+        # Both supported native gauges select the orthogonal representative.
+        value = value - self.right_kernel.project_coordinates(value)
+        return self.space.unflatten(value)
+
+
+@final
+class ProjectedPseudoinversePreconditionerBuilder(AbstractPreconditionerBuilder):
+    """Native small-coarse-space pseudoinverse with complete declared kernels.
+
+    This is an explicit coarse solver, not permission to materialize a fine
+    operator. The supplied materialization budget bounds both the matrix and
+    four matrix-sized factor/workspace allocations. Euclidean coordinates make
+    Moore--Penrose and declared orthogonal gauges agree without changing units.
+    """
+
+    nullspace: NullspacePolicy
+    right_kernel: LinearSubspace
+    left_kernel: LinearSubspace
+    rank_policy: RankPolicy = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    _builder_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        nullspace: NullspacePolicy,
+        /,
+        *,
+        rank_policy: RankPolicy | None = None,
+        tolerance: float = 1e-8,
+    ) -> None:
+        from ._policies import RankPolicy
+        from ._subspaces import NullspacePolicy
+
+        if not isinstance(nullspace, NullspacePolicy):
+            raise TypeError("nullspace must be NullspacePolicy.")
+        right, left = nullspace.right, nullspace.left
+        if right is None or left is None:
+            raise ValueError(
+                "Projected coarse solves require both complete declared kernels."
+            )
+        policy = RankPolicy() if rank_policy is None else rank_policy
+        if not isinstance(policy, RankPolicy) or policy.require_full_rank:
+            raise ValueError("rank_policy must allow the declared singular rank.")
+        tolerance_ = float(tolerance)
+        if not np.isfinite(tolerance_) or tolerance_ <= 0:
+            raise ValueError("tolerance must be finite and positive.")
+        identifier = canonical_fingerprint(
+            {
+                "kind": "projected-pseudoinverse-builder",
+                "right": right.subspace_id,
+                "left": left.subspace_id,
+                "compatibility": nullspace.compatibility,
+                "gauge": nullspace.gauge,
+                "relative_cutoff": policy.relative_cutoff,
+                "absolute_cutoff": policy.absolute_cutoff,
+                "tolerance": tolerance_,
+            }
+        )
+        self.nullspace = nullspace
+        self.right_kernel = right
+        self.left_kernel = left
+        self.rank_policy = policy
+        self.tolerance = tolerance_
+        self._builder_id = identifier
+
+    @property
+    def builder_id(self) -> str:
+        return self._builder_id
+
+    @property
+    def default_refresh(self) -> PreconditionerRefreshPolicy:
+        return "numeric"
+
+    def properties_for(
+        self, setup_operator: AbstractLinearOperator, /
+    ) -> PreconditionerProperties:
+        _validate_setup_operator(setup_operator)
+        space = setup_operator.source
+        if not isinstance(space, ArraySpace) or not isinstance(
+            space.pairing, EuclideanPairing
+        ):
+            raise ValueError(
+                "Projected pseudoinverse requires Euclidean ArraySpace coordinates."
+            )
+        for kernel in (self.right_kernel, self.left_kernel):
+            if not kernel.space.compatible(space) or kernel.batch_shape:
+                raise ValueError(
+                    "Declared coarse kernels must match the unbatched operator space."
+                )
+        claims = {
+            "linear": True,
+            "stationary": True,
+            "self_adjoint": setup_operator.properties.certifies("self_adjoint"),
+        }
+        return PreconditionerProperties(
+            **claims,
+            evidence={name: "transformed" for name, value in claims.items() if value},
+        )
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        self.properties_for(setup_operator)
+        entries = setup_operator.source.size**2
+        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        accepted, reason = _dense_materialization_eligibility(
+            setup_operator, materialization
+        )
+        if materialization is not None and (
+            4 * entries > materialization.max_entries
+            or 4 * entries * itemsize > materialization.max_bytes
+        ):
+            accepted = False
+            reason = (
+                "coarse pseudoinverse factors exceed the explicit materialization budget"
+            )
+        return PreconditionerCostEstimate(
+            component=self.builder_id,
+            storage_bytes=3 * entries * itemsize,
+            preparation_workspace_bytes=4 * entries * itemsize,
+            apply_workspace_bytes_per_rhs=4 * setup_operator.source.size * itemsize,
+            setup_matvec_count=_materialization_matvec_count(setup_operator),
+            accepted=accepted,
+            reason=reason,
+        )
+
+    def prepare(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        from ._dense_pseudoinverse import factor_pseudoinverse
+
+        properties = self.properties_for(setup_operator)
+        estimate = self.cost_for(setup_operator, materialization=materialization)
+        if not estimate.accepted:
+            raise LinearCapabilityError(estimate.reason)
+        matrix = materialize(setup_operator, materialization)
+        factors = factor_pseudoinverse(matrix, self.rank_policy)
+        right, left = self.right_kernel, self.left_kernel
+        right_basis = jnp.where(
+            jnp.arange(right.capacity) < right.dimension, right.basis, 0
+        )
+        left_basis = jnp.where(jnp.arange(left.capacity) < left.dimension, left.basis, 0)
+        scale = jnp.maximum(1.0, jnp.linalg.norm(matrix))
+        right_error = jnp.linalg.norm(matrix @ right_basis) / (
+            scale * jnp.maximum(1.0, jnp.linalg.norm(right_basis))
+        )
+        left_error = jnp.linalg.norm(jnp.conj(matrix.T) @ left_basis) / (
+            scale * jnp.maximum(1.0, jnp.linalg.norm(left_basis))
+        )
+        checked_matrix = eqx.error_if(
+            factors.matrix,
+            ~factors.finite
+            | (right_error > self.tolerance)
+            | (left_error > self.tolerance)
+            | (factors.rank != matrix.shape[1] - right.dimension)
+            | (factors.rank != matrix.shape[0] - left.dimension),
+            "Coarse factor rank or kernel residual does not match the complete declared nullspaces.",
+        )
+        factors = eqx.tree_at(lambda value: value.matrix, factors, checked_matrix)
+        return ProjectedPseudoinversePreconditioner(
+            setup_operator,
+            factors,
+            self.nullspace,
+            properties,
+            right_error,
+            left_error,
+            self.tolerance,
+        )
+
+    def refresh(
+        self,
+        preconditioner: AbstractPreconditioner,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        if not isinstance(preconditioner, ProjectedPseudoinversePreconditioner):
+            raise TypeError(
+                "Projected pseudoinverse refresh requires its prepared action."
             )
         return self.prepare(setup_operator, materialization=materialization)
 
@@ -1107,6 +1379,8 @@ __all__ = [
     "PreconditionerRefreshKind",
     "PreconditionerRefreshPolicy",
     "PreconditionerSource",
+    "ProjectedPseudoinversePreconditioner",
+    "ProjectedPseudoinversePreconditionerBuilder",
     "PreconditionerCostEstimate",
     "PreconditioningPolicy",
     "PreconditioningSide",

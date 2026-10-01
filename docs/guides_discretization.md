@@ -435,15 +435,20 @@ DOF layout, and symbolic sparsity remain fixed. A topology or DOF-count change
 requires replanning. Fixed-capacity masks remain part of topology and realization
 identity, and inactive payloads must remain numerically inert.
 
-## Meshfree RBF-FD and GMLS
+## Meshfree approximation and point-cloud solves
 
-`MeshfreeStencilPlan` freezes unique point coordinates, deterministic nearest
-neighbors, and a complete total-degree polynomial basis. It prepares value,
-gradient, or Laplacian operators with polyharmonic RBF-FD or Gaussian-weighted
-GMLS. `MeshfreeReproductionEvidence` records the maximum polynomial defect and
-local conditioning; rank-deficient preparation fails instead of dropping basis
-terms. Prepared operators preserve arbitrary trailing payload axes.
+`phydrax.discretization.meshfree` prepares certified bounded Morton neighborhoods,
+batched GMLS or polynomially augmented PHS-RBF-FD stencils, and native sparse
+operators. `LocalStencilPolicy` controls rank/condition/amplification admission;
+`MeshfreeFunctional` declares value, directional, mixed, or normal derivatives.
+`LocalStencilEvidence` retains each row's status rather than hiding failed fits.
 
-The current surface is a fixed point-cloud spatial operator. Boundary closures,
-moving-point refresh, conservative flux formulations, distributed ownership, and
-PDE-specific stability evidence remain separate candidate work.
+`PointCloudPlan` composes those stencils with point quadrature and boundary data.
+`PointCloudPoissonPlan` prepares sparse elliptic assembly and native solves;
+numeric coefficient refresh reuses structure. Collocated continuum approximation
+and quadrature-adjoint energy stability are separate contracts. Point observations
+choose polynomial reconstruction or an explicitly positive degree-zero Shepard
+route; neither is silently substituted for the other.
+
+See [Meshfree solvers](guides_meshfree.md) for metric-sign, geometry, boundary,
+resource, differentiation, and qualification contracts.

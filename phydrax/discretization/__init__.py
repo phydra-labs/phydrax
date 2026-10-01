@@ -216,22 +216,24 @@ from ._partition import CellPartition, partition_cells_contiguous
 from ._periodic_cell import PeriodicCell
 from ._point_cloud import (
     PointCloudPlan,
-    PointStencilReport,
     PreparedPointCloudDiscretization,
 )
 from ._point_cloud_pde import (
-    DissipativePointDiffusion,
-    DistributedPointPartition,
     point_sbp_report,
     PointBoundaryKind,
     PointBoundaryPlan,
+    PointCloudPoissonPlan,
     PointCloudPoissonResult,
-    PointConormalInterface,
+    PointDiffusionForm,
+    PointDiffusionOperator,
+    PointNeumannCompatibility,
+    PointPoissonPreconditioner,
     PointSBPReport,
-    solve_point_cloud_poisson,
+    PreparedPointCloudPoisson,
 )
 from ._point_cloud_view import (
     PointCloudFieldReconstructionKernel,
+    PointCloudReconstruction,
     prepare_point_cloud_field_reconstruction,
 )
 from ._polygon_geometry import (
@@ -1345,12 +1347,23 @@ from .lattice_boltzmann import (
     TRTCollisionPlan,
 )
 from .meshfree import (
-    MeshfreeMethod,
-    MeshfreeOperatorKind,
-    MeshfreeReproductionEvidence,
-    MeshfreeStencilPlan,
-    prepare_meshfree_operator,
-    PreparedMeshfreeOperator,
+    __all__ as _meshfree_all,
+    LocalStencilEvidence as LocalStencilEvidence,
+    LocalStencilPolicy as LocalStencilPolicy,
+    LocalStencilReport as LocalStencilReport,
+    MeshfreeApproximation as MeshfreeApproximation,
+    MeshfreeEdgeRelationPlan as MeshfreeEdgeRelationPlan,
+    MeshfreeFunctional as MeshfreeFunctional,
+    MeshfreeNeighborhoodPlan as MeshfreeNeighborhoodPlan,
+    MeshfreeOperator as MeshfreeOperator,
+    MeshfreeRowStatus as MeshfreeRowStatus,
+    prepare_chart_stencils as prepare_chart_stencils,
+    prepare_local_stencils as prepare_local_stencils,
+    PreparedLocalStencils as PreparedLocalStencils,
+    PreparedMeshfreeEdgeRelation as PreparedMeshfreeEdgeRelation,
+    PreparedMeshfreeNeighborhood as PreparedMeshfreeNeighborhood,
+    StencilAcceptance as StencilAcceptance,
+    StencilWeightKernel as StencilWeightKernel,
 )
 from .mpm import (
     AbstractExplicitMPMSchedule,
@@ -2407,6 +2420,7 @@ _FACADE_EXPORT_MODULES = (
     ".spatial",
     ".surfel",
     ".vortex",
+    ".meshfree",
 )
 
 
@@ -2557,12 +2571,7 @@ __all__ = [
     "static_collision_operator",
     "vem",
     "meshfree",
-    "MeshfreeMethod",
-    "MeshfreeOperatorKind",
-    "MeshfreeReproductionEvidence",
-    "MeshfreeStencilPlan",
-    "PreparedMeshfreeOperator",
-    "prepare_meshfree_operator",
+    *_meshfree_all,
     "explicit_polygon_h1",
     "AbstractDiscreteDirichletConstraint",
     "ExplicitPolygonH1BasisEvidence",
@@ -3453,17 +3462,18 @@ __all__ = [
     "reverse_oriented_paths",
     "PointTopology",
     "PointCloudPlan",
-    "PointStencilReport",
     "PreparedPointCloudDiscretization",
-    "DissipativePointDiffusion",
-    "DistributedPointPartition",
     "point_sbp_report",
     "PointBoundaryKind",
     "PointBoundaryPlan",
+    "PointCloudPoissonPlan",
     "PointCloudPoissonResult",
-    "PointConormalInterface",
+    "PointDiffusionForm",
+    "PointDiffusionOperator",
+    "PointNeumannCompatibility",
+    "PointPoissonPreconditioner",
     "PointSBPReport",
-    "solve_point_cloud_poisson",
+    "PreparedPointCloudPoisson",
     "PreparationReport",
     "PreparedStencilProgram",
     "PreparedStencilExecutionOperator",
@@ -4722,6 +4732,7 @@ __all__ = [
     "PreparedNonlinearFaceTrace",
     "UnstructuredFiniteVolumeFieldReconstructionKernel",
     "PointCloudFieldReconstructionKernel",
+    "PointCloudReconstruction",
     "prepare_point_cloud_field_reconstruction",
 ]
 

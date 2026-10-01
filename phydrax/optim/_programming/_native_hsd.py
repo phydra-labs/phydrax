@@ -9,9 +9,25 @@ from jax import Array
 
 from phydrax._strict import StrictModule
 
-from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    DenseLU,
+    DifferentiationPolicy,
+    FailurePolicy,
+    GMRES,
+    JacobianLinearOperator,
+    LinearSolvePolicy,
+    LinearSolveResult,
+    LinearSolveStatus,
+    LinearSystem,
+    prepare_linearization,
+    solve,
+    TolerancePolicy,
+)
 from ._barrier import ConeBarrierOracle
 from ._cones import AbstractConvexCone, ProductCone, ZeroCone
+from ._policy import ConvexSolvePolicy, ConvexTermination, NativeHomogeneousConic
 from ._problem import (
     _conic_matrix_mv,
     _conic_matrix_transpose_mv,
@@ -28,6 +44,7 @@ class HomogeneousConicState(StrictModule):
     kappa: Array
     active: Array
     iterations: Array
+    last_linear_status: Array
 
 
 def _split(cone: AbstractConvexCone, value: Array) -> tuple[Array, ...]:
@@ -87,8 +104,11 @@ def _embedding_residual(
     )
     centrality = _centrality(program.cone, barrier, s, z, mu)
     scalar_centrality = tau * kappa - mu
+    # Align equation blocks with (x, z, s, tau, kappa). A one-row gap shift
+    # otherwise creates a long artificial permutation cycle in matrix-free
+    # Krylov coordinates, although it is invisible to a dense direct solve.
     return jnp.concatenate(
-        (stationarity, primal, gap[None], centrality, scalar_centrality[None])
+        (stationarity, primal, centrality, gap[None], scalar_centrality[None])
     )
 
 
@@ -119,18 +139,94 @@ def _dual_step(cone: AbstractConvexCone, point: Array, direction: Array) -> Arra
 
 
 def _direction(
-    program: ConicProgram, barrier: ConeBarrierOracle, vector: Array, mu: Array
-) -> tuple[Array, Array]:
+    program: ConicProgram,
+    barrier: ConeBarrierOracle,
+    vector: Array,
+    mu: Array,
+    *,
+    linear: LinearSolvePolicy | None = None,
+) -> LinearSolveResult:
+    if program.constraint_is_sparse or program.quadratic_is_sparse:
+        coordinates = ArraySpace(
+            vector.shape,
+            dtype=vector.dtype,
+            space_id=f"native-hsd:{program.structure_id}:coordinates",
+        )
+
+        def residual(value: Array) -> Array:
+            return _embedding_residual(program, barrier, value, mu)
+
+        linearization = prepare_linearization(
+            residual,
+            vector,
+            source=coordinates,
+            target=coordinates,
+            linearization_id=f"native-hsd:{program.structure_id}:newton",
+        )
+        operator = JacobianLinearOperator(linearization)
+        selected = (
+            LinearSolvePolicy(
+                GMRES(restart=min(256, vector.size)),
+                tolerance=TolerancePolicy(
+                    relative=1e-10, absolute=1e-12, max_steps=max(64, 8 * vector.size)
+                ),
+                differentiation=DifferentiationPolicy("none"),
+                failure=FailurePolicy("status"),
+            )
+            if linear is None
+            else linear
+        )
+        if not isinstance(selected.method, GMRES):
+            raise TypeError(
+                "Sparse homogeneous Newton directions require native matrix-free GMRES."
+            )
+        return solve(
+            LinearSystem(operator, problem_id="native-hsd-sparse-newton"),
+            -linearization.primal,
+            policy=selected,
+        )
     residual = _embedding_residual(program, barrier, vector, mu)
     jacobian = jax.jacfwd(lambda value: _embedding_residual(program, barrier, value, mu))(
         vector
     )
-    result = solve(
+    return solve(
         LinearSystem(DenseLinearOperator(jacobian), problem_id="native-hsd-newton"),
         -residual,
-        policy=LinearSolvePolicy(DenseLU()),
+        policy=LinearSolvePolicy(DenseLU()) if linear is None else linear,
     )
-    return result.value, result.successful
+
+
+def _normalized_kkt_converged(
+    program: ConicProgram,
+    vector: Array,
+    policy: ConvexSolvePolicy,
+) -> Array:
+    # Reuse the canonical original-coordinate audit, including cone-block
+    # complementarity aggregation and requested relative/absolute thresholds.
+    # Unused ray/provenance outputs are eliminated from this scalar JAX action.
+    from ._clarabel import _audit_result
+
+    n, m = program.num_variables, program.num_constraints
+    tau = vector[-2]
+    safe_tau = jnp.maximum(tau, jnp.sqrt(jnp.finfo(vector.dtype).eps))
+    primal = vector[:n] / safe_tau
+    dual = vector[n : n + m] / safe_tau
+    slack = vector[n + m : n + 2 * m] / safe_tau
+    zero_bounds = jnp.zeros_like(primal)
+    audit = _audit_result(
+        program,
+        primal,
+        slack,
+        dual,
+        zero_bounds,
+        zero_bounds,
+        jnp.asarray(False),
+        jnp.asarray(0, dtype=jnp.int32),
+        policy,
+        "native-hsd-convergence",
+        backend="phydrax",
+    )
+    return (tau > jnp.sqrt(jnp.finfo(vector.dtype).eps)) & audit.successful
 
 
 def _step_bound(
@@ -158,10 +254,36 @@ def solve_homogeneous_conic(
     *,
     maximum_steps: int,
     tolerance: float,
+    policy: ConvexSolvePolicy | None = None,
 ) -> HomogeneousConicState:
     """Monotone homogeneous embedding with affine and centered Newton solves."""
     if program.batch_shape:
         raise ValueError("Homogeneous conic kernel currently requires one case.")
+    audit_policy = (
+        ConvexSolvePolicy(
+            NativeHomogeneousConic(),
+            termination=ConvexTermination(
+                absolute=tolerance, maximum_steps=maximum_steps
+            ),
+            failure=FailurePolicy("status"),
+        )
+        if policy is None
+        else policy
+    )
+    linear_policy = None
+    if program.constraint_is_sparse or program.quadratic_is_sparse:
+        size = program.num_variables + 2 * program.num_constraints + 2
+        linear_policy = LinearSolvePolicy(
+            GMRES(restart=min(256, size)),
+            tolerance=TolerancePolicy(
+                relative=min(1e-10, max(tolerance * 0.01, 1e-14)),
+                absolute=min(1e-12, max(tolerance * 0.01, 1e-14)),
+                max_steps=max(64, 8 * size),
+            ),
+            differentiation=DifferentiationPolicy("none"),
+            failure=FailurePolicy("status"),
+            resources=audit_policy.resources,
+        )
     reference = barrier.interior_reference(program.linear.dtype)
     dual = -barrier.gradient(reference)
     vector = jnp.concatenate(
@@ -174,19 +296,25 @@ def solve_homogeneous_conic(
     )
     active = jnp.asarray(True)
     iterations = jnp.asarray(0, dtype=jnp.int32)
+    last_linear_status = jnp.asarray(int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
 
     def iteration(
-        _: Array, state: tuple[Array, Array, Array]
-    ) -> tuple[Array, Array, Array]:
-        vector_, active_, iterations_ = state
+        _: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
+        vector_, active_, iterations_, _ = state
         n, m = program.num_variables, program.num_constraints
         slack = vector_[n + m : n + 2 * m]
         dual_ = vector_[n : n + m]
         tau, kappa = vector_[-2], vector_[-1]
         mu = (jnp.sum(slack * dual_) + tau * kappa) / (barrier.parameter + 1.0)
-        affine, affine_ok = _direction(
-            program, barrier, vector_, jnp.asarray(0.0, dtype=mu.dtype)
+        affine_result = _direction(
+            program,
+            barrier,
+            vector_,
+            jnp.asarray(0.0, dtype=mu.dtype),
+            linear=linear_policy,
         )
+        affine, affine_ok = affine_result.value, affine_result.successful
         affine_step = _step_bound(program, barrier, vector_, affine)
         affine_vector = vector_ + affine_step * affine
         affine_mu = (
@@ -196,7 +324,10 @@ def solve_homogeneous_conic(
         sigma = jnp.clip(
             (affine_mu / jnp.maximum(mu, jnp.finfo(mu.dtype).tiny)) ** 3, 0.0, 1.0
         )
-        corrected, corrected_ok = _direction(program, barrier, vector_, sigma * mu)
+        corrected_result = _direction(
+            program, barrier, vector_, sigma * mu, linear=linear_policy
+        )
+        corrected, corrected_ok = corrected_result.value, corrected_result.successful
         step = _step_bound(program, barrier, vector_, corrected)
         candidate = vector_ + step * corrected
         residual = jnp.max(
@@ -207,7 +338,11 @@ def solve_homogeneous_conic(
             ),
             initial=0.0,
         )
-        converged = (residual <= tolerance) & (mu <= tolerance)
+        converged = (
+            (residual <= tolerance)
+            & (mu <= tolerance)
+            & _normalized_kkt_converged(program, candidate, audit_policy)
+        )
         accepted = active_ & affine_ok & corrected_ok & jnp.all(jnp.isfinite(candidate))
         next_vector = jax.lax.cond(
             accepted,
@@ -219,10 +354,24 @@ def solve_homogeneous_conic(
             next_vector,
             active_ & accepted & ~converged,
             iterations_ + active_.astype(jnp.int32),
+            jnp.where(affine_ok, corrected_result.status, affine_result.status).astype(
+                jnp.int32
+            ),
         )
 
-    vector, active, iterations = jax.lax.fori_loop(
-        0, int(maximum_steps), iteration, (vector, active, iterations)
+    def keep_iterating(state: tuple[Array, Array, Array, Array]) -> Array:
+        _, active_, count_, _ = state
+        return active_ & (count_ < maximum_steps)
+
+    def advance(
+        state: tuple[Array, Array, Array, Array],
+    ) -> tuple[Array, Array, Array, Array]:
+        return iteration(state[2], state)
+
+    vector, active, iterations, last_linear_status = jax.lax.while_loop(
+        keep_iterating,
+        advance,
+        (vector, active, iterations, last_linear_status),
     )
     n, m = program.num_variables, program.num_constraints
     slack = vector[n + m : n + 2 * m]
@@ -237,7 +386,10 @@ def solve_homogeneous_conic(
         initial=0.0,
     )
     active = ~(
-        jnp.all(jnp.isfinite(vector)) & (residual <= tolerance) & (mu <= tolerance)
+        jnp.all(jnp.isfinite(vector))
+        & (residual <= tolerance)
+        & (mu <= tolerance)
+        & _normalized_kkt_converged(program, vector, audit_policy)
     )
     tau = vector[-2]
     safe_tau = jnp.maximum(tau, jnp.sqrt(jnp.finfo(tau.dtype).eps))
@@ -249,6 +401,7 @@ def solve_homogeneous_conic(
         vector[-1],
         active,
         iterations,
+        last_linear_status,
     )
 
 

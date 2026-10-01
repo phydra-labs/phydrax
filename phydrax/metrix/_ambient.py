@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import final
 
 import equinox as eqx
 import jax
@@ -25,6 +26,7 @@ from ..linalg import (
     OperatorProperties,
     solve,
 )
+from ..typing import Bool, Dim, Float, Inexact, Int32, VariadicDim
 from ._manifold import AbstractRiemannianManifold
 
 
@@ -91,6 +93,30 @@ class ManifoldTangentMeasureEvidence(StrictModule):
         self.log_volume = jnp.asarray(log_volume)
         self.orientation = jnp.asarray(orientation)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+
+
+class _NormalProjectionBatch(VariadicDim):
+    pass
+
+
+class _NormalProjectionAmbient(Dim):
+    pass
+
+
+@final
+class LevelSetNormalProjectionResult(StrictModule):
+    """Normal-gauge candidate and pointwise evidence, without runtime raises.
+
+    This proves a root of the represented regular level set, not a globally
+    unique closest point or a certified tubular neighborhood.
+    """
+
+    __strict_contract__ = True
+    points: Inexact[_NormalProjectionBatch, _NormalProjectionAmbient]
+    geometry: ManifoldTangentMeasureEvidence
+    residual: Float[_NormalProjectionBatch]
+    valid: Bool[_NormalProjectionBatch]
+    status: Int32[_NormalProjectionBatch]
 
 
 class RiemannianMapMeasureEvidence(StrictModule):
@@ -314,9 +340,9 @@ class RegularLevelSetManifold(AbstractRiemannianManifold):
         metric = self.local_geometry(value).metric
         return jnp.real(contract("...i,...ij,...j->", jnp.conj(left), metric, right))
 
-    def retract(self, point: ArrayLike, tangent_step: ArrayLike, /) -> Array:
-        value = self._point(point)
-        candidate = value + self.project_tangent(value, tangent_step)
+    def project_normal(self, point: ArrayLike, /) -> LevelSetNormalProjectionResult:
+        """Apply the native fixed-metric normal Newton gauge and return status."""
+        candidate = self._point(point)
         for _ in range(self.retraction_iterations):
             geometry = self.local_geometry(candidate)
             constraints = (
@@ -337,10 +363,27 @@ class RegularLevelSetManifold(AbstractRiemannianManifold):
             )
             correction = contract("...ij,...j->...i", raised_normals, multipliers)
             candidate = candidate - correction
-        residual = self.constraint_residual(candidate)
+        geometry = self.local_geometry(candidate)
+        constraints = jax.vmap(self.constraint)(
+            candidate.reshape((-1, candidate.shape[-1]))
+        ).reshape(candidate.shape[:-1] + (self.codimension,))
+        residual = jnp.max(jnp.abs(constraints), axis=-1)
+        valid = geometry.valid & jnp.isfinite(residual) & (residual <= self.tolerance)
+        status = jnp.where(valid, 0, jnp.where(~geometry.valid, 2, 1)).astype(jnp.int32)
+        return LevelSetNormalProjectionResult(
+            points=candidate,
+            geometry=geometry,
+            residual=residual,
+            valid=valid,
+            status=status,
+        )
+
+    def retract(self, point: ArrayLike, tangent_step: ArrayLike, /) -> Array:
+        value = self._point(point)
+        result = self.project_normal(value + self.project_tangent(value, tangent_step))
         return eqx.error_if(
-            candidate,
-            (residual > self.tolerance) | ~jnp.all(self.local_geometry(candidate).valid),
+            result.points,
+            ~jnp.all(result.valid),
             "Level-set retraction failed regularity or residual evidence.",
         )
 
@@ -540,6 +583,7 @@ class ImmersedRiemannianManifoldAdapter(AbstractRiemannianManifold):
 __all__ = [
     "ImmersedRiemannianManifoldAdapter",
     "ManifoldTangentMeasureEvidence",
+    "LevelSetNormalProjectionResult",
     "RegularLevelSetManifold",
     "RiemannianMapMeasureEvidence",
 ]

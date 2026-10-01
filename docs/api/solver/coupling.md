@@ -903,3 +903,32 @@ through a rebound epoch's route. See
 ---
 
 ::: phydrax.solver.coupling.coupling_exchange_transport
+
+## Meshfree components and bulk–surface exchange
+
+Meshfree components publish reconstruction and capacity, not inferred facet
+traces. Query-transpose exchange conserves amount; signed polynomial partitions
+and explicitly positive native deposition have distinct contracts. See
+[Meshfree solvers](../../guides_meshfree.md#bulk-surface-exchange).
+
+::: phydrax.solver.coupling.MeshfreeComponent
+
+---
+
+::: phydrax.solver.coupling.MeshfreeCapacity
+
+---
+
+::: phydrax.solver.coupling.SurfaceExchangeLaw
+
+---
+
+::: phydrax.solver.coupling.SurfaceExchangeEvidence
+
+---
+
+::: phydrax.solver.coupling.LangmuirAdsorptionFlux
+
+---
+
+::: phydrax.solver.coupling.MeshfreeBulkSurfaceMethod

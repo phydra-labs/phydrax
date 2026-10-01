@@ -456,23 +456,12 @@ different policy.
 
 ::: phydrax.solver.maxwell.UnstructuredMaxwellPlan
 
-### Point-cloud strong-form calculus
+### Meshfree and point-cloud calculus
 
-::: phydrax.discretization.PointCloudPlan
+See the [meshfree API](meshfree.md) for prepared local approximation, point-cloud
+field views, sparse diffusion, and reusable elliptic solves.
 
----
-
-::: phydrax.discretization.PreparedPointCloudDiscretization
-
----
-
-::: phydrax.discretization.DissipativePointDiffusion
-
----
-
-::: phydrax.discretization.solve_point_cloud_poisson
-
----
+### Compatible PDE consumers
 
 ::: phydrax.solver.CompatibleElasticityDynamics
 
@@ -499,7 +488,7 @@ different policy.
 ### Field views
 
 Finite-difference nodal values become field views only through an explicit
-interpolation policy; point clouds use a prepared moving-least-squares
+interpolation policy; point clouds use explicitly selected polynomial or positive
 reconstruction with conditioning and support evidence.
 
 ::: phydrax.discretization.prepare_finite_difference_field_reconstruction
@@ -516,13 +505,7 @@ reconstruction with conditioning and support evidence.
 
 ::: phydrax.discretization.FiniteDifferenceFieldReconstructionKernel
 
----
-
-::: phydrax.discretization.prepare_point_cloud_field_reconstruction
-
----
-
-::: phydrax.discretization.PointCloudFieldReconstructionKernel
+Point-cloud reconstruction is documented in the [meshfree API](meshfree.md).
 
 ## Staggered acoustic reference solver
 
