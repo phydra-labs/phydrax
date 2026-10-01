@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `51acb2f64641eca5c4e3f0693ee2a4df0fc24051e65ab9dcb5ae3a4fa238a5c7`
+Catalog ID: `27b0dfba9df4a8251a93f9788d7921218028075715bf913729af51c4e2f4f6d7`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 269 |
+| candidate | 277 |
 | research | 171 |
 | internal | 5 |
 | retired | 0 |
@@ -253,6 +253,14 @@ Catalog ID: `51acb2f64641eca5c4e3f0693ee2a4df0fc24051e65ab9dcb5ae3a4fa238a5c7`
 | `manufacturing.scheduled-spatial-runtime` | `phydrax.manufacturing` | candidate | implementation-qualified-candidate | 1 |
 | `materials.spatial-icme` | `phydrax.materials` | candidate | implementation-qualified-candidate | 1 |
 | `membranes.segmented-crossflow` | `phydrax.membranes` | candidate | implementation-qualified-candidate | 1 |
+| `meshfree.bulk-surface-exchange` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.conservative-exterior` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.elliptic-solve` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.learned-constitutive-flux` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.moving-surface` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.multilevel` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.strong-form` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.surface-operators` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `multiregion-surface.geometry` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.label-field-extraction` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.remeshing` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |

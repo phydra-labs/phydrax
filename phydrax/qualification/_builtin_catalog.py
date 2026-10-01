@@ -27,6 +27,7 @@ from ._registry import CapabilityProfile, SupportTuple
 # intentionally collapsed without changing the owner selected by the first producer.
 _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
+    ("phydrax.discretization.meshfree._profiles", "meshfree_candidate_profiles"),
     ("phydrax.acoustics._bubbly", "bubbly_medium_candidate_profiles"),
     ("phydrax.applications.foams._profiles", "foam_candidate_profiles"),
     (

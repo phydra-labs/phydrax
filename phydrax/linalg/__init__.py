@@ -456,6 +456,8 @@ from ._preconditioning import (
     PreconditioningPolicy,
     PreconditioningSide,
     PreparedPreconditioner,
+    ProjectedPseudoinversePreconditioner,
+    ProjectedPseudoinversePreconditionerBuilder,
 )
 from ._prepared import PreparedLinearSolve
 from ._problems import (
@@ -629,6 +631,12 @@ from ._sparse_providers import (
     SparseProviderAvailability,
     SparseProviderCapabilities,
     SparseProviderName,
+)
+from ._sparse_rank import (
+    prepare_sparse_row_rank,
+    SparseRowRankEvidence,
+    SparseRowRankPolicy,
+    SparseRowRankRefusal,
 )
 from ._sparse_triangular import (
     analyze_sparse_triangular,
@@ -859,6 +867,12 @@ __all__ = [
     "DenseQR",
     "DenseSVD",
     "DenseInversePreconditionerBuilder",
+    "ProjectedPseudoinversePreconditioner",
+    "ProjectedPseudoinversePreconditionerBuilder",
+    "prepare_sparse_row_rank",
+    "SparseRowRankEvidence",
+    "SparseRowRankPolicy",
+    "SparseRowRankRefusal",
     "DiagonalLinearOperator",
     "DiagonalPlusLowRankLinearOperator",
     "BlockJacobiPreconditionerBuilder",

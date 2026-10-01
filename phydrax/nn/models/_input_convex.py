@@ -130,7 +130,11 @@ class InputConvexCertificate(AbstractConstructionCertificate):
 
 
 def _require_positive_couplings(layers: tuple[Linear, ...], /) -> None:
-    if any(not isinstance(layer.weight_transform, PositiveTransform) for layer in layers):
+    if any(
+        not isinstance(layer.weight_transform, PositiveTransform)
+        or layer.weight_transform.minimum < 0.0
+        for layer in layers
+    ):
         raise ValueError(
             "Input-convex certificates require positive hidden-state couplings."
         )

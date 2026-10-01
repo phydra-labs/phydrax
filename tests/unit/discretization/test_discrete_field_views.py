@@ -404,7 +404,11 @@ def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials() -> N
 
 def _point_cloud(points: Any) -> Any:
     weights = np.full(points.shape[0], 1.0 / points.shape[0])
-    return phx.discretization.PointCloudPlan(points, weights, degree=2).prepare()
+    return phx.discretization.PointCloudPlan(
+        points,
+        weights,
+        stencil=phx.discretization.LocalStencilPolicy(polynomial_degree=2),
+    ).prepare()
 
 
 _UNIT_SQUARE = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0))

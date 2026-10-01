@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jax._src import ad_util, core
+from jax._src import ad_util, core, effects, source_info_util
 from jax._src.ad_checkpoint import transpose_jaxpr
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax.typing import ArrayLike
@@ -48,23 +48,40 @@ def _batch(
     dimensions: Sequence[int | None],
     *,
     call: core.ClosedJaxpr,
-) -> tuple[list[Any], tuple[int, ...]]:
+) -> tuple[list[Any], tuple[int | None, ...]]:
+    input_mapped = tuple(axis is not None for axis in dimensions)
+    known_call, mapped_call, output_mapped, residual_avals = (
+        pe.partial_eval_jaxpr_nounits(call, input_mapped, False)
+    )
+    known_values = _bind(
+        known_call,
+        tuple(
+            value
+            for value, present in zip(arguments, input_mapped, strict=True)
+            if not present
+        ),
+    )
+    known_count = len(known_values) - len(residual_avals)
+    known_outputs = iter(known_values[:known_count])
+    residuals = known_values[known_count:]
     mapped = tuple(
-        None if axis is None else jnp.moveaxis(value, axis, 0)
+        jnp.moveaxis(value, axis, 0)
         for value, axis in zip(arguments, dimensions, strict=True)
+        if axis is not None
     )
 
-    def lane(values: tuple[Array | None, ...]) -> list[Any]:
-        inputs = tuple(
-            original if axis is None else value
-            for original, value, axis in zip(arguments, values, dimensions, strict=True)
-        )
-        # Bind again, rather than evaluate the jaxpr directly, so nested vmap
-        # axes retain the same lane-local conditional semantics.
-        return _domain_call.bind(*inputs, call=call)
+    def lane(values: tuple[Array, ...]) -> list[Any]:
+        # Binding retains outer mapped axes and their lane-local conditionals.
+        return _bind(mapped_call, (*residuals, *values))
 
-    outputs = jax.lax.map(lane, mapped)
-    return outputs, (0,) * len(outputs)
+    mapped_outputs = iter(jax.lax.map(lane, mapped))
+    # In jacfwd's tangent-basis vmap, primal outputs have no tangent-axis
+    # dependence. Marking them mapped violates its out_axes=None contract.
+    outputs = [
+        next(mapped_outputs) if present else next(known_outputs)
+        for present in output_mapped
+    ]
+    return outputs, tuple(0 if present else None for present in output_mapped)
 
 
 def _jvp(
@@ -73,39 +90,70 @@ def _jvp(
     *,
     call: core.ClosedJaxpr,
 ) -> tuple[list[Any], list[Any]]:
-    values = _domain_call.bind(*primals, call=call)
     nonzero = tuple(not isinstance(value, ad_util.Zero) for value in tangents)
     if not any(nonzero):
+        values = _domain_call.bind(*primals, call=call)
         return values, [ad_util.p2tz(value) for value in values]
     differentiated, output_nonzero = ad.jvp_jaxpr(call, nonzero, False)
-    # Separate the known primal outputs from the linear tangent outputs. This
-    # lets ordinary partial evaluation retain primal residuals and transpose the
-    # tangent call, instead of leaving an opaque custom_vmap derivative primitive.
-    tangent_jaxpr, used_constants, used_inputs = pe.dce_jaxpr_consts(
-        differentiated.jaxpr,
-        (False,) * len(values) + (True,) * sum(output_nonzero),
-    )
-    tangent_call = core.ClosedJaxpr(
-        tangent_jaxpr,
-        [
-            value
-            for value, used in zip(differentiated.consts, used_constants, strict=True)
-            if used
-        ],
-    )
+    # Bind primal and tangent outputs together. Partial evaluation saves the
+    # accepted branch's nonlinear residuals once, preserving effect order.
     inputs = (
         *primals,
         *(value for value, present in zip(tangents, nonzero, strict=True) if present),
     )
-    tangent_values = iter(
-        _bind(
-            tangent_call,
-            tuple(value for value, used in zip(inputs, used_inputs, strict=True) if used),
-        )
-    )
+    outputs = _bind(differentiated, inputs)
+    values = outputs[: len(call.out_avals)]
+    tangent_values = iter(outputs[len(call.out_avals) :])
     return values, [
         next(tangent_values) if present else ad_util.p2tz(value)
         for value, present in zip(values, output_nonzero, strict=True)
+    ]
+
+
+def _partial_eval(
+    trace: pe.JaxprTrace, *tracers: pe.JaxprTracer, call: core.ClosedJaxpr
+) -> list[Any]:
+    unknown = tuple(not tracer.pval.is_known() for tracer in tracers)
+    known_call, linear_call, output_unknown, residual_avals = (
+        pe.partial_eval_jaxpr_nounits(call, unknown, False)
+    )
+    known_values = _bind(
+        known_call,
+        tuple(tracer.pval.get_known() for tracer in tracers if tracer.is_known()),
+    )
+    known_count = len(known_values) - len(residual_avals)
+    known_outputs = iter(known_values[:known_count])
+    # Residuals precede unknown operands in JAX's partial-evaluated jaxpr.
+    # Keep both calls behind the lane-local boundary: evaluating the known
+    # jaxpr directly would let vmap execute a rejected scientific branch.
+    inputs = [
+        *(trace.new_instantiated_const(value) for value in linear_call.consts),
+        *(trace.new_instantiated_const(value) for value in known_values[known_count:]),
+        *(tracer for tracer, present in zip(tracers, unknown, strict=True) if present),
+    ]
+    closed = core.ClosedJaxpr(pe.convert_constvars_jaxpr(linear_call.jaxpr), ())
+    outputs = [
+        pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+        for aval in closed.out_avals
+    ]
+    recipe = pe.new_eqn_recipe(
+        trace,
+        inputs,
+        outputs,
+        _domain_call,
+        dict(call=closed),
+        core.positional_effects(closed),
+        source_info_util.current(),
+    )
+    for output in outputs:
+        output.recipe = recipe
+    if effects.partial_eval_kept_effects.filter_in(closed.effects):
+        parents: list[core.Tracer] = list(inputs)
+        trace.effect_handles.append(pe.EffectHandle(parents, recipe))
+    unknown_outputs = iter(outputs)
+    return [
+        next(unknown_outputs) if present else next(known_outputs)
+        for present in output_unknown
     ]
 
 
@@ -139,6 +187,7 @@ _domain_call.def_effectful_abstract_eval(_abstract)
 batching.primitive_batchers[_domain_call] = _batch
 ad.primitive_jvps[_domain_call] = _jvp
 ad.primitive_transposes[_domain_call] = _transpose
+pe.custom_partial_eval_rules[_domain_call] = _partial_eval
 mlir.register_lowering(
     _domain_call, mlir.lower_fun(_implementation, multiple_results=True)
 )

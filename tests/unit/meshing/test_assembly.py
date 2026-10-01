@@ -17,7 +17,7 @@ def test_assembly_contracts() -> None:
         axis_names=("x", "y"),
     ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
     points = np.asarray([(x, y) for x in (0.0, 0.5, 1.0) for y in (0.0, 0.5, 1.0)])
-    cloud = phx.discretization.PointCloudPlan(points, np.ones(9), neighbor_count=9)
+    cloud = phx.discretization.PointCloudPlan(points, np.ones(9), neighbors=9)
     iga = phx.discretization.iga
     axis = iga.BSplineGrid.open_uniform(2, 1)
     xx, yy = jnp.meshgrid(axis.greville_abscissae, axis.greville_abscissae, indexing="ij")

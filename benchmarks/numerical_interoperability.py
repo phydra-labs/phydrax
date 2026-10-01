@@ -23,7 +23,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-from _runtime import (
+
+import phydrax as phx
+from benchmarks._runtime import (
     capture_environment,
     compiler_evidence,
     logical_array_bytes,
@@ -32,8 +34,6 @@ from _runtime import (
     measure_repeated,
     measure_synchronized,
 )
-
-import phydrax as phx
 from phydrax.discretization import SimplicialLocationPolicy
 from phydrax.discretization.fem import prepare_finite_element_field_reconstruction
 from phydrax.solver.coupling._interface_quadrature import (
@@ -2466,7 +2466,8 @@ def execution_group_parity_row(
             )
         command = [
             sys.executable,
-            str(Path(__file__).resolve()),
+            "-m",
+            "benchmarks.numerical_interoperability",
             "--rows",
             "execution-group-parity",
             "--warmup",

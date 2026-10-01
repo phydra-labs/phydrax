@@ -1,5 +1,5 @@
 {
-  "catalog_id": "51acb2f64641eca5c4e3f0693ee2a4df0fc24051e65ab9dcb5ae3a4fa238a5c7",
+  "catalog_id": "27b0dfba9df4a8251a93f9788d7921218028075715bf913729af51c4e2f4f6d7",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -10509,6 +10509,434 @@
       "public_symbols": [
         "phydrax.membranes.CrossflowMembraneModule"
       ]
+    },
+    {
+      "capability": "meshfree.bulk-surface-exchange",
+      "declaration_id": "698cbc2426a61078baee5bf49ce3062b7cd7858841761ce0b9ef383f8b655f4e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.bulk-surface-exchange.profile",
+          "profile_id": "c4057cd97c6a71ac26177c86bd772ddf19e61dc9e04719c102d7342490a90ac6",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "conservation",
+            "convergence",
+            "public-workflow",
+            "resource",
+            "scaling",
+            "window-lag"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "balance": "closed-exchange-ledger",
+                "coupling": "native-bulk-surface",
+                "kinetics": "langmuir",
+                "window": "explicit-buffer"
+              },
+              "capability": "meshfree.bulk-surface-exchange",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "afe68425d649c900341d716a0ff0a5d1fa1b057baa47a6269e349460d1d65fb2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.conservative-exterior",
+      "declaration_id": "a656267805b1f78b060f41c4c86a449d507ff68b790f418583533d5a5521c078",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.conservative-exterior.profile",
+          "profile_id": "7611431e7ad8e6a5f034a159538650d6f6e1ee7e0b6b23b9dd01a6c90d81333b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "coercivity",
+            "conservation",
+            "coordinate-derivative",
+            "feasibility",
+            "public-workflow",
+            "resource",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "conservation": "incidence-ledger",
+                "coordinate-derivative": "fixed-topology",
+                "dimension": "2,3",
+                "moments": "feasibility-certified",
+                "nonnegative": "may-refuse"
+              },
+              "capability": "meshfree.conservative-exterior",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ae489c0829a2fe8ea1fc24e7b51acd13465c34f58f4e1f2373dd5fd2badfc1eb"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.elliptic-solve",
+      "declaration_id": "381cfb349371f2649e2a0625ff4902dad3b194974e5d2b29ea04db0cfa881b11",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.elliptic-solve.profile",
+          "profile_id": "9e653affc44b3e85804fee03b3fcd100824ca0733d0c2913a2b982910e29c7ef",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "boundary",
+            "convergence",
+            "public-workflow",
+            "resource",
+            "scaling",
+            "true-residual"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "dirichlet,neumann,robin",
+                "dimension": "2,3",
+                "operator": "prepared-sparse",
+                "stabilization": "configured-not-universal"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3a3a9d523be6371da2ee9468908a14597c5b1c4019baadb8b837c48652b6d739"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.learned-constitutive-flux",
+      "declaration_id": "d9b68d33b4a38b3a84a7b98c7201c00a1ad587579d0174f28c4252a4daee4cff",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.learned-constitutive-flux.profile",
+          "profile_id": "6bfa5974ab7911453e146887a5fb29729d5909228bebe4d3bc4dc17bacb82845",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "coverage",
+            "implicit-derivative",
+            "law-recovery",
+            "newton-refusal",
+            "public-workflow",
+            "resource",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coverage-refusal": true,
+                "derivative": "implicit",
+                "law": "bounded-covered-features",
+                "solve": "native-nonlinear"
+              },
+              "capability": "meshfree.learned-constitutive-flux",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "251581288b34172c5738efcd5ed8140414b2aef9d7979ff727fa309c5e76ca48"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.moving-surface",
+      "declaration_id": "afe9a8578176354d700cce88acf46b24651d032f9a10330671666a8e36f6c507",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.moving-surface.profile",
+          "profile_id": "b83f3ebfff1723a1e94ed81efb80c066a33f7ad6977468d5a4ee830777b0134c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "conservation",
+            "dilution",
+            "epoch-transition",
+            "public-workflow",
+            "repeated-remap",
+            "resource",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "embedding-dimension": 3,
+                "evolution": "native-material-ale",
+                "remap": "explicit-mass-ledger",
+                "topology": "explicit-epoch"
+              },
+              "capability": "meshfree.moving-surface",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7cfac9d9c78641456ef066617e1e9398c39ef5dee70560042ee4d106dbaba133"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.multilevel",
+      "declaration_id": "3eceecf28e4eebce02c7b67ef2b41a62761900f5c088b0dfe8a2432d3f18c027",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.multilevel.profile",
+          "profile_id": "ad19d17dea1fda8a8ea4adce97a0aa5dadc2ca9116a78da5e843bf62c88828d0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "fine-system-cost",
+            "public-workflow",
+            "resource",
+            "scaling",
+            "transfer-reproduction",
+            "true-residual"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coarse-space": "declared-affine-degree",
+                "dimension": "2,3",
+                "fine-system-comparison": "native-ilu,native-smoothed-aggregation",
+                "hierarchy": "native-point-cloud"
+              },
+              "capability": "meshfree.multilevel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "53c83b9bb54b694cc20cdc70da01b1ae325753e7a07ab641ff26c8fb0340c6e7"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.strong-form",
+      "declaration_id": "92a36be4b81aa63b59a8ff0b7cbdf4df03de3441daad3d1abbd63b08131b8b17",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.strong-form.profile",
+          "profile_id": "c76e69c3f4975fd3f6e7d6ed6e7b1fed94d48c0ff4ec1a3b3b7c6d27cb63b1e2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "convergence",
+            "public-workflow",
+            "resource",
+            "row-refusal",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "dimension": "2,3",
+                "methods": "phs-rbf-fd,gmls",
+                "neighbors": "bounded-morton",
+                "polynomials": "bounded-degree",
+                "row-refusal": true
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ac9bbe38fa017f8589eabda977c3e3a053856a22ab035b7192175468364b6fb2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.surface-operators",
+      "declaration_id": "80db11fd84c7531dfd6bc87c9c43ddc95f4410f880741c9e680deec04d087de9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.surface-operators.profile",
+          "profile_id": "a457c0341c41c71a5d884904bce4f858ab309a33d6bdbac7af404c2741f0bb8d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "convergence",
+            "geometry-refusal",
+            "normal-comparison",
+            "public-workflow",
+            "resource",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "embedding-dimension": 3,
+                "geometry": "supplied-or-sampled-normals",
+                "intrinsic-dimension": 2,
+                "reach": "estimate-not-certificate"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b78f7e654584bbdaa43ca77b11a974731ccfd0d49d88a36d1d0cf0e45bc90241"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
     },
     {
       "capability": "multiregion-surface.geometry",

@@ -471,6 +471,27 @@ traces, but no compiled physics owner with residual rows and no
 so an FE–FD SAT coupling is not published through this assembler; SBP–SBP
 interface SAT stays the formulation-specific `SATInterfacePlan`.
 
+### Meshfree reconstruction/capacity components
+
+`MeshfreeComponent` publishes a prepared scalar point-cloud, surface, or
+conservative graph equation through reconstruction and capacity capabilities.
+Its native operator source, field identity, quadrature, source program, and
+numeric revision are admitted explicitly; equal shape or coincident nodes do
+not establish ownership. It does not subclass `AbstractTraceComponent`.
+
+`SurfaceExchangeLaw` lowers actual bulk-query/surface contributions using the
+owner's coordinate transpose. Signed polynomial interpolation can conserve, but
+positive native amount partitions require an explicitly positive reconstruction.
+`LangmuirAdsorptionFlux` reuses native adsorption kinetics.
+`MeshfreeBulkSurfaceMethod` supplies a native fixed-step participant; moving
+queries relocate at host window boundaries with lag evidence.
+
+Local edge-law learning uses MODEL-authorized bindings and `SolverObjective`
+over native nonlinear/implicit solves. Law metadata remain static; numerical
+parameters cross sparse derivative execution as filtered array leaves.
+See [Meshfree solvers](guides_meshfree.md) for scalar-only scope, derivative
+refusals, conservation versus positivity, and qualification.
+
 ### Flux, port, and transfer laws
 
 - **`ConservativeFluxLaw(law_id, binding, (minus, plus), flux, *,

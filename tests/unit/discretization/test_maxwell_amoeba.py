@@ -227,8 +227,8 @@ def test_maxwell_amoeba_scenario_2() -> None:
         jnp.ones((points.shape[0],)) / points.shape[0],
         boundary_mask=boundary,
         boundary_normals=normals,
-        degree=2,
-        neighbor_count=12,
+        stencil=phx.discretization.meshfree.LocalStencilPolicy(polynomial_degree=2),
+        neighbors=12,
     ).prepare()
     values = points[:, 0] ** 2 + 3.0 * points[:, 1]
     np.testing.assert_allclose(
@@ -241,7 +241,9 @@ def test_maxwell_amoeba_scenario_2() -> None:
         3.0,
         atol=2e-8,
     )
-    diffusion = phx.discretization.DissipativePointDiffusion(discretization)
+    diffusion = phx.discretization.PointDiffusionOperator(
+        discretization, 1.0, form="dissipative"
+    )
     assert diffusion.energy_rate(values) <= 1e-10
 
 

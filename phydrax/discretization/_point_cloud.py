@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import final
 
 import equinox as eqx
 import jax
@@ -13,12 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from scipy.spatial import cKDTree
-
-import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._polynomial._total_degree import TotalDegreePolynomialFeatures
 from .._strict import StrictModule
 from ..linalg import ArraySpace, DiagonalPairing
 from ..sparse import RowRelation
@@ -29,36 +26,32 @@ from ._core import (
     PreparationReport,
 )
 from ._lifecycle import validate_prepared_metadata
-from ._local_polynomial import (
-    prepare_weighted_least_squares,
-    PreparedWeightedLeastSquares,
-)
 from ._measure import DiscreteMeasure
 from ._spaces import DiscreteFieldSpace, TensorDofLayout
 from ._support import DiscreteSupport
 from ._tensor import AbstractStrongFormDiscretization
 from ._topology import EntitySet, PointTopology
+from .meshfree._neighbors import _integer, _points, MeshfreeNeighborhoodPlan
+from .meshfree._stencils import (
+    LocalStencilPolicy,
+    LocalStencilReport,
+    MeshfreeFunctional,
+    prepare_local_stencils,
+    PreparedLocalStencils,
+)
 
 
-class PointStencilReport(StrictModule):
-    maximum_condition_number: float = eqx.field(static=True)
-    minimum_singular_value: float = eqx.field(static=True)
-    maximum_moment_residual: float = eqx.field(static=True)
-    maximum_amplification: float = eqx.field(static=True)
-    minimum_trust_radius: float = eqx.field(static=True)
-    worst_point: int = eqx.field(static=True)
-    report_id: str = eqx.field(static=True)
-
-
+@final
 class PointCloudPlan(StrictModule):
     points: Array
     quadrature_weights: Array
     boundary_mask: Array
     boundary_normals: Array
     boundary_quadrature_weights: Array | None
-    degree: int = eqx.field(static=True)
-    neighbor_count: int = eqx.field(static=True)
-    condition_limit: float = eqx.field(static=True)
+    stencil: LocalStencilPolicy
+    neighbors: int = eqx.field(static=True)
+    maximum_candidates: int | None = eqx.field(static=True)
+    target_chunk_size: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -70,38 +63,40 @@ class PointCloudPlan(StrictModule):
         boundary_mask: ArrayLike | None = None,
         boundary_normals: ArrayLike | None = None,
         boundary_quadrature_weights: ArrayLike | None = None,
-        degree: int = 2,
-        neighbor_count: int | None = None,
-        condition_limit: float = 1e8,
+        stencil: LocalStencilPolicy | None = None,
+        neighbors: int | None = None,
+        maximum_candidates: int | None = None,
+        target_chunk_size: int | None = None,
     ) -> None:
-        points_ = np.asarray(points, dtype=np.float64)
+        points_ = _points(points, "points", unique=True)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
-        if points_.ndim != 2 or points_.shape[0] == 0 or points_.shape[1] == 0:
-            raise ValueError("Point cloud must have shape (points, dimension).")
-        if np.any(~np.isfinite(points_)):
-            raise ValueError("Point cloud coordinates must be finite.")
         if (
             weights.shape != points_.shape[:1]
             or np.any(~np.isfinite(weights))
             or np.any(weights <= 0.0)
         ):
             raise ValueError("Point quadrature weights must be finite and positive.")
-        if np.unique(points_, axis=0).shape[0] != points_.shape[0]:
-            raise ValueError("Point cloud must not contain duplicate coordinates.")
-        degree_ = int(degree)
-        if degree_ < 2:
-            raise ValueError("Point polynomial degree must be at least two.")
-        feature_count = math.comb(points_.shape[1] + degree_, degree_)
-        neighbors = (
-            max(feature_count + points_.shape[1], 2 * feature_count)
-            if neighbor_count is None
-            else int(neighbor_count)
+        policy = LocalStencilPolicy() if stencil is None else stencil
+        if not isinstance(policy, LocalStencilPolicy):
+            raise TypeError("stencil must be a LocalStencilPolicy.")
+        if policy.polynomial_degree < 2:
+            raise ValueError(
+                "Point-cloud strong derivatives require polynomial degree at least two."
+            )
+        feature_count = math.comb(
+            points_.shape[1] + policy.polynomial_degree, policy.polynomial_degree
         )
-        if neighbors < feature_count or neighbors > points_.shape[0]:
-            raise ValueError("neighbor_count must cover the polynomial basis and cloud.")
-        condition = float(condition_limit)
-        if not np.isfinite(condition) or condition <= 1.0:
-            raise ValueError("condition_limit must exceed one.")
+        count = (
+            min(points_.shape[0], 2 * feature_count) if neighbors is None else neighbors
+        )
+        neighborhood = MeshfreeNeighborhoodPlan(
+            points_,
+            count,
+            maximum_candidates=maximum_candidates,
+            target_chunk_size=target_chunk_size,
+        )
+        if neighborhood.neighbors < feature_count:
+            raise ValueError("neighbors must cover the polynomial basis.")
         boundary = (
             np.zeros(points_.shape[0], dtype=np.bool_)
             if boundary_mask is None
@@ -144,9 +139,10 @@ class PointCloudPlan(StrictModule):
         self.boundary_quadrature_weights = (
             None if boundary_weights is None else jnp.asarray(boundary_weights)
         )
-        self.degree = degree_
-        self.neighbor_count = neighbors
-        self.condition_limit = condition
+        self.stencil = policy
+        self.neighbors = neighborhood.neighbors
+        self.maximum_candidates = neighborhood.maximum_candidates
+        self.target_chunk_size = neighborhood.target_chunk_size
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "point-cloud-plan",
@@ -159,9 +155,14 @@ class PointCloudPlan(StrictModule):
                     if boundary_weights is None
                     else array_tree_fingerprint(boundary_weights)
                 ),
-                "degree": degree_,
-                "neighbor_count": neighbors,
-                "condition_limit": condition,
+                "neighborhood": neighborhood.plan_id,
+                "approximation": policy.approximation,
+                "degree": policy.polynomial_degree,
+                "phs_power": policy.phs_power,
+                "weight_kernel": policy.weight_kernel,
+                "condition_limit": policy.condition_limit,
+                "amplification_limit": policy.amplification_limit,
+                "acceptance": policy.acceptance,
             }
         )
 
@@ -169,12 +170,14 @@ class PointCloudPlan(StrictModule):
         return PreparedPointCloudDiscretization(self)
 
 
+@final
 class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     plan: PointCloudPlan
     relation: RowRelation
-    fit: PreparedWeightedLeastSquares
+    stencils: PreparedLocalStencils
     derivative_weights: tuple[tuple[Array, Array], ...]
-    report: PointStencilReport
+    mixed_weights: tuple[tuple[tuple[int, ...], Array], ...]
+    report: LocalStencilReport
     key: DiscretizationKey
     support: DiscreteSupport
     field_spaces: tuple[DiscreteFieldSpace, ...]
@@ -189,80 +192,37 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     def __init__(self, plan: PointCloudPlan, /) -> None:
         points = np.asarray(plan.points)
         count, dimension = points.shape
-        tree = cKDTree(points)
-        query_count = min(plan.neighbor_count + 1, count)
-        distances, indices = tree.query(points, k=query_count)
-        if query_count == 1:
-            distances = distances[:, None]
-            indices = indices[:, None]
-        selected_distances = distances[:, : plan.neighbor_count]
-        selected_indices = indices[:, : plan.neighbor_count].astype(np.int32)
-        valid = np.isfinite(selected_distances)
-        if np.any(np.sum(valid, axis=1) < plan.neighbor_count):
-            raise ValueError("Point cloud has insufficient finite neighbors.")
-        offsets = points[selected_indices] - points[:, None, :]
-        characteristic = np.max(selected_distances, axis=1)
-        if np.any(characteristic <= 0.0):
-            raise ValueError("Point stencil characteristic lengths must be positive.")
-        standardized = offsets / characteristic[:, None, None]
-        features = TotalDegreePolynomialFeatures(dimension, plan.degree)
-        exponents = np.asarray(features.exponents, dtype=np.int32)
-        design = np.ones((count, plan.neighbor_count, exponents.shape[0] + 1))
-        if exponents.shape[0]:
-            design[:, :, 1:] = np.prod(
-                standardized[:, :, None, :] ** exponents[None, None, :, :],
-                axis=-1,
-            )
-        radial_weights = (
-            1.0
-            / np.maximum(
-                selected_distances / characteristic[:, None],
-                0.25,
-            )
-            ** 2
-        )
-        fit = prepare_weighted_least_squares(
-            design,
-            radial_weights,
-            valid,
-            condition_limit=plan.condition_limit,
-        )
-        factors = np.asarray(fit.factors)
-        derivative_weights: list[tuple[Array, Array]] = []
-        residuals = []
-        amplifications = []
+        neighborhood = MeshfreeNeighborhoodPlan(
+            plan.points,
+            plan.neighbors,
+            maximum_candidates=plan.maximum_candidates,
+            target_chunk_size=plan.target_chunk_size,
+        ).prepare()
+        functionals: list[MeshfreeFunctional] = []
+        indices: list[tuple[int, ...]] = []
         for axis in range(dimension):
-            axis_weights: list[Array] = []
             for order in (1, 2):
-                target = np.zeros((count, exponents.shape[0] + 1))
-                exponent = np.zeros(dimension, dtype=np.int32)
-                exponent[axis] = order
-                matches = np.nonzero(np.all(exponents == exponent[None, :], axis=1))[0]
-                if matches.size != 1:
-                    raise ValueError(
-                        "Polynomial basis does not contain requested derivative."
-                    )
-                target[:, 1 + matches[0]] = math.factorial(order) / characteristic**order
-                weights = ein.contract("rf,rfk->rk", target, factors)
-                moments = ein.contract("rk,rkf->rf", weights, design)
-                residuals.append(np.max(np.abs(moments - target)))
-                amplifications.append(np.max(np.sum(np.abs(weights), axis=1)))
-                axis_weights.append(jnp.asarray(weights))
-            derivative_weights.append((axis_weights[0], axis_weights[1]))
-        trust = (
-            np.full(count, np.inf)
-            if query_count == plan.neighbor_count
-            else 0.5
-            * np.maximum(
-                distances[:, plan.neighbor_count] - distances[:, plan.neighbor_count - 1],
-                0.0,
-            )
+                index = tuple(order if d == axis else 0 for d in range(dimension))
+                indices.append(index)
+                functionals.append(
+                    MeshfreeFunctional((index,), (1.0,), name=f"d{axis}:{order}")
+                )
+        for first in range(dimension):
+            for second in range(first + 1, dimension):
+                index = tuple(int(d == first or d == second) for d in range(dimension))
+                indices.append(index)
+                functionals.append(
+                    MeshfreeFunctional((index,), (1.0,), name=f"d{first}d{second}")
+                )
+        stencils = prepare_local_stencils(
+            neighborhood, plan.points, plan.points, tuple(functionals), plan.stencil
         )
-        relation = RowRelation(
-            selected_indices,
-            source_size=count,
-            valid=valid,
+        derivative_weights = tuple(
+            (stencils.weights[2 * axis], stencils.weights[2 * axis + 1])
+            for axis in range(dimension)
         )
+        trust = np.asarray(neighborhood.trust_margin)
+        relation = neighborhood.relation
         entities = EntitySet("point_cloud_points", 0, np.arange(count))
         topology = PointTopology(
             entities,
@@ -289,7 +249,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
                 ),
             ),
             representation="point_value",
-            reconstruction_id=fit.prepared_id,
+            reconstruction_id=stencils.prepared_id,
         )
         measure = DiscreteMeasure(
             "point_cloud",
@@ -306,11 +266,19 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         )
         preparation = PreparationReport(
             capabilities=capabilities,
+            diagnostics=(
+                f"local-stencil-report:{stencils.report.report_id}",
+                "neighborhood-motion-bound:strict-displacement-less-than-gap/4",
+            ),
             resource_counts={
                 "points": count,
                 "dimension": dimension,
-                "neighbor_capacity": plan.neighbor_count,
-                "polynomial_features": design.shape[2],
+                "neighbor_capacity": plan.neighbors,
+                "polynomial_features": math.comb(
+                    dimension + plan.stencil.polynomial_degree,
+                    plan.stencil.polynomial_degree,
+                ),
+                "refused_stencil_rows": stencils.report.refused_rows,
             },
         )
         spaces, measures, capabilities = validate_prepared_metadata(
@@ -321,29 +289,12 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             capabilities=capabilities,
             preparation=preparation,
         )
-        worst = fit.report.worst_row
-        report_id = canonical_fingerprint(
-            {
-                "kind": "point-stencil-report",
-                "fit": fit.prepared_id,
-                "residuals": residuals,
-                "amplifications": amplifications,
-                "trust": array_tree_fingerprint(trust),
-            }
-        )
         self.plan = plan
         self.relation = relation
-        self.fit = fit
-        self.derivative_weights = tuple(derivative_weights)
-        self.report = PointStencilReport(
-            maximum_condition_number=fit.report.maximum_condition_number,
-            minimum_singular_value=fit.report.minimum_singular_value,
-            maximum_moment_residual=float(max(residuals)),
-            maximum_amplification=float(max(amplifications)),
-            minimum_trust_radius=float(np.min(trust)),
-            worst_point=worst,
-            report_id=report_id,
-        )
+        self.stencils = stencils
+        self.derivative_weights = derivative_weights
+        self.mixed_weights = tuple(zip(indices, stencils.weights, strict=True))
+        self.report = stencils.report
         self.key = key
         self.support = support
         self.field_spaces = spaces
@@ -351,7 +302,11 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         self.capabilities = capabilities
         self.plan_id = plan.plan_id
         self.prepared_id = canonical_fingerprint(
-            {"kind": "prepared-point-cloud", "plan": plan.plan_id, "fit": fit.prepared_id}
+            {
+                "kind": "prepared-point-cloud",
+                "plan": plan.plan_id,
+                "stencils": stencils.prepared_id,
+            }
         )
         self.numeric_version = "1"
         self.preparation = preparation
@@ -414,6 +369,17 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         return jnp.sum(
             weights.reshape(weights.shape + (1,) * len(payload)) * masked,
             axis=1,
+        )
+
+    def mixed_partial_derivative(
+        self, state: ArrayLike, /, *, multi_index: tuple[int, ...]
+    ) -> Array:
+        index = tuple(_integer(order, "derivative order", 0) for order in multi_index)
+        for prepared_index, weights in self.mixed_weights:
+            if index == prepared_index:
+                return self._apply_weights(self._validate_state(state), weights)
+        raise ValueError(
+            "Point-cloud mixed derivatives require a spatial multi-index of total order one/two."
         )
 
     def partial_derivative(
@@ -479,7 +445,8 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         axes: int | Sequence[int] | None = None,
         dual: bool = False,
     ) -> Array:
-        del dual
+        if dual:
+            raise ValueError("Point-cloud strong divergence has no certified dual route.")
         value = jnp.asarray(state)
         selected = self._selected_axes(axes)
         if value.shape[-1] != len(selected):
@@ -546,6 +513,5 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
 
 __all__ = [
     "PointCloudPlan",
-    "PointStencilReport",
     "PreparedPointCloudDiscretization",
 ]

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
+
 from .._partitioned_coupling_adaptive import (
     AbstractCouplingEpochTransfer,
     AdaptiveCouplingRolloutPlan,
@@ -265,7 +268,48 @@ from ._transition import (
 )
 
 
+_FACADE_EXPORT_MODULES: dict[str, str] = {
+    "MeshfreeCapacity": "._meshfree_components",
+    "MeshfreeComponent": "._meshfree_components",
+    "LangmuirAdsorptionFlux": "._surface_exchange",
+    "SurfaceExchangeEvidence": "._surface_exchange",
+    "SurfaceExchangeLaw": "._surface_exchange",
+    "MeshfreeBulkSurfaceMethod": "._surface_exchange",
+}
+
+if TYPE_CHECKING:
+    from ._meshfree_components import (
+        MeshfreeCapacity as MeshfreeCapacity,
+        MeshfreeComponent as MeshfreeComponent,
+    )
+    from ._surface_exchange import (
+        LangmuirAdsorptionFlux as LangmuirAdsorptionFlux,
+        MeshfreeBulkSurfaceMethod as MeshfreeBulkSurfaceMethod,
+        SurfaceExchangeEvidence as SurfaceExchangeEvidence,
+        SurfaceExchangeLaw as SurfaceExchangeLaw,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    module = _FACADE_EXPORT_MODULES.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
 __all__ = [
+    "MeshfreeCapacity",
+    "MeshfreeComponent",
+    "LangmuirAdsorptionFlux",
+    "SurfaceExchangeEvidence",
+    "SurfaceExchangeLaw",
+    "MeshfreeBulkSurfaceMethod",
     "AbstractContribution",
     "AbstractContributionResidual",
     "AbstractCouplingLaw",

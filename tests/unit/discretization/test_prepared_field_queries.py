@@ -672,7 +672,11 @@ def _point_cloud_points() -> np.ndarray:
 
 
 def _point_cloud_reconstruction(points: np.ndarray, quadrature: np.ndarray) -> Any:
-    discretization = phx.discretization.PointCloudPlan(points, quadrature, degree=2)
+    discretization = phx.discretization.PointCloudPlan(
+        points,
+        quadrature,
+        stencil=phx.discretization.LocalStencilPolicy(polynomial_degree=2),
+    )
     return phx.discretization.prepare_point_cloud_field_reconstruction(
         discretization.prepare(),
         support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(),
@@ -756,6 +760,35 @@ def test_point_cloud_query_adjoint_uses_the_cloud_quadrature_pairing() -> None:
     )
     np.testing.assert_allclose(adjoint, transpose / quadrature, atol=1e-12)
     assert not np.allclose(adjoint, transpose)
+
+
+def test_explicit_shepard_reconstruction_is_positive_on_collinear_support() -> None:
+    points = _point_cloud_points()
+    cloud = phx.discretization.PointCloudPlan(points, np.ones(points.shape[0])).prepare()
+    reconstruction = phx.discretization.prepare_point_cloud_field_reconstruction(
+        cloud,
+        support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(),
+        radius=_CLOUD_RADIUS,
+        capacity=points.shape[0],
+        reconstruction="shepard",
+    )
+    target = _CLOUD_QUERIES[2:3]
+    query = reconstruction.prepare_query(target)
+    distances = np.linalg.norm(points - target[0], axis=1)
+    ratio = np.minimum(distances / _CLOUD_RADIUS, 1.0)
+    positive = (1.0 - ratio) ** 4 * (4.0 * ratio + 1.0)
+    values = np.arange(points.shape[0], dtype=np.float64) ** 2
+    expected = np.dot(positive, values) / np.sum(positive)
+    np.testing.assert_allclose(query.apply(jnp.asarray(values)), expected, atol=1e-10)
+    np.testing.assert_allclose(query.apply(jnp.ones(points.shape[0])), 1.0, atol=1e-12)
+    supported = values[distances < _CLOUD_RADIUS]
+    assert (
+        supported.min() <= float(query.apply(jnp.asarray(values))[0]) <= supported.max()
+    )
+    with pytest.raises(ValueError, match="ILL_CONDITIONED"):
+        _point_cloud_reconstruction(points, np.ones(points.shape[0])).prepare_query(
+            target
+        )
 
 
 # --- Finite differences and global spectral ---

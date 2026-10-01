@@ -1,0 +1,401 @@
+{
+  "campaign_definition_id": "c40463fa3ac28a86cb3e82c0e002a28fe10e73fa59d95d0c255bcfebe97e127a",
+  "campaigns": [
+    {
+      "campaign_id": "Q8",
+      "convergence": [],
+      "name": "learned-law-and-implicit-derivatives",
+      "numerical_status": "measured-passed",
+      "release_gates": [
+        {
+          "gate": "scaling",
+          "metrics": {},
+          "reason": "Requires separately executed phase benchmark and approved resource envelope",
+          "status": "unexecuted"
+        },
+        {
+          "gate": "resource-peak",
+          "metrics": {},
+          "reason": "Logical payload and compiler estimates are not a measured peak resident envelope",
+          "status": "unexecuted"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capacity": 12,
+          "consumer": "examples.meshfree_learned_edge_flux.run_workflow",
+          "consumer_source_fingerprint": "bf58dba5f9b91d5cce3430f664a61b85e1d3d740a5623366a74c1aafa9567f56",
+          "dimension": 2,
+          "domain": "Cartesian-lattice-cloud:2D:N=12",
+          "gates": [
+            {
+              "gate": "law-recovery",
+              "metrics": {
+                "absolute_tolerance": 0.05,
+                "parameter_error": 1.3257617226258844e-11
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "implicit-derivative",
+              "metrics": {
+                "absolute_tolerance": 0.001,
+                "gradient_relative_error": 1.8600123967748054e-10
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "coverage",
+              "metrics": {
+                "coverage_refused": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "newton-refusal",
+              "metrics": {
+                "failure_rejected": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "primal-status",
+              "metrics": {
+                "primal_successful": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "adjoint-status",
+              "metrics": {
+                "adjoint_successful": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "conservation",
+              "metrics": {
+                "absolute_tolerance": 1e-07,
+                "conservation_defect": 3.4585667663122877e-12
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_learned_edge_flux.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 103353
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "metrics": {
+            "accepted_updates": 80,
+            "adjoint_status": 0,
+            "adjoint_successful": true,
+            "coercivity_certified": true,
+            "conservation_defect": 3.4585667663122877e-12,
+            "contraction_status": 2,
+            "coverage_refused": true,
+            "coverage_status": 0,
+            "dimension": 2,
+            "domain": "Cartesian-lattice-cloud:2D:N=12",
+            "equation_count": 4,
+            "failed_primal_status": 12,
+            "failure_rejected": true,
+            "finite_difference_gradient": -0.014456641425674223,
+            "gradient_relative_error": 1.8600123967748054e-10,
+            "implicit_gradient": -0.01445664142298527,
+            "learned_coefficient": 1.6999999999867423,
+            "node_count": 12,
+            "oracle_provenance": "analytical-nodal-field-and-host-endpoint-sigmoid-conservation",
+            "outside_coverage_status": 1,
+            "parameter_error": 1.3257617226258844e-11,
+            "precision": "float64",
+            "primal_successful": true,
+            "reference": "independent-host-manufactured-discrete-conservation",
+            "retained_bytes": 103353,
+            "training_domain": "train-only-external-material-sweep[-1,1]",
+            "truth_coefficient": 1.7,
+            "unseen_cloud_error": 5.319668316960957e-13,
+            "unseen_node_count": 16,
+            "unseen_primal_successful": true
+          },
+          "oracle_provenance": "analytical-nodal-field-and-host-endpoint-sigmoid-conservation",
+          "reserved_working_set_bytes": 2779648,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 2779648,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 0
+        },
+        {
+          "capacity": 24,
+          "consumer": "examples.meshfree_learned_edge_flux.run_workflow",
+          "consumer_source_fingerprint": "bf58dba5f9b91d5cce3430f664a61b85e1d3d740a5623366a74c1aafa9567f56",
+          "dimension": 2,
+          "domain": "Cartesian-lattice-cloud:2D:N=24",
+          "gates": [
+            {
+              "gate": "law-recovery",
+              "metrics": {
+                "absolute_tolerance": 0.05,
+                "parameter_error": 5.262457136723242e-14
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "implicit-derivative",
+              "metrics": {
+                "absolute_tolerance": 0.001,
+                "gradient_relative_error": 1.8370693225883778e-10
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "coverage",
+              "metrics": {
+                "coverage_refused": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "newton-refusal",
+              "metrics": {
+                "failure_rejected": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "primal-status",
+              "metrics": {
+                "primal_successful": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "adjoint-status",
+              "metrics": {
+                "adjoint_successful": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "conservation",
+              "metrics": {
+                "absolute_tolerance": 1e-07,
+                "conservation_defect": 1.474376176702208e-13
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_learned_edge_flux.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 208859
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "metrics": {
+            "accepted_updates": 80,
+            "adjoint_status": 0,
+            "adjoint_successful": true,
+            "coercivity_certified": true,
+            "conservation_defect": 1.474376176702208e-13,
+            "contraction_status": 2,
+            "coverage_refused": true,
+            "coverage_status": 0,
+            "dimension": 2,
+            "domain": "Cartesian-lattice-cloud:2D:N=24",
+            "equation_count": 9,
+            "failed_primal_status": 12,
+            "failure_rejected": true,
+            "finite_difference_gradient": -0.12252060479361891,
+            "gradient_relative_error": 1.8370693225883778e-10,
+            "implicit_gradient": -0.12252060477111103,
+            "learned_coefficient": 1.6999999999999473,
+            "node_count": 24,
+            "oracle_provenance": "analytical-nodal-field-and-host-endpoint-sigmoid-conservation",
+            "outside_coverage_status": 1,
+            "parameter_error": 5.262457136723242e-14,
+            "precision": "float64",
+            "primal_successful": true,
+            "reference": "independent-host-manufactured-discrete-conservation",
+            "retained_bytes": 208859,
+            "training_domain": "train-only-external-material-sweep[-1,1]",
+            "truth_coefficient": 1.7,
+            "unseen_cloud_error": 0.0,
+            "unseen_node_count": 28,
+            "unseen_primal_successful": true
+          },
+          "oracle_provenance": "analytical-nodal-field-and-host-endpoint-sigmoid-conservation",
+          "reserved_working_set_bytes": 2887168,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 2887168,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 0
+        }
+      ],
+      "status": "provisional"
+    }
+  ],
+  "config": {
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 2,
+    "max_points": 4096,
+    "neighbors": 12,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      12,
+      24
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "consumer_sources": {
+    "examples.meshfree_learned_edge_flux.run_workflow": "bf58dba5f9b91d5cce3430f664a61b85e1d3d740a5623366a74c1aafa9567f56"
+  },
+  "driver_dependencies": {
+    "benchmarks/meshfree_scaling.py": "57f1096341532a3a092111b49b429a83f4f40f1a3be0103424b62eb6daf9555c"
+  },
+  "elliptic_selection": {
+    "boundary_kinds": [
+      "dirichlet",
+      "neumann",
+      "robin"
+    ],
+    "forms": [
+      "collocated"
+    ],
+    "manufactured": "exponential",
+    "neighbor_policy": "native-support-count",
+    "neighbors": null,
+    "polynomial_degree": 3,
+    "status": "unexecuted",
+    "stencil": "phs-rbf-fd"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "generic_stencil_policy": {
+    "applies_to": [
+      "Q1",
+      "Q3"
+    ],
+    "elliptic_policy": "separate elliptic_selection namespace",
+    "neighbors": 12,
+    "polynomial_degree": 2
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "bbb3836954fed98f37f8791eaec21f3d896af8809a8fdcdf3f42444b64e03314",
+    "evidence_schema": {
+      "fields": [
+        "campaigns",
+        "config",
+        "consumer_sources",
+        "driver_dependencies",
+        "elliptic_selection",
+        "environment",
+        "generic_stencil_policy",
+        "kind",
+        "precision",
+        "released",
+        "unexecuted_campaigns"
+      ],
+      "signature": "c78996c3152209b878892fd0f5c28b2b5e2b424ac2cfcce810b445ac2435493a"
+    },
+    "fingerprint": "d0fb5fac68b2d55d9bad56679c811ad3861cf535f9cb468ee222266946217e48",
+    "source_build_fingerprint": "995d7357ca54831b36b5eef1a76dc6f1d5ff24976d988c9c11408dcb114413de"
+  },
+  "kind": "meshfree-qualification-campaign",
+  "precision": "float64",
+  "released": false,
+  "unexecuted_campaigns": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q5",
+    "Q6",
+    "Q7"
+  ]
+}

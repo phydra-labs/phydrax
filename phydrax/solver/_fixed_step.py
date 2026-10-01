@@ -680,6 +680,7 @@ class FixedStepResult(StrictModule):
     transform_applied: Array
     transform_correction_norm: Array
     transform_admissibility: AdmissibilityHeader | None = None
+    evidence: PyTree[Array] | None = None
 
 
 class RobustRetryPolicy(StrictModule, NonTrainableState):

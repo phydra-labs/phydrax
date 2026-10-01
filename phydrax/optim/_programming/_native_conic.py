@@ -165,6 +165,7 @@ def solve_native_conic_program(
             embedded_barrier,
             maximum_steps=policy.termination.maximum_steps,
             tolerance=policy.termination.absolute,
+            policy=policy,
         )
         original = program.num_constraints
         cone_dual = homogeneous.dual[:original]
