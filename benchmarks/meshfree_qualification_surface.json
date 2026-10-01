@@ -1,0 +1,932 @@
+{
+  "campaign_definition_id": "cc35e73403ee1b15d627d616ed572ab21ca5f9106216d9a1dac34ad0286828a1",
+  "campaigns": [
+    {
+      "campaign_id": "Q5",
+      "convergence": [
+        {
+          "gate": "convergence",
+          "metrics": {
+            "boundary_kind": "native",
+            "errors": [
+              0.08217459067177955,
+              0.03946375728424785
+            ],
+            "form": "native",
+            "metric": "sphere_exact_error",
+            "observed_rate": 2.116328091138634,
+            "polynomial_degree": null,
+            "scale_provenance": "nominal N^(-1/2) intrinsic surface density",
+            "scales": [
+              0.0625,
+              0.04419417382415922
+            ],
+            "seed": 4
+          },
+          "reason": null,
+          "status": "measured-passed"
+        },
+        {
+          "gate": "convergence",
+          "metrics": {
+            "boundary_kind": "native",
+            "errors": [
+              0.0821481461691305,
+              0.03954759981476201
+            ],
+            "form": "native",
+            "metric": "sphere_sampled_error",
+            "observed_rate": 2.109275759345335,
+            "polynomial_degree": null,
+            "scale_provenance": "nominal N^(-1/2) intrinsic surface density",
+            "scales": [
+              0.0625,
+              0.04419417382415922
+            ],
+            "seed": 4
+          },
+          "reason": null,
+          "status": "measured-passed"
+        },
+        {
+          "gate": "convergence",
+          "metrics": {
+            "boundary_kind": "native",
+            "errors": [
+              0.14661756749247537,
+              0.09144868355944795
+            ],
+            "form": "native",
+            "metric": "torus_exact_error",
+            "observed_rate": 1.362047336556979,
+            "polynomial_degree": null,
+            "scale_provenance": "nominal N^(-1/2) intrinsic surface density",
+            "scales": [
+              0.0625,
+              0.04419417382415922
+            ],
+            "seed": 4
+          },
+          "reason": null,
+          "status": "measured-passed"
+        },
+        {
+          "gate": "convergence",
+          "metrics": {
+            "boundary_kind": "native",
+            "errors": [
+              0.1360058825179309,
+              0.09327511107413002
+            ],
+            "form": "native",
+            "metric": "torus_sampled_error",
+            "observed_rate": 1.088209948061932,
+            "polynomial_degree": null,
+            "scale_provenance": "nominal N^(-1/2) intrinsic surface density",
+            "scales": [
+              0.0625,
+              0.04419417382415922
+            ],
+            "seed": 4
+          },
+          "reason": null,
+          "status": "measured-passed"
+        }
+      ],
+      "name": "sphere-torus-laplace-beltrami",
+      "numerical_status": "measured-passed",
+      "release_gates": [
+        {
+          "gate": "scaling",
+          "metrics": {},
+          "reason": "Requires separately executed phase benchmark and approved resource envelope",
+          "status": "unexecuted"
+        },
+        {
+          "gate": "resource-peak",
+          "metrics": {},
+          "reason": "Logical payload and compiler estimates are not a measured peak resident envelope",
+          "status": "unexecuted"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capacity": 256,
+          "consumer": "examples.meshfree_surface_laplace_beltrami.run_workflow",
+          "consumer_source_fingerprint": "033051b0206aaeb7623ace3795cec5dd8601beadf7fb5764ce81b17f6a1b5451",
+          "dimension": 3,
+          "domain": "unit sphere and ring torus (R=2,r=0.75)",
+          "gates": [
+            {
+              "gate": "sphere-analytic",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "sphere_exact_error": 0.08217459067177955
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "sphere-sampled",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "sphere_sampled_error": 0.0821481461691305
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "torus-analytic",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "torus_exact_error": 0.14661756749247537
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "torus-sampled",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "torus_sampled_error": 0.1360058825179309
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "sphere-normal-comparison",
+              "metrics": {
+                "absolute_tolerance": 0.3,
+                "sphere_normal_error": 0.0030170514974956013
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "torus-normal-comparison",
+              "metrics": {
+                "absolute_tolerance": 0.3,
+                "torus_normal_error": 0.04547725078210051
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_surface_laplace_beltrami.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 2136276
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "metrics": {
+            "approximation": "gmls",
+            "area_relative_error": 8.481479150569378e-16,
+            "capacity": 256,
+            "constant_residual": 4.707345624410664e-14,
+            "dimension": 3,
+            "divergence_integral_residual": 8.881784197001252e-16,
+            "domain": "unit sphere and ring torus (R=2,r=0.75)",
+            "geometry_valid": true,
+            "gradient_relative_error": 0.0008040810245564332,
+            "laplace_relative_error": 0.08217459067177955,
+            "maximum_candidates": 256,
+            "minimum_supported_capacity": 256,
+            "oracle_provenance": "independent Delta_S2 z=-2z; Delta_torus(r sin theta)=-sin(theta)/r-sin(theta)cos(theta)/(R+r cos(theta)); analytic radial normals",
+            "retained_bytes": 2136276,
+            "sampled_tube_certified": false,
+            "sphere_exact_error": 0.08217459067177955,
+            "sphere_exact_normal_error": 2.7194799110210365e-16,
+            "sphere_normal_error": 0.0030170514974956013,
+            "sphere_sampled_error": 0.0821481461691305,
+            "target_chunk_size": 32,
+            "torus_exact_error": 0.14661756749247537,
+            "torus_exact_normal_error": 8.899114524108741e-16,
+            "torus_neighbors": 8,
+            "torus_normal_error": 0.04547725078210051,
+            "torus_sampled_error": 0.1360058825179309,
+            "tube_certified": true
+          },
+          "oracle_provenance": "independent Delta_S2 z=-2z; Delta_torus(r sin theta)=-sin(theta)/r-sin(theta)cos(theta)/(R+r cos(theta)); analytic radial normals",
+          "reservation_scope": "four simultaneous exact/sampled sphere/torus preparations",
+          "reserved_working_set_bytes": 26738688,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 26738688,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 4
+        },
+        {
+          "capacity": 512,
+          "consumer": "examples.meshfree_surface_laplace_beltrami.run_workflow",
+          "consumer_source_fingerprint": "033051b0206aaeb7623ace3795cec5dd8601beadf7fb5764ce81b17f6a1b5451",
+          "dimension": 3,
+          "domain": "unit sphere and ring torus (R=2,r=0.75)",
+          "gates": [
+            {
+              "gate": "sphere-analytic",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "sphere_exact_error": 0.03946375728424785
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "sphere-sampled",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "sphere_sampled_error": 0.03954759981476201
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "torus-analytic",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "torus_exact_error": 0.09144868355944795
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "torus-sampled",
+              "metrics": {
+                "absolute_tolerance": 1.0,
+                "torus_sampled_error": 0.09327511107413002
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "sphere-normal-comparison",
+              "metrics": {
+                "absolute_tolerance": 0.3,
+                "sphere_normal_error": 0.0011637180477765397
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "torus-normal-comparison",
+              "metrics": {
+                "absolute_tolerance": 0.3,
+                "torus_normal_error": 0.01366750435530946
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_surface_laplace_beltrami.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 4272340
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "metrics": {
+            "approximation": "gmls",
+            "area_relative_error": 9.895059008997609e-16,
+            "capacity": 512,
+            "constant_residual": 9.370282327836321e-14,
+            "dimension": 3,
+            "divergence_integral_residual": 2.220446049250313e-15,
+            "domain": "unit sphere and ring torus (R=2,r=0.75)",
+            "geometry_valid": true,
+            "gradient_relative_error": 0.00027480066848103416,
+            "laplace_relative_error": 0.03946375728424785,
+            "maximum_candidates": 512,
+            "minimum_supported_capacity": 256,
+            "oracle_provenance": "independent Delta_S2 z=-2z; Delta_torus(r sin theta)=-sin(theta)/r-sin(theta)cos(theta)/(R+r cos(theta)); analytic radial normals",
+            "retained_bytes": 4272340,
+            "sampled_tube_certified": false,
+            "sphere_exact_error": 0.03946375728424785,
+            "sphere_exact_normal_error": 2.7194799110210365e-16,
+            "sphere_normal_error": 0.0011637180477765397,
+            "sphere_sampled_error": 0.03954759981476201,
+            "target_chunk_size": 32,
+            "torus_exact_error": 0.09144868355944795,
+            "torus_exact_normal_error": 9.51817968857363e-16,
+            "torus_neighbors": 8,
+            "torus_normal_error": 0.01366750435530946,
+            "torus_sampled_error": 0.09327511107413002,
+            "tube_certified": true
+          },
+          "oracle_provenance": "independent Delta_S2 z=-2z; Delta_torus(r sin theta)=-sin(theta)/r-sin(theta)cos(theta)/(R+r cos(theta)); analytic radial normals",
+          "reservation_scope": "four simultaneous exact/sampled sphere/torus preparations",
+          "reserved_working_set_bytes": 34537472,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 34537472,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 4
+        }
+      ],
+      "status": "provisional"
+    },
+    {
+      "campaign_id": "Q6",
+      "convergence": [],
+      "name": "expanding-surface-and-repeated-remap",
+      "numerical_status": "provisional",
+      "release_gates": [
+        {
+          "gate": "scaling",
+          "metrics": {},
+          "reason": "Requires separately executed phase benchmark and approved resource envelope",
+          "status": "unexecuted"
+        },
+        {
+          "gate": "resource-peak",
+          "metrics": {},
+          "reason": "Logical payload and compiler estimates are not a measured peak resident envelope",
+          "status": "unexecuted"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capacity": 256,
+          "consumer": "examples.meshfree_moving_surface_reaction_diffusion.run_workflow",
+          "consumer_source_fingerprint": "a345599bb441f8717ec5182a467889ee5d7c43df6630acd17bb56da26785caff",
+          "dimension": 3,
+          "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+          "gates": [
+            {
+              "gate": "dilution",
+              "metrics": {
+                "absolute_tolerance": 0.005,
+                "concentration_error": 3.8466883386378825e-06
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "conservation",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "conservation_residual": 3.647186719302198e-13
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "repeated-shift",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "shift_conservation_residual": 5.329070518200751e-15
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "epoch-remap",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "epoch_conservation_residual": 1.0658141036401503e-14
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "repeated-remap",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "repeated_cycle_conservation_residual": 4.735239977904371e-13
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "rollback",
+              "metrics": {
+                "absolute_tolerance": 1e-08,
+                "rollback_error": 0.0
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "step-status",
+              "metrics": {
+                "successful": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_moving_surface_reaction_diffusion.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {},
+              "reason": "Consumer does not expose retained arrays; reservation is not measured peak memory",
+              "status": "unexecuted"
+            }
+          ],
+          "metrics": {
+            "active_capacity": 194,
+            "concentration_error": 3.8466883386378825e-06,
+            "conservation_residual": 3.647186719302198e-13,
+            "dimension": 3,
+            "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+            "epoch": 2,
+            "epoch_conservation_residual": 1.0658141036401503e-14,
+            "history_count": 11,
+            "measure_rate_residual": 2.617993878110351e-07,
+            "minimum_concentration": 0.7865967086390865,
+            "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+            "repeated_cycle_conservation_residual": 4.735239977904371e-13,
+            "retained_bytes": null,
+            "rollback_error": 0.0,
+            "seed": 4,
+            "shift_conservation_residual": 5.329070518200751e-15,
+            "size": 256,
+            "successful": true
+          },
+          "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+          "reserved_working_set_bytes": 6684672,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 6684672,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 4
+        },
+        {
+          "capacity": 512,
+          "consumer": "examples.meshfree_moving_surface_reaction_diffusion.run_workflow",
+          "consumer_source_fingerprint": "a345599bb441f8717ec5182a467889ee5d7c43df6630acd17bb56da26785caff",
+          "dimension": 3,
+          "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+          "gates": [
+            {
+              "gate": "dilution",
+              "metrics": {
+                "absolute_tolerance": 0.005,
+                "concentration_error": 3.8466883375276595e-06
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "conservation",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "conservation_residual": 3.6256102287079983e-12
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "repeated-shift",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "shift_conservation_residual": 1.4210854715202004e-14
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "epoch-remap",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "epoch_conservation_residual": 1.2434497875801753e-14
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "repeated-remap",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "repeated_cycle_conservation_residual": 5.02403674218499e-12
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "rollback",
+              "metrics": {
+                "absolute_tolerance": 1e-08,
+                "rollback_error": 0.0
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "step-status",
+              "metrics": {
+                "successful": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_moving_surface_reaction_diffusion.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {},
+              "reason": "Consumer does not expose retained arrays; reservation is not measured peak memory",
+              "status": "unexecuted"
+            }
+          ],
+          "metrics": {
+            "active_capacity": 386,
+            "concentration_error": 3.8466883375276595e-06,
+            "conservation_residual": 3.6256102287079983e-12,
+            "dimension": 3,
+            "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+            "epoch": 2,
+            "epoch_conservation_residual": 1.2434497875801753e-14,
+            "history_count": 11,
+            "measure_rate_residual": 1.3089969390551754e-07,
+            "minimum_concentration": 0.7815206854709842,
+            "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+            "repeated_cycle_conservation_residual": 5.02403674218499e-12,
+            "retained_bytes": null,
+            "rollback_error": 0.0,
+            "seed": 4,
+            "shift_conservation_residual": 1.4210854715202004e-14,
+            "size": 512,
+            "successful": true
+          },
+          "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+          "reserved_working_set_bytes": 8634368,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 8634368,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 4
+        }
+      ],
+      "status": "provisional"
+    },
+    {
+      "campaign_id": "Q7",
+      "convergence": [],
+      "name": "langmuir-exchange-and-moving-window",
+      "numerical_status": "measured-passed",
+      "release_gates": [
+        {
+          "gate": "scaling",
+          "metrics": {},
+          "reason": "Requires separately executed phase benchmark and approved resource envelope",
+          "status": "unexecuted"
+        },
+        {
+          "gate": "resource-peak",
+          "metrics": {},
+          "reason": "Logical payload and compiler estimates are not a measured peak resident envelope",
+          "status": "unexecuted"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capacity": 256,
+          "consumer": "examples.meshfree_bulk_surface_exchange.run_workflow",
+          "consumer_source_fingerprint": "b0aaa04ff68903316064bfd9fe78a360cbb69e24a0078be463bd0b28c73e7f51",
+          "dimension": 3,
+          "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+          "gates": [
+            {
+              "gate": "analytic",
+              "metrics": {
+                "absolute_tolerance": 0.0001,
+                "equilibrium_error": 8.323897127127111e-14
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "conservation",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "conservation_error": 2.6645352591003757e-15
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "window-lag",
+              "metrics": {
+                "absolute_tolerance": 0.0001,
+                "window_lag_error": 0.0
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "window-status",
+              "metrics": {
+                "accepted": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_bulk_surface_exchange.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 3183136
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "metrics": {
+            "accepted": true,
+            "conservation_error": 2.6645352591003757e-15,
+            "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+            "equilibrium_error": 8.323897127127111e-14,
+            "flux_error": 1.2601031329495527e-13,
+            "geometry_differentiated_within_window": false,
+            "metric_exact": false,
+            "metric_moment_slack": 0.2644346959658305,
+            "nonlinear_iterations": 62,
+            "nonlinear_residual": 3.939549230051718e-13,
+            "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+            "points": 256,
+            "positive_deposition": true,
+            "query_constant_error": 4.440892098500626e-16,
+            "query_displacement": 0.0009998778805744362,
+            "retained_bytes": 3183136,
+            "window_lag": 0.05000000000001137,
+            "window_lag_error": 0.0
+          },
+          "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+          "reserved_working_set_bytes": 6684672,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 6684672,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 4
+        },
+        {
+          "capacity": 512,
+          "consumer": "examples.meshfree_bulk_surface_exchange.run_workflow",
+          "consumer_source_fingerprint": "b0aaa04ff68903316064bfd9fe78a360cbb69e24a0078be463bd0b28c73e7f51",
+          "dimension": 3,
+          "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+          "gates": [
+            {
+              "gate": "analytic",
+              "metrics": {
+                "absolute_tolerance": 0.0001,
+                "equilibrium_error": 9.844902670863576e-14
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "conservation",
+              "metrics": {
+                "absolute_tolerance": 1e-06,
+                "conservation_error": 2.6645352591003757e-15
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "window-lag",
+              "metrics": {
+                "absolute_tolerance": 0.0001,
+                "window_lag_error": 0.0
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "window-status",
+              "metrics": {
+                "accepted": true
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "examples.meshfree_bulk_surface_exchange.run_workflow"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 7020402
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "metrics": {
+            "accepted": true,
+            "conservation_error": 2.6645352591003757e-15,
+            "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+            "equilibrium_error": 9.844902670863576e-14,
+            "flux_error": 1.5135115383202447e-13,
+            "geometry_differentiated_within_window": false,
+            "metric_exact": false,
+            "metric_moment_slack": 0.35916552690820963,
+            "nonlinear_iterations": 59,
+            "nonlinear_residual": 5.56226033560987e-13,
+            "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+            "points": 512,
+            "positive_deposition": true,
+            "query_constant_error": 2.220446049250313e-16,
+            "query_displacement": 0.0009999694402908282,
+            "retained_bytes": 7020402,
+            "window_lag": 0.05000000000001137,
+            "window_lag_error": 0.0
+          },
+          "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+          "reserved_working_set_bytes": 8634368,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 8634368,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "seed": 4
+        }
+      ],
+      "status": "provisional"
+    }
+  ],
+  "config": {
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 3,
+    "max_points": 4096,
+    "neighbors": 24,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      4
+    ],
+    "sizes": [
+      256,
+      512
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "consumer_sources": {
+    "examples.meshfree_bulk_surface_exchange.run_workflow": "b0aaa04ff68903316064bfd9fe78a360cbb69e24a0078be463bd0b28c73e7f51",
+    "examples.meshfree_moving_surface_reaction_diffusion.run_workflow": "a345599bb441f8717ec5182a467889ee5d7c43df6630acd17bb56da26785caff",
+    "examples.meshfree_surface_laplace_beltrami.run_workflow": "033051b0206aaeb7623ace3795cec5dd8601beadf7fb5764ce81b17f6a1b5451"
+  },
+  "driver_dependencies": {
+    "benchmarks/meshfree_scaling.py": "57f1096341532a3a092111b49b429a83f4f40f1a3be0103424b62eb6daf9555c"
+  },
+  "elliptic_selection": {
+    "boundary_kinds": [
+      "dirichlet",
+      "neumann",
+      "robin"
+    ],
+    "forms": [
+      "collocated"
+    ],
+    "manufactured": "exponential",
+    "neighbor_policy": "native-support-count",
+    "neighbors": null,
+    "polynomial_degree": 3,
+    "status": "unexecuted",
+    "stencil": "phs-rbf-fd"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "generic_stencil_policy": {
+    "applies_to": [
+      "Q1",
+      "Q3"
+    ],
+    "elliptic_policy": "separate elliptic_selection namespace",
+    "neighbors": 24,
+    "polynomial_degree": 2
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "bbb3836954fed98f37f8791eaec21f3d896af8809a8fdcdf3f42444b64e03314",
+    "evidence_schema": {
+      "fields": [
+        "campaigns",
+        "config",
+        "consumer_sources",
+        "driver_dependencies",
+        "elliptic_selection",
+        "environment",
+        "generic_stencil_policy",
+        "kind",
+        "precision",
+        "released",
+        "unexecuted_campaigns"
+      ],
+      "signature": "c78996c3152209b878892fd0f5c28b2b5e2b424ac2cfcce810b445ac2435493a"
+    },
+    "fingerprint": "d0fb5fac68b2d55d9bad56679c811ad3861cf535f9cb468ee222266946217e48",
+    "source_build_fingerprint": "995d7357ca54831b36b5eef1a76dc6f1d5ff24976d988c9c11408dcb114413de"
+  },
+  "kind": "meshfree-qualification-campaign",
+  "precision": "float64",
+  "released": false,
+  "unexecuted_campaigns": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q8"
+  ]
+}

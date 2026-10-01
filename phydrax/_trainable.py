@@ -450,14 +450,16 @@ def _code_global_names(code: CodeType, /) -> frozenset[str]:
     return frozenset(names)
 
 
-def _global_reads(function: FunctionType, /) -> tuple[tuple[str, Any], ...]:
+def _global_reads(
+    function: FunctionType, /, *, include_imported: bool = False
+) -> tuple[tuple[str, Any], ...]:
     """Return the `(name, value)` module globals `function` reads, sorted by name.
 
     Nested code (lambdas, inner functions, comprehensions) shares the function's
     globals and is included. Names absent from the module namespace resolve to
-    builtins and are skipped. Functions imported from another module are
-    operations named by their import, not state of this module: their own
-    module state belongs to their defining module and is not followed.
+    builtins and are skipped. Imported functions are omitted when inspecting
+    this module's trainable state. Compiler identity requests their exact
+    bindings as well with ``include_imported=True``.
     """
     namespace = function.__globals__
     return tuple(
@@ -465,7 +467,8 @@ def _global_reads(function: FunctionType, /) -> tuple[tuple[str, Any], ...]:
         for name in sorted(_code_global_names(function.__code__))
         if name in namespace
         and not (
-            isinstance(namespace[name], FunctionType)
+            not include_imported
+            and isinstance(namespace[name], FunctionType)
             and namespace[name].__module__ != function.__module__
         )
     )

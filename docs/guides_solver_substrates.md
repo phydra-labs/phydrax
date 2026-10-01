@@ -469,18 +469,21 @@ Maxwell. See [Fourier-modal Maxwell](guides_fourier_modal_maxwell.md).
 The same degree-safe calculus applies full tetrahedral Whitney Hodge matrices and their
 inverse actions directly in codifferentials, energy pairings, frequency solves, and
 unstructured time evolution; diagonal metadata is not substituted for those operators.
-`PointCloudPlan` is separate: it prepares a fixed-capacity,
-rank/condition-certified nodal polynomial calculus over `PointTopology`. Its
-`DissipativePointDiffusion` supplies a negative-semidefinite factorization; no generic
-conservation claim is inferred from local polynomial reproduction.
-Point values are observed through `prepare_point_cloud_field_reconstruction`, a
-moving least-squares reconstruction with `partial` support coverage. Its prepared
-queries (`prepare_query(points, coverage="masked")`) keep every requested point's
-status, local-fit condition estimate, and neighbor count, admit only well-conditioned
-neighborhoods, and refuse incomplete coverage when `coverage="complete"`. Point
-clouds publish no facet trace: their boundary points, normals, and boundary weights
-serve point collocation and point-SBP evidence, not a weak trace with a facet
-measure.
+`PointCloudPlan` is separate: it prepares bounded, rank/condition-admitted GMLS or
+PHS-RBF-FD calculus over `PointTopology`. `PointDiffusionOperator` distinguishes
+collocated continuum product-rule approximation from quadrature-adjoint
+dissipation. The latter's energy inequality does not certify continuum accuracy
+for arbitrary quadrature. `PointCloudPoissonPlan` prepares reusable sparse
+assembly, native solves, explicit boundary lifting/gauges, and reported Neumann
+source projection. Full sparse point-SBP identities have a preparation budget.
+
+Point values are observed through `prepare_point_cloud_field_reconstruction`,
+with polynomial or explicitly selected positive degree-zero Shepard
+reconstruction and `partial` support coverage. Prepared queries retain status,
+fit condition, and neighbor counts; complete coverage refuses invalid rows.
+Point clouds publish no facet trace: their boundary points, normals, and weights
+serve collocation, not an inferred weak trace with a facet measure.
+See [Meshfree solvers](guides_meshfree.md).
 
 ## Staggered acoustics
 

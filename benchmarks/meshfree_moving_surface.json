@@ -1,0 +1,516 @@
+{
+  "config": {
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 3,
+    "max_points": 4096,
+    "neighbors": 12,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      48,
+      64
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "driver_dependencies": {
+    "benchmarks/meshfree_scaling.py": "57f1096341532a3a092111b49b429a83f4f40f1a3be0103424b62eb6daf9555c",
+    "examples/meshfree_moving_surface_reaction_diffusion.py": "a345599bb441f8717ec5182a467889ee5d7c43df6630acd17bb56da26785caff",
+    "examples/meshfree_surface_laplace_beltrami.py": "033051b0206aaeb7623ace3795cec5dd8601beadf7fb5764ce81b17f6a1b5451"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "bff904fd3cfdb4da506039456c71821f0b11eba14d821f67a6bd98dfbe9570d7",
+    "evidence_schema": {
+      "fields": [
+        "config",
+        "driver_dependencies",
+        "environment",
+        "kind",
+        "precision",
+        "release_status",
+        "resource_measurement",
+        "rows"
+      ],
+      "signature": "3a65578e4ff170f34e1608a997b4023cca6f633d80792b9cf0a6f67b6afecea6"
+    },
+    "fingerprint": "c79a553cf397af9420093120ca5cc529c8753f7008c002fd7ac5ccfdee1d4b78",
+    "source_build_fingerprint": "995d7357ca54831b36b5eef1a76dc6f1d5ff24976d988c9c11408dcb114413de"
+  },
+  "kind": "meshfree-phase-benchmark",
+  "precision": "float64",
+  "release_status": "candidate",
+  "resource_measurement": {
+    "compiler_scope": "official executable estimates, not process resident memory",
+    "peak_resident_bytes": null,
+    "peak_status": "unavailable",
+    "reason": "No native peak-memory sampler is exposed by the benchmark runtime",
+    "retained_scope": "unique logical payload visible to runtime object walker"
+  },
+  "rows": [
+    {
+      "capacity": 48,
+      "dimension": 3,
+      "domain": "unit-sphere-expanding-to-radius-1+0.2t",
+      "moving": {
+        "active_points": 36,
+        "compiler": {
+          "argument_bytes": 288,
+          "bytes_accessed": 149561,
+          "flops": 8922,
+          "generated_code_bytes": 0,
+          "output_bytes": 288,
+          "source": "jax-compiled-meshfree-consumer",
+          "temporary_bytes": 27440,
+          "unavailable_reason": null
+        },
+        "concentration_error": 4.978400234278979e-07,
+        "conservation_defect": 7.840950111415168e-16,
+        "epoch_conservation_defect": 5.329070518200751e-15,
+        "first_output_bytes": 288,
+        "output_bytes": 288,
+        "phases": {
+          "adjoint": {
+            "compilation_seconds": 0.497228125,
+            "compiler": {
+              "argument_bytes": 288,
+              "bytes_accessed": 334006,
+              "flops": 23842,
+              "generated_code_bytes": 0,
+              "output_bytes": 288,
+              "source": "jax-compiled-meshfree-adjoint",
+              "temporary_bytes": 39232,
+              "unavailable_reason": null
+            },
+            "first_seconds": 0.0012465,
+            "lowering_seconds": 1.327914208,
+            "status": "measured",
+            "warm": {
+              "count": 3,
+              "max_seconds": 0.000363167,
+              "mean_seconds": 0.0002621803333333333,
+              "median_seconds": 0.000245041,
+              "min_seconds": 0.000178333,
+              "samples_seconds": [
+                0.000363167,
+                0.000178333,
+                0.000245041
+              ],
+              "std_seconds": 7.642521158768371e-05
+            }
+          },
+          "assembly": {
+            "scope": "native-moving-graph-and-initial-state-preparation",
+            "seconds": 3.345530583,
+            "status": "measured"
+          },
+          "compilation": {
+            "seconds": 0.203868,
+            "status": "measured"
+          },
+          "epoch-transition": {
+            "includes_transfer_preparation": true,
+            "seconds": 15.702671917,
+            "status": "measured"
+          },
+          "first": {
+            "seconds": 0.000725708,
+            "status": "measured"
+          },
+          "hierarchy": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "lowering": {
+            "seconds": 0.536764041,
+            "status": "measured"
+          },
+          "neighbor": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "numeric-refresh": {
+            "seconds": 0.000513625,
+            "status": "measured"
+          },
+          "stencil": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "warm": {
+            "count": 3,
+            "max_seconds": 0.000154542,
+            "mean_seconds": 0.00010754166666666666,
+            "median_seconds": 8.9625e-05,
+            "min_seconds": 7.8458e-05,
+            "samples_seconds": [
+              0.000154542,
+              8.9625e-05,
+              7.8458e-05
+            ],
+            "status": "measured",
+            "std_seconds": 3.354548128867566e-05
+          }
+        },
+        "shift_seconds": 1.567609833,
+        "status_execution_seconds": 2.0034595
+      },
+      "oracle": "independent-host-NumPy sphere eigenfunction and exp(-0.1t)/(1+0.2t)^2 dilution",
+      "reserved_working_set_bytes": 2232832,
+      "retained_bytes": null,
+      "retained_bytes_unavailable_reason": "Native moving callbacks capture operator arrays outside the runtime object walker",
+      "retained_visible_bytes": 247502,
+      "seed": 0,
+      "surface": {
+        "compiler": {
+          "argument_bytes": 384,
+          "bytes_accessed": 23479,
+          "flops": 3456,
+          "generated_code_bytes": 0,
+          "output_bytes": 384,
+          "source": "jax-compiled-meshfree-consumer",
+          "temporary_bytes": 9288,
+          "unavailable_reason": null
+        },
+        "first_output_bytes": 384,
+        "laplace_relative_error": 0.22044079627314914,
+        "output_bytes": 384,
+        "phases": {
+          "adjoint": {
+            "compilation_seconds": 0.03087825,
+            "compiler": {
+              "argument_bytes": 384,
+              "bytes_accessed": 43831,
+              "flops": 6960,
+              "generated_code_bytes": 0,
+              "output_bytes": 384,
+              "source": "jax-compiled-meshfree-adjoint",
+              "temporary_bytes": 9672,
+              "unavailable_reason": null
+            },
+            "first_seconds": 0.000213792,
+            "lowering_seconds": 0.015762083,
+            "status": "measured",
+            "warm": {
+              "count": 3,
+              "max_seconds": 3.8125e-05,
+              "mean_seconds": 3.5972333333333335e-05,
+              "median_seconds": 3.7333e-05,
+              "min_seconds": 3.2459e-05,
+              "samples_seconds": [
+                3.8125e-05,
+                3.7333e-05,
+                3.2459e-05
+              ],
+              "std_seconds": 2.505254389389539e-06
+            }
+          },
+          "assembly": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "compilation": {
+            "seconds": 0.026215833,
+            "status": "measured"
+          },
+          "epoch-transition": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "first": {
+            "seconds": 0.000194292,
+            "status": "measured"
+          },
+          "hierarchy": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "lowering": {
+            "seconds": 0.033125042,
+            "status": "measured"
+          },
+          "neighbor": {
+            "reason": "SurfacePointCloudPlan exposes joint geometry/support admission",
+            "status": "unavailable"
+          },
+          "numeric-refresh": {
+            "seconds": 7.0573335,
+            "status": "measured"
+          },
+          "stencil": {
+            "scope": "surface-neighbor,geometry,quadrature,intrinsic-stencils",
+            "seconds": 18.363359833,
+            "status": "measured"
+          },
+          "warm": {
+            "count": 3,
+            "max_seconds": 3.5833e-05,
+            "mean_seconds": 3.2208333333333335e-05,
+            "median_seconds": 3.1208e-05,
+            "min_seconds": 2.9584e-05,
+            "samples_seconds": [
+              3.5833e-05,
+              3.1208e-05,
+              2.9584e-05
+            ],
+            "status": "measured",
+            "std_seconds": 2.647388692445613e-06
+          }
+        }
+      }
+    },
+    {
+      "capacity": 64,
+      "dimension": 3,
+      "domain": "unit-sphere-expanding-to-radius-1+0.2t",
+      "moving": {
+        "active_points": 48,
+        "compiler": {
+          "argument_bytes": 384,
+          "bytes_accessed": 193625,
+          "flops": 11142,
+          "generated_code_bytes": 0,
+          "output_bytes": 384,
+          "source": "jax-compiled-meshfree-consumer",
+          "temporary_bytes": 33712,
+          "unavailable_reason": null
+        },
+        "concentration_error": 4.978400235389202e-07,
+        "conservation_defect": 7.887787645266542e-15,
+        "epoch_conservation_defect": 3.552713678800501e-15,
+        "first_output_bytes": 384,
+        "output_bytes": 384,
+        "phases": {
+          "adjoint": {
+            "compilation_seconds": 0.502727875,
+            "compiler": {
+              "argument_bytes": 384,
+              "bytes_accessed": 425134,
+              "flops": 29806,
+              "generated_code_bytes": 0,
+              "output_bytes": 384,
+              "source": "jax-compiled-meshfree-adjoint",
+              "temporary_bytes": 47424,
+              "unavailable_reason": null
+            },
+            "first_seconds": 0.001098584,
+            "lowering_seconds": 1.442879,
+            "status": "measured",
+            "warm": {
+              "count": 3,
+              "max_seconds": 0.000381083,
+              "mean_seconds": 0.00034379166666666667,
+              "median_seconds": 0.000346542,
+              "min_seconds": 0.00030375,
+              "samples_seconds": [
+                0.000381083,
+                0.000346542,
+                0.00030375
+              ],
+              "std_seconds": 3.163090758876339e-05
+            }
+          },
+          "assembly": {
+            "scope": "native-moving-graph-and-initial-state-preparation",
+            "seconds": 2.085517833,
+            "status": "measured"
+          },
+          "compilation": {
+            "seconds": 0.217335958,
+            "status": "measured"
+          },
+          "epoch-transition": {
+            "includes_transfer_preparation": true,
+            "seconds": 14.93622675,
+            "status": "measured"
+          },
+          "first": {
+            "seconds": 0.000757667,
+            "status": "measured"
+          },
+          "hierarchy": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "lowering": {
+            "seconds": 0.512654541,
+            "status": "measured"
+          },
+          "neighbor": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "numeric-refresh": {
+            "seconds": 0.000523167,
+            "status": "measured"
+          },
+          "stencil": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "warm": {
+            "count": 3,
+            "max_seconds": 0.000171125,
+            "mean_seconds": 0.00012877766666666667,
+            "median_seconds": 0.00011125,
+            "min_seconds": 0.000103958,
+            "samples_seconds": [
+              0.000171125,
+              0.000103958,
+              0.00011125
+            ],
+            "status": "measured",
+            "std_seconds": 3.0091702027118523e-05
+          }
+        },
+        "shift_seconds": 1.396427,
+        "status_execution_seconds": 1.444434916
+      },
+      "oracle": "independent-host-NumPy sphere eigenfunction and exp(-0.1t)/(1+0.2t)^2 dilution",
+      "reserved_working_set_bytes": 2316288,
+      "retained_bytes": null,
+      "retained_bytes_unavailable_reason": "Native moving callbacks capture operator arrays outside the runtime object walker",
+      "retained_visible_bytes": 329694,
+      "seed": 0,
+      "surface": {
+        "compiler": {
+          "argument_bytes": 512,
+          "bytes_accessed": 31299,
+          "flops": 4608,
+          "generated_code_bytes": 0,
+          "output_bytes": 512,
+          "source": "jax-compiled-meshfree-consumer",
+          "temporary_bytes": 12360,
+          "unavailable_reason": null
+        },
+        "first_output_bytes": 512,
+        "laplace_relative_error": 0.15645321707632914,
+        "output_bytes": 512,
+        "phases": {
+          "adjoint": {
+            "compilation_seconds": 0.032392042,
+            "compiler": {
+              "argument_bytes": 512,
+              "bytes_accessed": 58435,
+              "flops": 9280,
+              "generated_code_bytes": 0,
+              "output_bytes": 512,
+              "source": "jax-compiled-meshfree-adjoint",
+              "temporary_bytes": 12872,
+              "unavailable_reason": null
+            },
+            "first_seconds": 0.000244167,
+            "lowering_seconds": 0.013401417,
+            "status": "measured",
+            "warm": {
+              "count": 3,
+              "max_seconds": 3.9292e-05,
+              "mean_seconds": 3.727766666666667e-05,
+              "median_seconds": 3.7416e-05,
+              "min_seconds": 3.5125e-05,
+              "samples_seconds": [
+                3.9292e-05,
+                3.7416e-05,
+                3.5125e-05
+              ],
+              "std_seconds": 1.7039805032791776e-06
+            }
+          },
+          "assembly": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "compilation": {
+            "seconds": 0.030154667,
+            "status": "measured"
+          },
+          "epoch-transition": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "first": {
+            "seconds": 0.000207583,
+            "status": "measured"
+          },
+          "hierarchy": {
+            "reason": "Not a phase of this native operation",
+            "status": "unavailable"
+          },
+          "lowering": {
+            "seconds": 0.034231041,
+            "status": "measured"
+          },
+          "neighbor": {
+            "reason": "SurfacePointCloudPlan exposes joint geometry/support admission",
+            "status": "unavailable"
+          },
+          "numeric-refresh": {
+            "seconds": 6.648925375,
+            "status": "measured"
+          },
+          "stencil": {
+            "scope": "surface-neighbor,geometry,quadrature,intrinsic-stencils",
+            "seconds": 17.9830645,
+            "status": "measured"
+          },
+          "warm": {
+            "count": 3,
+            "max_seconds": 3.4667e-05,
+            "mean_seconds": 3.2403e-05,
+            "median_seconds": 3.1792e-05,
+            "min_seconds": 3.075e-05,
+            "samples_seconds": [
+              3.4667e-05,
+              3.1792e-05,
+              3.075e-05
+            ],
+            "status": "measured",
+            "std_seconds": 1.6564445860537143e-06
+          }
+        }
+      }
+    }
+  ],
+  "workload_id": "ce5261f5b0e6b288b1e1c49e0abc7549f4e6dd9c71779f4e68f8d2dd484b5060"
+}

@@ -1,0 +1,1147 @@
+{
+  "campaign_definition_id": "2bb1f365a10b5968c8887d5993071da32a1dc96e91b0804c1fd2625658aedc30",
+  "campaigns": [
+    {
+      "campaign_id": "Q3",
+      "convergence": [],
+      "name": "fine-system-preconditioner-comparison",
+      "numerical_status": "measured-passed",
+      "release_gates": [
+        {
+          "gate": "scaling",
+          "metrics": {},
+          "reason": "Requires separately executed phase benchmark and approved resource envelope",
+          "status": "unexecuted"
+        },
+        {
+          "gate": "resource-peak",
+          "metrics": {},
+          "reason": "Logical payload and compiler estimates are not a measured peak resident envelope",
+          "status": "unexecuted"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capacity": 64,
+          "constant_reproduction_residuals": [
+            2.886579864025407e-15,
+            3.4416913763379853e-15
+          ],
+          "dimension": 2,
+          "domain": "unit-cube-convex-hull-dirichlet",
+          "fine_nnz": 2440,
+          "gates": [
+            {
+              "gate": "fine-system-cost",
+              "metrics": {
+                "providers": [
+                  "native-ilu",
+                  "native-smoothed-aggregation",
+                  "native-meshfree-multilevel"
+                ]
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "true-residual",
+              "metrics": {
+                "residuals": {
+                  "native-ilu": 9.911032325463416e-09,
+                  "native-meshfree-multilevel": 4.505145371027433e-09,
+                  "native-smoothed-aggregation": 9.872480008366202e-09
+                }
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "transfer-reproduction",
+              "metrics": {
+                "constant": [
+                  2.886579864025407e-15,
+                  3.4416913763379853e-15
+                ],
+                "linear": [
+                  2.4424906541753444e-15,
+                  3.774758283725532e-15
+                ]
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "analytic",
+              "metrics": {
+                "errors": {
+                  "native-ilu": 3.119501520654211e-06,
+                  "native-meshfree-multilevel": 4.843433343837411e-07,
+                  "native-smoothed-aggregation": 5.78020827513015e-06
+                }
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "__main__"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 2108416
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "level_sizes": [
+            64,
+            24,
+            14
+          ],
+          "linear_reproduction_residuals": [
+            2.4424906541753444e-15,
+            3.774758283725532e-15
+          ],
+          "optional_provider": {
+            "reason": "All three comparisons use native public owners",
+            "status": "not-requested"
+          },
+          "oracle": "independent-host-SciPy sparse matrix manufactured RHS and true residual; not a continuum convergence claim",
+          "phases": {
+            "adjoint": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "assembly": {
+              "seconds": 1.054024834,
+              "status": "measured"
+            },
+            "compilation": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "epoch-transition": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "first": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "hierarchy": {
+              "scope": "geometric-transfer-preparation",
+              "seconds": 28.876148541,
+              "status": "measured"
+            },
+            "lowering": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "neighbor": {
+              "reason": "PointCloudPlan exposes combined neighborhood/stencil preparation",
+              "status": "unavailable"
+            },
+            "numeric-refresh": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "stencil": {
+              "includes_neighbor_preparation": true,
+              "seconds": 10.531363375,
+              "status": "measured"
+            },
+            "warm": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            }
+          },
+          "reserved_working_set_bytes": 2707456,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 2707456,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "retained_bytes": 2108416,
+          "seed": 0,
+          "solvers": [
+            {
+              "compiler": {
+                "argument_bytes": 512,
+                "bytes_accessed": 494495,
+                "flops": 29691,
+                "generated_code_bytes": 0,
+                "output_bytes": 512,
+                "source": "jax-compiled-meshfree-consumer",
+                "temporary_bytes": 82992,
+                "unavailable_reason": null
+              },
+              "diagnostic_execution_seconds": 7.066409667,
+              "first_output_bytes": 512,
+              "independent_derivative_solve_policy": {
+                "absolute_tolerance": 1e-10,
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-08,
+                "route": "krylov"
+              },
+              "iterations": 16,
+              "matvec_count": 18,
+              "output_bytes": 512,
+              "phases": {
+                "adjoint": {
+                  "compilation_seconds": 2.848149208,
+                  "compiler": {
+                    "argument_bytes": 512,
+                    "bytes_accessed": 1006176,
+                    "flops": 69339,
+                    "generated_code_bytes": 0,
+                    "output_bytes": 512,
+                    "source": "jax-compiled-meshfree-adjoint",
+                    "temporary_bytes": 92376,
+                    "unavailable_reason": null
+                  },
+                  "first_seconds": 0.028228458,
+                  "lowering_seconds": 3.516205041,
+                  "status": "measured",
+                  "warm": {
+                    "count": 3,
+                    "max_seconds": 0.0361465,
+                    "mean_seconds": 0.024254208,
+                    "median_seconds": 0.018813333,
+                    "min_seconds": 0.017802791,
+                    "samples_seconds": [
+                      0.0361465,
+                      0.018813333,
+                      0.017802791
+                    ],
+                    "std_seconds": 0.008419234151369866
+                  }
+                },
+                "assembly": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "compilation": {
+                  "seconds": 0.92727325,
+                  "status": "measured"
+                },
+                "epoch-transition": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "first": {
+                  "seconds": 0.005331334,
+                  "status": "measured"
+                },
+                "hierarchy": {
+                  "scope": "native-solver-preconditioner-setup",
+                  "seconds": 1.96058475,
+                  "status": "measured"
+                },
+                "lowering": {
+                  "seconds": 1.39223125,
+                  "status": "measured"
+                },
+                "neighbor": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "numeric-refresh": {
+                  "assembly_seconds": 0.05737575,
+                  "seconds": 0.470250708,
+                  "status": "measured"
+                },
+                "stencil": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "warm": {
+                  "count": 3,
+                  "max_seconds": 0.0010075,
+                  "mean_seconds": 0.0009185556666666666,
+                  "median_seconds": 0.000951875,
+                  "min_seconds": 0.000796292,
+                  "samples_seconds": [
+                    0.0010075,
+                    0.000796292,
+                    0.000951875
+                  ],
+                  "status": "measured",
+                  "std_seconds": 8.938619690732766e-05
+                }
+              },
+              "provider": "native-ilu",
+              "refreshed_iterations": 16,
+              "refreshed_relative_residual": 9.911032038456999e-09,
+              "refreshed_solve_seconds": 1.864003417,
+              "relative_residual": 9.911032325463416e-09,
+              "retained_bytes": 1286766,
+              "solution_error": 3.119501520654211e-06,
+              "status": "measured"
+            },
+            {
+              "compiler": {
+                "argument_bytes": 512,
+                "bytes_accessed": 784011,
+                "flops": 43321,
+                "generated_code_bytes": 0,
+                "output_bytes": 512,
+                "source": "jax-compiled-meshfree-consumer",
+                "temporary_bytes": 107632,
+                "unavailable_reason": null
+              },
+              "diagnostic_execution_seconds": 1.988459083,
+              "first_output_bytes": 512,
+              "independent_derivative_solve_policy": {
+                "absolute_tolerance": 1e-10,
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-08,
+                "route": "krylov"
+              },
+              "iterations": 302,
+              "matvec_count": 311,
+              "output_bytes": 512,
+              "phases": {
+                "adjoint": {
+                  "compilation_seconds": 1.984498375,
+                  "compiler": {
+                    "argument_bytes": 512,
+                    "bytes_accessed": 1291220,
+                    "flops": 82709,
+                    "generated_code_bytes": 0,
+                    "output_bytes": 512,
+                    "source": "jax-compiled-meshfree-adjoint",
+                    "temporary_bytes": 115416,
+                    "unavailable_reason": null
+                  },
+                  "first_seconds": 0.045560125,
+                  "lowering_seconds": 2.790500083,
+                  "status": "measured",
+                  "warm": {
+                    "count": 3,
+                    "max_seconds": 0.05446,
+                    "mean_seconds": 0.04866555533333333,
+                    "median_seconds": 0.054361958,
+                    "min_seconds": 0.037174708,
+                    "samples_seconds": [
+                      0.054361958,
+                      0.05446,
+                      0.037174708
+                    ],
+                    "std_seconds": 0.008125354654287256
+                  }
+                },
+                "assembly": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "compilation": {
+                  "seconds": 1.203423125,
+                  "status": "measured"
+                },
+                "epoch-transition": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "first": {
+                  "seconds": 0.044958792,
+                  "status": "measured"
+                },
+                "hierarchy": {
+                  "scope": "native-solver-preconditioner-setup",
+                  "seconds": 15.203838542,
+                  "status": "measured"
+                },
+                "lowering": {
+                  "seconds": 1.4992285,
+                  "status": "measured"
+                },
+                "neighbor": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "numeric-refresh": {
+                  "assembly_seconds": 0.084671708,
+                  "seconds": 0.513790208,
+                  "status": "measured"
+                },
+                "stencil": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "warm": {
+                  "count": 3,
+                  "max_seconds": 0.039003833,
+                  "mean_seconds": 0.037416583,
+                  "median_seconds": 0.036873416,
+                  "min_seconds": 0.0363725,
+                  "samples_seconds": [
+                    0.039003833,
+                    0.036873416,
+                    0.0363725
+                  ],
+                  "status": "measured",
+                  "std_seconds": 0.0011408333596218164
+                }
+              },
+              "provider": "native-smoothed-aggregation",
+              "refreshed_iterations": 302,
+              "refreshed_relative_residual": 9.872479967779492e-09,
+              "refreshed_solve_seconds": 2.008448584,
+              "relative_residual": 9.872480008366202e-09,
+              "retained_bytes": 2108416,
+              "solution_error": 5.78020827513015e-06,
+              "status": "measured"
+            },
+            {
+              "compiler": {
+                "argument_bytes": 512,
+                "bytes_accessed": 803415,
+                "flops": 59024,
+                "generated_code_bytes": 0,
+                "output_bytes": 512,
+                "source": "jax-compiled-meshfree-consumer",
+                "temporary_bytes": 91888,
+                "unavailable_reason": null
+              },
+              "diagnostic_execution_seconds": 1.738665042,
+              "first_output_bytes": 512,
+              "independent_derivative_solve_policy": {
+                "absolute_tolerance": 1e-10,
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-08,
+                "route": "krylov"
+              },
+              "iterations": 40,
+              "matvec_count": 42,
+              "output_bytes": 512,
+              "phases": {
+                "adjoint": {
+                  "compilation_seconds": 1.650918625,
+                  "compiler": {
+                    "argument_bytes": 512,
+                    "bytes_accessed": 1314040,
+                    "flops": 98422,
+                    "generated_code_bytes": 0,
+                    "output_bytes": 512,
+                    "source": "jax-compiled-meshfree-adjoint",
+                    "temporary_bytes": 100568,
+                    "unavailable_reason": null
+                  },
+                  "first_seconds": 0.019232375,
+                  "lowering_seconds": 2.292828041,
+                  "status": "measured",
+                  "warm": {
+                    "count": 3,
+                    "max_seconds": 0.021035208,
+                    "mean_seconds": 0.020517111,
+                    "median_seconds": 0.020896958,
+                    "min_seconds": 0.019619167,
+                    "samples_seconds": [
+                      0.020896958,
+                      0.021035208,
+                      0.019619167
+                    ],
+                    "std_seconds": 0.0006374458596497954
+                  }
+                },
+                "assembly": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "compilation": {
+                  "seconds": 1.114414666,
+                  "status": "measured"
+                },
+                "epoch-transition": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "first": {
+                  "seconds": 0.015033084,
+                  "status": "measured"
+                },
+                "hierarchy": {
+                  "scope": "native-solver-preconditioner-setup",
+                  "seconds": 4.5659955,
+                  "status": "measured"
+                },
+                "lowering": {
+                  "seconds": 1.628830666,
+                  "status": "measured"
+                },
+                "neighbor": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "numeric-refresh": {
+                  "assembly_seconds": 0.014417166,
+                  "seconds": 0.163905334,
+                  "status": "measured"
+                },
+                "stencil": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "warm": {
+                  "count": 3,
+                  "max_seconds": 0.011315458,
+                  "mean_seconds": 0.010682180666666666,
+                  "median_seconds": 0.0105655,
+                  "min_seconds": 0.010165584,
+                  "samples_seconds": [
+                    0.0105655,
+                    0.010165584,
+                    0.011315458
+                  ],
+                  "status": "measured",
+                  "std_seconds": 0.0004766293720487185
+                }
+              },
+              "provider": "native-meshfree-multilevel",
+              "refreshed_iterations": 40,
+              "refreshed_relative_residual": 4.9006840085579326e-09,
+              "refreshed_solve_seconds": 1.000945667,
+              "relative_residual": 4.505145371027433e-09,
+              "retained_bytes": 1772298,
+              "solution_error": 4.843433343837411e-07,
+              "status": "measured"
+            }
+          ],
+          "stopping_reason": "minimum-coarse-points",
+          "transfer_entries": 1056
+        },
+        {
+          "capacity": 128,
+          "constant_reproduction_residuals": [
+            4.218847493575595e-15,
+            1.9984014443252818e-15,
+            1.5543122344752192e-15
+          ],
+          "dimension": 2,
+          "domain": "unit-cube-convex-hull-dirichlet",
+          "fine_nnz": 5586,
+          "gates": [
+            {
+              "gate": "fine-system-cost",
+              "metrics": {
+                "providers": [
+                  "native-ilu",
+                  "native-smoothed-aggregation",
+                  "native-meshfree-multilevel"
+                ]
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "true-residual",
+              "metrics": {
+                "residuals": {
+                  "native-ilu": 1.0016977676110566e-08,
+                  "native-meshfree-multilevel": 7.666113500122023e-09,
+                  "native-smoothed-aggregation": 9.811274621038599e-09
+                }
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "transfer-reproduction",
+              "metrics": {
+                "constant": [
+                  4.218847493575595e-15,
+                  1.9984014443252818e-15,
+                  1.5543122344752192e-15
+                ],
+                "linear": [
+                  2.220446049250313e-15,
+                  2.9976021664879227e-15,
+                  2.942091015256665e-15
+                ]
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "analytic",
+              "metrics": {
+                "errors": {
+                  "native-ilu": 3.9413725150261314e-07,
+                  "native-meshfree-multilevel": 8.944195930005172e-07,
+                  "native-smoothed-aggregation": 4.154598320260661e-06
+                }
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "public-workflow",
+              "metrics": {
+                "consumer": "__main__"
+              },
+              "reason": null,
+              "status": "measured-passed"
+            },
+            {
+              "gate": "resource",
+              "metrics": {
+                "retained_bytes": 5825812
+              },
+              "reason": "Measured logical retained payload; not physical peak memory",
+              "status": "measured-passed"
+            }
+          ],
+          "level_sizes": [
+            128,
+            49,
+            24,
+            14
+          ],
+          "linear_reproduction_residuals": [
+            2.220446049250313e-15,
+            2.9976021664879227e-15,
+            2.942091015256665e-15
+          ],
+          "optional_provider": {
+            "reason": "All three comparisons use native public owners",
+            "status": "not-requested"
+          },
+          "oracle": "independent-host-SciPy sparse matrix manufactured RHS and true residual; not a continuum convergence claim",
+          "phases": {
+            "adjoint": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "assembly": {
+              "seconds": 0.84345675,
+              "status": "measured"
+            },
+            "compilation": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "epoch-transition": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "first": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "hierarchy": {
+              "scope": "geometric-transfer-preparation",
+              "seconds": 16.717905875,
+              "status": "measured"
+            },
+            "lowering": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "neighbor": {
+              "reason": "PointCloudPlan exposes combined neighborhood/stencil preparation",
+              "status": "unavailable"
+            },
+            "numeric-refresh": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            },
+            "stencil": {
+              "includes_neighbor_preparation": true,
+              "seconds": 3.950533666,
+              "status": "measured"
+            },
+            "warm": {
+              "reason": "Not a phase of this native operation",
+              "status": "unavailable"
+            }
+          },
+          "reserved_working_set_bytes": 3055616,
+          "resource_reservation": {
+            "reason": "Declared workload reservation, not measured peak memory",
+            "reserved_bytes": 3055616,
+            "resource_budget": 1073741824,
+            "status": "provisional",
+            "working_set_budget": 268435456
+          },
+          "retained_bytes": 5825812,
+          "seed": 0,
+          "solvers": [
+            {
+              "compiler": {
+                "argument_bytes": 1024,
+                "bytes_accessed": 899535,
+                "flops": 54762,
+                "generated_code_bytes": 0,
+                "output_bytes": 1024,
+                "source": "jax-compiled-meshfree-consumer",
+                "temporary_bytes": 152304,
+                "unavailable_reason": null
+              },
+              "diagnostic_execution_seconds": 0.984167958,
+              "first_output_bytes": 1024,
+              "independent_derivative_solve_policy": {
+                "absolute_tolerance": 1e-10,
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-08,
+                "route": "krylov"
+              },
+              "iterations": 33,
+              "matvec_count": 35,
+              "output_bytes": 1024,
+              "phases": {
+                "adjoint": {
+                  "compilation_seconds": 0.66843275,
+                  "compiler": {
+                    "argument_bytes": 1024,
+                    "bytes_accessed": 1898702,
+                    "flops": 132957,
+                    "generated_code_bytes": 0,
+                    "output_bytes": 1024,
+                    "source": "jax-compiled-meshfree-adjoint",
+                    "temporary_bytes": 171096,
+                    "unavailable_reason": null
+                  },
+                  "first_seconds": 0.01359925,
+                  "lowering_seconds": 1.405553292,
+                  "status": "measured",
+                  "warm": {
+                    "count": 3,
+                    "max_seconds": 0.01208175,
+                    "mean_seconds": 0.011997861,
+                    "median_seconds": 0.011991458,
+                    "min_seconds": 0.011920375,
+                    "samples_seconds": [
+                      0.01208175,
+                      0.011991458,
+                      0.011920375
+                    ],
+                    "std_seconds": 6.603646196357489e-05
+                  }
+                },
+                "assembly": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "compilation": {
+                  "seconds": 0.6847675,
+                  "status": "measured"
+                },
+                "epoch-transition": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "first": {
+                  "seconds": 0.006765375,
+                  "status": "measured"
+                },
+                "hierarchy": {
+                  "scope": "native-solver-preconditioner-setup",
+                  "seconds": 1.225865542,
+                  "status": "measured"
+                },
+                "lowering": {
+                  "seconds": 0.768334917,
+                  "status": "measured"
+                },
+                "neighbor": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "numeric-refresh": {
+                  "assembly_seconds": 0.014335417,
+                  "seconds": 0.1093635,
+                  "status": "measured"
+                },
+                "stencil": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "warm": {
+                  "count": 3,
+                  "max_seconds": 0.003563583,
+                  "mean_seconds": 0.003397083,
+                  "median_seconds": 0.003443541,
+                  "min_seconds": 0.003184125,
+                  "samples_seconds": [
+                    0.003443541,
+                    0.003563583,
+                    0.003184125
+                  ],
+                  "status": "measured",
+                  "std_seconds": 0.00015835793373241523
+                }
+              },
+              "provider": "native-ilu",
+              "refreshed_iterations": 33,
+              "refreshed_relative_residual": 1.0016978332619577e-08,
+              "refreshed_solve_seconds": 0.585952584,
+              "relative_residual": 1.0016977676110566e-08,
+              "retained_bytes": 2707540,
+              "solution_error": 3.9413725150261314e-07,
+              "status": "measured"
+            },
+            {
+              "compiler": {
+                "argument_bytes": 1024,
+                "bytes_accessed": 1587759,
+                "flops": 90152,
+                "generated_code_bytes": 0,
+                "output_bytes": 1024,
+                "source": "jax-compiled-meshfree-consumer",
+                "temporary_bytes": 199792,
+                "unavailable_reason": null
+              },
+              "diagnostic_execution_seconds": 0.798434292,
+              "first_output_bytes": 1024,
+              "independent_derivative_solve_policy": {
+                "absolute_tolerance": 1e-10,
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-08,
+                "route": "krylov"
+              },
+              "iterations": 271,
+              "matvec_count": 279,
+              "output_bytes": 1024,
+              "phases": {
+                "adjoint": {
+                  "compilation_seconds": 0.64846325,
+                  "compiler": {
+                    "argument_bytes": 1024,
+                    "bytes_accessed": 2579134,
+                    "flops": 167772,
+                    "generated_code_bytes": 0,
+                    "output_bytes": 1024,
+                    "source": "jax-compiled-meshfree-adjoint",
+                    "temporary_bytes": 214360,
+                    "unavailable_reason": null
+                  },
+                  "first_seconds": 0.0462045,
+                  "lowering_seconds": 0.905871208,
+                  "status": "measured",
+                  "warm": {
+                    "count": 3,
+                    "max_seconds": 0.044318458,
+                    "mean_seconds": 0.04390406933333333,
+                    "median_seconds": 0.0440485,
+                    "min_seconds": 0.04334525,
+                    "samples_seconds": [
+                      0.04334525,
+                      0.044318458,
+                      0.0440485
+                    ],
+                    "std_seconds": 0.00041022645447064246
+                  }
+                },
+                "assembly": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "compilation": {
+                  "seconds": 0.407432083,
+                  "status": "measured"
+                },
+                "epoch-transition": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "first": {
+                  "seconds": 0.0360535,
+                  "status": "measured"
+                },
+                "hierarchy": {
+                  "scope": "native-solver-preconditioner-setup",
+                  "seconds": 5.753834209,
+                  "status": "measured"
+                },
+                "lowering": {
+                  "seconds": 0.365079334,
+                  "status": "measured"
+                },
+                "neighbor": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "numeric-refresh": {
+                  "assembly_seconds": 0.013990292,
+                  "seconds": 0.25283175,
+                  "status": "measured"
+                },
+                "stencil": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "warm": {
+                  "count": 3,
+                  "max_seconds": 0.047743542,
+                  "mean_seconds": 0.039375,
+                  "median_seconds": 0.035481958,
+                  "min_seconds": 0.0348995,
+                  "samples_seconds": [
+                    0.0348995,
+                    0.047743542,
+                    0.035481958
+                  ],
+                  "status": "measured",
+                  "std_seconds": 0.005922228507060721
+                }
+              },
+              "provider": "native-smoothed-aggregation",
+              "refreshed_iterations": 271,
+              "refreshed_relative_residual": 9.811274585599754e-09,
+              "refreshed_solve_seconds": 0.736539292,
+              "relative_residual": 9.811274621038599e-09,
+              "retained_bytes": 5825812,
+              "solution_error": 4.154598320260661e-06,
+              "status": "measured"
+            },
+            {
+              "compiler": {
+                "argument_bytes": 1024,
+                "bytes_accessed": 1711387,
+                "flops": 126697,
+                "generated_code_bytes": 0,
+                "output_bytes": 1024,
+                "source": "jax-compiled-meshfree-consumer",
+                "temporary_bytes": 171184,
+                "unavailable_reason": null
+              },
+              "diagnostic_execution_seconds": 1.014002042,
+              "first_output_bytes": 1024,
+              "independent_derivative_solve_policy": {
+                "absolute_tolerance": 1e-10,
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-08,
+                "route": "krylov"
+              },
+              "iterations": 69,
+              "matvec_count": 72,
+              "output_bytes": 1024,
+              "phases": {
+                "adjoint": {
+                  "compilation_seconds": 0.836015083,
+                  "compiler": {
+                    "argument_bytes": 1024,
+                    "bytes_accessed": 2707838,
+                    "flops": 204322,
+                    "generated_code_bytes": 0,
+                    "output_bytes": 1024,
+                    "source": "jax-compiled-meshfree-adjoint",
+                    "temporary_bytes": 187224,
+                    "unavailable_reason": null
+                  },
+                  "first_seconds": 0.025240333,
+                  "lowering_seconds": 1.693552625,
+                  "status": "measured",
+                  "warm": {
+                    "count": 3,
+                    "max_seconds": 0.023011125,
+                    "mean_seconds": 0.022953680666666667,
+                    "median_seconds": 0.022983583,
+                    "min_seconds": 0.022866334,
+                    "samples_seconds": [
+                      0.022866334,
+                      0.022983583,
+                      0.023011125
+                    ],
+                    "std_seconds": 6.277855565044181e-05
+                  }
+                },
+                "assembly": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "compilation": {
+                  "seconds": 0.484744667,
+                  "status": "measured"
+                },
+                "epoch-transition": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "first": {
+                  "seconds": 0.016301291,
+                  "status": "measured"
+                },
+                "hierarchy": {
+                  "scope": "native-solver-preconditioner-setup",
+                  "seconds": 1.6967065,
+                  "status": "measured"
+                },
+                "lowering": {
+                  "seconds": 0.511964625,
+                  "status": "measured"
+                },
+                "neighbor": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "numeric-refresh": {
+                  "assembly_seconds": 0.015481209,
+                  "seconds": 0.162169042,
+                  "status": "measured"
+                },
+                "stencil": {
+                  "reason": "Not a phase of this native operation",
+                  "status": "unavailable"
+                },
+                "warm": {
+                  "count": 3,
+                  "max_seconds": 0.015075542,
+                  "mean_seconds": 0.014872736,
+                  "median_seconds": 0.014935666,
+                  "min_seconds": 0.014607,
+                  "samples_seconds": [
+                    0.014607,
+                    0.014935666,
+                    0.015075542
+                  ],
+                  "status": "measured",
+                  "std_seconds": 0.00019638913771048222
+                }
+              },
+              "provider": "native-meshfree-multilevel",
+              "refreshed_iterations": 68,
+              "refreshed_relative_residual": 9.973797373353325e-09,
+              "refreshed_solve_seconds": 0.936275167,
+              "relative_residual": 7.666113500122023e-09,
+              "retained_bytes": 4171036,
+              "solution_error": 8.944195930005172e-07,
+              "status": "measured"
+            }
+          ],
+          "stopping_reason": "minimum-coarse-points",
+          "transfer_entries": 2412
+        }
+      ],
+      "status": "provisional"
+    }
+  ],
+  "config": {
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 2,
+    "max_points": 4096,
+    "neighbors": 18,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      64,
+      128
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "consumer_sources": {},
+  "driver_dependencies": {
+    "benchmarks/meshfree_multilevel.py": "ac54bfedbcc6186b0274411b48cfb0d3c070e2662b293e39008803a39ad359fe",
+    "benchmarks/meshfree_scaling.py": "57f1096341532a3a092111b49b429a83f4f40f1a3be0103424b62eb6daf9555c"
+  },
+  "elliptic_selection": {
+    "boundary_kinds": [
+      "dirichlet",
+      "neumann",
+      "robin"
+    ],
+    "forms": [
+      "collocated"
+    ],
+    "manufactured": "exponential",
+    "neighbor_policy": "native-support-count",
+    "neighbors": null,
+    "polynomial_degree": 3,
+    "status": "unexecuted",
+    "stencil": "phs-rbf-fd"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "generic_stencil_policy": {
+    "applies_to": [
+      "Q1",
+      "Q3"
+    ],
+    "elliptic_policy": "separate elliptic_selection namespace",
+    "neighbors": 18,
+    "polynomial_degree": 2
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "bbb3836954fed98f37f8791eaec21f3d896af8809a8fdcdf3f42444b64e03314",
+    "evidence_schema": {
+      "fields": [
+        "campaigns",
+        "config",
+        "consumer_sources",
+        "driver_dependencies",
+        "elliptic_selection",
+        "environment",
+        "generic_stencil_policy",
+        "kind",
+        "precision",
+        "released",
+        "unexecuted_campaigns"
+      ],
+      "signature": "c78996c3152209b878892fd0f5c28b2b5e2b424ac2cfcce810b445ac2435493a"
+    },
+    "fingerprint": "d0fb5fac68b2d55d9bad56679c811ad3861cf535f9cb468ee222266946217e48",
+    "source_build_fingerprint": "995d7357ca54831b36b5eef1a76dc6f1d5ff24976d988c9c11408dcb114413de"
+  },
+  "kind": "meshfree-qualification-campaign",
+  "precision": "float64",
+  "released": false,
+  "unexecuted_campaigns": [
+    "Q1",
+    "Q2",
+    "Q4",
+    "Q5",
+    "Q6",
+    "Q7",
+    "Q8"
+  ]
+}

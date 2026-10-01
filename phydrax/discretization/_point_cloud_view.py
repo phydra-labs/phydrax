@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from math import comb, isfinite
 from numbers import Integral
-from typing import Any, final
+from typing import Any, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -38,17 +38,8 @@ from .._interpolation import GatherStencil
 from .._model._ports import ValuePort
 from .._polynomial._total_degree import TotalDegreePolynomialFeatures
 from .._trainable import NonTrainableState
-from ..linalg import (
-    DenseLinearOperator,
-    DenseSVD,
-    FailurePolicy,
-    LeastSquaresProblem,
-    LinearSolvePolicy,
-    RankPolicy,
-    RHSLayout,
-    solve,
-)
 from ..sparse import linear_apply, linear_transpose_apply
+from ..typing import parse
 from ._point_cloud import PreparedPointCloudDiscretization
 from ._views import (
     AbstractFieldReconstructionKernel,
@@ -59,12 +50,15 @@ from ._views import (
     FieldTraceSide,
     PreparedFieldReconstruction,
 )
+from .meshfree._stencils import weighted_svd_factors
 
 
 # Leaf granularity of the prepared point hierarchy; the candidate capacity
 # bounds every leaf item within the radius box of one query.
 _LEAF_SIZE = 8
 _RANK_CUTOFF = 1.0e-12
+
+PointCloudReconstruction: TypeAlias = Literal["polynomial", "shepard"]
 
 
 def _wendland_c2(ratio: Array, /) -> Array:
@@ -84,6 +78,8 @@ class PointCloudFieldReconstructionKernel(
     capacity: int = eqx.field(static=True)
     minimum_neighbors: int = eqx.field(static=True)
     condition_limit: float = eqx.field(static=True)
+    reconstruction: PointCloudReconstruction = eqx.field(static=True)
+    source_owner_id: str = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
     def __init__(
@@ -97,6 +93,8 @@ class PointCloudFieldReconstructionKernel(
         minimum_neighbors: int,
         condition_limit: float,
         field_space_id: str,
+        source_owner_id: str,
+        reconstruction: PointCloudReconstruction = "polynomial",
     ) -> None:
         cloud = np.asarray(points, dtype=np.float64)
         if cloud.ndim != 2 or cloud.shape[0] == 0 or not np.all(np.isfinite(cloud)):
@@ -104,32 +102,63 @@ class PointCloudFieldReconstructionKernel(
                 "Point-cloud coordinates must be a finite (points, dimension) array."
             )
         features = TotalDegreePolynomialFeatures(cloud.shape[1], degree)
-        self.points = jnp.asarray(cloud)
-        self.bvh = prepare_bvh(
+        if not isinstance(source_owner_id, str) or not source_owner_id:
+            raise ValueError(
+                "source_owner_id must identify the prepared point-cloud owner."
+            )
+        reconstruction_ = parse(
+            reconstruction, PointCloudReconstruction, "reconstruction"
+        )
+        if reconstruction_ == "shepard" and degree != 0:
+            raise ValueError("Shepard reconstruction requires explicit degree zero.")
+        if (
+            not isfinite(radius)
+            or radius <= 0
+            or not isfinite(condition_limit)
+            or condition_limit <= 1
+        ):
+            raise ValueError(
+                "Reconstruction radius and condition limit must be admissible."
+            )
+        if (
+            not features.feature_count + 1
+            <= minimum_neighbors
+            <= capacity
+            <= cloud.shape[0]
+        ):
+            raise ValueError("Reconstruction capacities must cover the feature count.")
+        bvh = prepare_bvh(
             cloud,
             cloud,
             policy=BVHBuildPolicy(leaf_size=min(_LEAF_SIZE, cloud.shape[0])),
             dtype=jnp.float64,
         )
-        self.exponents = jnp.asarray(features.exponents)
-        self.radius = radius
-        self.capacity = capacity
-        self.minimum_neighbors = minimum_neighbors
-        self.condition_limit = condition_limit
-        self._kernel_id = canonical_fingerprint(
+        kernel_id = canonical_fingerprint(
             {
                 "kind": "point-cloud-moving-least-squares-kernel",
                 "points": array_tree_fingerprint(cloud),
                 "features": features.feature_id,
                 "weight": "wendland-c2",
+                "reconstruction": reconstruction_,
                 "radius": radius,
                 "capacity": capacity,
                 "minimum_neighbors": minimum_neighbors,
                 "condition_limit": condition_limit,
                 "rank_cutoff": _RANK_CUTOFF,
                 "field_space": field_space_id,
+                "source_owner": source_owner_id,
             }
         )
+        self.points = jnp.asarray(cloud)
+        self.bvh = bvh
+        self.exponents = features.exponents
+        self.radius = radius
+        self.capacity = capacity
+        self.minimum_neighbors = minimum_neighbors
+        self.condition_limit = condition_limit
+        self.reconstruction = reconstruction_
+        self.source_owner_id = source_owner_id
+        self._kernel_id = kernel_id
 
     @property
     def kernel_id(self) -> str:
@@ -168,30 +197,28 @@ class PointCloudFieldReconstructionKernel(
         inside = candidate_valid & (ratio < 1.0)
         count = jnp.sum(inside, axis=1, dtype=jnp.int32)
         root = jnp.where(inside, jnp.sqrt(_wendland_c2(jnp.minimum(ratio, 1.0))), 0.0)
-        design = jnp.concatenate(
-            (
-                jnp.ones(offsets.shape[:2] + (1,), dtype=offsets.dtype),
-                jnp.prod(offsets[..., None, :] ** self.exponents, axis=-1),
-            ),
-            axis=-1,
-        )
-        weighted = root[..., None] * design
-        scale = jnp.sqrt(jnp.sum(weighted * weighted, axis=1))
-        scale = jnp.where(scale > 0.0, scale, 1.0)
-        fit = solve(
-            LeastSquaresProblem(DenseLinearOperator(weighted / scale[:, None, :])),
-            root[..., None] * jnp.eye(self.capacity, dtype=root.dtype),
-            policy=LinearSolvePolicy(
-                DenseSVD(),
-                rank=RankPolicy(relative_cutoff=_RANK_CUTOFF, require_full_rank=True),
-                failure=FailurePolicy("status"),
-            ),
-            rhs_layout=RHSLayout((self.capacity,)),
-        )
-        full_rank = fit.diagnostics.rank[:, 0] == self.feature_count
-        conditioning = jnp.where(
-            full_rank, fit.diagnostics.condition_estimate[:, 0], jnp.inf
-        ).astype(points.dtype)
+        if self.reconstruction == "shepard":
+            positive = root * root
+            total = jnp.sum(positive, axis=1)
+            weights = positive / jnp.where(total > 0, total, 1.0)[:, None]
+            full_rank = total > 0
+            conditioning = jnp.where(full_rank, 1.0, jnp.inf).astype(points.dtype)
+        else:
+            design = jnp.concatenate(
+                (
+                    jnp.ones(offsets.shape[:2] + (1,), dtype=offsets.dtype),
+                    jnp.prod(offsets[..., None, :] ** self.exponents, axis=-1),
+                ),
+                axis=-1,
+            )
+            factors, rank, conditioning, _ = weighted_svd_factors(
+                design, root * root, inside
+            )
+            full_rank = rank == self.feature_count
+            conditioning = jnp.where(full_rank, conditioning, jnp.inf).astype(
+                points.dtype
+            )
+            weights = factors[:, 0, :]
         well_conditioned = full_rank & (conditioning <= self.condition_limit)
         status = jnp.where(
             ~finite,
@@ -211,8 +238,6 @@ class PointCloudFieldReconstructionKernel(
             ),
         ).astype(jnp.int32)
         valid = status == int(FieldQueryStatus.VALID)
-        # The constant coefficient of the unscaled fit is the reconstructed value.
-        weights = fit.value[:, 0, :] / scale[:, :1]
         route = GatherStencil(
             indices=candidates,
             weights=jnp.where(valid[:, None] & inside, weights, 0.0),
@@ -251,6 +276,7 @@ def prepare_point_cloud_field_reconstruction(
     minimum_neighbors: int | None = None,
     value_port: ValuePort | None = None,
     support_tolerance: float = 1.0e-9,
+    reconstruction: PointCloudReconstruction = "polynomial",
 ) -> PreparedFieldReconstruction:
     """Prepare an evidenced moving least-squares reconstruction of point values.
 
@@ -263,6 +289,10 @@ def prepare_point_cloud_field_reconstruction(
     cloud samples; every cloud point must lie in it. The reconstruction is
     `C^2` with smooth pieces, values only, and support coverage is `partial`.
     Coefficients are point values with shape `(points, *value_port.event_shape)`.
+    Explicit `reconstruction="shepard"` instead uses degree-zero positive
+    normalized Wendland weights. It reproduces constants, not the cloud's
+    polynomial degree, and permits minimum_neighbors=1 without downgrading a
+    polynomial fit after failure. The selector is part of kernel provenance.
     """
     from ..geometry import CompiledGeometry, GeometryKind
 
@@ -288,7 +318,12 @@ def prepare_point_cloud_field_reconstruction(
         raise ValueError("radius must be finite and positive.")
     if isinstance(capacity, bool) or not isinstance(capacity, Integral):
         raise TypeError("capacity must be an int.")
-    degree = discretization.plan.degree
+    reconstruction_ = parse(reconstruction, PointCloudReconstruction, "reconstruction")
+    degree = (
+        0
+        if reconstruction_ == "shepard"
+        else discretization.plan.stencil.polynomial_degree
+    )
     features = comb(dimension + degree, degree)
     minimum = features if minimum_neighbors is None else minimum_neighbors
     if isinstance(minimum, bool) or not isinstance(minimum, Integral):
@@ -322,8 +357,10 @@ def prepare_point_cloud_field_reconstruction(
         radius=radius_,
         capacity=int(capacity),
         minimum_neighbors=int(minimum),
-        condition_limit=discretization.plan.condition_limit,
+        condition_limit=discretization.plan.stencil.condition_limit,
         field_space_id=field_space_id,
+        source_owner_id=discretization.prepared_id,
+        reconstruction=reconstruction_,
     )
     port = (
         ValuePort(
@@ -359,5 +396,6 @@ def prepare_point_cloud_field_reconstruction(
 
 __all__ = [
     "PointCloudFieldReconstructionKernel",
+    "PointCloudReconstruction",
     "prepare_point_cloud_field_reconstruction",
 ]

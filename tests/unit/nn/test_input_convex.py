@@ -11,6 +11,7 @@ from phydrax.nn.models import (
     InputConvexNetwork,
     PartiallyInputConvexNetwork,
 )
+from phydrax.nn.parameters import PositiveTransform
 
 
 def test_input_convex_scenario_1() -> None:
@@ -115,3 +116,34 @@ def test_input_convex_scenario_2() -> None:
     boundary = domain.component({"x": phx.domain.Boundary()})
     enforced = phx.enforcement.enforce_dirichlet(field, boundary, target=0.0)
     assert "input_convex_certificate" not in enforced.metadata
+
+
+def test_negative_offset_coupling_cannot_certify_a_nonconvex_potential() -> None:
+    model = InputConvexNetwork(
+        in_size="scalar", width_size=1, depth=1, activation="softplus", key=jr.key(17)
+    )
+    invalid = eqx.tree_at(
+        lambda value: (
+            value.input_layers[0].weight,
+            value.input_layers[0].bias,
+            value.input_layers[1].weight,
+            value.input_layers[1].bias,
+            value.state_layers[0].weight,
+            value.state_layers[0].weight_transform,
+        ),
+        model,
+        (
+            jnp.ones((1, 1)),
+            jnp.zeros((1,)),
+            jnp.zeros((1, 1)),
+            jnp.zeros((1,)),
+            jnp.full((1, 1), -20.0),
+            PositiveTransform(minimum=-2.0),
+        ),
+    )
+    # This is a physically negative curvature, not merely a different wrapper.
+    assert float(invalid.hessian(jnp.asarray(0.0))) < -0.49
+    with pytest.raises(ValueError):
+        invalid.input_convex_certificate()
+    with pytest.raises(ValueError):
+        invalid.model_execution_contract()

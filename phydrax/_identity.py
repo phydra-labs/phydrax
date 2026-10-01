@@ -7,15 +7,19 @@ from __future__ import annotations
 import base64
 import dataclasses
 import enum
+import functools
 import hashlib
 import sys
 from collections.abc import Mapping, Sequence
+from inspect import getclosurevars
 from types import CodeType, FunctionType, ModuleType
 from typing import Any
 
 import equinox as eqx
 import jax
 import numpy as np
+from jax import core as jax_public_core
+from jax.extend import core as jax_core
 
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._strict import StrictModule
@@ -24,6 +28,7 @@ from ._trainable import _global_reads, _hidden_arrays
 
 RecordInput = Mapping[str, Any] | Sequence[tuple[str, Any]]
 _ARRAY_TYPES = (jax.Array, jax.ShapeDtypeStruct, np.ndarray)
+_AUTO_COMPILER_LAYOUT = jax_public_core.ShapedArray((), np.dtype("float32")).layout
 
 
 def _type_id(value: Any, /) -> str:
@@ -66,9 +71,781 @@ def _array_payload(value: Any, path: str, /) -> dict[str, Any]:
     }
 
 
+def _compiler_fingerprint(payload: Any, /) -> str:
+    # Compiler-owned records are already JSON-normalized: arrays, enums,
+    # abstract types and programs have explicit payloads. Rewalking them with
+    # the general array-aware normalizer would copy every large IR record.
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _compiler_sharding_payload(value: Any, path: str, /) -> Any:
+    if value is None:
+        return None
+    # The unplaced, empty abstract mesh is JAX's ordinary ShapedArray default.
+    # Device/mesh placement is executable state: never silently erase it.
+    if (
+        isinstance(value, jax.sharding.NamedSharding)
+        and isinstance(value.mesh, jax.sharding.AbstractMesh)
+        and value.mesh.empty
+    ):
+        spec = value.spec
+        if spec.unreduced or spec.reduced or spec.unreduced_kind is not None:
+            raise TypeError(f"Unsupported partition metadata at {path}.")
+        return {
+            "kind": "unplaced-named-sharding",
+            "partitions": _static_payload(tuple(spec), f"{path}.partitions"),
+            "memory_kind": value.memory_kind,
+        }
+    raise TypeError(
+        f"Unsupported compiler sharding at {path}; placement needs an explicit identity."
+    )
+
+
+def _manual_axes_payload(value: jax.sharding.ManualAxisType | None, path: str, /) -> Any:
+    if value is None:
+        return None
+    return {
+        name: sorted(
+            (_static_payload(axis, f"{path}.{name}") for axis in axes),
+            key=canonical_json,
+        )
+        for name, axes in (
+            ("varying", value.varying),
+            ("unreduced", value.unreduced),
+            ("reduced", value.reduced),
+        )
+    } | {
+        "unreduced_kind": _static_payload(value.unreduced_kind, f"{path}.unreduced_kind")
+    }
+
+
+def _abstract_array_payload(value: Any, path: str, /) -> dict[str, Any]:
+    if isinstance(value, jax.ShapeDtypeStruct):
+        if value.format.layout is not None or value.is_ref:
+            raise TypeError(f"Unsupported compiler layout or reference at {path}.")
+        extra = {
+            "manual_axes": _manual_axes_payload(value.manual_axis_type, path),
+            # This JAX constructor field has no public accessor. Keep its
+            # explicit owner adapter here rather than erasing memory placement.
+            "memory_space": _static_payload(value._memory_space, f"{path}.memory_space"),
+        }
+    elif type(value) is jax_public_core.ShapedArray:
+        default_layout = _AUTO_COMPILER_LAYOUT
+        if value.layout is not default_layout:
+            raise TypeError(f"Unsupported compiler layout at {path}.")
+        extra = {
+            "manual_axes": _manual_axes_payload(value.manual_axis_type, path),
+            "memory_space": _static_payload(value.memory_space, f"{path}.memory_space"),
+        }
+    else:
+        raise TypeError(
+            f"Unsupported compiler abstract type at {path}: {_type_id(value)}."
+        )
+    if any(type(dimension) is not int for dimension in value.shape):
+        raise TypeError(
+            f"Symbolic compiler dimensions at {path} need an explicit identity."
+        )
+    return {
+        "kind": "abstract-array",
+        "type": _type_id(value),
+        "shape": list(value.shape),
+        "dtype": np.dtype(value.dtype).str,
+        "weak_type": bool(value.weak_type),
+        "sharding": _compiler_sharding_payload(value.sharding, f"{path}.sharding"),
+        **extra,
+    }
+
+
+class _CompilerPayload:
+    """One content-addressed compiler DAG; object keys never enter its payload."""
+
+    def __init__(self) -> None:
+        self.memo: dict[tuple[Any, bool, tuple[int, ...]], str] = {}
+        self.programs: dict[str, Any] = {}
+        self.metadata: dict[str, Any] = {}
+        self.metadata_memo: dict[tuple[int, tuple[int, ...]], tuple[Any, Any]] = {}
+        self.metadata_values: dict[Any, Any] = {}
+        self.metadata_active: set[tuple[int, tuple[int, ...]]] = set()
+        self.array_memo: dict[int, tuple[Any, Any]] = {}
+        self.code_memo: dict[CodeType, str] = {}
+        self.abstract_memo: dict[tuple[Any, ...], Any] = {}
+        self.function_payloads: dict[tuple[FunctionType, tuple[int, ...]], Any] = {}
+        self.callback_scope: list[Any] = []
+        self.rules: dict[str, Any] = {}
+        self.primitive_memo: dict[jax_core.Primitive, Any] = {}
+        self.primitives = {
+            primitive: name
+            for name, primitive in sorted(vars(jax_core.primitives).items(), reverse=True)
+            if isinstance(primitive, jax_core.Primitive)
+        }
+        for module in (jax.lax, jax.lax.linalg):
+            self.primitives.update(
+                {
+                    primitive: f"{module.__name__}.{name}"
+                    for name, primitive in sorted(vars(module).items(), reverse=True)
+                    if not name.startswith("_")
+                    and isinstance(primitive, jax_core.Primitive)
+                }
+            )
+        from jax._src.callback import pure_callback_p
+        from jax._src.lax.control_flow.conditionals import platform_index_p
+
+        self.primitives[pure_callback_p] = "jax.pure_callback"
+        from equinox.internal import unvmap_all_p, unvmap_any_p, unvmap_max_p
+
+        self.primitives.update(
+            {
+                platform_index_p: "jax._src.lax.control_flow.conditionals.platform_index_p",
+                unvmap_all_p: "equinox.internal.unvmap_all_p",
+                unvmap_any_p: "equinox.internal.unvmap_any_p",
+                unvmap_max_p: "equinox.internal.unvmap_max_p",
+            }
+        )
+
+    @staticmethod
+    def payload_key(value: Any, /) -> Any:
+        """Freeze an already-owned JSON record without canonical/hash walks."""
+        value_type = type(value)
+        if value_type is dict:
+            return (
+                "mapping",
+                tuple(
+                    (key, _CompilerPayload.payload_key(item))
+                    for key, item in sorted(value.items())
+                ),
+            )
+        if value_type in (list, tuple):
+            return (
+                value_type,
+                tuple(_CompilerPayload.payload_key(item) for item in value),
+            )
+        if value_type is float:
+            return (float, value.hex())
+        return (value_type, value)
+
+    def callback_reference(self, value: Any, /) -> Any:
+        """Reference an enclosing declared callback binder, never an object ID."""
+        for depth, owner in enumerate(reversed(self.callback_scope)):
+            if value is owner:
+                return {"kind": "recursive-callback", "depth": depth}
+        return None
+
+    def callback_scope_key(self) -> tuple[int, ...]:
+        return tuple(id(owner) for owner in self.callback_scope)
+
+    def primitive_reference(self, primitive: jax_core.Primitive, path: str, /) -> Any:
+        previous = self.primitive_memo.get(primitive)
+        if previous is not None:
+            return previous
+        binding = self.primitives.get(primitive)
+        if binding is None:
+            from .nonlinear._domain_cond import _domain_call
+
+            if primitive is not _domain_call:
+                raise TypeError(
+                    f"Foreign compiler primitive at {path}: "
+                    f"{_type_id(primitive)} ({primitive.name}) needs an explicit identity."
+                )
+            binding = "phydrax.nonlinear._domain_cond._domain_call"
+        payload = {
+            "kind": "native-primitive",
+            "binding": binding,
+            "name": primitive.name,
+            "multiple_results": primitive.multiple_results,
+        }
+        primitive_id = _compiler_fingerprint(payload)
+        reference = {"metadata_id": primitive_id}
+        self.metadata[primitive_id] = payload
+        self.primitive_memo[primitive] = reference
+        return reference
+
+    def parameter(self, value: Any, path: str, /) -> Any:
+        recursive = self.callback_reference(value)
+        if recursive is not None:
+            return recursive
+        key = (id(value), self.callback_scope_key())
+        previous = self.metadata_memo.get(key)
+        if previous is not None:
+            return previous[1]
+        if value is None or isinstance(
+            value,
+            (
+                str,
+                bool,
+                int,
+                float,
+                complex,
+                np.generic,
+                np.dtype,
+                enum.Enum,
+                type,
+                bytes,
+            ),
+        ):
+            payload = self.parameter_payload(value, path)
+            self.metadata_memo[key] = (value, payload)
+            return payload
+        abstract_key = None
+        if isinstance(value, (jax.ShapeDtypeStruct, jax_public_core.ShapedArray)):
+            axes = value.manual_axis_type
+            axes_key = (
+                None
+                if axes is None
+                else (axes.varying, axes.unreduced, axes.reduced, axes.unreduced_kind)
+            )
+            placement = (
+                (value._memory_space, value._dll, bool(value.is_ref))
+                if isinstance(value, jax.ShapeDtypeStruct)
+                else (value.memory_space, value.layout)
+            )
+            abstract_key = (
+                type(value),
+                tuple((type(dimension), dimension) for dimension in value.shape),
+                value.dtype,
+                bool(value.weak_type),
+                value.sharding,
+                axes_key,
+                placement,
+            )
+            previous_abstract = self.abstract_memo.get(abstract_key)
+            if previous_abstract is not None:
+                self.metadata_memo[key] = (value, previous_abstract)
+                return previous_abstract
+        if key in self.metadata_active:
+            raise TypeError(
+                f"Recursive compiler metadata at {path} needs an explicit graph owner."
+            )
+        self.metadata_active.add(key)
+        try:
+            payload = self.parameter_payload(value, path)
+        finally:
+            self.metadata_active.remove(key)
+        semantic_key = self.payload_key(payload)
+        reference = self.metadata_values.get(semantic_key)
+        if reference is None:
+            if (
+                isinstance(value, (Mapping, tuple, list, set, frozenset))
+                and len(value) < 32
+            ):
+                # Tiny primitive parameter records are cheap inline. Their
+                # schemas/captures/programs already refer to shared graph nodes.
+                reference = payload
+            else:
+                fingerprint = _compiler_fingerprint(payload)
+                reference = {"metadata_id": fingerprint}
+                self.metadata[fingerprint] = payload
+            self.metadata_values[semantic_key] = reference
+        # Keep the source alive so visitation addresses cannot be recycled.
+        self.metadata_memo[key] = (value, reference)
+        if abstract_key is not None:
+            self.abstract_memo[abstract_key] = reference
+        return reference
+
+    def array(self, value: Any, path: str, /) -> Any:
+        key = id(value)
+        previous = self.array_memo.get(key)
+        if previous is not None:
+            return previous[1]
+        payload = _array_payload(value, path)
+        semantic_key = self.payload_key(payload)
+        reference = self.metadata_values.get(semantic_key)
+        if reference is None:
+            fingerprint = _compiler_fingerprint(payload)
+            reference = {"metadata_id": fingerprint}
+            self.metadata[fingerprint] = payload
+            self.metadata_values[semantic_key] = reference
+        self.array_memo[key] = (value, reference)
+        return reference
+
+    def parameter_payload(self, value: Any, path: str, /) -> Any:
+        # JAX's explicit owner types, not general object introspection. These
+        # interpreter-only adapters are localized here, like native primitives.
+        if isinstance(value, jax_core.Primitive):
+            return self.primitive_reference(value, path)
+        from equinox._ad import _ClosureConvert, _TrivialClosureConvert
+        from equinox._module._flatten import MISSING
+        from jax._src.callback import _FlatCallback
+        from jax._src.core import no_axis_name
+        from jax._src.flattree import (
+            Either,
+            FTDict,
+            FTFiltered,
+            FTPyTree,
+            FTSingleton,
+            FTStatic,
+            FTTuple,
+        )
+        from jax._src.interpreters.batching import AxisData
+        from jax._src.sharding_impls import UNSPECIFIED
+
+        if value is UNSPECIFIED:
+            return {"kind": "unspecified-sharding"}
+        if value is no_axis_name:
+            return {"kind": "unnamed-batch-axis"}
+        if value is MISSING:
+            return {
+                "kind": "missing-wrapper-field",
+                "owner": "equinox._module._flatten.MISSING",
+            }
+        if isinstance(value, AxisData):
+            return {
+                "kind": "batch-axis",
+                "name": self.parameter(value.name, f"{path}.name"),
+                "size": self.parameter(value.size, f"{path}.size"),
+                "spmd_name": self.parameter(value.spmd_name, f"{path}.spmd_name"),
+                # Preserve stored mesh axes, not a context-dependent property.
+                "explicit_mesh_axis": self.parameter(
+                    value._ema, f"{path}.explicit_mesh_axis"
+                ),
+            }
+        if isinstance(value, _ClosureConvert):
+            # A static transformation argument binds this callable, including
+            # its current owner-held captures. Jaxpr.consts may still refer to
+            # the original trace after Equinox replaces the dynamic leaves.
+            # Eqx.partition also transports non-executable fragments with a
+            # missing program. Preserve that slot as missing, never invent an
+            # empty executable; native combine reconstructs the callable.
+            return {
+                "kind": "equinox-closure-partition"
+                if value.jaxpr is None
+                else "bound-equinox-program",
+                "type": _type_id(value),
+                "program": None
+                if value.jaxpr is None
+                else self.program(value.jaxpr, path, dynamic_captures=True),
+                "static_captures": self.parameter(value.consts, f"{path}.consts"),
+                "input_dynamic_structure": self.parameter(
+                    value.in_dynamic_struct, f"{path}.in_dynamic_struct"
+                ),
+                "output_dynamic_structure": self.parameter(
+                    value.out_dynamic_struct, f"{path}.out_dynamic_struct"
+                ),
+                "input_static": self.parameter(value.in_static, f"{path}.in_static"),
+                "output_static": self.parameter(value.out_static, f"{path}.out_static"),
+            }
+        if isinstance(value, (eqx.filter_custom_jvp, jax.custom_jvp)):
+            if type(value) not in (eqx.filter_custom_jvp, jax.custom_jvp):
+                raise TypeError(
+                    f"Unsupported custom-JVP owner subclass at {path}: {_type_id(value)}."
+                )
+            self.callback_scope.append(value)
+            try:
+                if isinstance(value, eqx.filter_custom_jvp):
+                    return {
+                        "kind": "filtered-custom-jvp",
+                        "binding_scope": "lexical-callback",
+                        "function": self.parameter(value.fn, f"{path}.fn"),
+                    }
+                return {
+                    "kind": "custom-jvp",
+                    "binding_scope": "lexical-callback",
+                    "function": self.parameter(value.fun, f"{path}.fun"),
+                    "derivative": self.parameter(value.jvp, f"{path}.jvp"),
+                    "nondiff_argnums": self.parameter(
+                        value.nondiff_argnums, f"{path}.nondiff_argnums"
+                    ),
+                    "symbolic_zeros": value.symbolic_zeros,
+                }
+            finally:
+                self.callback_scope.pop()
+        if isinstance(value, _TrivialClosureConvert):
+            return {
+                "kind": "equinox-function-partition"
+                if value.fn is None
+                else "bound-equinox-function",
+                "type": _type_id(value),
+                "function": None
+                if value.fn is None
+                else self.parameter(value.fn, f"{path}.fn"),
+                "input_dynamic_structure": self.parameter(
+                    value.in_dynamic_struct, f"{path}.in_dynamic_struct"
+                ),
+                "input_static": self.parameter(value.in_static, f"{path}.in_static"),
+            }
+
+        if isinstance(value, (jax_core.Jaxpr, jax_core.ClosedJaxpr)):
+            return self.program(value, path, dynamic_captures=False)
+        if isinstance(value, (jax.ShapeDtypeStruct, jax_public_core.ShapedArray)):
+            return _abstract_array_payload(value, path)
+        if isinstance(value, jax_core.AbstractToken):
+            return {"kind": "abstract-token"}
+        if isinstance(value, jax.tree_util.PyTreeDef):
+            node = value.node_data()
+            return {
+                "kind": "pytree-def",
+                "node": None
+                if node is None
+                else {
+                    "type": f"{node[0].__module__}.{node[0].__qualname__}",
+                    "metadata": self.parameter(node[1], f"{path}.metadata"),
+                },
+                "children": [
+                    self.parameter(child, f"{path}.children[{index}]")
+                    for index, child in enumerate(value.children())
+                ],
+            }
+        if isinstance(value, jax.sharding.Sharding):
+            return _compiler_sharding_payload(value, path)
+        if isinstance(value, (jax.sharding.Mesh, jax.sharding.AbstractMesh)):
+            if not value.empty:
+                raise TypeError(
+                    f"Compiler mesh placement at {path} needs an explicit identity."
+                )
+            return {"kind": "empty-mesh", "type": _type_id(value)}
+        if isinstance(value, _FlatCallback):
+            return {
+                "kind": "host-callback",
+                "function": self.parameter(value.callback_func, f"{path}.function"),
+                "inputs": self.parameter(value.in_tree, f"{path}.inputs"),
+            }
+        if isinstance(value, Either):
+            return {
+                "kind": "flat-either",
+                "is_right": value.is_right,
+                "value": self.parameter(value.val, path),
+            }
+        if isinstance(value, (FTFiltered, FTStatic)):
+            return {"kind": _type_id(value), "value": self.parameter(value.val, path)}
+        if isinstance(value, FTDict):
+            return {
+                "kind": "flat-dict",
+                "keys": self.parameter(value.keys, path),
+                "values": self.parameter(value._vals, path),
+            }
+        if isinstance(value, FTSingleton):
+            return {"kind": "flat-singleton", "value": self.parameter(value.val, path)}
+        if isinstance(value, FTTuple):
+            return {"kind": "flat-tuple", "items": self.parameter(value.elts, path)}
+        if isinstance(value, FTPyTree):
+            return {
+                "kind": "flat-pytree",
+                "values": self.parameter(value.xs, path),
+                "tree": self.parameter(value.tree, path),
+            }
+        if isinstance(value, type):
+            return {"kind": "type", "name": f"{value.__module__}.{value.__qualname__}"}
+        if isinstance(value, Mapping):
+            return {
+                "kind": "mapping",
+                "items": [
+                    [key, self.parameter(item, f"{path}.{key}")]
+                    for key, item in _named_records(value, path)
+                ],
+            }
+        if isinstance(value, (tuple, list)):
+            return {
+                "kind": "tuple" if isinstance(value, tuple) else "list",
+                "type": _type_id(value),
+                "items": [
+                    self.parameter(item, f"{path}[{index}]")
+                    for index, item in enumerate(value)
+                ],
+            }
+        if isinstance(value, (set, frozenset)):
+            return {
+                "kind": "set",
+                "items": sorted(
+                    (self.parameter(item, path) for item in value), key=canonical_json
+                ),
+            }
+        if isinstance(value, (jax.Array, np.ndarray)):
+            return _array_payload(value, path)
+        if isinstance(value, (FunctionType, functools.partial)):
+            return self.bound_callable(value, path)
+        if isinstance(value, StrictModule):
+            return {
+                "kind": "strict-module",
+                "type": _type_id(value),
+                "fields": [
+                    [
+                        field.name,
+                        self.parameter(
+                            object.__getattribute__(value, field.name),
+                            f"{path}.{field.name}",
+                        ),
+                    ]
+                    for field in dataclasses.fields(value)
+                ],
+            }
+        if callable(value) and not isinstance(value, StrictModule):
+            raise TypeError(
+                f"Opaque compiler callable at {path}: {_type_id(value)} "
+                "requires its explicit native owner adapter."
+            )
+        return _static_payload(value, path)
+
+    def bound_callable(self, value: Any, path: str, /) -> Any:
+        recursive = self.callback_reference(value)
+        if recursive is not None:
+            return recursive
+        scope = self.callback_scope_key()
+        if isinstance(value, functools.partial):
+            self.callback_scope.append(value)
+            try:
+                return {
+                    "kind": "partial",
+                    "binding_scope": "lexical-callback",
+                    "function": self.bound_callable(value.func, path),
+                    "args": self.parameter(value.args, path),
+                    "keywords": self.parameter(value.keywords, path),
+                }
+            finally:
+                self.callback_scope.pop()
+        if not isinstance(value, FunctionType):
+            raise TypeError(
+                f"Opaque compiler callback at {path} needs an explicit identity."
+            )
+        key = (value, scope)
+        if key in self.function_payloads:
+            return self.function_payloads[key]
+        self.callback_scope.append(value)
+        try:
+            payload = self.bound_function(value, path)
+        finally:
+            self.callback_scope.pop()
+        self.function_payloads[key] = payload
+        return payload
+
+    def bound_function(self, value: FunctionType, path: str, /) -> Any:
+        code = value.__code__
+        if code not in self.code_memo:
+            self.code_memo[code] = _compiler_fingerprint(_code_payload(code, path))
+        return {
+            "kind": "bound-function",
+            "binding_scope": "lexical-callback",
+            "module": value.__module__,
+            "qualname": value.__qualname__,
+            "code": self.code_memo[code],
+            "defaults": self.parameter(value.__defaults__, path),
+            "keyword_defaults": self.parameter(value.__kwdefaults__, path),
+            "closure": [
+                [name, self.parameter(cell.cell_contents, f"{path}.{name}")]
+                for name, cell in zip(
+                    value.__code__.co_freevars, value.__closure__ or (), strict=True
+                )
+            ],
+            "globals": [
+                [
+                    name,
+                    (
+                        _global_payload(referenced, f"{path}.globals.{name}")
+                        if isinstance(referenced, (ModuleType, type))
+                        else self.parameter(referenced, f"{path}.globals.{name}")
+                    ),
+                ]
+                for name, referenced in _global_reads(value, include_imported=True)
+            ],
+        }
+
+    def rule_owner(self, thunk: Any, path: str, /) -> Any:
+        # Unwrap only JAX's owned memoization/thunk protocol. The cache and
+        # live tracing context are interpreter state, not executable constants.
+        if (
+            thunk.f.__module__ != "jax._src.interpreters.partial_eval"
+            or thunk.f.__qualname__ != "_memoize.<locals>.memoized"
+        ):
+            raise TypeError(f"Unsupported custom-JVP thunk at {path}.")
+        function = getclosurevars(thunk.f).nonlocals["fn"]
+        return getclosurevars(function).nonlocals["jvp"]
+
+    def rule_selector(self, owner: Any, path: str, /) -> tuple[Any, str]:
+        from jax._src.api_util import _prepend_static_args
+        from jax._src.custom_derivatives import _flatten_jvp
+        from jax._src.interpreters.batching import batch_custom_jvp_subtrace
+        from jax._src.util import Unhashable
+
+        transformations = []
+        for generator, arguments in owner.transforms:
+            if generator is _flatten_jvp.args[0]:
+                # The last argument is an auxiliary output-tree store.
+                arguments = arguments[:-1]
+            elif generator is _prepend_static_args.args[0]:
+                arguments = tuple(
+                    tuple(
+                        item.val if isinstance(item, Unhashable) else item
+                        for item in group
+                    )
+                    for group in arguments
+                )
+            elif generator is batch_custom_jvp_subtrace.args[0]:
+                tag, axis_data, input_dimensions = arguments
+                if not isinstance(tag, jax_core.TraceTag):
+                    raise TypeError(f"Unsupported custom-JVP batching tag at {path}.")
+                arguments = (axis_data, input_dimensions)
+            else:
+                raise TypeError(f"Unsupported custom-JVP transformation at {path}.")
+            transformations.append(
+                (
+                    generator.__module__,
+                    generator.__qualname__,
+                    self.parameter(arguments, path),
+                )
+            )
+        source = owner.f
+        lifted = None
+        if (
+            source.__module__ == "jax._src.custom_derivatives"
+            and source.__qualname__ == "lift_jvp.<locals>.jvp"
+        ):
+            captures = getclosurevars(source).nonlocals
+            source, selector = self.rule_selector(
+                self.rule_owner(captures["jvp_jaxpr_fun"], path), path
+            )
+            lifted = {"num_consts": captures["num_consts"], "selector": selector}
+        return source, _compiler_fingerprint(
+            {
+                "transformations": transformations,
+                "parameters": self.parameter(owner.params, path),
+                "input_type": self.parameter(owner.in_type, path),
+                "lifted": lifted,
+            }
+        )
+
+    def program(self, value: Any, path: str, /, *, dynamic_captures: bool) -> Any:
+        key = (value, dynamic_captures, self.callback_scope_key())
+        if key in self.memo:
+            return {"program_id": self.memo[key]}
+        # In JAX 0.11 Jaxpr and ClosedJaxpr are the same public class, with
+        # attached consts. The context, not this alias, determines binding.
+        program = value.jaxpr if isinstance(value, jax_core.ClosedJaxpr) else value
+        if program.effects:
+            raise TypeError(
+                f"Effectful compiler program at {path} needs an explicit effect identity."
+            )
+        variables: dict[jax_core.Var, int] = {}
+        variable_types: list[Any] = []
+
+        def variable(var: jax_core.Var, /) -> Any:
+            if isinstance(var, jax_core.DropVar):
+                return {"kind": "drop", "abstract_type": self.parameter(var.aval, path)}
+            if var not in variables:
+                variables[var] = len(variables)
+                variable_types.append(self.parameter(var.aval, path))
+            return variables[var]
+
+        def atom(item: Any, /) -> Any:
+            if isinstance(item, jax_core.Literal):
+                return {
+                    "kind": "literal",
+                    "abstract_type": self.parameter(item.aval, path),
+                    "value": self.array(item.val, path),
+                }
+            if isinstance(item, jax_core.Var):
+                return variable(item)
+            raise TypeError(f"Unsupported compiler atom at {path}.")
+
+        captures = [variable(var) for var in program.constvars]
+        inputs = [variable(var) for var in program.invars]
+        equations = []
+        for index, equation in enumerate(program.eqns):
+            equation_path = f"{path}.equations[{index}]"
+            if equation.effects:
+                raise TypeError(
+                    f"Effectful compiler equation at {equation_path} needs an explicit effect identity."
+                )
+            primitive = equation.primitive
+            primitive_reference = self.primitive_reference(primitive, equation_path)
+            params = equation.params
+            if primitive is jax_core.primitives.custom_jvp_call_p:
+                params = dict(params)
+                thunk = params.pop("jvp_jaxpr_fun")
+                owner = self.rule_owner(thunk, equation_path)
+                source, selector = self.rule_selector(owner, equation_path)
+                # Source, bindings, and native transformations determine
+                # every symbolic-zero branch without tracing 2**N masks.
+                declaration = {
+                    "kind": "bound-custom-jvp",
+                    "source": self.bound_callable(source, equation_path),
+                    "selector": selector,
+                }
+                declaration_id = _compiler_fingerprint(declaration)
+                self.rules.setdefault(declaration_id, declaration)
+                params["jvp_rule"] = {"declaration_id": declaration_id}
+            equations.append(
+                [
+                    primitive_reference,
+                    [atom(item) for item in equation.invars],
+                    [variable(var) for var in equation.outvars],
+                    self.parameter(params, equation_path),
+                    [],
+                ]
+            )
+        payload = {
+            "kind": "jaxpr",
+            "is_high": program.is_high,
+            "capture_binding": "dynamic" if dynamic_captures else "static",
+            "captures": captures,
+            "inputs": inputs,
+            "variable_types": variable_types,
+            "variable_reference": "index",
+            "equation_fields": (
+                "primitive",
+                "inputs",
+                "outputs",
+                "parameters",
+                "effects",
+            ),
+            "equations": equations,
+            "outputs": [atom(item) for item in program.outvars],
+            "effects": [],
+        }
+        if not dynamic_captures:
+            constants = value.consts
+            if len(constants) != len(program.constvars):
+                raise TypeError(
+                    f"Unbound compiler constants at {path} require dynamic capture declaration."
+                )
+            payload["static_constants"] = self.parameter(constants, f"{path}.constants")
+        fingerprint = _compiler_fingerprint(payload)
+        self.memo[key] = fingerprint
+        self.programs[fingerprint] = payload
+        return {"program_id": fingerprint}
+
+    def definitions(self) -> dict[str, Any]:
+        """Finish one shared native traversal without copying nested graphs."""
+        return {
+            "metadata": [[key, self.metadata[key]] for key in sorted(self.metadata)],
+            "programs": [[key, self.programs[key]] for key in sorted(self.programs)],
+            "derivative_rules": [[key, self.rules[key]] for key in sorted(self.rules)],
+        }
+
+
+def execution_metadata_payload(
+    value: Any, path: str = "execution", /, *, dynamic_captures: bool = False
+) -> Any:
+    """Canonical compiler metadata, never scientific identity from array shapes.
+
+    The owner must declare externally supplied captures as dynamic; embedded
+    programs retain their bound constant values. Shared programs are recorded
+    once in a content-addressed DAG, independent of object IDs/debug locations.
+    Unsupported placement/effects/callables/foreign primitives fail closed.
+    """
+    compiler = _CompilerPayload()
+    if isinstance(value, (jax_core.Jaxpr, jax_core.ClosedJaxpr)):
+        root = compiler.program(value, path, dynamic_captures=dynamic_captures)
+        return {
+            "kind": "compiler-program",
+            "root": root,
+            **compiler.definitions(),
+        }
+    if isinstance(
+        value,
+        (jax.ShapeDtypeStruct, jax_public_core.ShapedArray, jax.tree_util.PyTreeDef),
+    ):
+        root = compiler.parameter(value, path)
+        return {
+            "kind": "compiler-metadata",
+            "root": root,
+            **compiler.definitions(),
+        }
+    raise TypeError(f"Unsupported execution metadata at {path}: {_type_id(value)}.")
+
+
 def _static_payload(value: Any, path: str, /) -> Any:
     if isinstance(value, np.generic):
         return _static_payload(value.item(), path)
+    if isinstance(value, (jax.ShapeDtypeStruct, jax_core.Jaxpr, jax_core.ClosedJaxpr)):
+        return execution_metadata_payload(value, path)
     if isinstance(value, _ARRAY_TYPES):
         raise TypeError(
             f"Static identity field {path} cannot contain a numeric array; array values belong to a numeric revision."
@@ -91,11 +868,7 @@ def _static_payload(value: Any, path: str, /) -> Any:
             "value": base64.b64encode(value).decode("ascii"),
         }
     if isinstance(value, jax.tree_util.PyTreeDef):
-        return {
-            "kind": "pytree-def",
-            "value": str(value),
-            "leaves": value.num_leaves,
-        }
+        return execution_metadata_payload(value, path)
     if isinstance(value, enum.Enum):
         return {
             "kind": "enum",

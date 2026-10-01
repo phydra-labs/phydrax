@@ -4,34 +4,57 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
-    DenseLinearOperator,
-    DenseLU,
+    AbstractLinearOperator,
+    ArraySpace,
+    DiagonalLinearOperator,
     FailurePolicy,
+    GMRES,
+    ILUPreconditionerBuilder,
+    LinearSolveControl,
+    LinearSolveDiagnostics,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
+    plan_sparse_assembly,
+    PreconditioningPolicy,
+    prepare,
+    prepare_sparse_assembly,
+    PreparedLinearSolve,
+    PreparedSparseAssembly,
+    refresh,
+    refresh_sparse_assembly,
     solve,
+    SparseAssemblyPolicy,
+    TolerancePolicy,
+    transpose,
 )
+from ..sparse import SparseCoordinateOperator
 from ..typing import parse
 from ._point_cloud import PreparedPointCloudDiscretization
 
 
+if TYPE_CHECKING:
+    from .meshfree._multilevel import PreparedMeshfreeHierarchy
+
 PointBoundaryKind: TypeAlias = Literal["dirichlet", "neumann", "robin"]
+PointDiffusionForm: TypeAlias = Literal["collocated", "dissipative"]
+PointPoissonPreconditioner: TypeAlias = Literal["multilevel", "ilu", "none"]
+PointNeumannCompatibility: TypeAlias = Literal["refuse", "project"]
 
 
+@final
 class PointBoundaryPlan(StrictModule):
     kind: PointBoundaryKind = eqx.field(static=True)
     values: Array
@@ -50,6 +73,11 @@ class PointBoundaryPlan(StrictModule):
         values_ = jnp.asarray(values)
         if values_.ndim != 1:
             raise ValueError("Point boundary values must be a vector.")
+        values_ = eqx.error_if(
+            values_,
+            jnp.any(~jnp.isfinite(values_)),
+            "Point boundary values must be finite.",
+        )
         if kind == "robin":
             if robin_coefficient is None:
                 raise ValueError("Robin boundaries require robin_coefficient.")
@@ -78,11 +106,15 @@ class PointBoundaryPlan(StrictModule):
         )
 
 
+@final
 class PointSBPReport(StrictModule, NonTrainableState):
     maximum_green_residual: float = eqx.field(static=True)
     maximum_conservation_residual: float = eqx.field(static=True)
     passed: bool = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
+    evidence_scope: Literal["full-sparse-coefficient-identity"] = eqx.field(
+        static=True, default="full-sparse-coefficient-identity"
+    )
 
 
 def point_sbp_report(
@@ -90,40 +122,52 @@ def point_sbp_report(
     /,
     *,
     tolerance: float = 1e-8,
+    maximum_coefficients: int = 1_000_000,
 ) -> PointSBPReport:
+    """Check every coefficient of MD + DᵀM = Bn, at host preparation.
+
+    The conservation check is 1ᵀMD = 1ᵀBn, not a zero boundary flux claim.
+    Resource refusal never substitutes a finite set of polynomial probes.
+    """
     threshold = float(tolerance)
     if not np.isfinite(threshold) or threshold < 0.0:
         raise ValueError("SBP tolerance must be finite and nonnegative.")
+    budget = int(maximum_coefficients)
+    count, width = discretization.relation.source_indices.shape
+    if budget < 1 or 2 * count * width + count > budget:
+        raise ValueError("Full sparse SBP identity exceeds maximum_coefficients.")
     boundary_weights = discretization.plan.boundary_quadrature_weights
     if boundary_weights is None:
         raise ValueError("Point SBP evidence requires boundary_quadrature_weights.")
-    count = discretization.state_shape[0]
-    mass = np.diag(np.asarray(discretization.quadrature_weights))
-    boundary = np.diag(np.asarray(boundary_weights))
-    maximum_green = 0.0
-    maximum_conservation = 0.0
-    for axis in range(discretization.spatial_dimension):
-        identity = jnp.eye(count)
-        derivative = np.asarray(
-            jax.vmap(
-                lambda column, _axis=axis: discretization.partial_derivative(
-                    column,
-                    axis=_axis,
-                ),
-                in_axes=1,
-                out_axes=1,
-            )(identity)
+    mass = np.asarray(discretization.quadrature_weights)
+    boundary = np.asarray(boundary_weights)
+    indices = np.asarray(discretization.relation.source_indices)
+    valid = np.asarray(discretization.relation.valid)
+    normals = np.asarray(discretization.plan.boundary_normals)
+    maximum_green = maximum_conservation = 0.0
+    for axis, (first, _) in enumerate(discretization.derivative_weights):
+        entries: dict[tuple[int, int], float] = {}
+        conservation = -boundary * normals[:, axis]
+        weights = np.asarray(first)
+        for row in range(count):
+            for route in range(width):
+                if not valid[row, route]:
+                    continue
+                column = int(indices[row, route])
+                value = float(mass[row] * weights[row, route])
+                entries[row, column] = entries.get((row, column), 0.0) + value
+                entries[column, row] = entries.get((column, row), 0.0) + value
+                conservation[column] += value
+            entries[row, row] = entries.get((row, row), 0.0) - float(
+                boundary[row] * normals[row, axis]
+            )
+        maximum_green = max(
+            maximum_green, max((abs(v) for v in entries.values()), default=0.0)
         )
-        normal = np.asarray(discretization.plan.boundary_normals)[:, axis]
-        boundary_form = boundary @ np.diag(normal)
-        green = mass @ derivative + derivative.T @ mass - boundary_form
-        conservation = np.ones(count) @ mass @ derivative
-        maximum_green = max(maximum_green, float(np.max(np.abs(green))))
         maximum_conservation = max(
             maximum_conservation, float(np.max(np.abs(conservation)))
         )
-    passed = maximum_green <= threshold and maximum_conservation <= threshold
-    report_id = canonical_fingerprint(
+    identifier = canonical_fingerprint(
         {
             "kind": "point-sbp-report",
             "discretization": discretization.prepared_id,
@@ -135,15 +179,24 @@ def point_sbp_report(
     return PointSBPReport(
         maximum_green,
         maximum_conservation,
-        passed,
-        report_id,
+        maximum_green <= threshold and maximum_conservation <= threshold,
+        identifier,
     )
 
 
-class DissipativePointDiffusion(StrictModule, NonTrainableState):
+@final
+class PointDiffusionOperator(StrictModule, NonTrainableState):
+    """Collocated +div(k grad), or the quadrature-adjoint action -M⁻¹ ΣDᵀMkD.
+
+    Collocation applies the variable-coefficient product rule. Dissipative
+    energy is nonpositive in the quadrature pairing, not necessarily in ℓ².
+    Energy stability alone does not imply continuum consistency for arbitrary
+    quadrature/non-SBP derivatives; no approximation order is certified here.
+    """
+
     discretization: PreparedPointCloudDiscretization
-    gradient_matrices: tuple[Array, ...]
     diffusivity: Array
+    form: PointDiffusionForm = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
     def __init__(
@@ -151,34 +204,28 @@ class DissipativePointDiffusion(StrictModule, NonTrainableState):
         discretization: PreparedPointCloudDiscretization,
         diffusivity: ArrayLike = 1.0,
         /,
+        *,
+        form: PointDiffusionForm = "dissipative",
     ) -> None:
-        count = discretization.state_shape[0]
+        if not isinstance(discretization, PreparedPointCloudDiscretization):
+            raise TypeError("discretization must be PreparedPointCloudDiscretization.")
+        form = parse(form, PointDiffusionForm, "form")
         coefficient = jnp.broadcast_to(
-            jnp.asarray(diffusivity, dtype=jnp.float64), (count,)
+            jnp.asarray(diffusivity, dtype=jnp.float64), discretization.state_shape
         )
         coefficient = eqx.error_if(
             coefficient,
             jnp.any(~jnp.isfinite(coefficient)) | jnp.any(coefficient <= 0.0),
             "Point diffusivity must be finite and positive.",
         )
-        identity = jnp.eye(count)
-        gradients = tuple(
-            jax.vmap(
-                lambda column, axis=axis: discretization.partial_derivative(
-                    column, axis=axis
-                ),
-                in_axes=1,
-                out_axes=1,
-            )(identity)
-            for axis in range(discretization.spatial_dimension)
-        )
         self.discretization = discretization
-        self.gradient_matrices = gradients
         self.diffusivity = coefficient
+        self.form = form
         self.operator_id = canonical_fingerprint(
             {
-                "kind": "dissipative-point-diffusion",
+                "kind": "point-diffusion",
                 "discretization": discretization.prepared_id,
+                "form": form,
                 "diffusivity": array_tree_fingerprint(coefficient),
             }
         )
@@ -187,233 +234,473 @@ class DissipativePointDiffusion(StrictModule, NonTrainableState):
         value = jnp.asarray(values)
         if value.ndim < 1 or value.shape[0] != self.discretization.state_shape[0]:
             raise ValueError("Point diffusion values must begin with the point count.")
-        payload_rank = value.ndim - 1
-        reshape = (self.discretization.state_shape[0],) + (1,) * payload_rank
-        mass = self.discretization.quadrature_weights.reshape(reshape)
-        diffusivity = self.diffusivity.reshape(reshape)
+        shape = (value.shape[0],) + (1,) * (value.ndim - 1)
+        mass = self.discretization.quadrature_weights.reshape(shape)
+        coefficient = self.diffusivity.reshape(shape)
         output = jnp.zeros_like(value)
-        for gradient in self.gradient_matrices:
-            flux = diffusivity * (gradient @ value)
-            output = output - (jnp.conj(gradient.T) @ (mass * flux)) / mass
+        for axis in range(self.discretization.spatial_dimension):
+            derivative = self.discretization.partial_derivative(value, axis=axis)
+            if self.form == "dissipative":
+                output = (
+                    output
+                    - self.discretization.transpose_partial_derivative(
+                        mass * coefficient * derivative, axis=axis
+                    )
+                    / mass
+                )
+            else:
+                coefficient_gradient = self.discretization.partial_derivative(
+                    self.diffusivity, axis=axis
+                ).reshape(shape)
+                output = (
+                    output
+                    + coefficient
+                    * self.discretization.partial_derivative(value, axis=axis, order=2)
+                    + coefficient_gradient * derivative
+                )
         return output
 
     def energy_rate(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
-        reshape = (self.discretization.state_shape[0],) + (1,) * (value.ndim - 1)
-        mass = self.discretization.quadrature_weights.reshape(reshape)
-        return jnp.real(jnp.vdot(value, mass * self.mv(value)))
+        shape = (value.shape[0],) + (1,) * (value.ndim - 1)
+        return jnp.real(
+            jnp.vdot(
+                value,
+                self.discretization.quadrature_weights.reshape(shape) * self.mv(value),
+            )
+        )
+
+    def stiffness(self) -> AbstractLinearOperator:
+        """Native sparse-composable positive-sign elliptic operator.
+
+        Dissipative returns -M L; collocated returns -L.
+        """
+        d = self.discretization
+        space = ArraySpace(
+            d.state_shape,
+            dtype=self.diffusivity.dtype,
+            space_id=f"{d.prepared_id}:point-scalar-coordinates",
+        )
+        terms: list[AbstractLinearOperator] = []
+        for axis, (first, second) in enumerate(d.derivative_weights):
+            gradient = SparseCoordinateOperator(
+                d.relation,
+                first,
+                source=space,
+                target=space,
+                operator_id=f"{d.prepared_id}:point-first-derivative:{axis}",
+            )
+            if self.form == "dissipative":
+                weighted = DiagonalLinearOperator(
+                    d.quadrature_weights * self.diffusivity, space=space
+                )
+                terms.append(transpose(gradient) @ weighted @ gradient)
+            else:
+                second_map = SparseCoordinateOperator(
+                    d.relation,
+                    second,
+                    source=space,
+                    target=space,
+                    operator_id=f"{d.prepared_id}:point-second-derivative:{axis}",
+                )
+                terms.append(
+                    -(DiagonalLinearOperator(self.diffusivity, space=space) @ second_map)
+                    - DiagonalLinearOperator(
+                        d.partial_derivative(self.diffusivity, axis=axis), space=space
+                    )
+                    @ gradient
+                )
+        result = terms[0]
+        for term in terms[1:]:
+            result = result + term
+        return result
 
 
+@final
 class PointCloudPoissonResult(StrictModule):
     values: Array
     residual_norm: Array
     compatible: Array
+    source_correction: Array
+    compatibility_residual: Array
+    gauge_residual: Array
+    boundary_residual_norm: Array
+    linear_result: LinearSolveResult
+    correction_linear_result: LinearSolveResult | None
+    residual_tolerance: Array
 
-
-def solve_point_cloud_poisson(
-    discretization: PreparedPointCloudDiscretization,
-    source: ArrayLike,
-    boundary: PointBoundaryPlan,
-    /,
-    *,
-    diffusivity: ArrayLike = 1.0,
-) -> PointCloudPoissonResult:
-    if not isinstance(discretization, PreparedPointCloudDiscretization):
-        raise TypeError("discretization must be PreparedPointCloudDiscretization.")
-    if not isinstance(boundary, PointBoundaryPlan):
-        raise TypeError("boundary must be PointBoundaryPlan.")
-    count = discretization.state_shape[0]
-    dtype = inexact_result_type(source, boundary.values)
-    source_ = jnp.asarray(source, dtype=dtype)
-    if source_.shape != (count,) or boundary.values.shape != (count,):
-        raise ValueError("Point Poisson source/boundary values must match point count.")
-    boundary_mask = discretization.plan.boundary_mask
-    diffusion = DissipativePointDiffusion(discretization, diffusivity)
-    identity = jnp.eye(count, dtype=dtype)
-    matrix = jax.vmap(diffusion.mv, in_axes=1, out_axes=1)(identity).astype(dtype)
-    rhs = source_
-    augmented = None
-    augmented_rhs = None
-    if boundary.kind == "dirichlet":
-        matrix = jnp.where(boundary_mask[:, None], identity, matrix)
-        rhs = jnp.where(boundary_mask, boundary.values.astype(dtype), rhs)
-        compatibility = jnp.asarray(0.0, dtype=source_.real.dtype)
-    else:
-        normal_derivative = jnp.sum(
-            discretization.gradient(identity)
-            * discretization.plan.boundary_normals[:, None, :],
-            axis=-1,
+    @property
+    def successful(self) -> Array:
+        correction_ok = (
+            jnp.asarray(True)
+            if self.correction_linear_result is None
+            else self.correction_linear_result.successful
         )
-        boundary_matrix = normal_derivative
-        if boundary.kind == "robin":
-            assert boundary.robin_coefficient is not None
-            boundary_matrix = (
-                boundary_matrix
-                + boundary.robin_coefficient[:, None].astype(dtype) * identity
-            )
-        if boundary.kind == "neumann":
-            boundary_weights = discretization.plan.boundary_quadrature_weights
-            if boundary_weights is None:
-                raise ValueError(
-                    "Neumann point Poisson requires boundary_quadrature_weights."
-                )
-            volume_weights = discretization.quadrature_weights.astype(dtype)
-            boundary_weights_ = boundary_weights.astype(dtype)
-            mismatch = jnp.sum(volume_weights * source_) + jnp.sum(
-                boundary_weights_ * boundary.values.astype(dtype)
-            )
-            compatibility = jnp.abs(mismatch)
-            corrected_source = source_ - mismatch / jnp.sum(volume_weights)
-            rhs = jnp.where(
-                boundary_mask,
-                boundary.values.astype(dtype),
-                corrected_source,
-            )
-            matrix = jnp.where(boundary_mask[:, None], boundary_matrix, matrix)
-            augmented = jnp.zeros((count + 1, count + 1), dtype=dtype)
-            augmented = augmented.at[:count, :count].set(matrix)
-            augmented = augmented.at[:count, count].set(volume_weights)
-            augmented = augmented.at[count, :count].set(volume_weights)
-            augmented_rhs = jnp.concatenate((rhs, jnp.zeros((1,), dtype=dtype)))
-        else:
-            matrix = jnp.where(boundary_mask[:, None], boundary_matrix, matrix)
-            rhs = jnp.where(boundary_mask, boundary.values.astype(dtype), rhs)
-            compatibility = jnp.asarray(0.0, dtype=source_.real.dtype)
-    solve_matrix = matrix if augmented is None else augmented
-    solve_rhs = rhs if augmented is None else augmented_rhs
-    if solve_rhs is None:
-        raise RuntimeError("Point Poisson right-hand side was not prepared.")
-    solved = solve(
-        LinearSystem(
-            DenseLinearOperator(solve_matrix),
-            problem_id=f"{discretization.prepared_id}:point-poisson",
-        ),
-        solve_rhs,
-        policy=LinearSolvePolicy(
-            DenseLU(),
-            failure=FailurePolicy("error"),
-        ),
-    )
-    values = solved.value if augmented is None else solved.value[:count]
-    residual = solved.diagnostics.residual_norm
-    return PointCloudPoissonResult(values, residual, compatibility <= 1e-8)
+        return (
+            self.linear_result.successful
+            & correction_ok
+            & jnp.isfinite(self.residual_norm)
+            & (self.residual_norm <= self.residual_tolerance)
+            & (self.boundary_residual_norm <= self.residual_tolerance)
+            & (self.gauge_residual <= self.residual_tolerance)
+        )
+
+    @property
+    def status(self) -> Array:
+        return self.linear_result.status
+
+    @property
+    def diagnostics(self) -> LinearSolveDiagnostics:
+        return self.linear_result.diagnostics
 
 
-class PointConormalInterface(StrictModule):
-    left_indices: Array
-    right_indices: Array
-    left_diffusivity: Array
-    right_diffusivity: Array
-    jump: Array
-    interface_id: str = eqx.field(static=True)
+@final
+class PointCloudPoissonPlan(StrictModule):
+    discretization: PreparedPointCloudDiscretization
+    boundary: PointBoundaryPlan
+    form: PointDiffusionForm = eqx.field(static=True)
+    preconditioner: PointPoissonPreconditioner = eqx.field(static=True)
+    compatibility: PointNeumannCompatibility = eqx.field(static=True)
+    tolerance: TolerancePolicy
+    assembly_policy: SparseAssemblyPolicy
+    gauge_index: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        left_indices: ArrayLike,
-        right_indices: ArrayLike,
-        left_diffusivity: ArrayLike,
-        right_diffusivity: ArrayLike,
+        discretization: PreparedPointCloudDiscretization,
+        boundary: PointBoundaryPlan,
         /,
         *,
-        jump: ArrayLike = 0.0,
+        form: PointDiffusionForm = "collocated",
+        preconditioner: PointPoissonPreconditioner = "multilevel",
+        compatibility: PointNeumannCompatibility = "refuse",
+        tolerance: TolerancePolicy | None = None,
+        assembly_policy: SparseAssemblyPolicy | None = None,
+        gauge_index: int | None = None,
     ) -> None:
-        left_host = np.asarray(left_indices)
-        right_host = np.asarray(right_indices)
-        if (
-            left_host.ndim != 1
-            or right_host.shape != left_host.shape
-            or not np.issubdtype(left_host.dtype, np.signedinteger)
-            or not np.issubdtype(right_host.dtype, np.signedinteger)
-            or np.any(left_host < 0)
-            or np.any(right_host < 0)
+        if not isinstance(
+            discretization, PreparedPointCloudDiscretization
+        ) or not isinstance(boundary, PointBoundaryPlan):
+            raise TypeError(
+                "Poisson requires a prepared point cloud and PointBoundaryPlan."
+            )
+        if boundary.values.shape != discretization.state_shape:
+            raise ValueError("Boundary values must match point count.")
+        mask = np.asarray(discretization.plan.boundary_mask)
+        if not np.any(mask):
+            raise ValueError("Poisson requires explicit boundary points.")
+        if boundary.kind == "robin" and not np.any(
+            np.asarray(boundary.robin_coefficient)[mask] > 0
         ):
             raise ValueError(
-                "Point interface indices must be paired nonnegative signed integers."
+                "Zero-coefficient Robin is Neumann; choose neumann with an explicit compatibility policy."
             )
-        left = jnp.asarray(left_host, dtype=jnp.int32)
-        right = jnp.asarray(right_host, dtype=jnp.int32)
-        left_k = jnp.broadcast_to(jnp.asarray(left_diffusivity), left.shape)
-        right_k = jnp.broadcast_to(jnp.asarray(right_diffusivity), left.shape)
-        jump_ = jnp.broadcast_to(jnp.asarray(jump), left.shape)
-        if bool(
-            jnp.any(~jnp.isfinite(left_k) | (left_k <= 0.0))
-            | jnp.any(~jnp.isfinite(right_k) | (right_k <= 0.0))
-            | jnp.any(~jnp.isfinite(jump_))
+        interior = np.flatnonzero(~mask)
+        if interior.size == 0:
+            raise ValueError("Poisson requires at least one interior point.")
+        gauge = int(interior[0]) if gauge_index is None else int(gauge_index)
+        if gauge < 0 or gauge >= mask.size or mask[gauge]:
+            raise ValueError("Gauge must select an interior point.")
+        form_ = parse(form, PointDiffusionForm, "form")
+        preconditioner_ = parse(
+            preconditioner, PointPoissonPreconditioner, "preconditioner"
+        )
+        compatibility_ = parse(compatibility, PointNeumannCompatibility, "compatibility")
+        tolerance_ = (
+            TolerancePolicy(relative=1e-9, absolute=1e-10, max_steps=1000)
+            if tolerance is None
+            else tolerance
+        )
+        assembly_policy_ = (
+            SparseAssemblyPolicy() if assembly_policy is None else assembly_policy
+        )
+        if not isinstance(tolerance_, TolerancePolicy) or not isinstance(
+            assembly_policy_, SparseAssemblyPolicy
         ):
-            raise ValueError(
-                "Point interface diffusivities must be finite and positive and jumps must be finite."
-            )
-        self.left_indices = left
-        self.right_indices = right
-        self.left_diffusivity = left_k
-        self.right_diffusivity = right_k
-        self.jump = jump_
-        self.interface_id = canonical_fingerprint(
+            raise TypeError("Invalid Poisson tolerance or assembly policy.")
+        identifier = canonical_fingerprint(
             {
-                "kind": "point-conormal-interface",
-                "left": array_tree_fingerprint(left),
-                "right": array_tree_fingerprint(right),
-                "left_diffusivity": array_tree_fingerprint(left_k),
-                "right_diffusivity": array_tree_fingerprint(right_k),
-                "jump": array_tree_fingerprint(jump_),
+                "kind": "point-poisson-plan",
+                "discretization": discretization.prepared_id,
+                "boundary": boundary.plan_id,
+                "form": form_,
+                "preconditioner": preconditioner_,
+                "compatibility": compatibility_,
+                "gauge": gauge,
             }
         )
+        self.discretization = discretization
+        self.boundary = boundary
+        self.form = form_
+        self.preconditioner = preconditioner_
+        self.compatibility = compatibility_
+        self.tolerance = tolerance_
+        self.assembly_policy = assembly_policy_
+        self.gauge_index = gauge
+        self.plan_id = identifier
 
-    def residual(self, left_flux: ArrayLike, right_flux: ArrayLike, /) -> Array:
-        left = jnp.asarray(left_flux)[self.left_indices]
-        right = jnp.asarray(right_flux)[self.right_indices]
-        return self.right_diffusivity * right - self.left_diffusivity * left - self.jump
+    def prepare(self, diffusivity: ArrayLike = 1.0, /) -> PreparedPointCloudPoisson:
+        return PreparedPointCloudPoisson(self, diffusivity)
 
 
-class DistributedPointPartition(StrictModule, NonTrainableState):
-    owners: Array
-    partition_count: int = eqx.field(static=True)
-    partition_id: str = eqx.field(static=True)
+def _poisson_operators(
+    plan: PointCloudPoissonPlan, diffusion: PointDiffusionOperator
+) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
+    d = plan.discretization
+    stiffness = diffusion.stiffness()
+    space = stiffness.source
+    mask = d.plan.boundary_mask
+    fixed = DiagonalLinearOperator(mask.astype(diffusion.diffusivity.dtype), space=space)
+    free = DiagonalLinearOperator(
+        (~mask).astype(diffusion.diffusivity.dtype), space=space
+    )
+    if plan.boundary.kind == "dirichlet":
+        return stiffness, free @ stiffness @ free + fixed
+    conormal_weights = jnp.zeros_like(d.derivative_weights[0][0])
+    for axis, (first, _) in enumerate(d.derivative_weights):
+        conormal_weights = (
+            conormal_weights
+            + diffusion.diffusivity[:, None]
+            * d.plan.boundary_normals[:, axis, None]
+            * first
+        )
+    conormal = SparseCoordinateOperator(
+        d.relation, conormal_weights, source=space, target=space
+    )
+    if plan.boundary.kind == "robin":
+        robin_coefficient = plan.boundary.robin_coefficient
+        if robin_coefficient is None:
+            raise ValueError("Robin boundaries require robin_coefficient.")
+        conormal = conormal + DiagonalLinearOperator(robin_coefficient, space=space)
+    physical = free @ stiffness + fixed @ conormal
+    if plan.boundary.kind != "neumann":
+        return physical, physical
+    gauge = (
+        jnp.zeros(d.state_shape, dtype=diffusion.diffusivity.dtype)
+        .at[plan.gauge_index]
+        .set(1.0)
+    )
+    keep = DiagonalLinearOperator(1.0 - gauge, space=space)
+    return physical, keep @ physical + DiagonalLinearOperator(gauge, space=space)
 
-    def __init__(self, owners: ArrayLike, partition_count: int, /) -> None:
-        owners_host = np.asarray(owners)
-        count = int(partition_count)
-        if (
-            owners_host.ndim != 1
-            or count <= 0
-            or not np.issubdtype(owners_host.dtype, np.signedinteger)
-        ):
-            raise ValueError(
-                "Distributed point owners must be a signed-integer vector and partition_count must be positive."
+
+@final
+class PreparedPointCloudPoisson(StrictModule, NonTrainableState):
+    """Reusable sparse assembly and native solve; preparation is host-side.
+
+    Neumann uses one explicit point gauge. Compatibility is checked against
+    the complete original algebraic equations. Projection changes the interior
+    source by a reported constant, determined from the removed equation—not a
+    quadrature integral. Additional nullspaces cause native solve refusal.
+
+    Collocated form targets the continuum product-rule equation. Dissipative
+    form solves the selected quadrature-adjoint equation; independent accuracy
+    and full sparse SBP evidence must be assessed separately.
+    """
+
+    plan: PointCloudPoissonPlan
+    diffusion: PointDiffusionOperator
+    physical_assembly: PreparedSparseAssembly
+    assembly: PreparedSparseAssembly
+    linear_solve: PreparedLinearSolve
+    hierarchy: PreparedMeshfreeHierarchy | None
+
+    def __init__(
+        self, plan: PointCloudPoissonPlan, diffusivity: ArrayLike = 1.0, /
+    ) -> None:
+        if not isinstance(plan, PointCloudPoissonPlan):
+            raise TypeError("plan must be PointCloudPoissonPlan.")
+        diffusion = PointDiffusionOperator(
+            plan.discretization, diffusivity, form=plan.form
+        )
+        physical, gauged = _poisson_operators(plan, diffusion)
+        physical_assembly = prepare_sparse_assembly(
+            plan_sparse_assembly(physical, plan.assembly_policy), physical
+        )
+        assembly = prepare_sparse_assembly(
+            plan_sparse_assembly(gauged, plan.assembly_policy), gauged
+        )
+        preconditioning = None
+        hierarchy = None
+        if plan.preconditioner == "ilu":
+            preconditioning = PreconditioningPolicy(
+                ILUPreconditionerBuilder(), refresh="numeric"
             )
-        owners_ = jnp.asarray(owners_host, dtype=jnp.int32)
-        if bool(jnp.any((owners_ < 0) | (owners_ >= count))):
-            raise ValueError("Point owners are outside partition_count.")
-        self.owners = owners_
-        self.partition_count = count
-        self.partition_id = canonical_fingerprint(
-            {
-                "kind": "distributed-point-partition",
-                "owners": array_tree_fingerprint(owners_),
-                "partition_count": count,
-            }
+        elif plan.preconditioner == "multilevel":
+            from .meshfree._multilevel import (
+                meshfree_multigrid_builder,
+                MeshfreeHierarchyPlan,
+            )
+
+            boundary = plan.discretization.plan.boundary_mask
+            if plan.boundary.kind == "neumann":
+                boundary = boundary.at[plan.gauge_index].set(True)
+            fine_space = assembly.operator.source
+            if not isinstance(fine_space, ArraySpace):
+                raise TypeError(
+                    "Point Poisson multilevel requires scalar ArraySpace coordinates."
+                )
+            hierarchy = MeshfreeHierarchyPlan(
+                plan.discretization.plan.points, boundary=boundary
+            ).prepare(fine_space)
+            preconditioning = PreconditioningPolicy(
+                meshfree_multigrid_builder(
+                    hierarchy, coarse_solver=ILUPreconditionerBuilder()
+                )
+            )
+        policy = LinearSolvePolicy(
+            GMRES(restart=min(40, plan.discretization.state_shape[0])),
+            tolerance=plan.tolerance,
+            preconditioning=preconditioning,
+            failure=FailurePolicy("error"),
+        )
+        linear_solve = prepare(
+            LinearSystem(assembly.operator, problem_id=plan.plan_id), policy
+        )
+        self.plan = plan
+        self.diffusion = diffusion
+        self.physical_assembly = physical_assembly
+        self.assembly = assembly
+        self.linear_solve = linear_solve
+        self.hierarchy = hierarchy
+
+    def refresh(self, diffusivity: ArrayLike, /) -> PreparedPointCloudPoisson:
+        diffusion = PointDiffusionOperator(
+            self.plan.discretization, diffusivity, form=self.plan.form
+        )
+        physical, gauged = _poisson_operators(self.plan, diffusion)
+        physical_assembly = refresh_sparse_assembly(self.physical_assembly, physical)
+        assembly = refresh_sparse_assembly(self.assembly, gauged)
+        linear_solve = refresh(
+            self.linear_solve,
+            LinearSystem(assembly.operator, problem_id=self.plan.plan_id),
+        )
+        return eqx.tree_at(
+            lambda p: (p.diffusion, p.physical_assembly, p.assembly, p.linear_solve),
+            self,
+            (diffusion, physical_assembly, assembly, linear_solve),
         )
 
-    def halo_routes(
-        self,
-        discretization: PreparedPointCloudDiscretization,
-        /,
-    ) -> tuple[Array, Array]:
-        source = discretization.relation.source_indices
-        target_owner = self.owners[:, None]
-        source_owner = self.owners[source]
-        remote = source_owner != target_owner
-        return source[remote], jnp.broadcast_to(target_owner, source.shape)[remote]
+    def solve(
+        self, source: ArrayLike, /, *, boundary_values: ArrayLike | None = None
+    ) -> PointCloudPoissonResult:
+        d = self.plan.discretization
+        dtype = self.diffusion.diffusivity.dtype
+        source_ = jnp.asarray(source, dtype=dtype)
+        values = (
+            self.plan.boundary.values
+            if boundary_values is None
+            else jnp.asarray(boundary_values, dtype=dtype)
+        )
+        if source_.shape != d.state_shape or values.shape != d.state_shape:
+            raise ValueError("Poisson source/boundary values must match point count.")
+        source_ = eqx.error_if(
+            source_,
+            jnp.any(~jnp.isfinite(source_)) | jnp.any(~jnp.isfinite(values)),
+            "Poisson source and boundary values must be finite.",
+        )
+        mask = d.plan.boundary_mask
+        scale = (
+            d.quadrature_weights
+            if self.plan.form == "dissipative"
+            else jnp.ones_like(source_)
+        )
+        physical_rhs = jnp.where(mask, values, scale * source_)
+        lift = jnp.where(mask, values, 0.0)
+        rhs = physical_rhs
+        control = None
+        if self.plan.boundary.kind == "dirichlet":
+            rhs = jnp.where(
+                mask, values, scale * source_ - self.physical_assembly.operator.mv(lift)
+            )
+            # Lifting can amplify the algebraic RHS. Stop against the requested
+            # original-equation tolerance, not the artificially enlarged norm.
+            physical_tolerance = (
+                self.plan.tolerance.absolute
+                + self.plan.tolerance.relative * jnp.linalg.norm(physical_rhs)
+            )
+            control = LinearSolveControl(
+                relative_tolerance=0.0, absolute_tolerance=physical_tolerance
+            )
+        elif self.plan.boundary.kind == "neumann":
+            rhs = rhs.at[self.plan.gauge_index].set(0.0)
+        linear_result = solve(self.linear_solve, rhs, control=control)
+        solution = linear_result.value
+        correction = jnp.zeros_like(source_)
+        correction_result = None
+        residual_before = self.physical_assembly.operator.mv(solution) - physical_rhs
+        if self.plan.boundary.kind == "dirichlet":
+            residual_before = jnp.where(mask, solution - values, residual_before)
+        compatibility_residual = jnp.linalg.norm(residual_before)
+        threshold = (
+            self.plan.tolerance.absolute
+            + self.plan.tolerance.relative * jnp.linalg.norm(physical_rhs)
+        )
+        compatible = compatibility_residual <= threshold
+        if self.plan.boundary.kind == "neumann" and self.plan.compatibility == "project":
+            direction = jnp.where(mask, 0.0, scale)
+            direction_rhs = direction.at[self.plan.gauge_index].set(0.0)
+            correction_result = solve(self.linear_solve, direction_rhs)
+            response = correction_result.value
+            denominator = (self.physical_assembly.operator.mv(response) - direction)[
+                self.plan.gauge_index
+            ]
+            denominator = eqx.error_if(
+                denominator,
+                ~jnp.isfinite(denominator)
+                | (
+                    jnp.abs(denominator)
+                    <= jnp.finfo(dtype).eps * jnp.linalg.norm(direction)
+                ),
+                "Neumann source projection direction is algebraically incompatible with the left nullspace.",
+            )
+            shift = -residual_before[self.plan.gauge_index] / denominator
+            correction = jnp.where(mask, 0.0, shift)
+            solution = solution + shift * response
+        physical_rhs = physical_rhs + scale * correction
+        residual = self.physical_assembly.operator.mv(solution) - physical_rhs
+        if self.plan.boundary.kind == "dirichlet":
+            residual = jnp.where(mask, solution - values, residual)
+        norm = jnp.linalg.norm(residual)
+        residual_tolerance = (
+            self.plan.tolerance.absolute
+            + self.plan.tolerance.relative * jnp.linalg.norm(physical_rhs)
+        )
+        solution = eqx.error_if(
+            solution,
+            ~jnp.isfinite(norm) | (norm > residual_tolerance),
+            "Point Poisson refused: incompatible Neumann data or unresolved physical/boundary equations.",
+        )
+        gauge = (
+            jnp.abs(solution[self.plan.gauge_index])
+            if self.plan.boundary.kind == "neumann"
+            else jnp.asarray(0.0, dtype=dtype)
+        )
+        return PointCloudPoissonResult(
+            solution,
+            norm,
+            compatible,
+            correction,
+            compatibility_residual,
+            gauge,
+            jnp.linalg.norm(jnp.where(mask, residual, 0.0)),
+            linear_result,
+            correction_result,
+            residual_tolerance,
+        )
 
 
 __all__ = [
-    "DissipativePointDiffusion",
-    "DistributedPointPartition",
     "PointBoundaryKind",
     "PointBoundaryPlan",
+    "PointDiffusionForm",
+    "PointDiffusionOperator",
+    "PointPoissonPreconditioner",
+    "PointNeumannCompatibility",
+    "PointCloudPoissonPlan",
+    "PreparedPointCloudPoisson",
     "PointCloudPoissonResult",
-    "PointConormalInterface",
     "PointSBPReport",
     "point_sbp_report",
-    "solve_point_cloud_poisson",
 ]
