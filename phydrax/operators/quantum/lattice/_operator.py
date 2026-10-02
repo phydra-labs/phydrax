@@ -27,22 +27,35 @@ from ._compile import (
     CompiledMonomial,
     PreparedQuantumLattice,
 )
+from ._model import QuantumLatticeSpecification
 from ._sector import SectorChargeMap
 
 
 def _fermion_predecessor_sites(
-    prepared: PreparedQuantumLattice, mode_label: str, /
+    specification: QuantumLatticeSpecification, mode_label: str, /
 ) -> tuple[int, ...]:
-    order = prepared.specification.fermion_mode_order
+    order = specification.fermion_mode_order
     if order is None:
         raise ValueError("A fermion factor is missing its FermionModeOrder.")
     ordinal = order.ordinal(mode_label)
     predecessors = set(order.labels[:ordinal])
     return tuple(
         index
-        for index, space in enumerate(prepared.specification.spaces)
+        for index, space in enumerate(specification.spaces)
         if space.fermion_mode_label in predecessors
     )
+
+
+def _ordered_factor_sign(
+    configurations: Array, predecessors: tuple[int, ...], /
+) -> Array:
+    """Canonical CAR predecessor sign on the current intermediate coordinate."""
+    parity = (
+        jnp.sum(configurations[..., jnp.asarray(predecessors, dtype=jnp.int32)], axis=-1)
+        if predecessors
+        else jnp.zeros(configurations.shape[:-1], dtype=jnp.int32)
+    )
+    return jnp.where(parity % 2 == 0, 1.0, -1.0)
 
 
 def apply_monomial_to_coordinate(
@@ -89,13 +102,8 @@ def _apply_monomial_unchecked(
             mode = factor.space.fermion_mode_label
             if mode is None:
                 raise ValueError("Odd fermion operators require a mode label.")
-            predecessors = _fermion_predecessor_sites(prepared, mode)
-            parity = (
-                jnp.sum(configurations[:, jnp.asarray(predecessors)], axis=1)
-                if predecessors
-                else jnp.zeros((configurations.shape[0],), dtype=jnp.int32)
-            )
-            sign = jnp.where(parity % 2 == 0, 1.0, -1.0)
+            predecessors = _fermion_predecessor_sites(prepared.specification, mode)
+            sign = _ordered_factor_sign(configurations, predecessors)
         else:
             sign = jnp.ones((configurations.shape[0],), dtype=jnp.float64)
         configurations = jnp.repeat(configurations, dimension, axis=0)

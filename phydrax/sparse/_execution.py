@@ -17,7 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._compensated import two_sum
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import AnyShape, Bool, Inexact, Integer, parse
 from ._key_groups import KeyGroupPlan, KeyGroupState
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 
@@ -25,6 +25,143 @@ from ._relation import EdgeRelation, RowRelation, SparseRelation
 RelationAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
 RelationReduction: TypeAlias = Literal["sum", "mean", "min", "max"]
 RelationOutput: TypeAlias = Literal["compact", "dense"]
+
+
+class KeyGroupAccumulation(NonTrainableState, StrictModule):
+    """Seedable compact sums with their uncollapsed compensation."""
+
+    __strict_contract__ = True
+
+    high: Inexact[AnyShape] | Integer[AnyShape]
+    correction: Inexact[AnyShape] | Integer[AnyShape]
+
+    def __init__(self, high: ArrayLike, correction: ArrayLike) -> None:
+        high_array = parse(
+            jnp.asarray(high), Inexact[AnyShape] | Integer[AnyShape], "high"
+        )
+        correction_array = parse(
+            jnp.asarray(correction), Inexact[AnyShape] | Integer[AnyShape], "correction"
+        )
+        if high_array.shape != correction_array.shape:
+            raise ValueError("high and correction must have the same shape.")
+        if high_array.dtype != correction_array.dtype:
+            raise TypeError("high and correction must have the same dtype.")
+        self.high = high_array
+        self.correction = correction_array
+
+    @property
+    def value(self) -> Array:
+        return self.high + self.correction
+
+
+class KeyGroupReductionEvidence(NonTrainableState, StrictModule):
+    """Per-case numerical and grouping admission for a compact sum."""
+
+    __strict_contract__ = True
+
+    finite: Bool[AnyShape]
+    successful: Bool[AnyShape]
+
+
+def reduce_key_groups(
+    groups: KeyGroupState,
+    values: ArrayLike,
+    *,
+    accumulation: RelationAccumulation = "compensated",
+    initial: KeyGroupAccumulation | None = None,
+    value_valid: ArrayLike | None = None,
+) -> tuple[KeyGroupAccumulation, KeyGroupReductionEvidence]:
+    """Add canonical item events to seeded compact sums without chunk subtotals."""
+    accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+    array = parse(jnp.asarray(values), Inexact[AnyShape] | Integer[AnyShape], "values")
+    item_shape = groups.plan.case_shape + (groups.plan.item_capacity,)
+    if array.shape[: len(item_shape)] != item_shape:
+        raise ValueError(
+            f"values must begin with item shape {item_shape}; got {array.shape}."
+        )
+    trailing = array.shape[len(item_shape) :]
+    output_shape = groups.plan.case_shape + (groups.plan.group_capacity,) + trailing
+    if initial is None:
+        high = jnp.zeros(output_shape, dtype=array.dtype)
+        correction = jnp.zeros_like(high)
+    else:
+        if not isinstance(initial, KeyGroupAccumulation):
+            raise TypeError("initial must be a KeyGroupAccumulation.")
+        if initial.high.shape != output_shape:
+            raise ValueError(f"initial must have shape {output_shape}.")
+        if initial.high.dtype != array.dtype:
+            raise TypeError("initial and values must have the same dtype.")
+        high, correction = initial.high, initial.correction
+    if value_valid is None:
+        active = groups.item_valid
+    else:
+        active = jnp.asarray(value_valid, dtype=jnp.bool_)
+        if active.shape != item_shape:
+            raise ValueError(f"value_valid must have shape {item_shape}.")
+        active = active & groups.item_valid
+    batch_size = 1
+    for size in groups.plan.case_shape:
+        batch_size *= size
+    flat_values = array.reshape((batch_size, groups.plan.item_capacity) + trailing)
+    flat_order = groups.storage_to_logical.reshape(
+        (batch_size, groups.plan.item_capacity)
+    )
+    flat_valid = groups.sorted_item_valid.reshape((batch_size, groups.plan.item_capacity))
+    flat_active = active.reshape((batch_size, groups.plan.item_capacity))
+    flat_slots = groups.item_group_slots.reshape((batch_size, groups.plan.item_capacity))
+    seed_shape = (batch_size, groups.plan.group_capacity) + trailing
+
+    def reduce_case(
+        case_values: Array,
+        order: Array,
+        valid: Array,
+        value_active: Array,
+        slots: Array,
+        seed_high: Array,
+        seed_correction: Array,
+    ) -> tuple[Array, Array, Array]:
+        enabled = valid & value_active[order]
+        usable = (
+            enabled & (slots[order] >= 0) & (slots[order] < groups.plan.group_capacity)
+        )
+        mask_shape = (groups.plan.item_capacity,) + (1,) * len(trailing)
+        safe_values = jnp.where(
+            enabled.reshape(mask_shape), case_values[order], jnp.zeros((), array.dtype)
+        )
+        next_high, next_correction = _sum_segments(
+            safe_values,
+            jnp.where(usable, slots[order], 0),
+            usable,
+            groups.plan.group_capacity,
+            accumulation=accumulation,
+            initial=(seed_high, seed_correction),
+        )
+        finite = (
+            jnp.all(jnp.isfinite(safe_values))
+            & jnp.all(jnp.isfinite(next_high))
+            & jnp.all(jnp.isfinite(next_correction))
+            & jnp.all(jnp.isfinite(next_high + next_correction))
+        )
+        return next_high, next_correction, finite
+
+    result_high, result_correction, finite = jax.vmap(reduce_case)(
+        flat_values,
+        flat_order,
+        flat_valid,
+        flat_active,
+        flat_slots,
+        high.reshape(seed_shape),
+        correction.reshape(seed_shape),
+    )
+    finite = finite.reshape(groups.plan.case_shape)
+    return (
+        KeyGroupAccumulation(
+            result_high.reshape(output_shape), result_correction.reshape(output_shape)
+        ),
+        KeyGroupReductionEvidence(
+            finite=finite, successful=groups.evidence.successful & finite
+        ),
+    )
 
 
 def canonical_row_route_ids(
@@ -218,13 +355,14 @@ class RelationExecutionState(NonTrainableState, StrictModule):
             )
 
         if reduction in ("sum", "mean"):
-            compact = _sum_segments(
+            high, correction = _sum_segments(
                 safe_values,
                 safe_slots,
                 sorted_valid,
                 self.compact_target_capacity,
                 accumulation=accumulation,
             )
+            compact = high + correction if accumulation == "compensated" else high
             if reduction == "mean":
                 counts = self.groups.group_counts.astype(values.dtype)
                 count_shape = counts.shape + (1,) * len(trailing)
@@ -272,39 +410,72 @@ def _sum_segments(
     group_capacity: int,
     *,
     accumulation: RelationAccumulation,
-) -> Array:
+    initial: tuple[Array, Array] | None = None,
+) -> tuple[Array, Array]:
     trailing = values.shape[1:]
-    if accumulation == "fast":
-        return jax.ops.segment_sum(
-            values,
-            group_slots,
-            num_segments=group_capacity,
-            indices_are_sorted=True,
-        )
-
-    initial = jnp.zeros((group_capacity,) + trailing, dtype=values.dtype)
-    if accumulation == "deterministic":
-
-        def add_one(index: int, total: Array) -> Array:
-            slot = group_slots[index]
-            value = jnp.where(valid[index], values[index], jnp.zeros((), values.dtype))
-            return total.at[slot].add(value)
-
-        return jax.lax.fori_loop(0, values.shape[0], add_one, initial)
-
-    correction = jnp.zeros_like(initial)
-
-    def add_compensated(index: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
-        total, residual = carry
-        slot = group_slots[index]
-        value = jnp.where(valid[index], values[index], jnp.zeros((), values.dtype))
-        next_total, error = two_sum(total[slot], value)
-        return total.at[slot].set(next_total), residual.at[slot].add(error)
-
-    total, residual = jax.lax.fori_loop(
-        0, values.shape[0], add_compensated, (initial, correction)
+    if initial is None:
+        high = jnp.zeros((group_capacity,) + trailing, dtype=values.dtype)
+        correction = jnp.zeros_like(high)
+    else:
+        high, correction = initial
+    if values.shape[0] == 0:
+        return high, correction
+    mask_shape = valid.shape + (1,) * len(trailing)
+    safe_values = jnp.where(
+        valid.reshape(mask_shape), values, jnp.zeros((), values.dtype)
     )
-    return total + residual
+    match accumulation:
+        case "fast":
+            subtotal = jax.ops.segment_sum(
+                safe_values,
+                group_slots,
+                num_segments=group_capacity,
+                indices_are_sorted=True,
+            )
+            return (
+                subtotal
+                if initial is None
+                else jnp.where(subtotal != 0, high + subtotal, high),
+                correction,
+            )
+        case "deterministic":
+
+            def add_one(index: int, total: Array) -> Array:
+                slot = group_slots[index]
+                value = safe_values[index]
+                previous = total[slot]
+                next_total = jnp.where(value != 0, previous + value, previous)
+                return total.at[slot].set(next_total)
+
+            return (
+                jax.lax.fori_loop(0, values.shape[0], add_one, high),
+                correction,
+            )
+        case "compensated":
+
+            def add_compensated(
+                index: int, carry: tuple[Array, Array]
+            ) -> tuple[Array, Array]:
+                total, residual = carry
+                slot = group_slots[index]
+                value = safe_values[index]
+                previous = total[slot]
+                previous_residual = residual[slot]
+                next_total, error = two_sum(previous, value)
+                # Zero components, padding and key-retention items are true no-ops.
+                changed = value != 0
+                return (
+                    total.at[slot].set(jnp.where(changed, next_total, previous)),
+                    residual.at[slot].set(
+                        jnp.where(changed, previous_residual + error, previous_residual)
+                    ),
+                )
+
+            return jax.lax.fori_loop(
+                0, values.shape[0], add_compensated, (high, correction)
+            )
+        case _:
+            raise ValueError(f"Invalid accumulation: {accumulation!r}.")
 
 
 def _extreme_segments(
@@ -338,6 +509,9 @@ def _extreme_segments(
 
 __all__ = [
     "canonical_row_route_ids",
+    "KeyGroupAccumulation",
+    "KeyGroupReductionEvidence",
+    "reduce_key_groups",
     "RelationAccumulation",
     "RelationExecutionPlan",
     "RelationExecutionState",

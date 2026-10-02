@@ -2,6 +2,13 @@
 
 This guide explains how `FunctionalSolver` evaluates losses and how `solve()` updates parameters.
 
+[Native projector Monte Carlo](guides_projector_monte_carlo.md) has its own
+prepare/initialize/step/solve state machine, explicit energy/inverse-energy
+units, and committed raw histories. It is not functional minimization, VMC,
+TDVP, or quantum jumps. Continuation uses the same solve entry point;
+checkpoint reads require a caller-prepared template, and capacity enlargement
+uses an explicit resource-only restart relation with the same physical draws.
+
 ## Functional minimization versus trajectory integration
 
 `FunctionalSolver` and the differential backend solve different problems:
@@ -12,6 +19,7 @@ This guide explains how `FunctionalSolver` evaluates losses and how `solve()` up
 | `solve_diffrax` | One finite-dimensional ODE/SDE trajectory | Numerical reference solves, differentiable simulation |
 | `solve_markov_cubature` | One deterministic positive weighted approximation of an SDE law | Weak moments, distribution propagation, deterministic objectives |
 | `solve_diffrax_ensemble` | Coupled SDE trajectories with retained realization provenance | Process uncertainty, stochastic transition data |
+| `solve_projector_monte_carlo` | Bounded sparse signed/complex ground-state coefficient projection | Native self-adjoint lattice columns, complete annihilation, physical ratio estimators |
 
 An SDE is specified by `DifferentialProblem` with one or more named `WienerTerm`
 objects and an explicit `phx.stochastic.WienerRealization`. The problem declares

@@ -67,6 +67,30 @@ Restore requires a caller-prepared template of the same concrete type and exact 
 
 `write_quantum_result_archive` and `read_quantum_result_archive` cover TPQ and zero-/finite-temperature response results. Raw probes, thermal vectors, norm weights, correlations, estimator errors, shifted-solve residuals, moments, positivity, KMS evidence, validity masks, source/target sector IDs, and probe IDs remain distinct.
 
+### Sparse coefficient projector
+
+The same discovered `quantum_lattice_candidate_profiles` factory includes
+rank-free configuration columns, frozen positive guides, and exact bounded
+single-device projector policy combinations. They are candidate closure
+dependencies, not a new registration family or signed release. Their gates
+cover resource/sign/probability/raw-history/metric/denominator/replay/reference
+evidence; they do not cross-qualify TPQ, VMC, response, or controlled-sign
+frontier methods.
+
+`write_projector_monte_carlo_checkpoint` and
+`read_projector_monte_carlo_checkpoint` use the existing native runtime
+checkpoint format with a caller-prepared state template. Full packed support,
+coefficients, controllers, raw history, logical cursors, and root key survive
+restoration; executable Hamiltonian/guide providers do not come from bytes.
+`transport_projector_monte_carlo_resources` returns the enlarged state and an
+explicit restart relation without changing physical draws/scientific bindings.
+`write_projector_monte_carlo_result` retains result/evidence and optional host
+analysis through the durable native result owner. See the
+[projector guide](guides_projector_monte_carlo.md) for exact units, replay, metric,
+denominator, and finite-population/history caveats. No initiator, excited-state,
+distributed, transcorrelated, sign-cure, or unbiased-stationary-energy claim is
+attached to these candidates.
+
 ### Semiconductor detector results
 
 `write_detector_artifact_archive` and `read_detector_artifact_archive` cover bias electrostatics, zero-charge weighting fields, and prescribed Shockley–Ramo response. Potentials, fields, capacitance, electrode/route/sample masks, induced charge, interval current, endpoint closure residuals, resource observations, plan/trajectory/route IDs, and the sign convention are retained. The archive never advances a carrier or upgrades a prescribed trajectory to detector dynamics.

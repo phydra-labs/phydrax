@@ -1,5 +1,5 @@
 {
-  "catalog_id": "3a8bfbb146c430b39435068b819f3e0a4b592fde5ee34909779a711860cdd174",
+  "catalog_id": "e2c92c63b301abe5b4084228768ab2d64f5f8295eec3ad7b97f1aa2541684856",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -15594,6 +15594,61 @@
       "public_symbols": []
     },
     {
+      "capability": "quantum-lattice.configuration-columns",
+      "declaration_id": "5dbd959a005ca75807fa213714b6cada6c0c0d45e72bd146f1063c614a458620",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.operators.quantum.lattice",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "quantum-lattice.configuration-columns",
+          "profile_id": "dbb6765d4e209950d0524179eecfbf51b2708985182a5161369e75101908e087",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "fermionic-sign-and-complex-column-orientation",
+            "locked-independent-reference",
+            "numeric-binding-and-same-support-refresh",
+            "raw-route-probability-and-null-attempt-expectation",
+            "resource-admission-and-overflow-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "binding": "separate-topology-and-occurrence-numeric-slots",
+                "domain": "explicit-species-product-or-exact-abelian-charges",
+                "execution": "single-device-complex128-float64",
+                "operator": "sparse-outgoing-target-source",
+                "resources": "explicit-transition-route-coordinate-workspace-limits",
+                "sampling": "physical-raw-route-probability-with-null-attempts",
+                "statistics": "finite-fermion-spin-boson"
+              },
+              "capability": "quantum-lattice.configuration-columns",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a31ce2fb74cfd9d6fc8f1ecbeead25ca95710cfbc73a453327df3223d4f4eae8"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "quantum-lattice.fixed-sector",
       "declaration_id": "e35b51bf8a25667976b030c929406a04aa5c3f524c08f79c75147bec87ffd2a0",
       "dependencies": [],
@@ -15687,6 +15742,912 @@
               "capability": "quantum-lattice.orbit-sector",
               "kind": "capability-support-tuple",
               "support_tuple_id": "e9ce280b6c27b7f234571377930d17b4c3735a7309f2514727bd54c413dc7f3a"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "quantum-lattice.positive-guide",
+      "declaration_id": "89f6d5203f6273643de0fa724cb46f995187d8c034cea35176e35504bdc9e7a3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.operators.quantum.lattice",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "quantum-lattice.positive-guide",
+          "profile_id": "e888e2f924416feb2eeee30aa1f8cb0aa6210e610da286df2392d15c307313da",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "locked-independent-reference",
+            "original-self-adjoint-and-frozen-guide-binding",
+            "real-and-complex-physical-observable-recovery",
+            "resource-and-numerical-range-refusal",
+            "same-actual-inverse-guide-metric"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "execution": "single-device-complex128-float64",
+                "global-support": "provider-declaration-not-encountered-proof",
+                "mapping": "explicit-packed-address-provider-domain-binding",
+                "metric": "same-actual-guide-inverse-square",
+                "node-policy": "reject",
+                "observables": "original-physical-real-or-complex",
+                "provider": "frozen-strictmodule-log-amplitude-magnitude",
+                "similarity": "positive-invertible-original-self-adjoint"
+              },
+              "capability": "quantum-lattice.positive-guide",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7a240be43e05897f83eec74c26acc2139d10b105b0351620b604688ed78ae500"
+            },
+            {
+              "attributes": {
+                "execution": "single-device-complex128-float64",
+                "global-support": "provider-declaration-not-encountered-proof",
+                "mapping": "explicit-packed-address-provider-domain-binding",
+                "metric": "same-actual-guide-inverse-square",
+                "node-policy": "positive-log-floor",
+                "observables": "original-physical-real-or-complex",
+                "provider": "frozen-strictmodule-log-amplitude-magnitude",
+                "similarity": "positive-invertible-original-self-adjoint"
+              },
+              "capability": "quantum-lattice.positive-guide",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a5d30cc9bd18fef3f31ddcdbe5fbf528398fe8ae5967e61fcd52c7ef82fc53f2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "quantum-lattice.projector-monte-carlo",
+      "declaration_id": "c20b6c2d148e8df78ae6ca988030ecb3e85423af71061d5aa043c8c6296b76f1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.operators.quantum.lattice",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "quantum-lattice.projector-monte-carlo",
+          "profile_id": "3bf2597d5b5a2d659dcd7cbd6a426fb8f0989fa8c0af7bb743a84e044c85ec93",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "checkpoint-and-same-draw-resource-replay",
+            "complete-annihilation-and-raw-history-retention",
+            "fermionic-sign-and-complex-phase",
+            "joint-covariance-and-denominator-safety",
+            "locked-independent-reference",
+            "physical-raw-route-probability-and-compression-expectation",
+            "population-history-timestep-and-sign-resolution",
+            "resource-admission-and-atomic-overflow-refusal",
+            "same-actual-guide-physical-metric"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "00988ae0eb7a5d51bb7db6fbaefe0f39d80cfb5f444d158944d3bdb4f84e5840"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1518ea18bc778ecd6cd0f3a2eec537dcdf9d39aa9845f2fd4e19b6cf4fa5297c"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "163d619073d2e0e66f0d132ca0dfcf8a424c5cfd11ca06995de31704c8db9485"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "163d628140931bb4608abd89ca139da0fde633da0e9a1aebb0fa64a492809c5a"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "21ab09c4939ae2dece369a16db166490110b0a1e73bd3fe15a4fff5971d7d290"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "25531b5bc7b18bb424a7c50aea34c184e4ff58dd851ff45940682a9c07a86e9e"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "274ee5807746d0c75f85cbe0e41f0352ac55a8d0d93f3d10138091ffadd492e2"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "27f5f4fcaff59dca0e4a43dddd7cba92ab30b0fd285563b6c85c846054d844ed"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "29dd6c0696b8d9bb68a9e173e765f0af901418a0c5b1aad5dadf0f06997a6a72"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "350a96c9ad0d7f2663d8093f0cd24b14492fa1d5e20cd53b580fdd523e462bd2"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "35380e2a9ddb7f4e68ffefd4af575ddd59e7868a02969b1e8e6c4131888a2b3f"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "45e89ab762f8882552a74ad54a5f67c126cd9198a51eb04c00c2e1f6fea85887"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "499599474a2d35125c7ac89ec8ef63d60430070e65d096c30431ec8b75603c84"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "51bcd475e53784d80dbc2d3fc34834191c1a72cf5eb98f11e516a5ba666f0462"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "523e43113cdc02cfc3cfaf52c3a609649daa903a6cd030fc7282caec29763134"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6477e91e5dd846b519462ab556341432b877b5c3a6fdac4d7432041e9545be53"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6d239a1c942311c0b72aa8fa41a82550ca791a5560dc69c3fef96a320443fb0e"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6e4eb4c81cadad39db7e849efd788381de60cc4118381b2afa1e81e8b257ea71"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "79fe63c70d04671a7875c41e4da9909f7eedf5835902511d1b77ce630d9df05f"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7d05adeccf885affa86caaf93c6dee53eca769c59c53430ccf01eb8231be6ac0"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "90dcb0573524d7d00b5ad11b659ffc4435f84cd22ff2f5800bd891c87012e0b5"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "95146fc36d208dc52ae55c61ec0e3f1466178de8252a2ab54134cb0ffa4e1b0d"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b02222f2b64da8f847c03e850ed0c32937c708199dc7a4081ccb2b340bc51d9c"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b60167ea95ab3f13135abc767d329c6c4c478de04184e9000eabc2c796e9c30a"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c4550a02419ce9c39f708a88b826e60e99d9323039e90a0c2af0125f2e5efe96"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c6564361dd76217c2be1105471fb22e172c3ebecb4137aa83a12c87c6bb768f8"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ca99d6d48953258087f16f4ef90a2efe183af47d8bb0b4322632930829be401b"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ce3ec4418d1c7d28d6446428f2e76696cf24c39f3a72aa502caf8bd3be8f2502"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d1612142e790f710a35165dc436c7ac20dd0443a0e40d8548c93cd7dfa618fce"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "unguided",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d42d950df5d86e0ab0c7bad8282f6cd0899f33fe7ef0bdde000d1d65c0bb9546"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d59fa3716e4453a7a40159108988761d8133db9874d400330f16a44f09ede2b5"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d6ebeb593835af91c18b5c46645c6042f1f1eae679f676abef8b23231112d44b"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "threshold",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d990ab06b5e7fc1a9c25f9f91b2d5f4089b9f50601cf1b153ee3d63123af98ec"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "sampled",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "da20ae9ebdadb69cc6ce7fb0fd88e43dd5f65850e856450de8325d4eaf25e53f"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "double-log",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-reject",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "semistochastic",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "dfe4222f78f45ec00ec42480f3adbe601f10a923e3c53e1fa26534a3fa373012"
+            },
+            {
+              "attributes": {
+                "address": "rank-free-exact-packed-uint32-words",
+                "annihilation": "complete-seeded-compensated-before-late-compression",
+                "approximation": "no-initiator-finite-euler-finite-population",
+                "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                "compression": "none",
+                "controller": "fixed-shift",
+                "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                "execution": "single-device-complex128-float64",
+                "guide": "frozen-positive-log-floor",
+                "history": "complete-incoming-shift-finite-window-reweighting",
+                "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                "spawn": "exact",
+                "target": "self-adjoint-ground-state",
+                "uncertainty": "joint-common-block-covariance-denominator-gated"
+              },
+              "capability": "quantum-lattice.projector-monte-carlo",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f4a62d80d44fa24ffd08da71be4b73c50485abc2bc229a3cd7592fe15cda59dc"
             }
           ],
           "version": "candidate"

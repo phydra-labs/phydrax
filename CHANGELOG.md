@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Native single-device complex128 projector quantum Monte Carlo: packed rank-free
+  configuration addresses, prepared sparse outgoing columns, probability-corrected
+  raw-route sampling, adaptive semistochastic application, and complete signed
+  annihilation before late threshold compression.
+- Frozen positive guide similarities with original physical metrics, joint
+  correlated projected/replica ratios with denominator refusal, explicit
+  finite-history population-control assumptions, and transactional checkpoint,
+  continuation, and same-draw resource-only replay. These bounded candidate
+  workflows are not generic sign-cure or unbiased stationary-energy claims.
+- Native compact multiword key grouping and seeded deterministic/compensated
+  signed reduction, preserving existing scalar consumers; explicit lifecycle
+  archive limits support the complete retained projector statistical records.
 - Prepared meshfree approximation in `phydrax.discretization.meshfree`: bounded
   certified neighborhoods, batched GMLS/PHS-RBF-FD, enforced stencil admission,
   sparse point-cloud elliptic solves, explicit hyperviscosity, and native

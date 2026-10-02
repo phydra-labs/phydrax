@@ -2009,6 +2009,43 @@ from ._production_runtime import (
     ProductionTriggerAction,
     ProductionTriggerBinding,
 )
+from ._projector_monte_carlo import (
+    initialize_projector_monte_carlo,
+    prepare_projector_monte_carlo,
+    solve_projector_monte_carlo,
+    step_projector_monte_carlo,
+    validate_projector_state,
+)
+from ._projector_monte_carlo_contracts import (
+    PreparedProjectorMonteCarlo,
+    ProjectorMonteCarloEvidence,
+    ProjectorMonteCarloHistory,
+    ProjectorMonteCarloPlan,
+    ProjectorMonteCarloProblem,
+    ProjectorMonteCarloResult,
+    ProjectorMonteCarloState,
+    ProjectorMonteCarloStatus,
+    ProjectorMonteCarloStepResult,
+)
+from ._projector_monte_carlo_estimators import (
+    analyze_projector_monte_carlo,
+    ProjectorEstimatorPolicy,
+    ProjectorMonteCarloAnalysis,
+    ProjectorReweightedEstimate,
+    ProjectorSystematicRecord,
+    ProjectorWeightDiagnostics,
+    ProjectorWeightStatus,
+)
+from ._projector_monte_carlo_lifecycle import (
+    read_projector_monte_carlo_checkpoint,
+    transport_projector_monte_carlo_resources,
+    write_projector_monte_carlo_checkpoint,
+    write_projector_monte_carlo_result,
+)
+from ._projector_monte_carlo_observables import (
+    observe_projector_state,
+    ProjectorMonteCarloObservation,
+)
 from ._pseudomode import (
     jaynes_cummings_pseudomode_problem,
     PseudomodeEmbeddingProblem,
@@ -4985,4 +5022,34 @@ __all__ += [
     "SolverObjectiveEvaluation",
     "algorithmic_work_loss",
     "train_components",
+]
+
+__all__ += [
+    "PreparedProjectorMonteCarlo",
+    "ProjectorEstimatorPolicy",
+    "ProjectorMonteCarloAnalysis",
+    "ProjectorMonteCarloEvidence",
+    "ProjectorMonteCarloHistory",
+    "ProjectorMonteCarloObservation",
+    "ProjectorMonteCarloPlan",
+    "ProjectorMonteCarloProblem",
+    "ProjectorMonteCarloResult",
+    "ProjectorMonteCarloState",
+    "ProjectorMonteCarloStatus",
+    "ProjectorMonteCarloStepResult",
+    "ProjectorReweightedEstimate",
+    "ProjectorSystematicRecord",
+    "ProjectorWeightDiagnostics",
+    "ProjectorWeightStatus",
+    "analyze_projector_monte_carlo",
+    "initialize_projector_monte_carlo",
+    "observe_projector_state",
+    "prepare_projector_monte_carlo",
+    "read_projector_monte_carlo_checkpoint",
+    "solve_projector_monte_carlo",
+    "step_projector_monte_carlo",
+    "transport_projector_monte_carlo_resources",
+    "validate_projector_state",
+    "write_projector_monte_carlo_checkpoint",
+    "write_projector_monte_carlo_result",
 ]

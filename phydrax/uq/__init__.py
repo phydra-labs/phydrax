@@ -216,6 +216,12 @@ from ._correlated_observable import (
     CorrelatedObservablePolicy,
     CorrelatedObservableStatus,
 )
+from ._correlated_ratio import (
+    correlated_ratio_of_means,
+    CorrelatedRatioPolicy,
+    CorrelatedRatioResult,
+    CorrelatedRatioStatus,
+)
 from ._covariance import (
     AbstractCovariance,
     covariance_representation,
@@ -1900,6 +1906,10 @@ __all__ = [
     "CorrelatedObservableStatus",
     "correlated_observable_diagnostics",
     "correlated_observable_status_name",
+    "CorrelatedRatioPolicy",
+    "CorrelatedRatioResult",
+    "CorrelatedRatioStatus",
+    "correlated_ratio_of_means",
     "MCMCChainWarmup",
     "MCMCConvergenceError",
     "MCMCConvergenceReport",
