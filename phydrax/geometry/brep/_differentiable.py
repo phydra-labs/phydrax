@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
+from ...typing import checked
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -194,6 +195,7 @@ class FixedTopologyBRepSource(GeometrySource):
     parameter_links: tuple[BRepParameterLink, ...] = eqx.field(static=True)
     trainable_fields: frozenset[str] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: BRepModel,
@@ -211,8 +213,6 @@ class FixedTopologyBRepSource(GeometrySource):
             "weights",
         ),
     ) -> None:
-        if not isinstance(model, BRepModel):
-            raise TypeError("model must be a BRepModel.")
         _require_watertight_query_mesh(model)
         links = tuple(parameter_links)
         keys = tuple((link.face_index, link.field) for link in links)

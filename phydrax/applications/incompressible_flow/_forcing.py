@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spectral._incompressible import PeriodicLerayProjector
 from ...stochastic._ou import OrnsteinUhlenbeckRealization
+from ...typing import checked
 
 
 def _periodic_modal_geometry(
@@ -130,6 +131,7 @@ class ConstantPowerFourierForcingPlan(StrictModule, NonTrainableState):
     projector_id: str = eqx.field(static=True)
     forcing_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         projector: PeriodicLerayProjector,
@@ -143,8 +145,6 @@ class ConstantPowerFourierForcingPlan(StrictModule, NonTrainableState):
         power_tolerance: float = 1.0e-10,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be a PeriodicLerayProjector.")
         minimum_wave = float(minimum_wavenumber)
         maximum_wave = float(maximum_wavenumber)
         injection = float(power_input)
@@ -305,6 +305,7 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
     projector_id: str = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         projector: PeriodicLerayProjector,
@@ -314,8 +315,6 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
         minimum_wavenumber: float = 0.0,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be a PeriodicLerayProjector.")
         minimum_wave = float(minimum_wavenumber)
         maximum_wave = float(maximum_wavenumber)
         maximum_bytes = int(maximum_preparation_bytes)
@@ -499,6 +498,7 @@ class SolenoidalOUForcingPlan(StrictModule, NonTrainableState):
     projector_id: str = eqx.field(static=True)
     forcing_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: SolenoidalHermitianFourierBasis,
@@ -507,8 +507,6 @@ class SolenoidalOUForcingPlan(StrictModule, NonTrainableState):
         correlation_time: float,
         rms_acceleration: float,
     ) -> None:
-        if not isinstance(basis, SolenoidalHermitianFourierBasis):
-            raise TypeError("basis must be a SolenoidalHermitianFourierBasis.")
         correlation = float(correlation_time)
         rms = float(rms_acceleration)
         if (
@@ -538,9 +536,8 @@ class SolenoidalOUForcingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _validate_realization(self, realization: OrnsteinUhlenbeckRealization, /) -> None:
-        if not isinstance(realization, OrnsteinUhlenbeckRealization):
-            raise TypeError("OU forcing requires OrnsteinUhlenbeckRealization.")
         if realization.sample_shape or realization.noise_shape != (
             self.basis.coordinate_size,
         ):
@@ -579,13 +576,13 @@ class SolenoidalOUForcingPlan(StrictModule, NonTrainableState):
             forcing_id=self.forcing_id,
         )
 
+    @checked
     def evaluate(self, state: SolenoidalOUForcingState, /) -> Array:
-        if not isinstance(state, SolenoidalOUForcingState):
-            raise TypeError("state must be a SolenoidalOUForcingState.")
         if state.basis_id != self.basis_id or state.forcing_id != self.forcing_id:
             raise ValueError("OU continuation state belongs to another forcing plan.")
         return self.coefficient_scale * self.basis.evaluate(state.coefficients)
 
+    @checked
     def advance(
         self,
         state: SolenoidalOUForcingState,
@@ -595,8 +592,6 @@ class SolenoidalOUForcingPlan(StrictModule, NonTrainableState):
         /,
     ) -> SolenoidalOUForcingAdvance:
         self._validate_realization(realization)
-        if not isinstance(state, SolenoidalOUForcingState):
-            raise TypeError("state must be a SolenoidalOUForcingState.")
         if (
             state.basis_id != self.basis_id
             or state.forcing_id != self.forcing_id

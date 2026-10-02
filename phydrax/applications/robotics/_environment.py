@@ -35,6 +35,7 @@ from ...dynamics._plant import (
     PlantStepContext,
 )
 from ...dynamics._system import DiscreteSystem
+from ...typing import checked
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -493,6 +494,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
     environment_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plant: AbstractDiscretePlant,
@@ -504,12 +506,8 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         step_size: float,
         environment_id: str | None = None,
     ) -> None:
-        if not isinstance(plant, AbstractDiscretePlant):
-            raise TypeError("plant must be an AbstractDiscretePlant.")
         if plant.control_schema is None:
             raise ValueError("Robot environments require a plant control_schema.")
-        if not isinstance(parameters, PlantParameters):
-            raise TypeError("parameters must be PlantParameters.")
         if parameters.schema_id != plant.parameter_schema.schema_id:
             raise ValueError("PlantParameters schema_id does not match the plant.")
         if (
@@ -522,8 +520,6 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         if parameters.numeric_revision.revision_id != plant.numeric_revision.revision_id:
             raise ValueError("PlantParameters numeric revision does not match the plant.")
         plant.parameter_schema.validate(parameters.values)
-        if not isinstance(task, AbstractRobotTask):
-            raise TypeError("task must be an AbstractRobotTask.")
         wrapper_tuple = tuple(wrappers)
         if any(
             not isinstance(wrapper, AbstractRobotEnvironmentWrapper)
@@ -599,14 +595,13 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         )
         self.provenance_id = provenance_id
 
+    @checked
     def _check_task_evaluation(
         self,
         evaluation: RobotTaskEvaluation,
         case_shape: tuple[int, ...],
         /,
     ) -> RobotTaskEvaluation:
-        if not isinstance(evaluation, RobotTaskEvaluation):
-            raise TypeError("task.evaluate must return RobotTaskEvaluation.")
         observation = jnp.asarray(evaluation.observation)
         terminated = jnp.asarray(evaluation.terminated, dtype=jnp.bool_)
         descriptor = jnp.asarray(evaluation.descriptor)
@@ -622,14 +617,13 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             )
         return RobotTaskEvaluation(observation, terminated, descriptor)
 
+    @checked
     def _check_task_transition(
         self,
         transition: RobotTaskTransition,
         case_shape: tuple[int, ...],
         /,
     ) -> RobotTaskTransition:
-        if not isinstance(transition, RobotTaskTransition):
-            raise TypeError("task.transition must return RobotTaskTransition.")
         observation = jnp.asarray(transition.observation)
         rewards = jnp.asarray(transition.reward_components)
         terminated = jnp.asarray(transition.terminated, dtype=jnp.bool_)
@@ -656,11 +650,8 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             descriptor,
         )
 
+    @checked
     def _validate_plant_state(self, state: PlantRuntimeState, /) -> tuple[int, ...]:
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError(
-                "RobotEnvironmentState plant_state must be PlantRuntimeState."
-            )
         observed = (
             state.semantic_provenance_id,
             state.numeric_revision_id,
@@ -931,6 +922,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             plant_result.evidence,
         )
 
+    @checked
     def step(
         self,
         state: RobotEnvironmentState,
@@ -938,8 +930,6 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         /,
     ) -> RobotEnvironmentTransition:
         """Propose one fixed-work repeated action and atomically commit or roll back."""
-        if not isinstance(state, RobotEnvironmentState):
-            raise TypeError("state must be a RobotEnvironmentState.")
         if state.environment_id != self.environment_id:
             raise ValueError("RobotEnvironmentState belongs to a different environment.")
         if state.provenance_id != self.provenance_id:

@@ -43,6 +43,7 @@ from ...linalg._rational_functions import (
 )
 from ...linalg._spaces import ArraySpace
 from ...metrix._gauge_representation import AbstractGaugeRepresentation
+from ...typing import checked
 from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 
 
@@ -144,6 +145,7 @@ class LatticeFermionResourceEvidence(StrictModule):
     policy_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         site_count: int,
@@ -155,8 +157,6 @@ class LatticeFermionResourceEvidence(StrictModule):
         *,
         fifth_extent: int = 1,
     ) -> None:
-        if not isinstance(policy, LatticeFermionResourcePolicy):
-            raise TypeError("policy must be LatticeFermionResourcePolicy.")
         policy.admit(
             site_count,
             spin_components,
@@ -565,6 +565,7 @@ class FreeWilsonDiracOperator(AbstractLatticeDiracOperator):
     lattice_spacing: float = eqx.field(static=True)
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boundary: LatticeBoundaryPhasePlan,
@@ -579,8 +580,6 @@ class FreeWilsonDiracOperator(AbstractLatticeDiracOperator):
         dtype: Any = jnp.complex64,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(boundary, LatticeBoundaryPhasePlan):
-            raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
         policy = LatticeFermionResourcePolicy() if resources is None else resources
         if not isinstance(policy, LatticeFermionResourcePolicy):
             raise TypeError("resources must be LatticeFermionResourcePolicy or None.")
@@ -698,6 +697,7 @@ class WilsonDiracOperator(AbstractLatticeDiracOperator):
     lattice_spacing: float = eqx.field(static=True)
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boundary: LatticeBoundaryPhasePlan,
@@ -715,12 +715,6 @@ class WilsonDiracOperator(AbstractLatticeDiracOperator):
         gauge_field_id: str | None = None,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(boundary, LatticeBoundaryPhasePlan):
-            raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
-        if not isinstance(representation, AbstractGaugeRepresentation):
-            raise TypeError("representation must be AbstractGaugeRepresentation.")
-        if not isinstance(transport, GaugeCovariantShiftPlan):
-            raise TypeError("transport must be GaugeCovariantShiftPlan.")
         if (
             transport.site_count != boundary.site_count
             or transport.dimension != boundary.dimension
@@ -886,6 +880,7 @@ class CloverWilsonDiracOperator(AbstractLatticeDiracOperator):
     inverse_tolerance: float = eqx.field(static=True)
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wilson: WilsonDiracOperator,
@@ -895,8 +890,6 @@ class CloverWilsonDiracOperator(AbstractLatticeDiracOperator):
         inverse_tolerance: float = 1e-6,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(wilson, WilsonDiracOperator):
-            raise TypeError("wilson must be WilsonDiracOperator.")
         policy = wilson.resource_policy if resources is None else resources
         if not isinstance(policy, LatticeFermionResourcePolicy):
             raise TypeError("resources must be LatticeFermionResourcePolicy or None.")
@@ -1052,16 +1045,13 @@ class EvenOddSchurOperator(AbstractLinearOperator):
     representation_id: str = eqx.field(static=True)
     gauge_field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLatticeDiracOperator,
         plan: EvenOddSchurPlan,
         /,
     ) -> None:
-        if not isinstance(operator, AbstractLatticeDiracOperator):
-            raise TypeError("operator must be AbstractLatticeDiracOperator.")
-        if not isinstance(plan, EvenOddSchurPlan):
-            raise TypeError("plan must be EvenOddSchurPlan.")
         if operator.operator_id != plan.operator_id:
             raise ValueError("Schur plan and operator identities do not match.")
         self.operator = operator
@@ -1267,6 +1257,7 @@ class TwistedMassDoubletOperator(AbstractLinearOperator):
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
     degrees_of_freedom: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wilson: AbstractLatticeDiracOperator,
@@ -1275,8 +1266,6 @@ class TwistedMassDoubletOperator(AbstractLinearOperator):
         twisted_mass: float,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(wilson, AbstractLatticeDiracOperator):
-            raise TypeError("wilson must be AbstractLatticeDiracOperator.")
         mu = _finite_real(twisted_mass, "twisted_mass")
         policy = wilson.resource_policy if resources is None else resources
         if not isinstance(policy, LatticeFermionResourcePolicy):
@@ -1399,6 +1388,7 @@ class StaggeredDiracOperator(AbstractLatticeDiracOperator):
     lattice_spacing: float = eqx.field(static=True)
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boundary: LatticeBoundaryPhasePlan,
@@ -1413,12 +1403,6 @@ class StaggeredDiracOperator(AbstractLatticeDiracOperator):
         gauge_field_id: str | None = None,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(boundary, LatticeBoundaryPhasePlan):
-            raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
-        if not isinstance(representation, AbstractGaugeRepresentation):
-            raise TypeError("representation must be AbstractGaugeRepresentation.")
-        if not isinstance(transport, GaugeCovariantShiftPlan):
-            raise TypeError("transport must be GaugeCovariantShiftPlan.")
         if (
             transport.site_count != boundary.site_count
             or transport.dimension != boundary.dimension
@@ -1538,6 +1522,7 @@ class NaikStaggeredDiracOperator(AbstractLatticeDiracOperator):
     three_link_coefficient: float = eqx.field(static=True)
     three_link_gauge_field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         one_link: StaggeredDiracOperator,
@@ -1548,8 +1533,6 @@ class NaikStaggeredDiracOperator(AbstractLatticeDiracOperator):
         three_link_coefficient: float = -1.0 / 24.0,
         three_link_gauge_field_id: str | None = None,
     ) -> None:
-        if not isinstance(one_link, StaggeredDiracOperator):
-            raise TypeError("one_link must be StaggeredDiracOperator.")
         first = _finite_real(one_link_coefficient, "one_link_coefficient")
         third = _finite_real(three_link_coefficient, "three_link_coefficient")
         three_links = (
@@ -1682,6 +1665,7 @@ class DomainWallDiracOperator(AbstractLinearOperator):
     resources: LatticeFermionResourceEvidence
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractLatticeDiracOperator,
@@ -1692,8 +1676,6 @@ class DomainWallDiracOperator(AbstractLinearOperator):
         fermion_mass: float,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractLatticeDiracOperator):
-            raise TypeError("kernel must be AbstractLatticeDiracOperator.")
         extent = int(fifth_extent)
         height = _finite_real(domain_wall_height, "domain_wall_height")
         mass = _finite_real(fermion_mass, "fermion_mass")
@@ -1809,6 +1791,7 @@ class MobiusDomainWallDiracOperator(AbstractLinearOperator):
     resources: LatticeFermionResourceEvidence
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractLatticeDiracOperator,
@@ -1821,8 +1804,6 @@ class MobiusDomainWallDiracOperator(AbstractLinearOperator):
         c_coefficient: float,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractLatticeDiracOperator):
-            raise TypeError("kernel must be AbstractLatticeDiracOperator.")
         extent = int(fifth_extent)
         height = _finite_real(domain_wall_height, "domain_wall_height")
         mass = _finite_real(fermion_mass, "fermion_mass")
@@ -2111,6 +2092,7 @@ class OverlapDiracOperator(AbstractLatticeDiracOperator):
     fermion_mass: float = eqx.field(static=True)
     resource_policy: LatticeFermionResourcePolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractLatticeDiracOperator,
@@ -2121,10 +2103,6 @@ class OverlapDiracOperator(AbstractLatticeDiracOperator):
         rational_policy: RationalFunctionPolicy | None = None,
         resources: LatticeFermionResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractLatticeDiracOperator):
-            raise TypeError("kernel must be AbstractLatticeDiracOperator.")
-        if not isinstance(approximation, RationalSignApproximation):
-            raise TypeError("approximation must be RationalSignApproximation.")
         policy = LatticeFermionResourcePolicy() if resources is None else resources
         if not isinstance(policy, LatticeFermionResourcePolicy):
             raise TypeError("resources must be LatticeFermionResourcePolicy or None.")

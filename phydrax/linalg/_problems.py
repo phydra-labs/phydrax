@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._operators import AbstractLinearOperator
 from ._subspaces import NullspacePolicy
 
@@ -39,6 +40,7 @@ class LinearSystem(AbstractLinearProblem):
 
     nullspace_policy: NullspacePolicy | None
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -47,8 +49,6 @@ class LinearSystem(AbstractLinearProblem):
         nullspace_policy: NullspacePolicy | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.source.size != operator.target.size:
             raise ValueError("LinearSystem requires equal source and target dimensions.")
         _validate_nullspace(nullspace_policy, operator)
@@ -73,6 +73,7 @@ class LeastSquaresProblem(AbstractLinearProblem):
     regularizer: AbstractLinearOperator | None
     nullspace_policy: NullspacePolicy | None
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -83,8 +84,6 @@ class LeastSquaresProblem(AbstractLinearProblem):
         nullspace_policy: NullspacePolicy | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if weights is None:
             weights_ = None
         else:
@@ -139,6 +138,7 @@ class MinimumNormProblem(AbstractLinearProblem):
 
     nullspace_policy: NullspacePolicy | None
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -147,8 +147,6 @@ class MinimumNormProblem(AbstractLinearProblem):
         problem_id: str | None = None,
         nullspace_policy: NullspacePolicy | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.source.size < operator.target.size:
             raise ValueError(
                 "MinimumNormProblem requires source dimension at least target dimension."

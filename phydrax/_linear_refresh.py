@@ -23,6 +23,7 @@ from .linalg import (
     PreparedPreconditioner,
     refresh as refresh_linear,
 )
+from .typing import checked
 
 
 class LinearRefreshState(StrictModule):
@@ -37,6 +38,7 @@ class LinearRefreshState(StrictModule):
     preconditioner_built_numeric_version: Array
     preconditioner_refresh_kind: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedLinearSolve,
@@ -45,8 +47,6 @@ class LinearRefreshState(StrictModule):
         template: LinearSolveTemplate | None = None,
         preconditioner_refresh_kind: str | None = None,
     ) -> None:
-        if not isinstance(prepared, PreparedLinearSolve):
-            raise TypeError("prepared must be a PreparedLinearSolve.")
         template_ = prepared.template if template is None else template
         if not isinstance(template_, LinearSolveTemplate):
             raise TypeError("template must be a LinearSolveTemplate or None.")
@@ -117,6 +117,7 @@ class LinearRefreshState(StrictModule):
             ),
         )
 
+    @checked
     def refresh(
         self,
         problem: AbstractLinearProblem,
@@ -124,8 +125,6 @@ class LinearRefreshState(StrictModule):
         *,
         setup_operator: AbstractLinearOperator | None = None,
     ) -> tuple[PreparedLinearSolve, LinearRefreshState]:
-        if not isinstance(problem, AbstractLinearProblem):
-            raise TypeError("problem must be an AbstractLinearProblem.")
         if setup_operator is not None and not isinstance(
             setup_operator, AbstractLinearOperator
         ):

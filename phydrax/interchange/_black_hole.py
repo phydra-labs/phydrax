@@ -31,7 +31,7 @@ from ..artifacts import (
     ExternalArtifactPolicy,
     read_admitted_artifact,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._report import (
     AdapterError,
     AdapterFormatProfile,
@@ -224,9 +224,8 @@ class BlackHoleArtifactRights(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def require(self, policy: BlackHoleArtifactUsePolicy, /) -> None:
-        if not isinstance(policy, BlackHoleArtifactUsePolicy):
-            raise TypeError("Artifact use requires BlackHoleArtifactUsePolicy.")
         if self.license_id not in policy.accepted_license_ids:
             raise PermissionError("Artifact license is outside the explicit use policy.")
         requested = (

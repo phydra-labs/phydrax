@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class EquilibriumWallVortexClosureEvidence(StrictModule):
@@ -531,6 +532,7 @@ class PreparedCompressibleVortexAugmentation(StrictModule, NonTrainableState):
     plan: CompressibleVortexAugmentationPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def evaluate(
         self,
         state: CompressibleVortexState,
@@ -541,8 +543,6 @@ class PreparedCompressibleVortexAugmentation(StrictModule, NonTrainableState):
         density_gradient: ArrayLike | None = None,
         pressure_gradient: ArrayLike | None = None,
     ) -> CompressibleVortexAugmentationResult:
-        if not isinstance(state, CompressibleVortexState):
-            raise TypeError("state must be CompressibleVortexState.")
         density = jnp.asarray(state.density)
         momentum = jnp.asarray(state.momentum, dtype=density.dtype)
         total_energy = jnp.asarray(state.total_energy, dtype=density.dtype)

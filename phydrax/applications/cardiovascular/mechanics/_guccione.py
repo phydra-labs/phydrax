@@ -15,6 +15,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....operators.mechanics import VolumetricConstraint
+from ....typing import checked
 from ._materials import (
     ExactIncompressibleCardiacMaterial,
     FiniteBulkCardiacMaterial,
@@ -122,6 +123,7 @@ class Guccione1991Energy(StrictModule, NonTrainableState):
     frame_id: str = eqx.field(static=True)
     energy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: Guccione1991Parameters,
@@ -133,8 +135,6 @@ class Guccione1991Energy(StrictModule, NonTrainableState):
         frame_tolerance: float = 1.0e-8,
         energy_id: str | None = None,
     ) -> None:
-        if not isinstance(parameters, Guccione1991Parameters):
-            raise TypeError("parameters must be Guccione1991Parameters.")
         frame, identifier, selected_cell = resolve_material_frame(
             material_frame,
             frame_id=frame_id,

@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from phydrax.domain import ComponentSum, Domain, DomainComponent, DomainFunction
 
 from .._strict import StrictModule
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -205,6 +206,7 @@ class Observation(AbstractResidualCondition):
     target: DomainFunction
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fields: str | Sequence[str],
@@ -216,8 +218,6 @@ class Observation(AbstractResidualCondition):
         label: str | None = None,
     ) -> None:
         resolved_fields = _fields(fields)
-        if not isinstance(target, DomainFunction):
-            raise TypeError("Observation target must be a DomainFunction.")
         if not target.domain.same_support(on.domain):
             raise ValueError("Observation target domain is incompatible with support.")
         if operator is None:

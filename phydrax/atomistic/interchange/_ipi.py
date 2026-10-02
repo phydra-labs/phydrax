@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._hybrid import AbstractExternalAtomisticProvider, ExternalAtomisticEvaluation
 from .._system import PreparedAtomisticSystem
 
@@ -189,11 +190,10 @@ class IPISession:
             jnp.asarray(cell), jnp.asarray(inverse), jnp.asarray(positions), request_id
         )
 
+    @checked
     def send_force(self, response: IPIResponse) -> None:
         if self.status is not IPITransportStatus.HAVE_DATA:
             raise ValueError("i-PI force response has no pending position request.")
-        if not isinstance(response, IPIResponse):
-            raise TypeError("response must be IPIResponse.")
         forces = np.asarray(response.forces, dtype="<f8")
         virial = np.asarray(response.virial, dtype="<f8")
         if (

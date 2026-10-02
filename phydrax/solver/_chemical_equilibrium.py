@@ -32,6 +32,7 @@ from ..optim import (
     OptimizationTermination,
     PrimalDualInteriorPoint,
 )
+from ..typing import checked
 
 
 class ChemicalEquilibriumEnsemble(StrEnum):
@@ -107,6 +108,7 @@ class ChemicalEquilibriumPlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     equilibrium_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
@@ -116,8 +118,6 @@ class ChemicalEquilibriumPlan(StrictModule):
         tolerance: float = 1.0e-9,
         maximum_steps: int = 200,
     ) -> None:
-        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
-            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
             raise TypeError("Chemical equilibrium currently requires ideal phases.")
         try:

@@ -22,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..applications.relativistic_scattering._matrix_element_revision import (
     MatrixElementRevision,
 )
+from ..typing import checked
 from ._capabilities import HEPProviderBinding
 from ._events import ParticleEventBatch
 from ._host_events import HostEventRecord
@@ -119,9 +120,8 @@ class NamedWeightSnapshot(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_event_weights(cls, weights: EventWeightSet, /) -> NamedWeightSnapshot:
-        if not isinstance(weights, EventWeightSet):
-            raise TypeError("weights must be EventWeightSet.")
         return cls(
             weights.values,
             event_active=weights.event_active,
@@ -131,9 +131,8 @@ class NamedWeightSnapshot(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_host_event(cls, event: HostEventRecord, /) -> NamedWeightSnapshot:
-        if not isinstance(event, HostEventRecord):
-            raise TypeError("event must be HostEventRecord.")
         return cls(
             [[value.value for value in event.weights]],
             event_active=(True,),

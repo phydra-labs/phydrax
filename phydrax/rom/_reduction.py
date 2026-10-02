@@ -21,6 +21,7 @@ from ..linalg import (
     DenseLinearOperator,
     DualSpace,
 )
+from ..typing import checked
 from ._basis import ReducedBasisArtifact
 
 
@@ -107,9 +108,8 @@ class TrialTestReduction(StrictModule, NonTrainableState):
     def square(self) -> bool:
         return self.trial_rank == self.test_rank
 
+    @checked
     def validate_operator(self, operator: AbstractLinearOperator, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("Affine ROM operator terms must be unbatched.")
         if not operator.source.compatible(self.trial.full_space):

@@ -39,6 +39,7 @@ from ....equations import (
     FiniteElementForm,
     TensorDiffusionAction,
 )
+from ....typing import checked
 from ....units import convert_value, derived_unit, METER, SIEMENS, UnitDefinition
 from .._evidence import GeophysicalCapabilityEvidence, GeophysicalResourceEstimate
 from ._survey import ElectricalSurvey
@@ -336,9 +337,8 @@ class PreparedDC(StrictModule, NonTrainableState):
     template: la.LinearSolveTemplate
     check_policy: la.LinearSolveCheckPolicy
 
+    @checked
     def __init__(self, plan: FinitePatchDCPlan, /) -> None:
-        if not isinstance(plan, FinitePatchDCPlan):
-            raise TypeError("plan must be FinitePatchDCPlan.")
         discretization = FiniteElementPlan(
             plan.mesh,
             FiniteElementFieldSpec("potential", lagrange_element("tetrahedron", 1)),
@@ -508,6 +508,7 @@ class PreparedDCConductivity(StrictModule, NonTrainableState):
     conductivity: Array
     linear_solve: la.PreparedLinearSolve
 
+    @checked
     def __init__(
         self,
         dc: PreparedDC,
@@ -516,8 +517,6 @@ class PreparedDCConductivity(StrictModule, NonTrainableState):
         *,
         unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
     ) -> None:
-        if not isinstance(dc, PreparedDC):
-            raise TypeError("dc must be PreparedDC.")
         tensor = _conductivity_tensor(
             conductivity, dc.cell_count, dc.electrode_weights.dtype, unit
         )

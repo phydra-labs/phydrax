@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._system import PreparedAtomisticSystem
 
 
@@ -121,6 +122,7 @@ class PreparedElasticNetwork(StrictModule, NonTrainableState):
     preparation: ElasticNetworkPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ElasticNetworkPlan,
@@ -130,10 +132,6 @@ class PreparedElasticNetwork(StrictModule, NonTrainableState):
         *,
         reference_id: str | None = None,
     ) -> None:
-        if not isinstance(plan, ElasticNetworkPlan):
-            raise TypeError("plan must be an ElasticNetworkPlan.")
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be a PreparedAtomisticSystem.")
         reference = np.asarray(reference_positions)
         if reference.shape != (system.capacity, 3):
             raise ValueError(

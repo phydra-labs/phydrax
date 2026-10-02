@@ -30,6 +30,7 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ..typing import checked
 from ._mac_immersed_boundary import MACImmersedBoundaryProjectionPlan
 from ._mac_viscous import MACHelmholtzResult, MACHelmholtzSolvePlan
 
@@ -112,6 +113,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
     termination: NonlinearTermination
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -127,18 +129,10 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         termination: NonlinearTermination | None = None,
         structural_contact_residual: StructuralContactResidual | None = None,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None:
             raise ValueError(
                 "MAC deformable immersed routes do not support active algebraic LES."
             )
-        if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
-            raise TypeError("projection must be MACImmersedBoundaryProjectionPlan.")
-        if not isinstance(marker_map, PreparedFiniteElementImmersedMarkerMap):
-            raise TypeError("marker_map must be PreparedFiniteElementImmersedMarkerMap.")
-        if not isinstance(structure, SecondOrderDifferentialSystem):
-            raise TypeError("structure must be SecondOrderDifferentialSystem.")
         if marker_map.configuration_space.size != int(
             jnp.prod(jnp.asarray(structure.state_shape))
         ):
@@ -225,6 +219,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             jnp.asarray(int(MACDeformableImmersedStatus.SUCCESS), dtype=jnp.int32),
         )
 
+    @checked
     def step(
         self,
         time: ArrayLike,
@@ -233,8 +228,6 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         *,
         args: Any = None,
     ) -> MACDeformableImmersedStepResult:
-        if not isinstance(state, MACDeformableImmersedState):
-            raise TypeError("state must be MACDeformableImmersedState.")
         step = jnp.asarray(self.step_size, dtype=state.fluid_state.dtype)
         time_ = jnp.asarray(time, dtype=step.dtype).reshape(())
         attempted_time = time_ + step

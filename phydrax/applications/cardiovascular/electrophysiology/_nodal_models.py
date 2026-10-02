@@ -28,6 +28,7 @@ from jax.typing import DTypeLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._membrane_scaling import CardiacMembraneScaling
 from ._reaction import (
     ArrayLike,
@@ -282,9 +283,8 @@ class SinoatrialStateLayout(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown sinoatrial state field {name!r}.")
         return self.names.index(name)
 
+    @checked
     def pack(self, state: SinoatrialState, /) -> Array:
-        if not isinstance(state, SinoatrialState):
-            raise TypeError("state must be SinoatrialState.")
         return jnp.stack(
             (
                 state.voltage_mV,
@@ -359,9 +359,8 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
     layout: SinoatrialStateLayout
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, parameters: ZhangSinoatrialParameters, /) -> None:
-        if not isinstance(parameters, ZhangSinoatrialParameters):
-            raise TypeError("parameters must be ZhangSinoatrialParameters.")
         layout = SinoatrialStateLayout()
         self.parameters = parameters
         self.layout = layout
@@ -381,9 +380,8 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
         values = (-58.0, 0.20, 0.004, 0.95, 0.020, 0.80, 0.10, 0.03, 1.0e-4, 0.80)
         return SinoatrialState(*(_full(value, shape, resolved_dtype) for value in values))
 
+    @checked
     def currents(self, state: SinoatrialState, /) -> SinoatrialCurrents:
-        if not isinstance(state, SinoatrialState):
-            raise TypeError("state must be SinoatrialState.")
         p = self.parameters
         v = state.voltage_mV
         ek = p.rtf_mV * jnp.log(p.potassium_o_mM / p.potassium_i_mM)
@@ -400,11 +398,10 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
             i_f, i_cal, i_cat, i_kr, i_ks, i_k1, i_background, total
         )
 
+    @checked
     def calcium_output(
         self, state: SinoatrialState, currents: SinoatrialCurrents, /
     ) -> SinoatrialCalciumOutput:
-        if not isinstance(currents, SinoatrialCurrents):
-            raise TypeError("currents must be SinoatrialCurrents.")
         p = self.parameters
         membrane_current = currents.l_type_calcium + currents.t_type_calcium
         membrane_flux = -p.ca_current_scale * membrane_current
@@ -631,9 +628,8 @@ class AtrioventricularStateLayout(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown atrioventricular state field {name!r}.")
         return self.names.index(name)
 
+    @checked
     def pack(self, state: AtrioventricularState, /) -> Array:
-        if not isinstance(state, AtrioventricularState):
-            raise TypeError("state must be AtrioventricularState.")
         return jnp.stack(
             (
                 state.voltage_mV,
@@ -706,9 +702,8 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
     layout: AtrioventricularStateLayout
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, parameters: InadaAtrioventricularParameters, /) -> None:
-        if not isinstance(parameters, InadaAtrioventricularParameters):
-            raise TypeError("parameters must be InadaAtrioventricularParameters.")
         layout = AtrioventricularStateLayout()
         self.parameters = parameters
         self.layout = layout
@@ -730,9 +725,8 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
             *(_full(value, shape, resolved_dtype) for value in values)
         )
 
+    @checked
     def currents(self, state: AtrioventricularState, /) -> AtrioventricularCurrents:
-        if not isinstance(state, AtrioventricularState):
-            raise TypeError("state must be AtrioventricularState.")
         p = self.parameters
         v = state.voltage_mV
         ena = p.rtf_mV * jnp.log(p.sodium_o_mM / p.sodium_i_mM)
@@ -750,11 +744,10 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
             i_na, i_cal, i_to, i_kr, i_k1, i_f, i_background, total
         )
 
+    @checked
     def calcium_output(
         self, state: AtrioventricularState, currents: AtrioventricularCurrents, /
     ) -> AtrioventricularCalciumOutput:
-        if not isinstance(currents, AtrioventricularCurrents):
-            raise TypeError("currents must be AtrioventricularCurrents.")
         membrane_flux = -self.parameters.ca_current_scale * currents.l_type_calcium
         removal = self.parameters.ca_removal_rate * (
             state.calcium_i_mM - self.parameters.resting_calcium_mM

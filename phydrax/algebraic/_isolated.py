@@ -24,6 +24,7 @@ from ..backends.homotopy_continuation import (
     HomotopyContinuationProvider,
     HomotopyContinuationRequest,
 )
+from ..typing import checked
 from ._grading import total_degree_bezout_forecast
 from ._system import PolynomialScaling, SparsePolynomialSystem
 
@@ -54,14 +55,13 @@ class IsolatedPolynomialRootProblem(StrictModule):
     scaling: PolynomialScaling | None
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: SparsePolynomialSystem,
         scaling: PolynomialScaling | None = None,
         /,
     ) -> None:
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be a SparsePolynomialSystem.")
         support = system.support
         if support.equation_count != support.variable_count:
             raise ValueError("Isolated affine root solving requires a square system.")

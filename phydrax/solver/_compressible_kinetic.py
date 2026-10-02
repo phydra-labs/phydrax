@@ -16,6 +16,7 @@ from ..discretization.discrete_velocity import (
     CompressibleKineticRuntimePlan,
     CompressibleKineticRuntimeState,
 )
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -23,9 +24,8 @@ class CompressibleKineticFixedStepMethod(AbstractFixedStepMethod, NonTrainableSt
     runtime: CompressibleKineticRuntimePlan
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, runtime: CompressibleKineticRuntimePlan, /) -> None:
-        if not isinstance(runtime, CompressibleKineticRuntimePlan):
-            raise TypeError("runtime must be CompressibleKineticRuntimePlan.")
         self.runtime = runtime
         self.method_id = canonical_fingerprint(
             {"kind": "compressible-kinetic-fixed-step", "runtime": runtime.runtime_id}

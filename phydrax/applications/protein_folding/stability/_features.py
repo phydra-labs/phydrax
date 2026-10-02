@@ -19,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....qualification import ReferenceArtifactManifest, ScientificCampaign
+from ....typing import checked
 from ..interchange._megascale import (
     parse_mutation_code,
     ProteinStabilityCohort,
@@ -457,9 +458,8 @@ class ProteinFeatureTransform(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def transform(self, features: ProteinMutationFeatures, /) -> Array:
-        if not isinstance(features, ProteinMutationFeatures):
-            raise TypeError("features must be ProteinMutationFeatures.")
         if (
             features.feature_names != self.feature_names
             or features.feature_definition_id != self.feature_definition_id

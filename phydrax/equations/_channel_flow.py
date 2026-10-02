@@ -21,6 +21,7 @@ from ..discretization.spectral import (
     PseudospectralMethodPlan,
     TensorSpectralDiscretization,
 )
+from ..typing import checked
 from ._incompressible import IncompressibleFlowProblem
 
 
@@ -45,6 +46,7 @@ class CompiledChannelFlowDynamics(StrictModule):
     compilation_id: str = eqx.field(static=True)
     source_hash: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: IncompressibleFlowProblem,
@@ -52,16 +54,10 @@ class CompiledChannelFlowDynamics(StrictModule):
         spatial_method: PreparedPseudospectralMethod,
         /,
     ) -> None:
-        if not isinstance(problem, IncompressibleFlowProblem):
-            raise TypeError("problem must be an IncompressibleFlowProblem.")
         if problem.spatial_dimension != 3:
             raise ValueError("Channel flow requires a three-dimensional problem.")
-        if not isinstance(stokes_plan, ChannelStokesPlan):
-            raise TypeError("stokes_plan must be a ChannelStokesPlan.")
         if not bool(jnp.array_equal(problem.viscosity, stokes_plan.viscosity)):
             raise ValueError("Problem and channel Stokes viscosities must match exactly.")
-        if not isinstance(spatial_method, PreparedPseudospectralMethod):
-            raise TypeError("spatial_method must be PreparedPseudospectralMethod.")
         if (
             spatial_method.discretization.prepared_id
             != stokes_plan.discretization.prepared_id

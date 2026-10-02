@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._distributed import DistributedContactEpoch
 
 
@@ -28,6 +29,7 @@ class ContactHaloExchangePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     @classmethod
+    @checked
     def from_distributed_epoch(
         cls,
         epoch: DistributedContactEpoch,
@@ -36,8 +38,6 @@ class ContactHaloExchangePlan(StrictModule, NonTrainableState):
         rank_count: int,
         halo_capacity: int,
     ) -> ContactHaloExchangePlan:
-        if not isinstance(epoch, DistributedContactEpoch):
-            raise TypeError("epoch must be DistributedContactEpoch.")
         ranks = int(rank_count)
         capacity = int(halo_capacity)
         if ranks <= 0 or capacity < 0:

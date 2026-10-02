@@ -11,6 +11,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._dem import DEMDiagnostics, DEMRejectionReason
 from ._qualification import AbstractParticleQualificationProfile
 
@@ -84,9 +85,8 @@ class DEMQualificationProfile(AbstractParticleQualificationProfile):
             {"kind": "dem-qualification-profile", "tolerances": list(values)}
         )
 
+    @checked
     def constraints_satisfied(self, residuals: DEMConstraintResiduals, /) -> Array:
-        if not isinstance(residuals, DEMConstraintResiduals):
-            raise TypeError("residuals must be DEMConstraintResiduals.")
         return (
             (residuals.net_internal_force <= self.internal_force_tolerance)
             & (residuals.net_internal_torque <= self.internal_torque_tolerance)
@@ -107,6 +107,7 @@ class DEMQualificationArtifact(StrictModule):
     qualified: Array
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: DEMQualificationProfile,
@@ -114,10 +115,6 @@ class DEMQualificationArtifact(StrictModule):
         execution_successful: Array,
         /,
     ) -> None:
-        if not isinstance(profile, DEMQualificationProfile):
-            raise TypeError("profile must be a DEMQualificationProfile.")
-        if not isinstance(residuals, DEMConstraintResiduals):
-            raise TypeError("residuals must be DEMConstraintResiduals.")
         execution = jnp.asarray(execution_successful, dtype=jnp.bool_)
         constraints = profile.constraints_satisfied(residuals)
         self.profile_id = profile.profile_id

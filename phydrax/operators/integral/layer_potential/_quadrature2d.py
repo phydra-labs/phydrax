@@ -22,6 +22,7 @@ from ....integration import (
     IntegrationProvenance,
     IntegrationStatus,
 )
+from ....typing import checked
 from ._core import AbstractLayerKernel, BoundaryPanelization2D
 
 
@@ -41,6 +42,7 @@ class PanelInteractionReport2D(StrictModule):
     source_node_collision: Array
     classification_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: BoundaryPanelization2D,
@@ -49,8 +51,6 @@ class PanelInteractionReport2D(StrictModule):
         *,
         near_ratio: float = 4.0,
     ) -> None:
-        if not isinstance(panelization, BoundaryPanelization2D):
-            raise TypeError("panelization must be BoundaryPanelization2D.")
         ratio = float(near_ratio)
         if not jnp.isfinite(ratio) or ratio <= 0.0:
             raise ValueError("near_ratio must be finite and positive.")

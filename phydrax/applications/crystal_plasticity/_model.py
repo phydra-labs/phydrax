@@ -46,6 +46,7 @@ from ...integration import (
     ReferenceTetrahedronRule,
 )
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...typing import checked
 
 
 def _real_array(value: ArrayLike, name: str, /) -> Array:
@@ -366,6 +367,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
     inverse_plan: SmallLinearSolvePlan
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         slip_systems: Sequence[CrystalSlipSystem],
@@ -377,8 +379,6 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
             isinstance(value, CrystalSlipSystem) for value in systems
         ):
             raise ValueError("CPFEM requires one or more CrystalSlipSystem values.")
-        if not isinstance(parameters, CrystalPlasticityParameters):
-            raise TypeError("parameters must be CrystalPlasticityParameters.")
         for index, left in enumerate(systems):
             left_schmid = np.asarray(left.schmid)
             for right in systems[:index]:
@@ -422,9 +422,8 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
             jnp.asarray(0.0, dtype=resolved_dtype),
         )
 
+    @checked
     def _validate_state_shape(self, state: CrystalPlasticityState, /) -> None:
-        if not isinstance(state, CrystalPlasticityState):
-            raise TypeError("committed_state must be CrystalPlasticityState.")
         if state.strengths.shape != (self.slip_count,):
             raise ValueError("CPFEM committed strengths do not match slip systems.")
 
@@ -748,6 +747,7 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -755,8 +755,6 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
         routes: Sequence[tuple[str, CrystalPlasticityModel, ArrayLike]],
         /,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         field = str(field_name)
         if not field:
             raise ValueError("CPFEM route field_name must be non-empty.")
@@ -889,14 +887,13 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
         self.prepared_id = discretization.prepared_id
         self.route_id = route_id
 
+    @checked
     def validate_discretization(
         self,
         discretization: FiniteElementDiscretization,
         field_name: str,
         /,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         if (
             str(field_name) != self.field_name
             or discretization.support.support_id != self.support_id
@@ -927,9 +924,8 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
         self.validate(transaction)
         return transaction
 
+    @checked
     def validate(self, transaction: MaterialTransaction, /) -> None:
-        if not isinstance(transaction, MaterialTransaction):
-            raise TypeError("CPFEM material state must be one MaterialTransaction.")
         expected_keys = {site.key for site in self.site_ids}
         if {state.site_id.key for state in transaction.states} != expected_keys:
             raise ValueError(
@@ -987,9 +983,8 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
         self.validate(transaction)
         return transaction.checkpoint_payload(plan_id=self.route_id)
 
+    @checked
     def restore(self, checkpoint: MaterialCheckpointPayload, /) -> MaterialTransaction:
-        if not isinstance(checkpoint, MaterialCheckpointPayload):
-            raise TypeError("checkpoint must be MaterialCheckpointPayload.")
         if checkpoint.plan_id != self.route_id:
             raise ValueError("CPFEM checkpoint belongs to another material route.")
         transaction = checkpoint.restore()

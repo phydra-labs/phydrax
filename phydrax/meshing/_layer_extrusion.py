@@ -42,6 +42,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..geometry.brep import BRepModel, persist_occt_shape, read_occt_shape
 from ..geometry.brep._occt import _explore_unique
+from ..typing import checked
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._controls import BoundaryLayerControl, BoundaryLayerRoute
 from ._scope import MeshingEntityKind, MeshingScope
@@ -101,6 +102,7 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
     maximum_relative_volume_residual: float = eqx.field(static=True)
     extrusion_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: BRepModel,
@@ -111,8 +113,6 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         maximum_relative_volume_residual: float,
         /,
     ) -> None:
-        if not isinstance(source, BRepModel):
-            raise TypeError("source must be BRepModel.")
         if not isinstance(control, BoundaryLayerControl) or (
             control.route is not BoundaryLayerRoute.EXACT_SWEEP
         ):

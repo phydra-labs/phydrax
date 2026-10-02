@@ -19,6 +19,7 @@ from ..._sampling import SingleCoordinateProposalPayload
 from ..._strict import StrictModule
 from ...discretization import CellComplexTopology
 from ...metrix import FlatTorusStateGeometry
+from ...typing import checked
 from ._lattice_action import AbstractIncrementalLatticeAction, LatticeActionEvidence
 
 
@@ -52,6 +53,7 @@ class CompactU1GaugeMeasure(AbstractIncrementalLatticeAction):
     action_id: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -59,8 +61,6 @@ class CompactU1GaugeMeasure(AbstractIncrementalLatticeAction):
         *,
         beta: float,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be CellComplexTopology.")
         if topology.dimension < 2:
             raise ValueError("Compact U(1) gauge measures require 0-, 1-, and 2-cells.")
         beta_ = float(beta)

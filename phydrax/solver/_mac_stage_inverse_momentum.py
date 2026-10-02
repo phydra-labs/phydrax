@@ -23,6 +23,7 @@ from ..discretization.finite_volume._mac_boundary import (
     PreparedMACBoundaryPlan,
 )
 from ..linalg import FunctionLinearOperator, OperatorProperties
+from ..typing import checked
 from ._mac_viscous import MACHelmholtzResult, MACHelmholtzSolvePlan
 
 
@@ -43,6 +44,7 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
     inverse_diagonal: FaceVelocity
     stage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -53,8 +55,6 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
         *,
         stage_id: str | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         if isinstance(inverse_diagonal, (tuple, list)):
             values = operators.validate_velocity(tuple(inverse_diagonal))
         else:
@@ -166,6 +166,7 @@ class MACHelmholtzStageInverseMomentum(StrictModule, NonTrainableState):
     rhs_scale: Array
     stage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MACHelmholtzSolvePlan,
@@ -177,8 +178,6 @@ class MACHelmholtzStageInverseMomentum(StrictModule, NonTrainableState):
         rhs_scale: ArrayLike = 1.0,
         stage_id: str,
     ) -> None:
-        if not isinstance(plan, MACHelmholtzSolvePlan):
-            raise TypeError("plan must be MACHelmholtzSolvePlan.")
         identifier = str(stage_id)
         if not identifier:
             raise ValueError("stage_id must be nonempty.")

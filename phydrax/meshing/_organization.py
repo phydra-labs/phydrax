@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import UnitDefinition
 from ._scope import MeshingScope
 
@@ -52,6 +53,7 @@ class MeshPatch(StrictModule, NonTrainableState):
     adjacent_zone_ids: tuple[str, ...] = eqx.field(static=True)
     patch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -64,8 +66,6 @@ class MeshPatch(StrictModule, NonTrainableState):
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh patch name must be non-empty.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("Mesh patch scope must be MeshingScope.")
         if isinstance(adjacent_zone_ids, str):
             raise TypeError("adjacent_zone_ids must be an iterable of zone IDs.")
         adjacent = tuple(
@@ -102,6 +102,7 @@ class MeshZone(StrictModule, NonTrainableState):
     region_role: RegionRole | None = eqx.field(static=True)
     zone_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -117,8 +118,6 @@ class MeshZone(StrictModule, NonTrainableState):
             raise ValueError("Mesh zone name must be non-empty.")
         if not isinstance(role, MeshZoneRole):
             raise TypeError("role must be MeshZoneRole.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("Mesh zone scope must be MeshingScope.")
         material = None if material_id is None else str(material_id).strip()
         if material == "":
             raise ValueError("Mesh zone material_id must be non-empty when supplied.")
@@ -156,12 +155,11 @@ class MeshLabel(StrictModule, NonTrainableState):
     scope: MeshingScope
     label_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, name: str, scope: MeshingScope, /) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh label name must be non-empty.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("Mesh label scope must be MeshingScope.")
         self.name = value
         self.scope = scope
         self.label_id = canonical_fingerprint(
@@ -180,6 +178,7 @@ class MeshAttribute(StrictModule, NonTrainableState):
     component_shape: tuple[int, ...] = eqx.field(static=True)
     attribute_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -195,8 +194,6 @@ class MeshAttribute(StrictModule, NonTrainableState):
             raise ValueError("Mesh attribute name must be non-empty.")
         if not isinstance(role, MeshAttributeRole):
             raise TypeError("role must be MeshAttributeRole.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("Mesh attribute scope must be MeshingScope.")
         if unit is not None and not isinstance(unit, UnitDefinition):
             raise TypeError("unit must be UnitDefinition or None.")
         array = np.asarray(values)

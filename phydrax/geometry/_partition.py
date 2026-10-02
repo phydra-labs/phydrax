@@ -12,7 +12,7 @@ from jax import Array
 
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._atlas import BoundaryAtlas
 
 
@@ -150,6 +150,7 @@ class BoundaryAtlasPartition(StrictModule):
     candidate_count: int
     maximum_quadrature_points: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: BoundaryAtlas,
@@ -158,8 +159,6 @@ class BoundaryAtlasPartition(StrictModule):
         candidate_count: int = 64,
         maximum_quadrature_points: int = 1_000_000,
     ) -> None:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("atlas must be a BoundaryAtlas.")
         if quadrature_order < 2 or candidate_count < 2:
             raise ValueError("quadrature_order and candidate_count must be at least two.")
         if maximum_quadrature_points <= 0:

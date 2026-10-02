@@ -16,7 +16,7 @@ import phydrax.linalg as la
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 FieldSlotRole: TypeAlias = Literal[
@@ -141,6 +141,7 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
     kernel_id: str = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action_kind: ActionKind,
@@ -167,8 +168,6 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
             raise ValueError("Local action output slots must be unique.")
         if len(set(inputs)) != len(inputs):
             raise ValueError("Local action input slots must be unique.")
-        if not isinstance(region, RegionIR):
-            raise TypeError("region must be RegionIR.")
         action_kind = parse(action_kind, ActionKind, "action_kind")
         self.action_kind = action_kind
         self.output_slots = outputs
@@ -483,9 +482,8 @@ class OperatorFusionPlan(StrictModule, NonTrainableState):
     groups: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, program: OperatorProgram, /) -> None:
-        if not isinstance(program, OperatorProgram):
-            raise TypeError("program must be OperatorProgram.")
         consumers: dict[str, int] = {}
         for node in program.nodes:
             for name in node.input_names:
@@ -520,14 +518,13 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
     kernels: tuple[tuple[str, Callable], ...] = eqx.field(static=True)
     lowered_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         program: OperatorProgram,
         kernels: Mapping[str, Callable],
         /,
     ) -> None:
-        if not isinstance(program, OperatorProgram):
-            raise TypeError("program must be OperatorProgram.")
         required = tuple(dict.fromkeys(node.kernel_id for node in program.nodes))
         if set(required) != set(kernels) or any(
             not callable(kernels[name]) for name in required

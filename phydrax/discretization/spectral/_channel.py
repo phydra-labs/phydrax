@@ -25,7 +25,7 @@ from ...linalg._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._channel_ultraspherical import (
     prepare_ultraspherical_channel,
     PreparedUltrasphericalChannel,
@@ -83,6 +83,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
     constraint_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -97,8 +98,6 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         maximum_factor_bytes: int = 512 * 1024**2,
         constraint_tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         families = tuple(axis.family for axis in discretization.axes)
         if families != ("fourier", "chebyshev", "fourier"):
             raise ValueError(
@@ -250,9 +249,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
     block_size: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ChannelStokesPlan, shift: ArrayLike, /) -> None:
-        if not isinstance(plan, ChannelStokesPlan):
-            raise TypeError("plan must be a ChannelStokesPlan.")
         raw_shift = jnp.asarray(shift)
         if jnp.iscomplexobj(raw_shift):
             raise TypeError("shift must be real.")

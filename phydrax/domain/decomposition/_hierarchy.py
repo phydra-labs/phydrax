@@ -10,6 +10,7 @@ from collections.abc import Sequence
 import equinox as eqx
 
 from ..._strict import StrictModule
+from ...typing import checked
 from .._domain import Domain
 from .._function import DomainFunction
 from ._fields import LocalFieldFamily, partition_of_unity_field
@@ -22,6 +23,7 @@ class SubdomainLevel(StrictModule):
     coefficient: float = eqx.field(static=True)
     level_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         level_id: str,
@@ -36,8 +38,6 @@ class SubdomainLevel(StrictModule):
             raise ValueError("level_id must be non-empty.")
         if not math.isfinite(coefficient_) or coefficient_ == 0.0:
             raise ValueError("coefficient must be finite and nonzero.")
-        if not isinstance(family, LocalFieldFamily):
-            raise TypeError("family must be a LocalFieldFamily.")
         self.level_id = name
         self.family = family
         self.coefficient = coefficient_

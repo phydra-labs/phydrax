@@ -10,6 +10,7 @@ from typing import Any
 
 from ..._fingerprint import canonical_fingerprint, canonical_json
 from ..._model import ValuePort
+from ...typing import checked
 from ._quantities import GeophysicalQuantity
 from ._time import TemporalSupport
 from ._vertical import HybridPressureCoordinate
@@ -70,6 +71,7 @@ class GeophysicalFieldBinding:
     dimensions_verified: bool = field(init=False)
     _vertical_json: str | None = field(init=False, repr=False)
 
+    @checked
     def __init__(
         self,
         quantity: GeophysicalQuantity,
@@ -87,8 +89,6 @@ class GeophysicalFieldBinding:
         from ...dynamics import StateLayout
         from ...nn.operator.task import OperatorTask
 
-        if not isinstance(quantity, GeophysicalQuantity):
-            raise TypeError("Binding quantity must be a GeophysicalQuantity.")
         if (
             sum(owner is not None for owner in (field_space, state_layout, operator_task))
             != 1

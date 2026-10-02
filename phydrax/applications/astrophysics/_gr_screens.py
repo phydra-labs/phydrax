@@ -21,7 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._metric import LorentzianMetric
 from ...metrix._spacetime_conventions import RelativityConvention
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import UnitDefinition
 from ._gr_bundles import gr_chart_identity, gr_metric_identity
 
@@ -99,6 +99,7 @@ class GRObserverScreenPlan(StrictModule):
     coordinate_unit_id: str = eqx.field(static=True)
     affine_parameter_unit_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         metric: LorentzianMetric,
@@ -125,18 +126,10 @@ class GRObserverScreenPlan(StrictModule):
             raise TypeError(
                 "GR observer screens require a four-dimensional LorentzianMetric."
             )
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be a RelativityConvention.")
         if convention.metric_signature != metric.convention:
             raise ValueError(
                 "RelativityConvention metric signature must match the metric."
             )
-        if not isinstance(coordinate_unit, UnitDefinition):
-            raise TypeError("coordinate_unit must be a UnitDefinition.")
-        if not isinstance(affine_parameter_unit, UnitDefinition):
-            raise TypeError("affine_parameter_unit must be a UnitDefinition.")
         coordinates = jnp.asarray(observer_coordinates)
         if jnp.iscomplexobj(coordinates):
             raise TypeError("Observer coordinates must be real.")

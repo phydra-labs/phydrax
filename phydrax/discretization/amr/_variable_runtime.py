@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._variable import (
     VariablePatchFieldState,
     VariablePatchHierarchyTopology,
@@ -126,6 +127,7 @@ class VariablePatchFillPatchPlan(StrictModule, NonTrainableState):
     component_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: VariablePatchHierarchyTopology,
@@ -134,8 +136,6 @@ class VariablePatchFillPatchPlan(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
     ) -> None:
-        if not isinstance(topology, VariablePatchHierarchyTopology):
-            raise TypeError("Variable patch FillPatch requires realized topology.")
         level_ = int(level)
         if level_ < 0 or level_ >= len(topology.levels):
             raise ValueError("Variable patch FillPatch level is out of range.")

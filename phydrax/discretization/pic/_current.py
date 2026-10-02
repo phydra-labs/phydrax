@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
+from ...typing import checked
 from ._binning import PICCellBinningPlan
 from ._transfer import PreparedPICParticleCochainTransfer
 from ._types import PICCurrentDepositResult
@@ -43,6 +44,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedPICParticleCochainTransfer,
@@ -51,8 +53,6 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         maximum_segments_per_particle: int = 4,
         tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(transfer, PreparedPICParticleCochainTransfer):
-            raise TypeError("transfer must be PreparedPICParticleCochainTransfer.")
         if transfer.bridge.dimension != 3:
             raise ValueError("Charge-conserving current currently requires a 3-D bridge.")
         axes = transfer.bridge.grid.structured_axes

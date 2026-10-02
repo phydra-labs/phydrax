@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 def _scalar(value: ArrayLike, name: str, /, *, lower: float | None = None) -> Array:
@@ -294,6 +295,7 @@ class LocalStochasticVolatilityModel(StrictModule):
     leverage_surface: LocalVolatilityModel
     reference_variance: Array
 
+    @checked
     def __init__(
         self,
         variance_model: HestonModel,
@@ -302,10 +304,6 @@ class LocalStochasticVolatilityModel(StrictModule):
         *,
         reference_variance: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(variance_model, HestonModel):
-            raise TypeError("variance_model must be a HestonModel.")
-        if not isinstance(leverage_surface, LocalVolatilityModel):
-            raise TypeError("leverage_surface must be a LocalVolatilityModel.")
         reference = (
             variance_model.long_run_variance
             if reference_variance is None

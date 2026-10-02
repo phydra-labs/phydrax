@@ -14,6 +14,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._core import DiscretizationCapability, DiscretizationKey, PreparationReport
 from .._periodic_cell import PeriodicCell
 from ._cell_list import CellListParticleNeighborhoodPlan
@@ -54,6 +55,7 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractParticleNeighborhoodPlan,
@@ -64,8 +66,6 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         name: str = "verlet-particle-neighborhood",
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(base, AbstractParticleNeighborhoodPlan):
-            raise TypeError("base must be an AbstractParticleNeighborhoodPlan.")
         interaction = float(interaction_radius)
         skin_ = float(skin)
         if not np.isfinite(interaction) or interaction <= 0.0:
@@ -124,13 +124,10 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: VerletParticleNeighborhoodPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, VerletParticleNeighborhoodPlan):
-            raise TypeError("plan must be a VerletParticleNeighborhoodPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         base = plan.base.prepare(particles)
         preparation = PreparationReport(
             capabilities=tuple(
@@ -226,6 +223,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             self.prepared_id,
         )
 
+    @checked
     def update(
         self,
         positions: ArrayLike,
@@ -235,8 +233,6 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         active_mask: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> ParticleVerletState:
-        if not isinstance(previous, ParticleVerletState):
-            raise TypeError("previous must be a ParticleVerletState.")
         if previous.prepared_verlet_id != self.prepared_id:
             raise ValueError("Verlet state belongs to another prepared neighborhood.")
         value = self._positions(positions)

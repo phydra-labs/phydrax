@@ -15,6 +15,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._physical_boundaries import PrescribedHeatFluxWallBoundary
 from ._rarefied_wall import MaxwellSmoluchowskiContinuumWallPlan
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
@@ -32,9 +33,8 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
     gradient: PreparedTriangleWLSQ
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, gradient: PreparedTriangleWLSQ, /) -> None:
-        if not isinstance(gradient, PreparedTriangleWLSQ):
-            raise TypeError("gradient must be PreparedTriangleWLSQ.")
         self.gradient = gradient
         self.plan_id = canonical_fingerprint(
             {"kind": "triangle-viscous-flux", "gradient": gradient.prepared_id}

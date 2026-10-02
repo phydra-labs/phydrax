@@ -18,6 +18,7 @@ from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core import Currency, FinanceDate
 
 
@@ -169,6 +170,7 @@ class CurveDefinition(StrictModule):
     currency: Currency | None = eqx.field(static=True)
     representation: CurveRepresentation = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -180,14 +182,8 @@ class CurveDefinition(StrictModule):
         grid: CurveGrid,
         interpolation: InterpolationPolicy,
     ) -> None:
-        if not isinstance(valuation_date, FinanceDate):
-            raise TypeError("valuation_date must be a FinanceDate.")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency or None.")
-        if not isinstance(grid, CurveGrid):
-            raise TypeError("grid must be a CurveGrid.")
-        if not isinstance(interpolation, InterpolationPolicy):
-            raise TypeError("interpolation must be an InterpolationPolicy.")
         self.curve_id = _identifier(curve_id, "curve_id")
         self.role = _identifier(role, "role")
         self.valuation_date = valuation_date
@@ -424,6 +420,7 @@ class PreparedCurve(StrictModule):
     node_quote_jacobian: Array | None
     quote_ids: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         definition: CurveDefinition,
@@ -433,8 +430,6 @@ class PreparedCurve(StrictModule):
         node_quote_jacobian: ArrayLike | None = None,
         quote_ids: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(definition, CurveDefinition):
-            raise TypeError("definition must be a CurveDefinition.")
         nodes = _real_vector(node_values, "node_values")
         if nodes.shape != definition.grid.times.shape:
             raise ValueError("node_values shape must match the curve grid.")

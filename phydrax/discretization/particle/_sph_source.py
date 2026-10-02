@@ -17,7 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._particle_epoch import ParticleCapacityRequest
 from ._population import (
     _select_state,
@@ -102,6 +102,7 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
     schedule_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         population: ParticlePopulationPlan,
@@ -122,8 +123,6 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
         replay_policy: Any,
         schedule_id: str = "sph-emission",
     ) -> None:
-        if not isinstance(population, ParticlePopulationPlan):
-            raise TypeError("population must be ParticlePopulationPlan.")
         sites = np.asarray(source_sites, dtype=np.float64)
         normal = np.asarray(normals, dtype=np.float64)
         area = np.asarray(quadrature_area, dtype=np.float64)

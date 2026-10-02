@@ -17,7 +17,7 @@ from .._doc import DOC_KEY0
 from .._model import AxisModelEvaluator, ModelBinding
 from .._strict import StrictModule
 from ..logging import emit
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._evaluation import (
     BatchEvaluator,
     complete_batch_axes,
@@ -32,6 +32,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
     deps: tuple[str, ...]
     binding: ModelBinding
 
+    @checked
     def __init__(
         self,
         model: Callable[..., Any],
@@ -44,8 +45,6 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
 
         if not callable(model):
             raise TypeError("Domain models must be callable.")
-        if not isinstance(binding, ModelBinding):
-            raise TypeError("Domain models require an explicit ModelBinding.")
         if binding.batch_mode == "axis" and not isinstance(model, AxisModelEvaluator):
             raise TypeError("Axis-batch model bindings require an AxisModelEvaluator.")
         binding.require_dependencies(tuple(deps))

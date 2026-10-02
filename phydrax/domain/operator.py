@@ -37,7 +37,7 @@ from ..nn.operator.data import (
     tensor_product,
 )
 from ..nn.operator.protocols import OperatorModel
-from ..typing import parse
+from ..typing import checked, parse
 
 
 OperatorDomainKind: TypeAlias = Literal[
@@ -121,6 +121,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
     layouts: frozendict[str, OperatorDomainLayout]
     kind: OperatorDomainKind = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         batch: OperatorBatch,
@@ -129,8 +130,6 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         *,
         kind: OperatorDomainKind,
     ) -> None:
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("OperatorDomainView requires an OperatorBatch.")
         kind = parse(kind, OperatorDomainKind, "kind")
         frozen = frozendict(layouts)
         if tuple(frozen) != tuple(batch.queries):
@@ -155,6 +154,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         self.layouts = frozen
         self.kind = kind
 
+    @checked
     def restore_field(
         self,
         prediction: OperatorPrediction,
@@ -162,8 +162,6 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         /,
     ) -> cx.AxisArray:
         """Restore one named prediction field to its original domain axes."""
-        if not isinstance(prediction, OperatorPrediction):
-            raise TypeError("prediction must be an OperatorPrediction.")
         field = prediction.field(field_name)
         if field.query_name not in self.layouts:
             raise KeyError(

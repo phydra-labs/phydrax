@@ -20,6 +20,7 @@ from ...linalg import (
     inverse_small_linear,
     SmallLinearSolvePlan,
 )
+from ...typing import checked
 from ._state import make_z4c_state, Z4cState
 
 
@@ -80,9 +81,8 @@ class Z4cAlgebraicEnforcement(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def apply(self, state: Z4cState, /) -> Z4cEnforcementResult:
-        if not isinstance(state, Z4cState):
-            raise TypeError("state must be a Z4cState.")
         metric_trailing = _trailing_matrix(state.conformal_metric)
         extrinsic = state.conformal_extrinsic_curvature
         determinant = determinant_small_linear(_SMALL_3X3, metric_trailing)

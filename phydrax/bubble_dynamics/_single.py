@@ -32,7 +32,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..solver import DifferentialProblem, DifferentialSolution, solve_diffrax
-from ..typing import parse
+from ..typing import checked, parse
 from ._contracts import AbstractBubblePressureDrive, BubbleScales
 from ._events import BubbleEventPolicy, BubbleRegimeTape
 from ._gas import sphere_volume
@@ -116,6 +116,7 @@ class SingleBubblePlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: RadialBubbleModel,
@@ -131,10 +132,6 @@ class SingleBubblePlan(StrictModule):
         events: BubbleEventPolicy | None = None,
         validity: BubbleValidityPolicy | None = None,
     ) -> None:
-        if not isinstance(model, RadialBubbleModel):
-            raise TypeError("model must be a RadialBubbleModel.")
-        if not isinstance(drive, AbstractBubblePressureDrive):
-            raise TypeError("drive must be an AbstractBubblePressureDrive.")
         times = _validated_save_times(save_times)
         selected = parse(integrator, SingleBubbleIntegrator, "integrator")
         policy = BubbleEventPolicy() if events is None else events

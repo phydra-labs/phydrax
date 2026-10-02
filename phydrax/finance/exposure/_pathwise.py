@@ -22,7 +22,7 @@ from ...stochastic import (
     JumpMeasureChange,
     measure_changed_target,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ..contracts._credit import DefaultEventState
 from ..core import Currency, FinanceDate, FinanceEvidenceBinding
 from ._collateral import (
@@ -73,6 +73,7 @@ class PathwiseTradeValues(StrictModule):
     coupling_id: str = eqx.field(static=True)
     value_state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         times: ArrayLike,
@@ -95,8 +96,6 @@ class PathwiseTradeValues(StrictModule):
         ids = tuple(_identifier(value, "trade_id") for value in trade_ids)
         if len(ids) != marks.shape[2] or len(set(ids)) != len(ids):
             raise ValueError("trade_ids must uniquely identify the trade axis.")
-        if not isinstance(base_currency, Currency):
-            raise TypeError("base_currency must be a Currency.")
         path_valid = jnp.asarray(valid)
         if path_valid.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("valid must have a boolean dtype.")
@@ -182,6 +181,7 @@ class DiscountFactorPath(StrictModule):
     pricing_law_id: str = eqx.field(static=True)
     path_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         times: ArrayLike,
@@ -202,10 +202,6 @@ class DiscountFactorPath(StrictModule):
             jnp.any(~jnp.isfinite(discounts) | (discounts <= 0.0)),
             "Discount factors must be finite and positive.",
         )
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
-        if not isinstance(valuation_date, FinanceDate):
-            raise TypeError("valuation_date must be a FinanceDate.")
         curve = _identifier(curve_id, "curve_id")
         law = _identifier(pricing_law_id, "pricing_law_id")
         self.times = nodes
@@ -293,6 +289,7 @@ class ExposureSimulationPlan(StrictModule):
     discount_curve_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         netting_set: NettingSet,
@@ -309,14 +306,6 @@ class ExposureSimulationPlan(StrictModule):
         discount_curve_id: str,
         plan_id: str,
     ) -> None:
-        if not isinstance(netting_set, NettingSet):
-            raise TypeError("netting_set must be a NettingSet.")
-        if not isinstance(collateral, PreparedCollateralAgreement):
-            raise TypeError("collateral must be a PreparedCollateralAgreement.")
-        if not isinstance(closeout, CloseoutConvention):
-            raise TypeError("closeout must be a CloseoutConvention.")
-        if not isinstance(closeout_binding, CloseoutIdentityBinding):
-            raise TypeError("closeout_binding must be a CloseoutIdentityBinding.")
         if closeout_binding.netting_set_id != netting_set.netting_set_id:
             raise ValueError("Closeout binding and netting set identities differ.")
         if collateral.agreement.netting_set_id != netting_set.netting_set_id:

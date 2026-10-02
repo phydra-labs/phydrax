@@ -26,6 +26,7 @@ from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..nn.flows import AbstractFlowDistribution
+from ..typing import checked
 from ._causal_hmc import _LogDensity
 from ._chain import (
     _split_chain_keys,
@@ -261,6 +262,7 @@ class FlowNUTSResult(StrictModule):
     flow_parameter_memory_bytes: int = eqx.field(static=True)
     history_memory_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -285,10 +287,6 @@ class FlowNUTSResult(StrictModule):
         duration_seconds: float,
         history_memory_bytes: int,
     ) -> None:
-        if not isinstance(mcmc, MCMCResult):
-            raise TypeError("mcmc must be an MCMCResult.")
-        if not isinstance(config, FlowNUTSConfig):
-            raise TypeError("config must be a FlowNUTSConfig.")
         rounds = config.num_adaptation_rounds
         if (
             len(training_losses) != rounds

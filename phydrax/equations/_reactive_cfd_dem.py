@@ -26,6 +26,7 @@ from ..discretization.particle._particle_internal_unstructured import (
     PreparedUnstructuredParticleInternalMesh,
 )
 from ..discretization.splatting import PreparedMeshParticleGridSplat
+from ..typing import checked
 from ._cfd_dem import UnresolvedCFDEMCouplingPlan
 from ._particle_conversion import PreparedParticleConversionDynamics
 from ._particle_thermochemistry import ParticleThermodynamicMaterialPlan
@@ -53,6 +54,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
     species_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedMeshParticleGridSplat,
@@ -62,8 +64,6 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         *,
         schema_id: str,
     ) -> None:
-        if not isinstance(transfer, PreparedMeshParticleGridSplat):
-            raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
         heat = np.asarray(heat_transfer_coefficient, dtype=np.float64)
         mass = np.asarray(mass_transfer_coefficient, dtype=np.float64)
         if heat.shape != (transfer.particle_capacity,):
@@ -311,6 +311,7 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
     radiation: ReciprocalPairRadiationPlan | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dem: PreparedSoftSphereDEMDynamics,
@@ -323,12 +324,6 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
         morphology: DensityPorosityMorphologyPlan | None = None,
         radiation: ReciprocalPairRadiationPlan | None = None,
     ) -> None:
-        if not isinstance(dem, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dem must be PreparedSoftSphereDEMDynamics.")
-        if not isinstance(conversion, PreparedParticleConversionDynamics):
-            raise TypeError("conversion must be PreparedParticleConversionDynamics.")
-        if not isinstance(continuum_exchange, ParticleContinuumExchangePlan):
-            raise TypeError("continuum_exchange must be ParticleContinuumExchangePlan.")
         if contact_exchange is not None and not isinstance(
             contact_exchange, ParticleContactExchangePlan
         ):

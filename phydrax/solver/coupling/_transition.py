@@ -56,6 +56,7 @@ from ...dynamics import (
 from ...dynamics._system import DiscreteTransitionResult
 from ...measurement import PreparedQuantityField
 from ...observation import CholeskyCovarianceAction, MeasurementComparisonPlan
+from ...typing import checked
 from .._differential_algebraic import (
     DAESolvePolicy,
     prepare_dae,
@@ -615,11 +616,10 @@ class CoupledObservationPort(StrictModule):
     binding_ids: tuple[str, ...] = eqx.field(static=True)
     observation_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, transition: PreparedCoupledTransition, binding_ids: Sequence[str], /
     ) -> None:
-        if not isinstance(transition, PreparedCoupledTransition):
-            raise TypeError("transition must be a PreparedCoupledTransition.")
         ids = tuple(canonical_identifier(item, "binding_id") for item in binding_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("binding_ids must name distinct observation bindings.")

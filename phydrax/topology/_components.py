@@ -47,7 +47,18 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import nonnegative_integer
 from ..sparse import EdgeRelation, KeyGroupPlan
-from ..typing import as_array, Bool, Dim, Float, Int32, parse, Scalar, Scope, Size
+from ..typing import (
+    as_array,
+    Bool,
+    checked,
+    Dim,
+    Float,
+    Int32,
+    parse,
+    Scalar,
+    Scope,
+    Size,
+)
 
 
 _INT32_MAX = int(np.iinfo(np.int32).max)
@@ -199,6 +210,7 @@ class ConnectedComponentPlan(StrictModule):
     maximum_rounds: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -207,8 +219,6 @@ class ConnectedComponentPlan(StrictModule):
         component_capacity: int,
         maximum_rounds: int,
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be a phydrax.sparse.EdgeRelation.")
         if relation.source_size != relation.target_size:
             raise ValueError("relation must map one entity space onto itself.")
         entities = _positive_integer(relation.source_size, "relation entity count")

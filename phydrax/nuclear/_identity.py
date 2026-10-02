@@ -20,6 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 
 
 def _integer(value: int, name: str, /, *, minimum: int = 0) -> int:
@@ -204,9 +205,8 @@ class NuclearSpeciesTable:
         values.setflags(write=False)
         return values
 
+    @checked
     def index(self, species: NuclearSpeciesKey, /) -> int:
-        if not isinstance(species, NuclearSpeciesKey):
-            raise TypeError("species must be NuclearSpeciesKey.")
         identifiers = tuple(value.species_id for value in self.species)
         if species.species_id not in identifiers:
             raise KeyError("Nuclear species is absent from this table.")

@@ -21,7 +21,7 @@ from ....linalg import (
     estimate_operator_action_cost,
     IdentityLinearOperator,
 )
-from ....typing import parse
+from ....typing import checked, parse
 from ._scalar_calderon3d import ScalarCalderonDP0Galerkin3D
 
 
@@ -42,6 +42,7 @@ class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
     calderon: ScalarCalderonDP0Galerkin3D
     material_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -54,8 +55,6 @@ class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
         coefficient = float(flux_coefficient)
         if not name_:
             raise ValueError("Scalar transmission materials require a name.")
-        if not isinstance(calderon, ScalarCalderonDP0Galerkin3D):
-            raise TypeError("calderon must be ScalarCalderonDP0Galerkin3D.")
         if not math.isfinite(coefficient) or coefficient <= 0.0:
             raise ValueError("flux_coefficient must be finite and positive.")
         self.name = name_

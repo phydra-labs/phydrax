@@ -20,6 +20,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellMesh
 from ....discretization._cell_complex import TetrahedralConnectivity
+from ....typing import checked
 from ._roles import CardiacBoundaryRoles
 
 
@@ -394,6 +395,7 @@ class OrientedChamberSurface(StrictModule, NonTrainableState):
     geometric_tolerance: float = eqx.field(static=True)
     surface_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chamber_name: str,
@@ -410,8 +412,6 @@ class OrientedChamberSurface(StrictModule, NonTrainableState):
         self.reference_coordinates = jnp.asarray(reference_coordinates)
         self.triangles = jnp.asarray(triangles, dtype=jnp.int32)
         self.vertex_global_ids = jnp.asarray(vertex_global_ids, dtype=jnp.int64)
-        if not isinstance(topology_evidence, ChamberSurfaceTopologyEvidence):
-            raise TypeError("topology_evidence must be ChamberSurfaceTopologyEvidence.")
         self.topology_evidence = topology_evidence
         self.geometric_tolerance = float(geometric_tolerance)
         self.surface_id = _nonempty(surface_id, "surface_id")

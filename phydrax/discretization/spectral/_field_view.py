@@ -26,6 +26,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._view_support import tensor_box_support_geometry
 from .._views import (
     AbstractFieldReconstructionKernel,
@@ -72,6 +73,7 @@ class SpectralFieldReconstructionKernel(
     real_output: bool = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -79,8 +81,6 @@ class SpectralFieldReconstructionKernel(
         *,
         field_space_id: str,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         precision = discretization.plan.precision
         real = not precision.physical_dtype.startswith("complex")
         self.axes = discretization.axes

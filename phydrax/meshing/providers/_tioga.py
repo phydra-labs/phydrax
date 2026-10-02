@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._assembly import MeshAssembly, MeshPart
 from .._canonical import certify_cell_mesh
 from .._contracts import (
@@ -916,6 +917,7 @@ class TiogaProvider:
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    @checked
     def execute(
         self,
         assembly: MeshAssembly,
@@ -934,8 +936,6 @@ class TiogaProvider:
         Existing non-overset overlays and all input audits are retained
         verbatim. The registration replaces any earlier one of this session.
         """
-        if not isinstance(assembly, MeshAssembly):
-            raise TypeError("assembly must be MeshAssembly.")
         limits_ = _limits(limits)
         if self.options.ranks > len(assembly.parts):
             raise ValueError("TIOGA requires ranks <= part count.")
@@ -974,6 +974,7 @@ class TiogaProvider:
             {"operation": "register", "source_assembly": assembly.assembly_id},
         )
 
+    @checked
     def move(
         self,
         previous: TiogaAssemblyResult,
@@ -991,8 +992,6 @@ class TiogaProvider:
         a later registration, or a later motion) fails explicitly. Moved parts
         are recertified; unmoved parts and their overlays are kept verbatim.
         """
-        if not isinstance(previous, TiogaAssemblyResult):
-            raise TypeError("previous must be TiogaAssemblyResult.")
         if not isinstance(coordinates, Mapping) or not coordinates:
             raise TypeError("coordinates must map moved part names to coordinates.")
         limits_ = _limits(limits)

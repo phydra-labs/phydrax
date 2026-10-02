@@ -19,6 +19,7 @@ from ..linalg import (
     HermitianSpectrum,
     TracelessHermitianSpace,
 )
+from ..typing import checked
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -180,6 +181,7 @@ class TomographyLikelihoodResult(StrictModule):
     valid: Array
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         log_likelihood: ArrayLike,
@@ -193,8 +195,6 @@ class TomographyLikelihoodResult(StrictModule):
         self.probabilities = jnp.asarray(probabilities)
         self.normalization_residual = jnp.asarray(normalization_residual)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
 
 

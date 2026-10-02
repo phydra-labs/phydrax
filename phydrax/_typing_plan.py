@@ -8,6 +8,11 @@ The closed grammar compiled here is documented in `phydrax.typing`. Checks read
 only host metadata (object kind, rank, extents, dtype, Python values of static
 metadata): they add no JAX operations, synchronize nothing, and never mutate the
 checked value.
+
+Two compilers share the one checker. `compile_form` owns stored-field and `parse`
+contracts. `compile_input_form` owns signature inputs: it also checks nominal
+runtime classes and callables, while selectors, conversion inputs, numeric
+scalars, and containers stay with the owning validator.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import sys
 import threading
 import types
 import weakref
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -34,7 +39,7 @@ from typing import (
 
 import jax
 import numpy as np
-from typing_extensions import evaluate_forward_ref, get_annotations
+from typing_extensions import evaluate_forward_ref, get_annotations, is_protocol
 
 from ._dtype_names import dtype_matches, DTypeRule
 from ._typing_forms import (
@@ -150,6 +155,18 @@ class FixedTupleContract:
     items: tuple[Contract, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class NominalContract:
+    """An input whose runtime class must be `cls` or a subclass of it."""
+
+    cls: type
+
+
+@dataclass(frozen=True, slots=True)
+class CallableContract:
+    """An input that must be callable; its signature and results stay unchecked."""
+
+
 Contract: TypeAlias = (
     ArrayContract
     | KeyContract
@@ -161,6 +178,8 @@ Contract: TypeAlias = (
     | OptionalContract
     | UnionContract
     | FixedTupleContract
+    | NominalContract
+    | CallableContract
 )
 
 
@@ -333,6 +352,84 @@ def compile_form(form: object, /) -> Contract | None:
     if contains_vocabulary(form):
         _form_error(form, "Phydrax contracts are unsupported in this placement")
     return None
+
+
+# Classes from these modules are scalars, containers, ABCs, or typing constructs:
+# their acceptance and normalization belong to the owning validator.
+_STATIC_INPUT_MODULES: frozenset[str] = frozenset(
+    {
+        "abc",
+        "builtins",
+        "collections.abc",
+        "numbers",
+        "types",
+        "typing",
+        "typing_extensions",
+    }
+)
+
+
+def _nominal_input_class(form: object, /) -> type | None:
+    origin = get_origin(form)
+    cls = origin if isinstance(origin, type) else form
+    if not isinstance(cls, type):
+        return None
+    if (
+        cls.__module__ in _STATIC_INPUT_MODULES
+        or cls.__module__.partition(".")[0] == "numpy"
+        or cls is jax.Array
+        or issubclass(cls, Enum)
+        or is_protocol(cls)
+    ):
+        # NumPy and JAX array/dtype annotations describe conversion inputs; Enum
+        # selectors are parsed by their owner; protocols are structural.
+        return None
+    return cls
+
+
+def _input_union(form: object, arguments: tuple[object, ...], /) -> Contract | None:
+    members = [
+        (argument, compile_input_form(argument))
+        for argument in arguments
+        if argument is not type(None)
+    ]
+    contracts = [contract for _, contract in members if contract is not None]
+    if len(contracts) < len(members):
+        # One static-only member makes the union static-only; dropping a
+        # structural member instead would silently weaken its contract.
+        if any(
+            contract is not None and contains_vocabulary(argument)
+            for argument, contract in members
+        ):
+            _form_error(form, "a contract form cannot be combined with static-only forms")
+        return None
+    inner = contracts[0] if len(contracts) == 1 else UnionContract(tuple(contracts))
+    return OptionalContract(inner) if type(None) in arguments else inner
+
+
+def compile_input_form(form: object, /) -> Contract | None:
+    """Compile one signature annotation; `None` means static-only.
+
+    Phydrax tensor and metadata forms keep their `compile_form` meaning. Nominal
+    runtime classes (including subscripted generic classes) and callables are
+    checked. Literal and Enum selectors, `Like` conversion inputs, builtin
+    scalars and containers, NumPy/JAX array types, protocols, and typing
+    constructs are static-only, as is any union or tuple containing one of them.
+    """
+    origin = get_origin(form)
+    arguments = get_args(form)
+    if isinstance(form, TypeAliasType) and not _is_vocabulary(form):
+        return compile_input_form(form.__value__)
+    if form is Like or origin is Like or origin is Literal:
+        return None
+    if form is Callable or origin is Callable:
+        return CallableContract()
+    if origin is Union or origin is types.UnionType:
+        return _input_union(form, arguments)
+    if origin is tuple or contains_vocabulary(form):
+        return compile_form(form)
+    nominal = _nominal_input_class(form)
+    return None if nominal is None else NominalContract(nominal)
 
 
 @lru_cache(maxsize=4096)
@@ -743,6 +840,14 @@ def check(
             return _check_union(alternatives, value, scope, path, canonicalize)
         case FixedTupleContract():
             return _check_tuple(contract, value, scope, path, canonicalize)
+        case NominalContract(cls=cls):
+            if not isinstance(value, cls):
+                return _type_violation(path, cls.__qualname__, value)
+            return None, value
+        case CallableContract():
+            if not callable(value):
+                return _type_violation(path, "callable", value)
+            return None, value
 
 
 def raise_violation(violation: Violation, /) -> NoReturn:

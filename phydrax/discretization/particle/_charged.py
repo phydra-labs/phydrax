@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleDiscretization
 
 
@@ -73,13 +74,10 @@ class PreparedChargedParticles(StrictModule, NonTrainableState):
     reference_specific_charge: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: ChargedParticlePlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, ChargedParticlePlan):
-            raise TypeError("plan must be ChargedParticlePlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         if plan.charges.shape != (particles.capacity,):
             raise ValueError("charges must have the particle-capacity shape.")
         dtype = jnp.result_type(plan.charges, particles.safe_masses)

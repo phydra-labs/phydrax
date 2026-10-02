@@ -50,7 +50,17 @@ from ..linalg import (
     refresh,
     solve,
 )
-from ..typing import as_array, Bool, Dim, Float, Int32, Scalar, Scope, VariadicDim
+from ..typing import (
+    as_array,
+    Bool,
+    checked,
+    Dim,
+    Float,
+    Int32,
+    Scalar,
+    Scope,
+    VariadicDim,
+)
 from ._mac_variable_density import (
     MACVariableDensityProjectionPlan,
     MACVariableDensityProjectionResult,
@@ -396,6 +406,7 @@ class MACCompartmentProjectionPlan(StrictModule, NonTrainableState):
     schur_problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -406,8 +417,6 @@ class MACCompartmentProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1e-9,
         maximum_iterations: int = 500,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         capacity = positive_integer(compartment_capacity, "compartment_capacity")
         if capacity > _MAXIMUM_COMPARTMENT_CAPACITY:
             raise ValueError(
@@ -464,9 +473,8 @@ class MACCompartmentProjectionPlan(StrictModule, NonTrainableState):
         self.schur_problem_id = schur_problem_id
         self.plan_id = identifier
 
+    @checked
     def _support(self, constraint: MACCompartmentConstraint, /) -> _CompartmentSupport:
-        if not isinstance(constraint, MACCompartmentConstraint):
-            raise TypeError("constraint must be a MACCompartmentConstraint.")
         operators = self.projection.operators
         cell_shape = tuple(operators.discretization.cell_shape)
         capacity = self.compartment_capacity

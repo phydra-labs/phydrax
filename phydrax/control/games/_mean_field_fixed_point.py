@@ -19,6 +19,7 @@ from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
+from ...typing import checked
 from ._mean_field import (
     FROZEN_LAW_BEST_RESPONSE,
     FrozenLawBestResponseResult,
@@ -83,6 +84,7 @@ class MeanFieldGameFixedPointProblem(StrictModule):
     law_mixture_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_flow: EmpiricalMeanField,
@@ -104,8 +106,6 @@ class MeanFieldGameFixedPointProblem(StrictModule):
         law_distance_id: str,
         problem_id: str,
     ) -> None:
-        if not isinstance(initial_flow, EmpiricalMeanField):
-            raise TypeError("initial_flow must be an EmpiricalMeanField.")
         for owner, callback in (
             ("best_response", best_response),
             ("induced_flow", induced_flow),

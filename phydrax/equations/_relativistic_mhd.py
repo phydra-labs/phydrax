@@ -22,6 +22,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 from ._relativistic_eos import (
     AbstractRelativisticEOS,
     GammaLawEOS,
@@ -141,6 +142,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
     primitive_names: tuple[str, ...] = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eos: AbstractRelativisticEOS,
@@ -158,10 +160,6 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-11,
         relative_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(eos, AbstractRelativisticEOS):
-            raise TypeError("eos must be AbstractRelativisticEOS.")
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
         if eos.scale.scale_id != scale.scale_id:
             raise ValueError("Relativistic EOS and GRMHD scale identities differ.")
         if float(scale.speed_of_light) != 1.0:
@@ -272,14 +270,13 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
             raise TypeError(f"{name} must have a real floating-point dtype.")
         return array
 
+    @checked
     def _geometry(
         self,
         geometry: ADMGridGeometry,
         leading_shape: tuple[int, ...],
         /,
     ) -> ADMGridGeometry:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if geometry.leading_shape != leading_shape:
             raise ValueError(
                 "ADM geometry leading shape must exactly match the Valencia state."
@@ -1196,6 +1193,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
             derivative_valid,
         )
 
+    @checked
     def geometric_source(
         self,
         conserved: ArrayLike,
@@ -1204,8 +1202,6 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         value = self._state(conserved, "Valencia conserved state")
-        if not isinstance(source_geometry, ValenciaGeometrySource):
-            raise TypeError("source_geometry must be ValenciaGeometrySource.")
         geometry = self._geometry(source_geometry.geometry, value.shape[:-1])
         recovery = self.recover(value, geometry, composition)
         projection = self.stress_energy(
@@ -1216,6 +1212,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         )
         return self.geometric_source_from_projection(projection, source_geometry)
 
+    @checked
     def geometric_source_from_projection(
         self,
         projection: StressEnergyProjection,
@@ -1224,8 +1221,6 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
     ) -> Array:
         """Evaluate curvature sources from an already-recovered stage projection."""
 
-        if not isinstance(source_geometry, ValenciaGeometrySource):
-            raise TypeError("source_geometry must be ValenciaGeometrySource.")
         self._geometry(source_geometry.geometry, projection.leading_shape)
         momentum_source, energy_source = valencia_geometric_source_from_projection(
             projection, source_geometry, self.convention

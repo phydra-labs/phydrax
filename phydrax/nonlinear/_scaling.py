@@ -26,7 +26,7 @@ from ..linalg import (
     PyTreeSpace,
 )
 from ..linalg._spaces import _coordinate_pairing_weights, _has_diagonal_pairing
-from ..typing import parse
+from ..typing import checked, parse
 from ._preconditioning import (
     _TransformationEvaluation,
     AbstractNonlinearSystemTransformation,
@@ -207,6 +207,7 @@ class NonlinearScalingPolicy(StrictModule):
         self.state_floor, self.residual_floor = values
         self.explicit = explicit
 
+    @checked
     def prepare(
         self,
         problem: NonlinearSystemProblem,
@@ -214,8 +215,6 @@ class NonlinearScalingPolicy(StrictModule):
         args: Any = None,
         /,
     ) -> tuple[NonlinearSystemProblem, NonlinearScaling]:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
         state_ = problem.validate_state(state)
         residual, _ = problem.evaluate(state_, args)
         problem_ = problem.bind_spaces(state_, residual)
@@ -256,16 +255,13 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
     _residual_norm_lower: float = eqx.field(static=True)
     _residual_norm_upper: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
         scaling: NonlinearScaling,
         /,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
-        if not isinstance(scaling, NonlinearScaling):
-            raise TypeError("scaling must be a NonlinearScaling.")
         if problem.state_space is None or problem.residual_space is None:
             raise ValueError("A scaled root requires bound physical vector spaces.")
 
@@ -416,13 +412,12 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
         physical_state = self.original.validate_state(initial_state)
         return self.problem.validate_state(self.scaling.to_solver_state(physical_state))
 
+    @checked
     def solver_termination(
         self,
         termination: NonlinearTermination,
         /,
     ) -> NonlinearTermination:
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         residual_ratio = self._residual_norm_lower / self._residual_norm_upper
         state_ratio = self._state_norm_lower / self._state_norm_upper
         divergence = (

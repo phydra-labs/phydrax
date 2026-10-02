@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._hydrostatic import HydrostaticOceanState, PreparedHydrostaticOcean
 
 
@@ -83,14 +84,14 @@ class HydrostaticWetDryEventPlan(StrictModule, NonTrainableState):
     policy: WetDryEpochPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, policy: WetDryEpochPolicy, /) -> None:
-        if not isinstance(policy, WetDryEpochPolicy):
-            raise TypeError("policy must be a WetDryEpochPolicy.")
         self.policy = policy
         self.plan_id = canonical_fingerprint(
             {"kind": "hydrostatic-wet-dry-event", "policy": policy.policy_id}
         )
 
+    @checked
     def transition(
         self,
         ocean: PreparedHydrostaticOcean,
@@ -100,8 +101,6 @@ class HydrostaticWetDryEventPlan(StrictModule, NonTrainableState):
         *,
         eta_tangent: ArrayLike | None = None,
     ) -> HydrostaticWetDrySensitivityResult:
-        if not isinstance(ocean, PreparedHydrostaticOcean):
-            raise TypeError("ocean must be a PreparedHydrostaticOcean.")
         if not ocean.plan.wetting_and_drying:
             raise ValueError("Ocean plan has no wetting-and-drying event semantics.")
         previous_depth = ocean.geometry.rest_depth + previous.eta

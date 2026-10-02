@@ -22,6 +22,7 @@ from ...discretization.surfel import (
     SurfelOrientationScope,
     SurfelSetPlan,
 )
+from ...typing import checked
 from ._regions import TriangleSurface
 
 
@@ -40,6 +41,7 @@ class SimplicialSurfelPlan(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: TriangleSurface,
@@ -48,8 +50,6 @@ class SimplicialSurfelPlan(StrictModule, NonTrainableState):
         footprint_area_ratio: float = 1.0,
         name: str = "simplicial-surfels",
     ) -> None:
-        if not isinstance(surface, TriangleSurface):
-            raise TypeError("surface must be TriangleSurface.")
         ratio = float(footprint_area_ratio)
         name_value = str(name).strip()
         if not np.isfinite(ratio) or ratio <= 0.0:

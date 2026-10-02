@@ -58,6 +58,7 @@ from ...bubble_dynamics import (
     BubbleEnvironment,
     BubbleGasState,
 )
+from ...typing import checked
 from ._bubble_components import (
     ATMOSPHERE_ID,
     BubbleComponentState,
@@ -203,6 +204,7 @@ class BubbleCompartmentPlan(StrictModule):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law: AbstractBubbleCompartmentGasLaw,
@@ -212,10 +214,6 @@ class BubbleCompartmentPlan(StrictModule):
         capacity: int,
         dimension: int,
     ) -> None:
-        if not isinstance(law, AbstractBubbleCompartmentGasLaw):
-            raise TypeError("law must be an AbstractBubbleCompartmentGasLaw.")
-        if not isinstance(environment, BubbleEnvironment):
-            raise TypeError("environment must be a BubbleEnvironment.")
         slots = positive_integer(capacity, "capacity")
         space = positive_integer(dimension, "dimension")
         if space not in (2, 3):

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._coordinates import HarmonicCoordinateFields
 
 
@@ -327,16 +328,13 @@ class PreparedVentricularMicrostructure(StrictModule, NonTrainableState):
     longitudinal_index: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: VentricularMicrostructurePlan,
         fields: HarmonicCoordinateFields,
         /,
     ) -> None:
-        if not isinstance(plan, VentricularMicrostructurePlan):
-            raise TypeError("plan must be VentricularMicrostructurePlan.")
-        if not isinstance(fields, HarmonicCoordinateFields):
-            raise TypeError("fields must be HarmonicCoordinateFields.")
         self.plan = plan
         self.fields = fields
         self.transmural_index = fields.coordinate_index(plan.transmural_coordinate)

@@ -51,7 +51,7 @@ from ...topology import (
     ConnectedComponentPlan,
     grid_adjacency_relation,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._vof import PreparedIncompressibleTwoPhaseVOF
 
 
@@ -202,6 +202,7 @@ class BubbleComponentPlan(StrictModule, NonTrainableState):
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         two_phase: PreparedIncompressibleTwoPhaseVOF,
@@ -213,8 +214,6 @@ class BubbleComponentPlan(StrictModule, NonTrainableState):
         gas_threshold: float = 1.0e-6,
         vent_sides: tuple[tuple[int, BoundarySide], ...] = (),
     ) -> None:
-        if not isinstance(two_phase, PreparedIncompressibleTwoPhaseVOF):
-            raise TypeError("two_phase must be PreparedIncompressibleTwoPhaseVOF.")
         capacity = positive_integer(component_capacity, "component_capacity")
         rounds = positive_integer(maximum_rounds, "maximum_rounds")
         pairs = positive_integer(pair_capacity, "pair_capacity")

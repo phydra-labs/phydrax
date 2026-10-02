@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._cell_complex import PolygonalConnectivity
 from ...discretization._cell_mesh import CellMesh
+from ...typing import checked
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from ._contracts import (
     SurfaceAuditPolicy,
@@ -488,6 +489,7 @@ class SurfaceModel(StrictModule, NonTrainableState):
     orientation_repair: SurfaceOrientationRepair | None
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -498,10 +500,6 @@ class SurfaceModel(StrictModule, NonTrainableState):
         interfaces: Sequence[SurfaceInterface] = (),
         orientation_repair: SurfaceOrientationRepair | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("SurfaceModel mesh must be a CellMesh.")
-        if not isinstance(metadata, SurfaceMetadata):
-            raise TypeError("SurfaceModel metadata must be SurfaceMetadata.")
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
             raise SurfacePreparationError(
                 SurfacePreparationStatus.UNSUPPORTED_TOPOLOGY,
@@ -559,6 +557,7 @@ class SurfaceModel(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_triangles(
         cls,
         coordinates: ArrayLike,
@@ -572,8 +571,6 @@ class SurfaceModel(StrictModule, NonTrainableState):
         repair_orientation: bool = False,
         orient_closed_outward: bool = True,
     ) -> SurfaceModel:
-        if not isinstance(metadata, SurfaceMetadata):
-            raise TypeError("metadata must be SurfaceMetadata.")
         points, faces = _validate_triangle_arrays(coordinates, triangles)
         signs, _, _ = _orientation_solution(faces)
         repair = None
@@ -624,9 +621,8 @@ class SurfaceModel(StrictModule, NonTrainableState):
             role=role,
         )
 
+    @checked
     def with_selection(self, selection: SurfaceSelection, /) -> SurfaceModel:
-        if not isinstance(selection, SurfaceSelection):
-            raise TypeError("selection must be a SurfaceSelection.")
         return SurfaceModel(
             self.mesh,
             self.metadata,
@@ -635,9 +631,8 @@ class SurfaceModel(StrictModule, NonTrainableState):
             orientation_repair=self.orientation_repair,
         )
 
+    @checked
     def with_interface(self, interface: SurfaceInterface, /) -> SurfaceModel:
-        if not isinstance(interface, SurfaceInterface):
-            raise TypeError("interface must be a SurfaceInterface.")
         return SurfaceModel(
             self.mesh,
             self.metadata,
@@ -813,9 +808,8 @@ class SurfaceRealization(StrictModule, NonTrainableState):
             physical_tags=tags,
         )
 
+    @checked
     def chart_ids_for(self, selection: SurfaceSelection, /) -> Array:
-        if not isinstance(selection, SurfaceSelection):
-            raise TypeError("selection must be a SurfaceSelection.")
         if selection.cell_entity_set_id != self.chart_mapping.cell_entity_set_id:
             raise ValueError("Surface selection is not bound to this chart mapping.")
         mask = np.isin(

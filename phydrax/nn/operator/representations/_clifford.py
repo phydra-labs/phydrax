@@ -22,6 +22,7 @@ from phydrax.metrix.clifford import (
     MetricIsometryAction,
 )
 
+from ....typing import checked
 from ._o3 import O3Features, O3Representation
 
 
@@ -39,14 +40,13 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
     grade_layouts: tuple[CliffordBladeLayout, ...]
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: CliffordAlgebraSpec,
         multiplicities: Sequence[int],
         /,
     ) -> None:
-        if not isinstance(algebra, CliffordAlgebraSpec):
-            raise TypeError("algebra must be a CliffordAlgebraSpec.")
         resolved = tuple(multiplicities)
         if len(resolved) != algebra.dimension + 1:
             raise ValueError(
@@ -105,9 +105,8 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
             offset += count
         return CliffordGradeFeatures(tuple(grades))
 
+    @checked
     def join(self, features: CliffordGradeFeatures, /) -> Array:
-        if not isinstance(features, CliffordGradeFeatures):
-            raise TypeError("features must be CliffordGradeFeatures.")
         if len(features.grades) != self.algebra.dimension + 1:
             raise ValueError(
                 "Clifford feature grade count does not match representation."

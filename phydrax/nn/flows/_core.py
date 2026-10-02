@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
@@ -202,6 +202,7 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
     layers: tuple[AffineCouplingLayer, ...]
     condition_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: NormalFlowDistribution,
@@ -210,8 +211,6 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
         *,
         condition_size: int,
     ) -> None:
-        if not isinstance(base, NormalFlowDistribution):
-            raise TypeError("base must be a NormalFlowDistribution.")
         if not layers:
             raise ValueError("A coupling flow requires at least one layer.")
         if any(layer.event_size != base.shape[0] for layer in layers):

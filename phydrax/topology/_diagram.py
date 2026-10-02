@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._resources import TopologyResourceError
 
 
@@ -110,14 +111,13 @@ class PackedPersistenceDiagram(StrictModule, NonTrainableState):
     source_diagram_id: str = eqx.field(static=True)
     packed_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         diagram: PersistenceDiagram,
         capacity: int,
         /,
     ) -> None:
-        if not isinstance(diagram, PersistenceDiagram):
-            raise TypeError("Packing requires a PersistenceDiagram.")
         size = int(capacity)
         if size <= 0:
             raise ValueError("Packed persistence capacity must be positive.")

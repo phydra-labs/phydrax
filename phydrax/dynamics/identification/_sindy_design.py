@@ -15,7 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from .._layout import InputLayout, StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary
@@ -97,6 +97,7 @@ class SINDyProblem(StrictModule):
     library: AbstractFeatureLibrary
     formulation: AbstractSINDyFormulation
 
+    @checked
     def __init__(
         self,
         *,
@@ -104,12 +105,6 @@ class SINDyProblem(StrictModule):
         library: AbstractFeatureLibrary,
         formulation: AbstractSINDyFormulation,
     ) -> None:
-        if not isinstance(data, TrajectoryData):
-            raise TypeError("data must be TrajectoryData.")
-        if not isinstance(library, AbstractFeatureLibrary):
-            raise TypeError("library must be an AbstractFeatureLibrary.")
-        if not isinstance(formulation, AbstractSINDyFormulation):
-            raise TypeError("formulation must be an AbstractSINDyFormulation.")
         _validate_library(data, library)
         self.data = data
         self.library = library

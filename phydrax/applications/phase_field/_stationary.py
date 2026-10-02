@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._phase_field import DoubleWellFreeEnergy
 from ..._strict import StrictModule
 from ...linalg import inverse
+from ...typing import checked
 
 
 class DoubleWellKinkPlan(StrictModule):
@@ -28,6 +29,7 @@ class DoubleWellKinkPlan(StrictModule):
     maximum_matrix_elements: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinates: ArrayLike,
@@ -41,8 +43,6 @@ class DoubleWellKinkPlan(StrictModule):
         maximum_matrix_elements: int = 10_000_000,
     ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
-        if not isinstance(free_energy, DoubleWellFreeEnergy):
-            raise TypeError("free_energy must be DoubleWellFreeEnergy.")
         coefficient = float(gradient_coefficient)
         newton = int(maximum_newton_steps)
         backtracks = int(maximum_backtracks)

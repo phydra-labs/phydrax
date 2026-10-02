@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._space import TensorSpectralDiscretization
 
 
@@ -30,9 +31,8 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     projector_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, discretization: TensorSpectralDiscretization, /) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         dimension = len(discretization.axes)
         if dimension not in (2, 3) or any(
             axis.family != "fourier" for axis in discretization.axes

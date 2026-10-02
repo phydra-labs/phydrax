@@ -36,7 +36,7 @@ from phydrax.qualification._registry import (
 )
 
 from ..logging import emit
-from ..typing import parse
+from ..typing import checked, parse
 from ._auth import (
     _bounded_access_token,
     AccessTokenValidator,
@@ -90,6 +90,7 @@ class SupportDependencyAdmitter(Protocol):
 class ReleaseIndexDependencyAdmitter:
     """Adapter from exact SupportDependency records to release-index admission."""
 
+    @checked
     def __init__(
         self,
         release_index: ReleaseIndex,
@@ -97,8 +98,6 @@ class ReleaseIndexDependencyAdmitter:
         support_tuples: Mapping[str, SupportTuple],
         /,
     ) -> None:
-        if not isinstance(release_index, ReleaseIndex):
-            raise TypeError("Dependency admission requires a typed release index.")
         if not support_tuples:
             raise ValueError("Dependency admission requires exact support tuples.")
         normalized: dict[str, SupportTuple] = {}
@@ -612,11 +611,10 @@ class InProcessReferenceService:
             support_tuple_id=tuple_id,
         )
 
+    @checked
     def submit(self, token: str, submission: JobSubmission, /) -> JobStatus:
         principal = self._authenticate(token)
         self._authorize(principal, "service:submit", principal.tenant_id)
-        if not isinstance(submission, JobSubmission):
-            raise TypeError("submission must be a JobSubmission.")
         with self._lock:
             binding = self._require_profile(submission.profile_id)
             request_digest = self._request_digest(submission, binding.support_tuple_id)

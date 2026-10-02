@@ -22,6 +22,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticUnitSystem
+from ...typing import checked
 from ...units import UnitDefinition
 from ._lattice_force_constants import (
     third_order_force_constant_unit,
@@ -94,6 +95,7 @@ class ThreePhononModeVertices(StrictModule, NonTrainableState):
     convention_id: str = eqx.field(static=True)
     vertex_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decay_vertices: npt.ArrayLike,
@@ -122,8 +124,6 @@ class ThreePhononModeVertices(StrictModule, NonTrainableState):
             or np.any(frequency <= 0.0)
         ):
             raise ValueError("Three-phonon vertex arrays or mesh axes are invalid.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         self.decay_vertices = jnp.asarray(decay)
         self.coalescence_vertices = jnp.asarray(coalescence)
         self.angular_frequencies = jnp.asarray(frequency)
@@ -169,6 +169,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
     maximum_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ifc3: ThirdOrderForceConstants,
@@ -185,10 +186,6 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
         maximum_channels: int = 50_000_000,
         maximum_bytes: int = 2_147_483_648,
     ) -> None:
-        if not isinstance(ifc3, ThirdOrderForceConstants):
-            raise TypeError("ifc3 must be ThirdOrderForceConstants.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         expected_unit = third_order_force_constant_unit(
             units.scale.energy_unit, units.scale.length_unit
         )
@@ -433,6 +430,7 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
     detailed_balance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ifc3: ThirdOrderForceConstants,
@@ -448,8 +446,6 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         maximum_channels: int = 50_000_000,
         detailed_balance_tolerance: float = 1.0e-5,
     ) -> None:
-        if not isinstance(ifc3, ThirdOrderForceConstants):
-            raise TypeError("ifc3 must be canonical ThirdOrderForceConstants.")
         if not ifc3.source_kind.startswith("provider-"):
             raise ValueError(
                 "Production RTA requires provider-normalized IFC3; native IFC3 remains candidate."
@@ -493,8 +489,6 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "RTA broadening, temperature, volume, and tolerance must be positive."
             )
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         self.ifc3 = ifc3
         self.qpoint_indices = jnp.asarray(indices, dtype=jnp.int32)
         self.mesh_shape = shape
@@ -522,6 +516,7 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         mode_vertices: ThreePhononModeVertices,
@@ -529,8 +524,6 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         heat_capacities: ArrayLike,
         /,
     ) -> ThreePhononRTAResult:
-        if not isinstance(mode_vertices, ThreePhononModeVertices):
-            raise TypeError("mode_vertices must be IFC3-derived ThreePhononModeVertices.")
         if (
             mode_vertices.ifc3_id != self.ifc3.ifc_id
             or mode_vertices.energy_unit.unit_id != self.units.scale.energy_unit.unit_id

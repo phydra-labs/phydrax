@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._boundary import LatticeBoltzmannGeometrySnapshot
 from ._discretization import LatticeBoltzmannDiscretization
 
@@ -90,6 +91,7 @@ class LatticeBoltzmannLinkEpoch(StrictModule, NonTrainableState):
     numeric_id: str = eqx.field(static=True)
     link_epoch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -101,10 +103,6 @@ class LatticeBoltzmannLinkEpoch(StrictModule, NonTrainableState):
         boundary_fraction: ArrayLike | None = None,
         boundary_normals: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("Link epochs require an LBM discretization.")
-        if not isinstance(geometry, LatticeBoltzmannGeometrySnapshot):
-            raise TypeError("Link epochs require an LBM geometry snapshot.")
         if geometry.discretization_id != discretization.prepared_id:
             raise ValueError("Link geometry belongs to a different discretization.")
         topology = int(topology_epoch)
@@ -200,6 +198,7 @@ class LatticeBoltzmannGeometryEpoch(StrictModule, NonTrainableState):
     geometry_kind: LatticeBoltzmannGeometryKind = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -209,8 +208,6 @@ class LatticeBoltzmannGeometryEpoch(StrictModule, NonTrainableState):
         *,
         geometry_kind: LatticeBoltzmannGeometryKind = LatticeBoltzmannGeometryKind.NATIVE,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("Geometry epochs require an LBM discretization.")
         if not isinstance(snapshot, LatticeBoltzmannGeometrySnapshot) or not isinstance(
             links, LatticeBoltzmannLinkEpoch
         ):
@@ -385,6 +382,7 @@ class LatticeBoltzmannTopologyEventRequest(StrictModule, NonTrainableState):
     request_id: str = eqx.field(static=True)
     accepted_step_only: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: LatticeBoltzmannGeometryEpoch,
@@ -394,8 +392,6 @@ class LatticeBoltzmannTopologyEventRequest(StrictModule, NonTrainableState):
         *,
         source_id: str,
     ) -> None:
-        if not isinstance(source, LatticeBoltzmannGeometryEpoch):
-            raise TypeError("Topology requests require a source geometry epoch.")
         mask = np.asarray(candidate_fluid_mask, dtype=np.bool_)
         step = int(requested_after_step)
         identifier = str(source_id)

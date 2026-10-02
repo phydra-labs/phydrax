@@ -36,6 +36,7 @@ from .._model._ports import require_port_shapes
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..dynamics import TimeGrid
+from ..typing import checked
 from ._problem import _identifier, _shape
 
 
@@ -148,6 +149,7 @@ class PiecewiseConstantControlParameterization(AbstractControlParameterization):
 
     time_grid: TimeGrid
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -156,8 +158,6 @@ class PiecewiseConstantControlParameterization(AbstractControlParameterization):
         *,
         parameterization_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         shape = _shape(control_shape, "control_shape")
         self.time_grid = time_grid
         self.control_shape = shape
@@ -205,6 +205,7 @@ class PiecewiseLinearControlParameterization(AbstractControlParameterization):
 
     time_grid: TimeGrid
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -213,8 +214,6 @@ class PiecewiseLinearControlParameterization(AbstractControlParameterization):
         *,
         parameterization_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         shape = _shape(control_shape, "control_shape")
         self.time_grid = time_grid
         self.control_shape = shape
@@ -333,6 +332,7 @@ class BSplineControlParameterization(AbstractControlParameterization):
     grid: BSplineGrid
     time_grid: TimeGrid | None
 
+    @checked
     def __init__(
         self,
         grid: BSplineGrid,
@@ -341,8 +341,6 @@ class BSplineControlParameterization(AbstractControlParameterization):
         *,
         parameterization_id: str,
     ) -> None:
-        if not isinstance(grid, BSplineGrid):
-            raise TypeError("grid must be a BSplineGrid.")
         shape = _shape(control_shape, "control_shape")
         self.grid = grid
         self.time_grid = None
@@ -426,6 +424,7 @@ class BSplineControlParameterization(AbstractControlParameterization):
             parameterization_id=self.parameterization_id,
         )
 
+    @checked
     def refine(
         self,
         new_grid: BSplineGrid,
@@ -438,8 +437,6 @@ class BSplineControlParameterization(AbstractControlParameterization):
         maximum_condition: float = 1.0e12,
     ) -> BSplineControlRefinement:
         """Transfer coefficients through the canonical diagnosed grid transfer."""
-        if not isinstance(new_grid, BSplineGrid):
-            raise TypeError("new_grid must be a BSplineGrid.")
         cases = _case_shape(case_shape)
         values = _coefficient_array(coefficients, cases, self.parameter_shape)
         transfer = BSplineGridTransfer(
@@ -503,6 +500,7 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     time_input: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -515,8 +513,6 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(time_input, bool):
             raise TypeError("time_input must be bool.")
         states = _shape(state_shape, "state_shape")

@@ -26,6 +26,7 @@ from ...linalg import (
     ConstraintMap,
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import checked
 from ._identity import InterfaceId
 
 
@@ -360,9 +361,8 @@ class InterfaceCertificate(StrictModule, NonTrainableState):
     periodic: bool = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def assert_matches(self, interface: PatchInterface, /) -> None:
-        if not isinstance(interface, PatchInterface):
-            raise TypeError("interface must be a PatchInterface.")
         if interface.interface_id != self.interface_id:
             raise ValueError("Interface certificate does not match this patch interface.")
 
@@ -665,13 +665,10 @@ class PeriodicCompatibilityAdapter(StrictModule, NonTrainableState):
     certificate: InterfaceCertificate
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, interface: PatchInterface, certificate: InterfaceCertificate, /
     ) -> None:
-        if not isinstance(interface, PatchInterface):
-            raise TypeError("interface must be a PatchInterface.")
-        if not isinstance(certificate, InterfaceCertificate):
-            raise TypeError("Periodic compatibility requires an InterfaceCertificate.")
         certificate.assert_matches(interface)
         if not interface.periodic or not certificate.periodic:
             raise ValueError("Periodic compatibility requires a periodic interface.")
@@ -786,6 +783,7 @@ class H1NitscheInterfacePlan(StrictModule, NonTrainableState):
     coercivity: H1NitscheCoercivityCertificate
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interface: PatchInterface,
@@ -793,12 +791,6 @@ class H1NitscheInterfacePlan(StrictModule, NonTrainableState):
         coercivity: H1NitscheCoercivityCertificate,
         /,
     ) -> None:
-        if not isinstance(interface, PatchInterface):
-            raise TypeError("interface must be a PatchInterface.")
-        if not isinstance(certificate, InterfaceCertificate):
-            raise TypeError("Nitsche lowering requires an InterfaceCertificate.")
-        if not isinstance(coercivity, H1NitscheCoercivityCertificate):
-            raise TypeError("Nitsche lowering requires a coercivity stability gate.")
         certificate.assert_matches(interface)
         if coercivity.interface_certificate.certificate_id != certificate.certificate_id:
             raise ValueError("Nitsche coercivity evidence belongs to another interface.")
@@ -980,6 +972,7 @@ class MortarInterfacePlan(StrictModule, NonTrainableState):
     stability: MortarInfSupCertificate
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interface: PatchInterface,
@@ -988,12 +981,6 @@ class MortarInterfacePlan(StrictModule, NonTrainableState):
         stability: MortarInfSupCertificate,
         /,
     ) -> None:
-        if not isinstance(interface, PatchInterface):
-            raise TypeError("interface must be a PatchInterface.")
-        if not isinstance(certificate, InterfaceCertificate):
-            raise TypeError("Mortar lowering requires an InterfaceCertificate.")
-        if not isinstance(stability, MortarInfSupCertificate):
-            raise TypeError("Mortar lowering requires an inf-sup stability gate.")
         certificate.assert_matches(interface)
         if stability.interface_certificate.certificate_id != certificate.certificate_id:
             raise ValueError("Mortar inf-sup evidence belongs to another interface.")

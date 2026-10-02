@@ -18,6 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize, PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
+from ..typing import checked
 from ._contraction import (
     ContractionPlan,
     ContractionPlanCache,
@@ -70,6 +71,7 @@ class TensorRenormalizationProblem(StrictModule):
     tensor: UniformSquareTensor
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tensor: UniformSquareTensor,
@@ -77,8 +79,6 @@ class TensorRenormalizationProblem(StrictModule):
         *,
         problem_id: str = "uniform-square-partition-function",
     ) -> None:
-        if not isinstance(tensor, UniformSquareTensor):
-            raise TypeError("tensor must be a UniformSquareTensor.")
         if jnp.issubdtype(tensor.value.dtype, jnp.complexfloating):
             raise TypeError(
                 "Tensor renormalization currently supports real partition tensors."

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 def _scaled_norm(value: Array, /) -> Array:
@@ -494,9 +495,8 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
             packet, candidate, accepted, evidence, successful
         )
 
+    @checked
     def _check_ledger(self, ledger: DarkRadiationLedger, /) -> None:
-        if not isinstance(ledger, DarkRadiationLedger):
-            raise TypeError("ledger must be a DarkRadiationLedger.")
         shape = (self.capacity,)
         vectors = (self.capacity, self.dimension)
         if (
@@ -522,9 +522,8 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
                 "Dark-radiation physical fields require one shared floating dtype."
             )
 
+    @checked
     def _check_packet(self, packet: DarkRadiationPacket, /) -> None:
-        if not isinstance(packet, DarkRadiationPacket):
-            raise TypeError("packet must be a DarkRadiationPacket.")
         scalar_fields = (
             packet.packet_id,
             packet.species_id,

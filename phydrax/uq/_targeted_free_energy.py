@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._posterior import AbstractBijector
 
 
@@ -74,6 +75,7 @@ class TargetedMapPlan(StrictModule):
     parameter_state_id: str = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bijector: AbstractBijector,
@@ -82,8 +84,6 @@ class TargetedMapPlan(StrictModule):
         *,
         architecture_id: str,
     ) -> None:
-        if not isinstance(bijector, AbstractBijector):
-            raise TypeError("bijector must implement AbstractBijector.")
         shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
@@ -143,6 +143,7 @@ class TargetedFreeEnergyProblem(StrictModule, NonTrainableState):
     mapping: TargetedMapPlan
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: AbstractReducedPotential,
@@ -154,8 +155,6 @@ class TargetedFreeEnergyProblem(StrictModule, NonTrainableState):
             target, AbstractReducedPotential
         ):
             raise TypeError("source and target must implement AbstractReducedPotential.")
-        if not isinstance(mapping, TargetedMapPlan):
-            raise TypeError("mapping must be TargetedMapPlan.")
         if (
             source.event_shape != target.event_shape
             or source.event_shape != mapping.event_shape

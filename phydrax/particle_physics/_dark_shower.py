@@ -32,6 +32,7 @@ from ..solver._dark_sector_epoch_runtime import (
     DarkSectorEpochResult,
     DarkSectorEpochState,
 )
+from ..typing import checked
 from ._events import ParticleEventBatch
 from ._identity import ParticleRole
 from ._species import ParticleSpeciesTable
@@ -198,6 +199,7 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
     production_evidence_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime_plan: DarkSectorEpochPlan,
@@ -221,16 +223,10 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
         production_evidence_ids: Sequence[str],
         provider_status: int = 1,
     ) -> None:
-        if not isinstance(runtime_plan, DarkSectorEpochPlan):
-            raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
-        if not isinstance(species, ParticleSpeciesTable):
-            raise TypeError("species must be ParticleSpeciesTable.")
         if runtime_plan.species_revision_id != species.table_id:
             raise ValueError(
                 "runtime_plan species revision must match the shower species table."
             )
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be RelativisticUnitContract.")
         if species.energy_unit.unit_id != units.energy_unit.unit_id:
             raise ValueError(
                 "species and shower must share the exact relativistic energy unit."

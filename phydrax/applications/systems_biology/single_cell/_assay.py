@@ -20,6 +20,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.series import SampledSeries, SeriesSupport
 from phydrax.units import conversion_factor, SECOND, UnitDefinition
 
+from ....typing import checked
 from .._gene_expression import CountMeasurementPlan, PreparedCountMeasurement
 from ._scenario import _address, _identity, _label, GeneIdentity, TranscriptExperiment
 
@@ -89,6 +90,7 @@ class TranscriptCounts:
     preprocessing_id: str
     observation_id: str
 
+    @checked
     def __init__(
         self,
         gene: GeneIdentity,
@@ -104,8 +106,6 @@ class TranscriptCounts:
         source_id: str,
         preprocessing_id: str,
     ) -> None:
-        if not isinstance(gene, GeneIdentity):
-            raise TypeError("gene must be GeneIdentity.")
         ids = tuple(_identity(x, "cell_id") for x in cell_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("Count snapshots require nonempty unique cell identities.")

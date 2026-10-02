@@ -22,7 +22,7 @@ from ...exterior._chains import (
     SegmentWeight,
 )
 from ...linalg import compound_matrix
-from ...typing import AnyDim, Dim, Float, Int32, Size
+from ...typing import AnyDim, checked, Dim, Float, Int32, Size
 from .._cell_de_rham import AbstractCellDeRhamComplex
 from .._simplicial_locator import (
     CellLocationResult,
@@ -237,6 +237,7 @@ class SimplicialWhitneyKernel(AbstractChainIntegrationKernel):
     dof_offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: AbstractCellDeRhamComplex | CellComplexTopology,
@@ -245,8 +246,6 @@ class SimplicialWhitneyKernel(AbstractChainIntegrationKernel):
     ) -> None:
         if not isinstance(complex, (AbstractCellDeRhamComplex, CellComplexTopology)):
             raise TypeError("complex must be a cell de Rham complex or cell topology.")
-        if not isinstance(locator, PreparedSimplicialCellLocator):
-            raise TypeError("locator must be a prepared simplicial locator.")
         if locator.cell_map.coordinate_element.degree != 1:
             raise ValueError(
                 "Whitney chain integration requires affine simplex geometry."

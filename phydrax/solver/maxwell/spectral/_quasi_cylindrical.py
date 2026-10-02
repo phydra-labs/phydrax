@@ -68,7 +68,7 @@ from ....discretization.pic import (
 )
 from ....discretization.spectral import PreparedSharedGridHankel, SharedGridHankelPlan
 from ....linalg import FFTLinearTransform
-from ....typing import parse
+from ....typing import checked, parse
 from ..._maxwell_antenna import AntennaEmissionDirection
 from ..._maxwell_far_field import (
     _gather_map,
@@ -365,6 +365,7 @@ class QuasiCylindricalMaxwellPlan(StrictModule, NonTrainableState):
     permeability: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: QuasiCylindricalGrid,
@@ -380,8 +381,6 @@ class QuasiCylindricalMaxwellPlan(StrictModule, NonTrainableState):
         permittivity: float = 1.0,
         permeability: float = 1.0,
     ) -> None:
-        if not isinstance(grid, QuasiCylindricalGrid):
-            raise TypeError("grid must be a QuasiCylindricalGrid.")
         variant = parse(variant, SpectralMaxwellVariant, "variant")
         charge_conservation = parse(
             charge_conservation, SpectralChargeConservation, "charge_conservation"
@@ -954,14 +953,13 @@ class PreparedQuasiCylindricalMaxwell(AbstractPreparedPICFieldSolver, NonTrainab
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: QuasiCylindricalMaxwellPlan,
         transfers: Sequence[PreparedAzimuthalTransfer],
         /,
     ) -> None:
-        if not isinstance(plan, QuasiCylindricalMaxwellPlan):
-            raise TypeError("plan must be a QuasiCylindricalMaxwellPlan.")
         transfer_values = tuple(transfers)
         if any(
             not isinstance(value, PreparedAzimuthalTransfer) for value in transfer_values
@@ -1460,6 +1458,7 @@ class PreparedQuasiCylindricalMaxwell(AbstractPreparedPICFieldSolver, NonTrainab
             jnp.max(jnp.abs(physical[..., 1]), initial=0.0),
         )
 
+    @checked
     def advance(
         self,
         time: Array,
@@ -1468,8 +1467,6 @@ class PreparedQuasiCylindricalMaxwell(AbstractPreparedPICFieldSolver, NonTrainab
         step_size: Array,
         /,
     ) -> PICFieldAdvance:
-        if not isinstance(current, QuasiCylindricalSource):
-            raise TypeError("Quasi-cylindrical Maxwell advances with its own source.")
         if (
             current.current.shape != self._spectral_zeros().shape
             or current.charge_change.shape != self._spectral_zeros().shape[:-1]

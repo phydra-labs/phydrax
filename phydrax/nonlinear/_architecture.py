@@ -26,6 +26,7 @@ from ..linalg import (
     plan as plan_linear,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._linearization import JacobianPolicy, prepare_jacobian
 from ._precision import NonlinearPrecisionPolicy
 from ._types import NonlinearSystemProblem, NonlinearTermination
@@ -62,6 +63,7 @@ class NonlinearModel(StrictModule):
     precision_policy_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -76,12 +78,6 @@ class NonlinearModel(StrictModule):
         precision_policy_id: str,
         model_id: str,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be AbstractLinearOperator.")
-        if not isinstance(work, NonlinearWork):
-            raise TypeError("work must be NonlinearWork.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         precision_identifier = str(precision_policy_id)
         if not precision_identifier:
             raise ValueError("precision_policy_id must be non-empty.")
@@ -272,16 +268,13 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         self.linear = policy
         self.precision = precision_
 
+    @checked
     def compute(
         self,
         model: NonlinearModel,
         budget: NonlinearWorkBudget,
         /,
     ) -> DirectionResult:
-        if not isinstance(model, NonlinearModel):
-            raise TypeError("model must be NonlinearModel.")
-        if not isinstance(budget, NonlinearWorkBudget):
-            raise TypeError("budget must be NonlinearWorkBudget.")
         minimum_work = NonlinearWork(
             jvp_evaluations=3,
             linear_setups=1,
@@ -447,6 +440,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         self.maximum_steps = steps
         self.precision = precision_
 
+    @checked
     def apply(
         self,
         problem: NonlinearSystemProblem,
@@ -456,14 +450,6 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         budget: NonlinearWorkBudget,
         /,
     ) -> GlobalizationResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(model, NonlinearModel):
-            raise TypeError("model must be NonlinearModel.")
-        if not isinstance(direction, DirectionResult):
-            raise TypeError("direction must be DirectionResult.")
-        if not isinstance(budget, NonlinearWorkBudget):
-            raise TypeError("budget must be NonlinearWorkBudget.")
         self.precision.validate_accumulation_space(model.operator.source)
         self.precision.validate_accumulation_space(model.operator.target)
 
@@ -607,6 +593,7 @@ class RootResidualCertificate(AbstractNonlinearCertificate):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.precision = precision_
 
+    @checked
     def certify(
         self,
         problem: NonlinearSystemProblem,
@@ -618,8 +605,6 @@ class RootResidualCertificate(AbstractNonlinearCertificate):
         args: Any,
         /,
     ) -> NonlinearCertificate:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
         if problem.residual_space is None:
             raise ValueError("Root certification requires a bound residual space.")
         self.precision.validate_trees(state, residual)

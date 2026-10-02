@@ -13,7 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import DimensionalScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 AstrodynamicsTimeScale: TypeAlias = Literal[
@@ -49,9 +49,8 @@ class JulianDate(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def difference_seconds(self, other: JulianDate, /) -> float:
-        if not isinstance(other, JulianDate):
-            raise TypeError("other must be a JulianDate.")
         return ((self.high - other.high) + (self.low - other.low)) * 86400.0
 
 
@@ -62,9 +61,8 @@ class TimeInstant(StrictModule, NonTrainableState):
     scale: AstrodynamicsTimeScale = eqx.field(static=True)
     instant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, julian_date: JulianDate, scale: AstrodynamicsTimeScale, /) -> None:
-        if not isinstance(julian_date, JulianDate):
-            raise TypeError("julian_date must be a JulianDate.")
         scale_ = parse(str(scale).upper(), AstrodynamicsTimeScale, "scale")
         self.julian_date = julian_date
         self.scale = scale_
@@ -84,9 +82,8 @@ class ReferenceEpoch(StrictModule, NonTrainableState):
     continuous: bool = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, instant: TimeInstant, /, *, continuous: bool = True) -> None:
-        if not isinstance(instant, TimeInstant):
-            raise TypeError("instant must be a TimeInstant.")
         if not isinstance(continuous, bool):
             raise TypeError("continuous must be a bool.")
         if continuous and instant.scale == "UTC":
@@ -149,6 +146,7 @@ class AstrodynamicsContext(StrictModule, NonTrainableState):
     frame: FrameDefinition
     context_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: AstrodynamicsScaleContract,
@@ -156,12 +154,6 @@ class AstrodynamicsContext(StrictModule, NonTrainableState):
         frame: FrameDefinition,
         /,
     ) -> None:
-        if not isinstance(scale, AstrodynamicsScaleContract):
-            raise TypeError("scale must be an AstrodynamicsScaleContract.")
-        if not isinstance(epoch, ReferenceEpoch):
-            raise TypeError("epoch must be a ReferenceEpoch.")
-        if not isinstance(frame, FrameDefinition):
-            raise TypeError("frame must be a FrameDefinition.")
         self.scale = scale
         self.epoch = epoch
         self.frame = frame
@@ -174,9 +166,8 @@ class AstrodynamicsContext(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def require_compatible(self, other: AstrodynamicsContext, /) -> None:
-        if not isinstance(other, AstrodynamicsContext):
-            raise TypeError("other must be an AstrodynamicsContext.")
         if self.context_id != other.context_id:
             raise ValueError("Astrodynamics contexts are incompatible.")
 

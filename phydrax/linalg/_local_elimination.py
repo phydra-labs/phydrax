@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._local_blocks import prepare_local_block_factorization, solve_local_blocks
 
 
@@ -94,14 +95,13 @@ class LocalEliminationPlan(StrictModule, NonTrainableState):
             failed=failed_operator | failed_load,
         )
 
+    @checked
     def reconstruct(
         self,
         retained_solution: ArrayLike,
         result: LocalEliminationResult,
         /,
     ) -> Array:
-        if not isinstance(result, LocalEliminationResult):
-            raise TypeError("result must be LocalEliminationResult.")
         retained = jnp.asarray(retained_solution)
         if (
             retained.shape[:2]

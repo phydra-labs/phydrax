@@ -14,7 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ..core import CurrencyAmount, FinanceDate, InstrumentReference, ResolvedSchedule
 from ._base import AbstractPayoff, AbstractResolvedContract
 from ._cashflows import CashflowBatch
@@ -238,6 +238,7 @@ class DefaultableBondContract(AbstractResolvedContract):
     resolved_id: str = eqx.field(static=True)
     default_boundary_side: DefaultBoundarySide = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -252,18 +253,12 @@ class DefaultableBondContract(AbstractResolvedContract):
         contract_id: str,
         default_boundary_side: DefaultBoundarySide = "before_payment",
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(face, CurrencyAmount):
-            raise TypeError("face must be a CurrencyAmount.")
         if face.currency.currency_id != instrument.settlement_currency.currency_id:
             raise ValueError(
                 "Bond face currency must match instrument settlement currency."
             )
         if int(np.asarray(jax.device_get(face.atoms))) <= 0:
             raise ValueError("Bond face amount must be positive.")
-        if not isinstance(recovery, RecoveryTerms):
-            raise TypeError("recovery must be RecoveryTerms.")
         if not isinstance(payoff, CreditPayoff) or payoff.kind != "defaultable_bond":
             raise TypeError("payoff must be a defaultable-bond CreditPayoff.")
         default_boundary_side = parse(
@@ -345,6 +340,7 @@ class CreditDefaultSwapContract(AbstractResolvedContract):
     accrued_on_default: bool = eqx.field(static=True)
     default_boundary_side: DefaultBoundarySide = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -361,16 +357,10 @@ class CreditDefaultSwapContract(AbstractResolvedContract):
         accrued_on_default: bool = True,
         default_boundary_side: DefaultBoundarySide = "before_payment",
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(notional, CurrencyAmount):
-            raise TypeError("notional must be a CurrencyAmount.")
         if notional.currency.currency_id != instrument.settlement_currency.currency_id:
             raise ValueError("CDS notional currency must match settlement currency.")
         if int(np.asarray(jax.device_get(notional.atoms))) <= 0:
             raise ValueError("CDS notional must be positive.")
-        if not isinstance(recovery, RecoveryTerms):
-            raise TypeError("recovery must be RecoveryTerms.")
         if recovery.convention != "par":
             raise ValueError("CDS protection currently requires recovery-of-par terms.")
         if not isinstance(payoff, CreditPayoff) or payoff.kind != "credit_default_swap":

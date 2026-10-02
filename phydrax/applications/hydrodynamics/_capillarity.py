@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._free_surface_ale import PreparedGraphSurfaceALE
 
 
@@ -48,6 +49,7 @@ class GraphCapillarityPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedGraphSurfaceALE,
@@ -57,8 +59,6 @@ class GraphCapillarityPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 200,
     ) -> None:
-        if not isinstance(surface, PreparedGraphSurfaceALE):
-            raise TypeError("surface must be PreparedGraphSurfaceALE.")
         sigma = float(surface_tension)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)

@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._mna import AbstractMNAComponent, MNAStamp
 
 
@@ -238,6 +238,7 @@ class CircuitElement(AbstractMNAComponent):
     noise_law: AbstractCircuitNoiseLaw | None
     element_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         implicit_law: AbstractImplicitCircuitLaw,
@@ -248,8 +249,6 @@ class CircuitElement(AbstractMNAComponent):
         noise_law: AbstractCircuitNoiseLaw | None = None,
         element_id: str,
     ) -> None:
-        if not isinstance(implicit_law, AbstractImplicitCircuitLaw):
-            raise TypeError("implicit_law must be AbstractImplicitCircuitLaw.")
         if frequency_law is not None and not isinstance(
             frequency_law, AbstractMNAComponent
         ):

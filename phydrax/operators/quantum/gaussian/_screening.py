@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._basis import PreparedGaussianBasis
 from ._integrals import contracted_electron_repulsion_element
 
@@ -78,6 +79,7 @@ class PreparedGaussianScreening(StrictModule, NonTrainableState):
     omitted_bound_sum: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: GaussianScreeningPlan,
@@ -85,10 +87,6 @@ class PreparedGaussianScreening(StrictModule, NonTrainableState):
         positions: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, GaussianScreeningPlan):
-            raise TypeError("plan must be GaussianScreeningPlan.")
-        if not isinstance(basis, PreparedGaussianBasis):
-            raise TypeError("basis must be PreparedGaussianBasis.")
         coordinate = np.asarray(positions, dtype=np.float64)
         if (
             coordinate.ndim != 2

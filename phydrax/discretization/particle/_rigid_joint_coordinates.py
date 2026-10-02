@@ -14,6 +14,7 @@ from phydrax.ein import contract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
+from ...typing import checked
 from ._rigid_body import (
     _principal_angle,
     _quaternion_conjugate,
@@ -55,9 +56,8 @@ class PreparedRigidJointCoordinates(StrictModule, NonTrainableState):
     graph: PreparedRigidJointGraph
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, graph: PreparedRigidJointGraph, /) -> None:
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
         self.graph = graph
         self.prepared_id = f"rigid-joint-coordinates/{graph.prepared_id}"
 
@@ -151,9 +151,8 @@ class PreparedRigidJointCoordinates(StrictModule, NonTrainableState):
         distance_length = jnp.linalg.norm(distance_right - distance_left, axis=-1)
         return hinge_angle, prismatic_position, distance_length
 
+    @checked
     def evaluate(self, kinematics: RigidBodyKinematics, /) -> RigidJointCoordinates:
-        if not isinstance(kinematics, RigidBodyKinematics):
-            raise TypeError("kinematics must be RigidBodyKinematics.")
         graph = self.graph
         residuals = graph.residuals(kinematics)
         _rigid_body_rotation_matrix(graph.bodies, kinematics.orientation)

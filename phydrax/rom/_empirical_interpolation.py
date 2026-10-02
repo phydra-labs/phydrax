@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._basis import BasisRole, ReducedBasisArtifact
 
 
@@ -161,9 +161,8 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
     condition_number: float = eqx.field(static=True)
     maximum_reproduction_error: float = eqx.field(static=True)
 
+    @checked
     def __init__(self, artifact: EmpiricalInterpolationArtifact, /) -> None:
-        if not isinstance(artifact, EmpiricalInterpolationArtifact):
-            raise TypeError("artifact must be EmpiricalInterpolationArtifact.")
         self.node_indices = jnp.asarray(artifact.node_indices, dtype=jnp.int32)
         self.reconstruction_matrix = jnp.asarray(artifact.reconstruction_matrix)
         self.artifact_id = artifact.artifact_id

@@ -23,6 +23,7 @@ from ...control.games._mean_field_fixed_point import (
     MeanFieldGameFixedPointResult,
     solve_mean_field_game_fixed_point,
 )
+from ...typing import checked
 from ..core import InstrumentReference, PhysicalLaw, StressLaw
 
 
@@ -48,6 +49,7 @@ class RobustExecutionDefinition(StrictModule):
     problem: DiscreteZeroSumHJBIProblem
     definition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -58,20 +60,12 @@ class RobustExecutionDefinition(StrictModule):
         *,
         definition_id: str,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(physical_law, PhysicalLaw):
-            raise TypeError("physical_law must be a PhysicalLaw.")
-        if not isinstance(stress_law, StressLaw):
-            raise TypeError("stress_law must be a StressLaw.")
         if physical_law.law_id == stress_law.law_id:
             raise ValueError("Physical and stress law identities must remain distinct.")
         if physical_law.factor_layout_id != stress_law.factor_layout_id:
             raise ValueError("Physical and stress laws must use the same factor layout.")
         if physical_law.filtration_id != stress_law.filtration_id:
             raise ValueError("Physical and stress laws must use the same filtration.")
-        if not isinstance(problem, DiscreteZeroSumHJBIProblem):
-            raise TypeError("problem must be a DiscreteZeroSumHJBIProblem.")
         self.instrument = instrument
         self.physical_law = physical_law
         self.stress_law = stress_law
@@ -169,6 +163,7 @@ class MeanFieldExecutionDefinition(StrictModule):
     crowding_statistic_id: str = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -179,12 +174,6 @@ class MeanFieldExecutionDefinition(StrictModule):
         crowding_statistic_id: str,
         definition_id: str,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(physical_law, PhysicalLaw):
-            raise TypeError("mean-field execution requires a PhysicalLaw.")
-        if not isinstance(problem, MeanFieldGameFixedPointProblem):
-            raise TypeError("problem must be a MeanFieldGameFixedPointProblem.")
         self.instrument = instrument
         self.physical_law = physical_law
         self.problem = problem
@@ -201,6 +190,7 @@ class MeanFieldExecutionPlan(StrictModule):
     definition_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fixed_point_plan: MeanFieldGameFixedPointPlan,
@@ -209,8 +199,6 @@ class MeanFieldExecutionPlan(StrictModule):
         definition_id: str,
         plan_id: str,
     ) -> None:
-        if not isinstance(fixed_point_plan, MeanFieldGameFixedPointPlan):
-            raise TypeError("fixed_point_plan must be a MeanFieldGameFixedPointPlan.")
         self.fixed_point_plan = fixed_point_plan
         self.definition_id = _identifier(definition_id, "definition_id")
         self.plan_id = _identifier(plan_id, "plan_id")

@@ -17,7 +17,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse
-from ..typing import parse
+from ..typing import checked, parse
 from ._chart import CoordinateChart
 from ._lorentzian import _assemble_adm_matrix
 from ._metric import _metric_inverse, LorentzianConvention, LorentzianMetric
@@ -54,6 +54,7 @@ class ADMDecomposition(StrictModule):
     chart: CoordinateChart
     convention: LorentzianConvention = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lapse: ArrayLike,
@@ -64,8 +65,6 @@ class ADMDecomposition(StrictModule):
         chart: CoordinateChart,
         convention: LorentzianConvention = "mostly_plus",
     ) -> None:
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("An ADM decomposition requires at least one spatial axis.")
         convention = parse(convention, LorentzianConvention, "convention")
@@ -361,6 +360,7 @@ class ADMParameterization(StrictModule):
     minimum_spatial_diagonal: float = eqx.field(static=True)
     convention: LorentzianConvention = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         raw_lapse: Callable[[Array], Array],
@@ -379,8 +379,6 @@ class ADMParameterization(StrictModule):
             raise TypeError("shift must be callable.")
         if not callable(raw_spatial_factor):
             raise TypeError("raw_spatial_factor must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("ADMParameterization requires at least one spatial axis.")
         lapse_floor = float(minimum_lapse)

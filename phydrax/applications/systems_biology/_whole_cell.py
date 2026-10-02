@@ -20,6 +20,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._network import PreparedStoichiometricNetwork, StoichiometricRuntime
 
 
@@ -86,6 +87,7 @@ class WholeCellProcessBinding(StrictModule, NonTrainableState):
     species_to_fields: tuple[tuple[str, str], ...] = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -93,8 +95,6 @@ class WholeCellProcessBinding(StrictModule, NonTrainableState):
         species_to_fields: Mapping[str, str],
         /,
     ) -> None:
-        if not isinstance(network, PreparedStoichiometricNetwork):
-            raise TypeError("network must be PreparedStoichiometricNetwork.")
         if not isinstance(species_to_fields, Mapping):
             raise TypeError("species_to_fields must be a mapping.")
         name_value = _path_name(name, "Whole-cell process name")
@@ -255,9 +255,8 @@ class WholeCellStepEvaluation(StrictModule):
     base_epoch: Array
     assembly_id: str = eqx.field(static=True)
 
+    @checked
     def commit(self, state: WholeCellState, /) -> WholeCellCommitResult:
-        if not isinstance(state, WholeCellState):
-            raise TypeError("state must be WholeCellState.")
         if state.lineage_id != self.base_lineage_id:
             raise ValueError("State and evaluation lineage identities must match.")
         if state.assembly_id != self.assembly_id:
@@ -443,9 +442,8 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
     conservation_basis_units: tuple[str, ...] = eqx.field(static=True)
     assembly_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: WholeCellAssemblyPlan, /) -> None:
-        if not isinstance(plan, WholeCellAssemblyPlan):
-            raise TypeError("plan must be WholeCellAssemblyPlan.")
         field_index = {item.name: index for index, item in enumerate(plan.fields)}
         process_index = {item.name: index for index, item in enumerate(plan.processes)}
         mappings = []
@@ -740,9 +738,8 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
             self.assembly_id,
         )
 
+    @checked
     def _validate_state_identity(self, state: WholeCellState, /) -> None:
-        if not isinstance(state, WholeCellState):
-            raise TypeError("state must be WholeCellState.")
         if state.assembly_id != self.assembly_id:
             raise ValueError("Whole-cell state belongs to a different prepared assembly.")
         if state.values.shape != (self.plan.field_capacity,):

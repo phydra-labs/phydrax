@@ -17,6 +17,7 @@ from ..discretization import CellMesh, TetrahedralConnectivity
 from ..geometry import CompartmentComplex
 from ..geometry.surface import SurfaceModel
 from ..imaging import CompartmentSurfaceResult, LabelVolume
+from ..typing import checked
 from ._audit import CellMeshAuditPolicy
 from ._canonical import certify_cell_mesh
 from ._contracts import (
@@ -126,11 +127,10 @@ def _surface_arrays(surface: SurfaceModel, /) -> tuple[np.ndarray, np.ndarray]:
 class FTetWildCompartmentProvider:
     """Insert all compartment surfaces once, then classify tetrahedra by labels."""
 
+    @checked
     def execute(
         self, specification: CompartmentMeshingSpec, /
     ) -> CompartmentMeshingResult:
-        if not isinstance(specification, CompartmentMeshingSpec):
-            raise TypeError("specification must be CompartmentMeshingSpec.")
         surfaces = (specification.outer_surface,) + tuple(
             value.surface for value in specification.interfaces.surfaces
         )

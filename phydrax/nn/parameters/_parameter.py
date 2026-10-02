@@ -11,6 +11,7 @@ from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import checked
 from ._transforms import AbstractParameterTransform
 
 
@@ -20,9 +21,8 @@ class TransformedParameter(StrictModule, ParameterOwner):
     raw: PyTree[Array]
     transform: AbstractParameterTransform
 
+    @checked
     def __init__(self, raw: PyTree[Array], transform: AbstractParameterTransform) -> None:
-        if not isinstance(transform, AbstractParameterTransform):
-            raise TypeError("transform must be an AbstractParameterTransform.")
         leaves = jax.tree_util.tree_leaves(raw)
         if not leaves:
             raise ValueError("raw must contain at least one array leaf.")

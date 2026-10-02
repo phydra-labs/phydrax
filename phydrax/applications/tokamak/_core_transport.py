@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import solve_tridiagonal_lines
+from ...typing import checked
 from ._flux_surfaces import FluxSurfaceGeometry, PreparedFluxSurfaceGeometry
 
 
@@ -257,9 +258,8 @@ class PreparedTokamakCoreTransport(StrictModule, NonTrainableState):
     def cell_count(self) -> int:
         return self.geometry.cell_volume_m3.shape[0]
 
+    @checked
     def conserved_density(self, state: TokamakCoreState, /) -> Array:
-        if not isinstance(state, TokamakCoreState):
-            raise TypeError("state must be TokamakCoreState.")
         if state.electron_density_m3.shape != (self.cell_count,):
             raise ValueError("Tokamak core state does not match prepared geometry.")
         electron_energy_density = (
@@ -285,6 +285,7 @@ class PreparedTokamakCoreTransport(StrictModule, NonTrainableState):
         ion_energy = value[:, 2] / (1.5 * ion_density)
         return TokamakCoreState(density, electron_energy, ion_energy, time_s)
 
+    @checked
     def step(
         self,
         state: TokamakCoreState,
@@ -294,10 +295,6 @@ class PreparedTokamakCoreTransport(StrictModule, NonTrainableState):
         edge_flux: TokamakEdgeFlux | None = None,
         /,
     ) -> TokamakCoreTransportStepResult:
-        if not isinstance(coefficients, TokamakTransportCoefficients):
-            raise TypeError("coefficients must be TokamakTransportCoefficients.")
-        if not isinstance(sources, TokamakTransportSources):
-            raise TypeError("sources must be TokamakTransportSources.")
         boundary = TokamakEdgeFlux() if edge_flux is None else edge_flux
         if not isinstance(boundary, TokamakEdgeFlux):
             raise TypeError("edge_flux must be TokamakEdgeFlux or None.")

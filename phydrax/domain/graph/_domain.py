@@ -14,7 +14,7 @@ import phydrax.axes as cx
 
 from ..._frozendict import frozendict
 from ...graph import GraphIR
-from ...typing import parse
+from ...typing import checked, parse
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -73,6 +73,7 @@ class GraphDomain(JointFactor):
     _label: str
     _measure_mode: GraphMeasureMode
 
+    @checked
     def __init__(
         self,
         graph: GraphIR,
@@ -91,8 +92,6 @@ class GraphDomain(JointFactor):
                 entity reductions; `"count"` scales by the selected entity count.
             validate: Validate the `GraphIR` before storing it.
         """
-        if not isinstance(graph, GraphIR):
-            raise TypeError("GraphDomain expects a phydrax.graph.GraphIR instance.")
         if validate:
             graph.validate()
         measure = parse(measure, GraphMeasureMode, "measure")

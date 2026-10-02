@@ -19,6 +19,7 @@ from ..discretization._fv_precision import (
     PrecisionDType,
 )
 from ..discretization.finite_volume import UnstructuredFiniteVolumeDiscretization
+from ..typing import checked
 from ._finite_volume_runtime import (
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
@@ -79,6 +80,7 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
     execution: FiniteVolumeExecutionSpec
     case_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -91,11 +93,7 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
         name_ = str(name)
         if not name_:
             raise ValueError("Finite-volume case name must be non-empty.")
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         precision_ = runtime.precision if precision is None else precision
-        if not isinstance(execution, FiniteVolumeExecutionSpec):
-            raise TypeError("execution must be FiniteVolumeExecutionSpec.")
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be FiniteVolumePrecisionPolicy.")
         if precision_.policy_id != runtime.precision.policy_id:

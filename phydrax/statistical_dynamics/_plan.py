@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..continuation._core import ParameterContinuationProblem
+from ..typing import checked
 from ._cumulants import (
     CumulantState,
     CumulantStateEvidence,
@@ -164,6 +165,7 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
     maximum_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: SecondCumulantLayout,
@@ -179,12 +181,6 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
         maximum_state_bytes: int = 512 * 1024 * 1024,
         maximum_workspace_bytes: int = 2 * 1024 * 1024 * 1024,
     ) -> None:
-        if not isinstance(layout, SecondCumulantLayout):
-            raise TypeError("layout must be a SecondCumulantLayout.")
-        if not isinstance(dynamics, QuadraticDynamics):
-            raise TypeError("dynamics must be QuadraticDynamics.")
-        if not isinstance(forcing, ForcingCovariance):
-            raise TypeError("forcing must be ForcingCovariance.")
         if dynamics.dimension != layout.state_size:
             raise ValueError("Dynamics and second-cumulant layout dimensions differ.")
         if forcing.dimension != layout.eddy_dimension:

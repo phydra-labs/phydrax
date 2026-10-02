@@ -6,6 +6,7 @@ import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
 
+from ..typing import checked
 from ._ir import batch_graphs, GraphIR, unbatch_graph
 
 # PyG-style batch conversion counts nodes and edges per graph once while
@@ -125,9 +126,8 @@ class Batch(StrictModule):
 
     data: Data
 
+    @checked
     def __init__(self, data: Data, /) -> None:
-        if not isinstance(data, Data):
-            raise TypeError("data must be Data.")
         self.data = data
 
     @property

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...dynamics import ContinuousSystem
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._state import CARTESIAN_ORBIT_STATE_LAYOUT
 from ._status import AstrodynamicsStatus
@@ -56,6 +57,7 @@ class PointMassGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mu: ArrayLike,
@@ -64,8 +66,6 @@ class PointMassGravity(AbstractAstrodynamicsForce):
         *,
         force_id: str | None = None,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         coupling_host = jnp.asarray(mu).reshape(())
         self.mu = coupling_host
         self.context = context
@@ -125,6 +125,7 @@ class ConstantAcceleration(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         acceleration: ArrayLike,
@@ -133,8 +134,6 @@ class ConstantAcceleration(AbstractAstrodynamicsForce):
         *,
         force_id: str,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         value = jnp.asarray(acceleration)
         if value.shape != (3,):
             raise ValueError("Constant acceleration must have shape (3,).")
@@ -173,14 +172,13 @@ class CompositeAstrodynamicsForce(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         terms: tuple[AbstractAstrodynamicsForce, ...],
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         terms_ = tuple(terms)
         if not terms_ or any(
             not isinstance(term, AbstractAstrodynamicsForce) for term in terms_

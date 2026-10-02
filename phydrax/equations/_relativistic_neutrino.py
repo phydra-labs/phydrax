@@ -22,7 +22,7 @@ from ..metrix._adm_exchange import (
     StressEnergyProjection,
 )
 from ..metrix._spacetime_conventions import RelativityConvention
-from ..typing import parse
+from ..typing import checked, parse
 from ._relativistic_multigroup_radiation import (
     GRMultigroupM1ClosureEvaluation,
     GRMultigroupM1RadiationSystem,
@@ -208,14 +208,13 @@ class GRNeutrinoInteractionPlan(StrictModule, NonTrainableState):
     lepton_signs: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         neutrinos: GRNeutrinoM1System,
         species_interactions: tuple[GRMultigroupRadiationInteractionPlan, ...],
         /,
     ) -> None:
-        if not isinstance(neutrinos, GRNeutrinoM1System):
-            raise TypeError("neutrinos must be GRNeutrinoM1System.")
         interactions = tuple(species_interactions)
         if len(interactions) != neutrinos.species_count or any(
             not isinstance(value, GRMultigroupRadiationInteractionPlan)

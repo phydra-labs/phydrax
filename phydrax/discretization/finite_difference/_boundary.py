@@ -15,7 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator
-from ...typing import parse
+from ...typing import checked, parse
 from ._stencil import StencilFootprint
 
 
@@ -83,6 +83,7 @@ class BoundaryRealizationPlan(StrictModule, NonTrainableState):
     upper_width: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boundary: AxisBoundaryPair,
@@ -92,8 +93,6 @@ class BoundaryRealizationPlan(StrictModule, NonTrainableState):
         lower_width: int = 0,
         upper_width: int = 0,
     ) -> None:
-        if not isinstance(boundary, AxisBoundaryPair):
-            raise TypeError("boundary must be an AxisBoundaryPair.")
         realization = parse(realization, BoundaryRealizationKind, "realization")
         lower = int(lower_width)
         upper = int(upper_width)
@@ -132,6 +131,7 @@ class HaloPlan(StrictModule, NonTrainableState):
     distributed_neighbors: bool = eqx.field(static=True)
     halo_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         footprint: StencilFootprint,
@@ -142,8 +142,6 @@ class HaloPlan(StrictModule, NonTrainableState):
         coarse_fine_neighbors: bool = False,
         distributed_neighbors: bool = False,
     ) -> None:
-        if not isinstance(footprint, StencilFootprint):
-            raise TypeError("footprint must be a StencilFootprint.")
         boundaries = tuple(physical_boundaries)
         if not all(isinstance(value, BoundaryRealizationPlan) for value in boundaries):
             raise TypeError("physical_boundaries must contain BoundaryRealizationPlan.")

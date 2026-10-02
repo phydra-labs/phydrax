@@ -19,6 +19,7 @@ from .._execution_runtime import ExecutionGroup
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._functional_objective import _PreparedObjective
 
 
@@ -106,9 +107,8 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
     def synchronize(self, name: str, /) -> None:
         multihost_utils.sync_global_devices(str(name))
 
+    @checked
     def field_sharding(self, field: cx.AxisArray, /) -> NamedSharding:
-        if not isinstance(field, cx.AxisArray):
-            raise TypeError("field must be a phydrax.axes.AxisArray.")
         entries: list[str | None] = []
         for axis, size in zip(field.dims, field.data.shape, strict=True):
             device_axis = None if axis is None else self.axis_mapping.get(axis)
@@ -165,9 +165,8 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
             self.place_tree(fixed),
         )
 
+    @checked
     def place_prepared(self, prepared: _PreparedObjective, /) -> _PreparedObjective:
-        if not isinstance(prepared, _PreparedObjective):
-            raise TypeError("prepared must be a _PreparedObjective.")
         return self.place_tree(prepared)
 
 

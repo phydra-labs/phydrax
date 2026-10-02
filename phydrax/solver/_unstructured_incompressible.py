@@ -32,6 +32,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 MomentumPredictor = Callable[[Array, Array, Any], Array]
@@ -92,6 +93,7 @@ class UnstructuredPressureProjectionPlan(StrictModule, NonTrainableState):
     pressure_problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedUnstructuredCollocatedOperators,
@@ -103,8 +105,6 @@ class UnstructuredPressureProjectionPlan(StrictModule, NonTrainableState):
         dtype: Any | None = None,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedUnstructuredCollocatedOperators):
-            raise TypeError("operators must be PreparedUnstructuredCollocatedOperators.")
         density_ = float(density)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
@@ -313,14 +313,13 @@ class UnstructuredPressureCorrectionPlan(StrictModule, NonTrainableState):
     correctors: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         projection: UnstructuredPressureProjectionPlan,
         correctors: int = 2,
         /,
     ) -> None:
-        if not isinstance(projection, UnstructuredPressureProjectionPlan):
-            raise TypeError("projection must be UnstructuredPressureProjectionPlan.")
         correctors_ = int(correctors)
         if correctors_ <= 0:
             raise ValueError("correctors must be positive.")

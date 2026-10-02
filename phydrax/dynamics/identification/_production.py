@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._system import ContinuousSystem, DiscreteSystem
 from .._trajectory import StateLayout
 
@@ -37,6 +37,7 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
     source_artifact_ids: tuple[str, ...] = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         physical_layout: StateLayout,
@@ -49,8 +50,6 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
         partition_id: str,
         source_artifact_ids: Sequence[str],
     ) -> None:
-        if not isinstance(physical_layout, StateLayout):
-            raise TypeError("physical_layout must be a StateLayout.")
         kind = parse(kind, TransformKind, "kind")
         offset_ = jnp.asarray(offset)
         scale_ = jnp.asarray(scale, dtype=offset_.dtype)
@@ -159,6 +158,7 @@ class IdentifiedDynamicsArtifact(StrictModule, NonTrainableState):
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transform: IdentificationStateTransform,
@@ -169,8 +169,6 @@ class IdentifiedDynamicsArtifact(StrictModule, NonTrainableState):
         formulation_id: str,
         evidence_ids: Sequence[str],
     ) -> None:
-        if not isinstance(transform, IdentificationStateTransform):
-            raise TypeError("transform must be IdentificationStateTransform.")
         if not isinstance(system, (ContinuousSystem, DiscreteSystem)):
             raise TypeError("system must be ContinuousSystem or DiscreteSystem.")
         support = str(support_id)

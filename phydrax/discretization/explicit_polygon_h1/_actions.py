@@ -16,6 +16,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._integration_domain import IntegrationDomain
 from .._local_variational import (
     LocalGeometryActions,
@@ -356,6 +357,7 @@ class ExplicitPolygonH1LocalProvider(StrictModule):
             ),
         )
 
+    @checked
     def prepare_local_regions(
         self,
         domain: IntegrationDomain,
@@ -366,8 +368,6 @@ class ExplicitPolygonH1LocalProvider(StrictModule):
         kernel_mode: str,
     ) -> tuple[PreparedLocalRegion, ...]:
         discretization = self.discretization
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be IntegrationDomain.")
         if domain.support_id != discretization.support.support_id:
             raise ValueError("Explicit polygon domain belongs to another support.")
         if tuple(field_names) != (discretization.field.name,):

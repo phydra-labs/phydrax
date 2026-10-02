@@ -24,7 +24,7 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._contracts import CompressibleFlowCaseSpec
 
 
@@ -340,6 +340,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule):
     homogeneous_axes: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         case: CompressibleFlowCaseSpec,
@@ -349,10 +350,6 @@ class CompressiblePlaneBaseflowPlan(StrictModule):
         wall_normal_axis: int = 0,
         homogeneous_axes: Sequence[int] | None = None,
     ) -> None:
-        if not isinstance(case, CompressibleFlowCaseSpec):
-            raise TypeError(
-                "Compressible baseflow preparation requires a case specification."
-            )
         if not isinstance(
             case.system,
             (
@@ -959,6 +956,7 @@ class SlowGrowthContinuation(StrictModule):
     accepted_time: float = eqx.field(static=True)
     continuation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         snapshot: CompressiblePlaneBaseflowSnapshot,
@@ -968,8 +966,6 @@ class SlowGrowthContinuation(StrictModule):
         accepted_time: float = 0.0,
         continuation_id: str | None = None,
     ) -> None:
-        if not isinstance(snapshot, CompressiblePlaneBaseflowSnapshot):
-            raise TypeError("Slow-growth continuation requires a baseflow snapshot.")
         step = int(accepted_step)
         time = float(accepted_time)
         if step < 0 or not np.isfinite(time):
@@ -1002,6 +998,7 @@ class SlowGrowthContinuation(StrictModule):
                 "Prepared slow-growth source does not belong to this parent step."
             )
 
+    @checked
     def accept(
         self,
         prepared: PreparedSlowGrowthSource,
@@ -1011,8 +1008,6 @@ class SlowGrowthContinuation(StrictModule):
         accepted_time: float | None = None,
     ) -> "SlowGrowthContinuation":
         self._check_prepared(prepared)
-        if not isinstance(next_snapshot, CompressiblePlaneBaseflowSnapshot):
-            raise TypeError("Accepted slow-growth continuation requires a new snapshot.")
         if next_snapshot.plan_id != self.snapshot.plan_id:
             raise ValueError(
                 "Accepted slow-growth snapshot belongs to a different baseflow plan."
@@ -1082,9 +1077,8 @@ class SlowGrowthContinuation(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_restart(cls, restart: SlowGrowthRestart, /) -> "SlowGrowthContinuation":
-        if not isinstance(restart, SlowGrowthRestart):
-            raise TypeError("Slow-growth restart has the wrong record type.")
         return cls(
             restart.snapshot,
             accepted_step=restart.accepted_step,
@@ -1267,6 +1261,7 @@ class TemporalSlowGrowthModelPlan(StrictModule, NonTrainableState):
     def claims_spatial_dns(self) -> bool:
         return False
 
+    @checked
     def prepare(
         self,
         snapshot: CompressiblePlaneBaseflowSnapshot,
@@ -1274,8 +1269,6 @@ class TemporalSlowGrowthModelPlan(StrictModule, NonTrainableState):
         *,
         continuation: SlowGrowthContinuation | None = None,
     ) -> PreparedSlowGrowthSource:
-        if not isinstance(snapshot, CompressiblePlaneBaseflowSnapshot):
-            raise TypeError("Temporal slow growth requires a baseflow snapshot.")
         dilation_coordinate = snapshot.coordinates - snapshot.coordinates[0]
         preliminary = (
             -self.growth_rate
@@ -1361,6 +1354,7 @@ class SpatialSlowGrowthModelPlan(StrictModule, NonTrainableState):
     def claims_spatial_dns(self) -> bool:
         return False
 
+    @checked
     def prepare(
         self,
         snapshot: CompressiblePlaneBaseflowSnapshot,
@@ -1368,8 +1362,6 @@ class SpatialSlowGrowthModelPlan(StrictModule, NonTrainableState):
         *,
         continuation: SlowGrowthContinuation | None = None,
     ) -> PreparedSlowGrowthSource:
-        if not isinstance(snapshot, CompressiblePlaneBaseflowSnapshot):
-            raise TypeError("Modeled-spatial slow growth requires a baseflow snapshot.")
         if snapshot.streamwise_base_derivative is None:
             raise ValueError(
                 "Modeled-spatial slow growth requires supplied streamwise base derivatives."

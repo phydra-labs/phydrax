@@ -25,6 +25,7 @@ from ...linalg import (
     LinearSystem,
     solve,
 )
+from ...typing import checked
 
 
 _LU_POLICY = LinearSolvePolicy(DenseLU(), failure=FailurePolicy("status"))
@@ -131,9 +132,8 @@ class PreparedCliffordMetricProduct(StrictModule):
         static=True
     )
 
+    @checked
     def __init__(self, metric_field: CliffordMetricField, /) -> None:
-        if not isinstance(metric_field, CliffordMetricField):
-            raise TypeError("metric_field must be a CliffordMetricField.")
         dimension = metric_field.dimension
         axes = tuple(
             index

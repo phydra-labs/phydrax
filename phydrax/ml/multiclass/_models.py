@@ -23,6 +23,7 @@ from ..._differentiation import (
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import (
     _protocol_model,
@@ -315,11 +316,10 @@ class OneVsRestRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
     num_classes: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, base_recipe: AbstractRecipe, /, *, num_classes: int | None = None
     ) -> None:
-        if not isinstance(base_recipe, AbstractRecipe):
-            raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
         self.num_classes = None if num_classes is None else int(num_classes)
 
@@ -421,11 +421,10 @@ class OneVsOneRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
     num_classes: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, base_recipe: AbstractRecipe, /, *, num_classes: int | None = None
     ) -> None:
-        if not isinstance(base_recipe, AbstractRecipe):
-            raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
         self.num_classes = None if num_classes is None else int(num_classes)
 
@@ -532,6 +531,7 @@ class OutputCodeRecipe(AbstractRecipe):
     codebook: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     num_classes: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_recipe: AbstractRecipe,
@@ -540,8 +540,6 @@ class OutputCodeRecipe(AbstractRecipe):
         *,
         num_classes: int | None = None,
     ) -> None:
-        if not isinstance(base_recipe, AbstractRecipe):
-            raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
         self.codebook = tuple(tuple(row) for row in codebook)
         self.num_classes = None if num_classes is None else int(num_classes)
@@ -655,9 +653,8 @@ class MultilabelModel(AbstractFittedModel):
 class MultilabelRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
 
+    @checked
     def __init__(self, base_recipe: AbstractRecipe, /) -> None:
-        if not isinstance(base_recipe, AbstractRecipe):
-            raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -900,9 +897,8 @@ def _fit_chain(
 class ClassifierChainRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
 
+    @checked
     def __init__(self, base_recipe: AbstractRecipe, /) -> None:
-        if not isinstance(base_recipe, AbstractRecipe):
-            raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -912,9 +908,8 @@ class ClassifierChainRecipe(AbstractRecipe):
 class SmoothClassifierChainRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
 
+    @checked
     def __init__(self, base_recipe: AbstractRecipe, /) -> None:
-        if not isinstance(base_recipe, AbstractRecipe):
-            raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:

@@ -33,6 +33,7 @@ from ..optim._finite import (
     FiniteSearchResult,
     search_finite,
 )
+from ..typing import checked
 from ._foundation import Experiment
 
 
@@ -159,6 +160,7 @@ class FiniteDesignBelief(StrictModule):
     parameter_space_id: str = eqx.field(static=True)
     belief_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: FiniteProductSpace,
@@ -168,8 +170,6 @@ class FiniteDesignBelief(StrictModule):
         parameter_mask: ArrayLike | None = None,
         history: tuple[Experiment, ...] = (),
     ) -> None:
-        if not isinstance(parameters, FiniteProductSpace):
-            raise TypeError("parameters must be a FiniteProductSpace.")
         values = jnp.asarray(log_masses)
         if jnp.issubdtype(values.dtype, jnp.integer):
             values = values.astype(jnp.asarray(0.0).dtype)

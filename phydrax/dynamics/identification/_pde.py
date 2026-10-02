@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import weighted_total_degree_indices
 from ..._strict import StrictModule
+from ...typing import checked
 from .._layout import StateLayout
 from ._sindy_design import _make_equation_design, SINDyDesign
 from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
@@ -56,6 +57,7 @@ class StructuredPDEData(StrictModule):
     source_id: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinates: Sequence[ArrayLike],
@@ -69,8 +71,6 @@ class StructuredPDEData(StrictModule):
         weights: ArrayLike | None = None,
         source_id: str,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         coordinate_values = tuple(jnp.asarray(item) for item in coordinates)
         names = tuple(str(name) for name in coordinate_names)
         if not coordinate_values or len(names) != len(coordinate_values):
@@ -249,16 +249,13 @@ class FiniteDifferencePDEDerivative(AbstractPDEDerivative):
         self.max_total_order = maximum
         self.method_id = f"finite-difference:gradient:max-order={maximum}"
 
+    @checked
     def evaluate(
         self,
         data: StructuredPDEData,
         derivative: PDEDerivative,
         /,
     ) -> PDEDerivativeEvaluation:
-        if not isinstance(data, StructuredPDEData):
-            raise TypeError("data must be StructuredPDEData.")
-        if not isinstance(derivative, PDEDerivative):
-            raise TypeError("derivative must be a PDEDerivative.")
         if derivative.component < 0 or derivative.component >= data.state_layout.size:
             raise ValueError("PDE derivative component is out of range.")
         if len(derivative.orders) != data.num_axes:
@@ -433,6 +430,7 @@ class PolynomialPDELibrary(AbstractPDEFeatureLibrary):
     polynomial_degree: int = eqx.field(static=True)
     spatial_derivative_order: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -446,8 +444,6 @@ class PolynomialPDELibrary(AbstractPDEFeatureLibrary):
         include_interactions: bool = True,
         max_features: int = 4096,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         names = tuple(str(name) for name in coordinate_names)
         resolved_time = int(time_axis)
         if len(names) < 2 or resolved_time < 0 or resolved_time >= len(names):
@@ -536,6 +532,7 @@ class PDEIdentificationProblem(StrictModule):
     target_names: tuple[str, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -544,10 +541,6 @@ class PDEIdentificationProblem(StrictModule):
         targets: Sequence[PDEDerivative] | None = None,
         derivative: AbstractPDEDerivative | None = None,
     ) -> None:
-        if not isinstance(data, StructuredPDEData):
-            raise TypeError("data must be StructuredPDEData.")
-        if not isinstance(library, AbstractPDEFeatureLibrary):
-            raise TypeError("library must be an AbstractPDEFeatureLibrary.")
         for term in library.terms:
             if len(term.state_powers) != data.state_layout.size:
                 raise ValueError("Every PDE term must name each state component power.")

@@ -20,6 +20,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from ._contact import AbstractMPMFrictionPlan, SharpCoulombMPMFrictionPlan
 
 
@@ -168,6 +169,7 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
             jnp.all(~valid | jnp.isfinite(gaps)),
         )
 
+    @checked
     def solve(
         self,
         mass: ArrayLike,
@@ -184,8 +186,6 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
         dt = jnp.asarray(step_size, dtype=velocity_.dtype)
         if mass_.shape != velocity_.shape[:-1] or mass_.shape[0] != self.field_count:
             raise ValueError("K-way contact velocity/mass layout changed.")
-        if not isinstance(graph, MPMContactGraph):
-            raise TypeError("graph must be MPMContactGraph.")
         spatial_shape = mass_.shape[1:]
         dimension = velocity_.shape[-1]
         node_count = int(np.prod(spatial_shape))

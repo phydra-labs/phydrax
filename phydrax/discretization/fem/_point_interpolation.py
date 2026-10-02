@@ -34,7 +34,7 @@ from ..._trainable import NonTrainableState
 from ...exterior._algebra import map_reference_values
 from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import ArraySpace
-from ...typing import parse
+from ...typing import checked, parse
 from .._integration_domain import IntegrationDomain
 from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from .._side_actions import (
@@ -178,6 +178,7 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -192,8 +193,6 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         prepared_id: str | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         name = str(field_name)
         field_space = _field_array_space(discretization, name)
         dimension = discretization.mesh.ambient_dimension
@@ -460,6 +459,7 @@ class FiniteElementFieldReconstructionKernel(
     global_dof_count: int = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         locator: AbstractCellLocator,
@@ -472,10 +472,6 @@ class FiniteElementFieldReconstructionKernel(
         global_dof_count: int,
         field_space_id: str,
     ) -> None:
-        if not isinstance(locator, AbstractCellLocator):
-            raise TypeError("locator must be an AbstractCellLocator.")
-        if not isinstance(element, FiniteElementSpec):
-            raise TypeError("element must be a FiniteElementSpec.")
         routes = jnp.asarray(cell_dofs)
         signs = jnp.asarray(orientations)
         expected = (locator.cell_map.cell_count, element.local_dof_count)

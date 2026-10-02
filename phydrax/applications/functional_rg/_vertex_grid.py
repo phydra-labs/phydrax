@@ -17,6 +17,7 @@ from ..._interpolation import linear_interpolate
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._regulators import FunctionalRGStatus, Regulator, ThresholdQuadraturePlan
 from ._wetterich import _volume_factor
 
@@ -136,9 +137,8 @@ class PreparedMomentumVertexGridFlow(StrictModule, NonTrainableState):
     support_mask: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MomentumVertexGridFlowPlan, /) -> None:
-        if not isinstance(plan, MomentumVertexGridFlowPlan):
-            raise TypeError("plan must be MomentumVertexGridFlowPlan.")
         p = plan.momentum_nodes[:, None, None]
         q = jnp.sqrt(plan.radial.nodes)[None, :, None]
         cosine = plan.angular_nodes[None, None, :]
@@ -156,14 +156,13 @@ class PreparedMomentumVertexGridFlow(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         state: MomentumVertexState,
         anomalous_dimension: ArrayLike = 0.0,
         /,
     ) -> MomentumVertexFlowEvaluation:
-        if not isinstance(state, MomentumVertexState):
-            raise TypeError("state must be MomentumVertexState.")
         shape = self.plan.momentum_nodes.shape
         if (
             state.inverse_propagator.shape != shape

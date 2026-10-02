@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ....tensor_network import su2_clebsch_gordan, su2_fusion
+from ....typing import checked
 
 
 class SU2SectorResourcePolicy(StrictModule):
@@ -68,6 +69,7 @@ class SU2CouplingTreePlan(StrictModule):
     sector_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         site_labels: Sequence[str],
@@ -85,8 +87,6 @@ class SU2CouplingTreePlan(StrictModule):
             raise ValueError(
                 "SU2 coupling requires at least two nonnegative doubled spins."
             )
-        if not isinstance(resources, SU2SectorResourcePolicy):
-            raise TypeError("resources must be SU2SectorResourcePolicy.")
         paths: list[tuple[int, ...]] = []
 
         def extend(current: int, index: int, path: tuple[int, ...]) -> None:

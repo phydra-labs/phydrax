@@ -10,6 +10,7 @@ from typing import Any
 
 from .._fingerprint import canonical_fingerprint
 from .._validation import canonical_identifier, finite_real_scalar
+from ..typing import checked
 from ._accounting import (
     account_mechanism_traces,
     AccountingMethod,
@@ -280,11 +281,10 @@ class PrivacyReleaseLedger:
             method=self.accounting_method,
         )
 
+    @checked
     def register(
         self, release_root_id: str, certificate: PrivacyCertificate, /
     ) -> PrivacyReleaseLedger:
-        if not isinstance(certificate, PrivacyCertificate):
-            raise TypeError("certificate must be a PrivacyCertificate.")
         root_id = canonical_identifier(release_root_id, "release root ID")
         if certificate.scope.scope_contract_id != self.scope.scope_contract_id:
             raise ValueError("Certificate and release ledger data scopes differ.")
@@ -304,11 +304,10 @@ class PrivacyReleaseLedger:
             self.ledger_id,
         )
 
+    @checked
     def require_successor(self, previous: PrivacyReleaseLedger, /) -> None:
         """Reject rollback, fork, or accounting regression from a persisted ledger head."""
 
-        if not isinstance(previous, PrivacyReleaseLedger):
-            raise TypeError("previous must be a PrivacyReleaseLedger.")
         if (
             self.scope.scope_contract_id != previous.scope.scope_contract_id
             or self.budget != previous.budget

@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class ParabolicVelocityParameters(StrictModule):
@@ -73,6 +74,7 @@ class ParabolicVelocityProfilePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def __call__(
         self,
         time: ArrayLike,
@@ -81,8 +83,6 @@ class ParabolicVelocityProfilePlan(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         del time
-        if not isinstance(parameters, ParabolicVelocityParameters):
-            raise TypeError("parameters must be ParabolicVelocityParameters.")
         points = jnp.asarray(coordinates)
         if (
             points.ndim < 1
@@ -236,6 +236,7 @@ class WomersleyVelocityProfilePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def __call__(
         self,
         time: ArrayLike,
@@ -243,8 +244,6 @@ class WomersleyVelocityProfilePlan(StrictModule, NonTrainableState):
         parameters: WomersleyVelocityParameters,
         /,
     ) -> Array:
-        if not isinstance(parameters, WomersleyVelocityParameters):
-            raise TypeError("parameters must be WomersleyVelocityParameters.")
         points = jnp.asarray(coordinates)
         if (
             points.ndim < 1

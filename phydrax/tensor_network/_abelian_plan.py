@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from .._array_archive import array_payload_digest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._abelian import AbelianTensor, AbelianTensorLayout
 from ._abelian_core import AbelianMatrixProductState
 
@@ -223,9 +224,8 @@ class AbelianCanonicalizationPlan(StrictModule):
     right_routes: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, state: AbelianMatrixProductState, /) -> None:
-        if not isinstance(state, AbelianMatrixProductState):
-            raise TypeError("state must be AbelianMatrixProductState.")
         left_routes = []
         right_routes = []
         for tensor in state.tensors:
@@ -310,6 +310,7 @@ class AbelianTwoSiteGatePlan(StrictModule):
     protected_charges: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: AbelianMatrixProductState,
@@ -321,8 +322,6 @@ class AbelianTwoSiteGatePlan(StrictModule):
         normalize: bool = True,
         protected_charges: Sequence[Sequence[int]] = (),
     ) -> None:
-        if not isinstance(state, AbelianMatrixProductState):
-            raise TypeError("state must be AbelianMatrixProductState.")
         site = int(left_site)
         if not 0 <= site < state.site_count - 1:
             raise ValueError("Prepared gate site is outside the Abelian MPS.")

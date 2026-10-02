@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._costs import PrecomputedCost
 from ._measure import lower_transport_measure
 from ._problem import DiscreteTransportProblem
@@ -206,9 +207,8 @@ class GromovWasserstein(StrictModule):
         self.tolerance = threshold
         self.differentiation = differentiation
 
+    @checked
     def __call__(self, problem: GromovWassersteinProblem, /) -> GromovWassersteinResult:
-        if not isinstance(problem, GromovWassersteinProblem):
-            raise TypeError("problem must be a GromovWassersteinProblem.")
         coupling = _quantile_coupling(
             problem.source.probabilities,
             problem.target.probabilities,

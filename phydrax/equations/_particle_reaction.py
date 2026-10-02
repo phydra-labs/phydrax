@@ -24,6 +24,7 @@ from ..discretization.particle._particle_internal_mesh import (
     PreparedParticleInternalBatch,
 )
 from ..discretization.particle._particle_internal_state import ParticleInternalBatchState
+from ..typing import checked
 from ._chemical_mechanism import PreparedChemicalMechanism
 from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
 from ._particle_thermochemistry import (
@@ -66,6 +67,7 @@ class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
     reaction_count: int = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -74,8 +76,6 @@ class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
         locations: Sequence[ParticleReactionLocation] | None = None,
         network_id: str | None = None,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         count = mechanism.reaction_count
         location_values = (
             (ParticleReactionLocation.BULK,) * count
@@ -231,6 +231,7 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
     allow_condensation: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
@@ -243,16 +244,10 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
         *,
         allow_condensation: bool = False,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         liquid = int(liquid_species)
         vapor = int(vapor_species)
         coefficient = float(mass_transfer_coefficient)
         latent = float(latent_heat)
-        if not isinstance(saturation_pressure, AntoineSaturationPressurePlan):
-            raise TypeError(
-                "saturation_pressure must be an AntoineSaturationPressurePlan."
-            )
         if (
             liquid == vapor
             or liquid < 0

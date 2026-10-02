@@ -26,6 +26,7 @@ from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import FiniteVolumeDiscretization
 from ...solver import AbstractFixedStepMethod, FixedStepResult
 from ...solver._mac_ale import MACALEStageGeometry
+from ...typing import checked
 from ._boundary import FreeSurfaceBoundaryPlan
 from ._capillarity import GraphCapillarityPlan
 from ._free_surface_ale import (
@@ -191,6 +192,7 @@ class OnePhaseFreeSurfaceALEPlan(StrictModule, NonTrainableState):
     coupling_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface_plan: GraphSurfaceALEPlan,
@@ -204,8 +206,6 @@ class OnePhaseFreeSurfaceALEPlan(StrictModule, NonTrainableState):
         coupling_iterations: int = 6,
         coupling_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(surface_plan, GraphSurfaceALEPlan):
-            raise TypeError("surface_plan must be GraphSurfaceALEPlan.")
         boundary_ = FreeSurfaceBoundaryPlan() if boundary is None else boundary
         density_ = float(density)
         gravity_ = float(gravity)
@@ -402,9 +402,8 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
     hydrodynamics: PreparedOnePhaseFreeSurfaceALE
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE, /) -> None:
-        if not isinstance(hydrodynamics, PreparedOnePhaseFreeSurfaceALE):
-            raise TypeError("hydrodynamics must be PreparedOnePhaseFreeSurfaceALE.")
         self.hydrodynamics = hydrodynamics
         self.method_id = canonical_fingerprint(
             {

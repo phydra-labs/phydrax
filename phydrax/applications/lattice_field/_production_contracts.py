@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._lattice_boundary import LatticeBoundaryPhasePlan
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import checked
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -41,6 +42,7 @@ class LatticeRegulator(StrictModule, NonTrainableState):
     site_count: int = eqx.field(static=True)
     regulator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boundary: LatticeBoundaryPhasePlan,
@@ -49,8 +51,6 @@ class LatticeRegulator(StrictModule, NonTrainableState):
         *,
         gauge_topology_id: str,
     ) -> None:
-        if not isinstance(boundary, LatticeBoundaryPhasePlan):
-            raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
         spacing = np.asarray(lattice_spacing, dtype=np.float64)
         dimension = boundary.dimension
         if spacing.shape == ():
@@ -95,6 +95,7 @@ class LatticeTheoryPoint(StrictModule, NonTrainableState):
     scale_setting_id: str = eqx.field(static=True)
     theory_point_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         regulator: LatticeRegulator,
@@ -105,8 +106,6 @@ class LatticeTheoryPoint(StrictModule, NonTrainableState):
         trajectory_id: str,
         scale_setting_id: str,
     ) -> None:
-        if not isinstance(regulator, LatticeRegulator):
-            raise TypeError("regulator must be LatticeRegulator.")
         if not isinstance(bare_parameters, Mapping) or not bare_parameters:
             raise TypeError("bare_parameters must be a non-empty mapping.")
         parameters = sorted(
@@ -155,6 +154,7 @@ class LatticeEnsemblePlan(StrictModule, NonTrainableState):
     maximum_storage_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         theory_point: LatticeTheoryPoint,
@@ -167,8 +167,6 @@ class LatticeEnsemblePlan(StrictModule, NonTrainableState):
         maximum_observables: int = 256,
         maximum_storage_bytes: int = 1 << 30,
     ) -> None:
-        if not isinstance(theory_point, LatticeTheoryPoint):
-            raise TypeError("theory_point must be LatticeTheoryPoint.")
         names = tuple(str(value).strip() for value in observable_names)
         qualifications = tuple(str(value).strip() for value in qualification_ids)
         count = int(sample_count)
@@ -241,9 +239,8 @@ class PreparedLatticeEnsemble(StrictModule, NonTrainableState):
     plan: LatticeEnsemblePlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: LatticeEnsemblePlan, /) -> None:
-        if not isinstance(plan, LatticeEnsemblePlan):
-            raise TypeError("plan must be LatticeEnsemblePlan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {
@@ -461,9 +458,8 @@ class PreparedContinuumExtrapolation(StrictModule, NonTrainableState):
     design: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ContinuumExtrapolationPlan, /) -> None:
-        if not isinstance(plan, ContinuumExtrapolationPlan):
-            raise TypeError("plan must be ContinuumExtrapolationPlan.")
         spacings = np.asarray(
             [
                 float(np.prod(np.asarray(point.regulator.lattice_spacing)))

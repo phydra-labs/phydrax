@@ -17,7 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._multiresolution import MultiresolutionCoefficients
 from ._wavelet_kernels import (
     dwt_axis,
@@ -238,10 +238,9 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
             transform_fingerprint=self.fingerprint,
         )
 
+    @checked
     def synthesis(self, coefficients: MultiresolutionCoefficients, /) -> Array:
         """Reconstruct an array, cropping only axes transformed during analysis."""
-        if not isinstance(coefficients, MultiresolutionCoefficients):
-            raise TypeError("coefficients must be MultiresolutionCoefficients.")
         if coefficients.transform_fingerprint != self.fingerprint:
             raise ValueError("Wavelet coefficients belong to a different transform.")
         if coefficients.levels != self.levels:

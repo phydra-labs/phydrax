@@ -19,7 +19,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 RodMaterialKind: TypeAlias = Literal["stretch_shear", "bend_twist"]
@@ -593,13 +593,10 @@ class PreparedLinearElasticRodMaterial(RodConstitutiveTrial, NonTrainableState):
     control_size: int = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: LinearElasticRodMaterialPlan, workset: RodMaterialWorkset, /
     ) -> None:
-        if not isinstance(plan, LinearElasticRodMaterialPlan):
-            raise TypeError("plan must be a LinearElasticRodMaterialPlan.")
-        if not isinstance(workset, RodMaterialWorkset):
-            raise TypeError("workset must be a RodMaterialWorkset.")
         if (
             plan.site_count != workset.site_count
             or plan.component_count != workset.component_count
@@ -770,13 +767,10 @@ class PreparedKelvinVoigtRodMaterial(RodConstitutiveTrial, NonTrainableState):
     control_size: int = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: KelvinVoigtRodMaterialPlan, workset: RodMaterialWorkset, /
     ) -> None:
-        if not isinstance(plan, KelvinVoigtRodMaterialPlan):
-            raise TypeError("plan must be a KelvinVoigtRodMaterialPlan.")
-        if not isinstance(workset, RodMaterialWorkset):
-            raise TypeError("workset must be a RodMaterialWorkset.")
         if (
             plan.site_count != workset.site_count
             or plan.component_count != workset.component_count

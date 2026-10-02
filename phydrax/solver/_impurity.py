@@ -44,6 +44,7 @@ from ..operators.quantum.lattice._sector import (
     FixedCardinalityFermionBasis,
     SectorBasisResourcePolicy,
 )
+from ..typing import checked
 
 
 def _positive_int(value: int, name: str, /) -> int:
@@ -292,6 +293,7 @@ class ImpuritySolveRequest(StrictModule, NonTrainableState):
     beta: float = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         onsite_energy: float,
@@ -317,8 +319,6 @@ class ImpuritySolveRequest(StrictModule, NonTrainableState):
             or not jnp.issubdtype(labels.dtype, jnp.integer)
         ):
             raise TypeError("indices must be one nonempty rank-one integer array.")
-        if not isinstance(environment, ImpurityEnvironment):
-            raise TypeError("environment must be ImpurityEnvironment.")
         self.onsite_energy = onsite
         self.interaction = interaction_
         self.chemical_potential = chemical

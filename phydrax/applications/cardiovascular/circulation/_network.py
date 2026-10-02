@@ -30,6 +30,7 @@ from ....nonlinear import (
     RobustRoot,
     root,
 )
+from ....typing import checked
 from ._components import PressureFlowComponent, StorageOwner
 
 
@@ -182,14 +183,13 @@ class CirculationNetwork(StrictModule):
                 return value
         raise KeyError(f"Unknown circulation component {name!r}.")
 
+    @checked
     def replace_component(
         self,
         name: str,
         replacement: PressureFlowComponent,
         /,
     ) -> CirculationNetwork:
-        if not isinstance(replacement, PressureFlowComponent):
-            raise TypeError("replacement must be a PressureFlowComponent.")
         original = self.component(name)
         if replacement.name != original.name:
             raise ValueError("Replacement component must preserve the component name.")

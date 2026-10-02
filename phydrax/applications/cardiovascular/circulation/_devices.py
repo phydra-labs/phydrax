@@ -30,6 +30,7 @@ from ....dynamics import (
     DAEPort,
     DAEVariableBlock,
 )
+from ....typing import checked
 from ._components import PressureFlowComponent
 from ._oxygen import exchange_membrane_oxygen, MembraneOxygenatorModel
 
@@ -1079,6 +1080,7 @@ class ECMOCircuitPlan(StrictModule, NonTrainableState):
     residual_tolerance_kPa: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pump_map: PumpHeadFlowMap,
@@ -1092,8 +1094,6 @@ class ECMOCircuitPlan(StrictModule, NonTrainableState):
         bisection_steps: int = 64,
         residual_tolerance_kPa: float = 1.0e-8,
     ) -> None:
-        if not isinstance(pump_map, PumpHeadFlowMap):
-            raise TypeError("pump_map must be a PumpHeadFlowMap.")
         if not isinstance(drainage_cannula, Cannula) or not isinstance(
             return_cannula, Cannula
         ):
@@ -1101,8 +1101,6 @@ class ECMOCircuitPlan(StrictModule, NonTrainableState):
         segments = tuple(tubing)
         if any(not isinstance(segment, TubingSegment) for segment in segments):
             raise TypeError("Every ECMO tubing element must be a TubingSegment.")
-        if not isinstance(oxygenator, HydraulicOxygenator):
-            raise TypeError("oxygenator must be a HydraulicOxygenator.")
         if oxygen_model is not None and not isinstance(
             oxygen_model, MembraneOxygenatorModel
         ):

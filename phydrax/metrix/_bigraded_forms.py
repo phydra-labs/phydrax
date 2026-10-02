@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..exterior._basis import exterior_indices, wedge_sign
+from ..typing import checked
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives
 from ._utils import _pointwise_array
 
@@ -27,6 +28,7 @@ class BigradedForm(StrictModule):
     holomorphic_indices: tuple[tuple[int, ...], ...]
     antiholomorphic_indices: tuple[tuple[int, ...], ...]
 
+    @checked
     def __init__(
         self,
         coefficients: Callable[[Array], Array],
@@ -37,8 +39,6 @@ class BigradedForm(StrictModule):
     ) -> None:
         if not callable(coefficients):
             raise TypeError("Bigraded coefficients must be callable.")
-        if not isinstance(convention, ComplexCoordinateConvention):
-            raise TypeError("convention must be a ComplexCoordinateConvention.")
         p, q = (int(bidegree[0]), int(bidegree[1]))
         dimension = convention.complex_dimension
         if p < 0 or q < 0 or p > dimension or q > dimension:

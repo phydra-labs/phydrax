@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ...._identity import SemanticProvenance
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._heidlauf_roehrle_2014 import PreparedHeidlaufRoehrle2014Material
 
 
@@ -63,6 +64,7 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
             }
         ).semantic_id
 
+    @checked
     def evaluate(
         self,
         material: PreparedHeidlaufRoehrle2014Material,
@@ -71,8 +73,6 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
         deformation_rate: ArrayLike,
         /,
     ) -> HeidlaufRoehrle2014QualificationEvidence:
-        if not isinstance(material, PreparedHeidlaufRoehrle2014Material):
-            raise TypeError("material must be PreparedHeidlaufRoehrle2014Material.")
         deformation = jnp.asarray(deformation)
         rate = jnp.asarray(deformation_rate)
         if deformation.shape != (3, 3) or rate.shape != (3, 3):

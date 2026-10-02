@@ -21,6 +21,7 @@ from ..._numerics._compensated import compensated_sum
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -89,6 +90,7 @@ class WeaklyCompressibleSPHMethodPlan(StrictModule, NonTrainableState):
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractSPHSmoothingKernel,
@@ -108,10 +110,6 @@ class WeaklyCompressibleSPHMethodPlan(StrictModule, NonTrainableState):
         name: str = "weakly-compressible-sph",
         method_id: str | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractSPHSmoothingKernel):
-            raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
-        if not isinstance(density, AbstractSPHDensityPlan):
-            raise TypeError("density must be an AbstractSPHDensityPlan.")
         if physical_viscosity is not None and not isinstance(
             physical_viscosity, MorrisViscosityPlan
         ):
@@ -270,6 +268,7 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -283,14 +282,6 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         external_acceleration: ExternalParticleAcceleration | None = None,
         external_acceleration_id: str | None = None,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError(
-                "neighborhood must be an AbstractPreparedParticleNeighborhood."
-            )
-        if not isinstance(method, WeaklyCompressibleSPHMethodPlan):
-            raise TypeError("method must be a WeaklyCompressibleSPHMethodPlan.")
         if neighborhood.particle_discretization_id != particles.prepared_id:
             raise ValueError(
                 "Particle neighborhood was prepared for a different support."

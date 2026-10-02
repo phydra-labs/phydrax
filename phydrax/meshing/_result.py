@@ -14,6 +14,7 @@ from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
 from ..geometry.surface import SurfaceModel
 from ..interchange import AdapterReport
+from ..typing import checked
 from ._association import GeometryAssociation
 from ._audit import (
     _evidence_id,
@@ -143,6 +144,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
     provenance: SemanticProvenance
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -166,13 +168,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         associations: tuple[GeometryAssociation, ...] = (),
         adapter_reports: tuple[AdapterReport, ...] = (),
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
-        if not isinstance(geometry, CellGeometrySpec):
-            raise TypeError("geometry must be CellGeometrySpec.")
         geometry.resolve(mesh)
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if boundary is not None and not isinstance(boundary, SurfaceModel):
             raise TypeError("boundary must be SurfaceModel or None.")
         if not isinstance(audit, CellMeshAuditReport) or audit.mesh_id != mesh.mesh_id:
@@ -194,8 +190,6 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             raise ValueError("Successful meshing results require passed compliance.")
         if not isinstance(trace, MeshingTrace) or not trace.successful:
             raise ValueError("Successful meshing results require a successful trace.")
-        if not isinstance(provider, MeshingProviderInfo):
-            raise TypeError("provider must be MeshingProviderInfo.")
         if (
             not isinstance(runtime, MeshingRuntimeInfo)
             or runtime.provider_id != provider.provider_id
@@ -203,8 +197,6 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             raise ValueError("Meshing runtime must match the provider.")
         if not isinstance(derivative_mode, MeshingDerivativeMode):
             raise TypeError("derivative_mode must be MeshingDerivativeMode.")
-        if not isinstance(provenance, SemanticProvenance):
-            raise TypeError("provenance must be SemanticProvenance.")
         patches_ = tuple(patches)
         zones_ = validate_mesh_zones(tuple(zones))
         labels_ = validate_mesh_labels(tuple(labels))

@@ -17,6 +17,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._incident_wave import IncidentWavePlan, WaveSample
 from ...solver._mac_ale import MACALEStageGeometry
+from ...typing import checked
 from ._free_surface_ale import FaceTuple, PreparedGraphSurfaceALE
 
 
@@ -66,6 +67,7 @@ class WaveForcingPlan(StrictModule, NonTrainableState):
     history_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         provider: IncidentWavePlan,
@@ -79,8 +81,6 @@ class WaveForcingPlan(StrictModule, NonTrainableState):
         active_gain: float = 0.0,
         history_size: int = 128,
     ) -> None:
-        if not isinstance(provider, IncidentWavePlan):
-            raise TypeError("provider must be IncidentWavePlan.")
         generation = jnp.asarray(generation_weight)
         sponge = jnp.asarray(sponge_weight, dtype=generation.dtype)
         if generation.shape != sponge.shape or generation.ndim != 3:

@@ -15,6 +15,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._step import TwoPhaseMovingBodyPlan
 from ._vof import PreparedIncompressibleTwoPhaseVOF, TwoPhaseVOFState
 
@@ -112,6 +113,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
             )
         return jnp.stack(components, axis=-1)
 
+    @checked
     def evaluate(
         self,
         two_phase: PreparedIncompressibleTwoPhaseVOF,
@@ -121,8 +123,6 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
         previous_state: TwoPhaseVOFState | None = None,
         body: TwoPhaseMovingBodyPlan | None = None,
     ) -> TwoPhaseCapabilityEvidence:
-        if not isinstance(two_phase, PreparedIncompressibleTwoPhaseVOF):
-            raise TypeError("two_phase must be a PreparedIncompressibleTwoPhaseVOF.")
         if body is not None and not isinstance(body, TwoPhaseMovingBodyPlan):
             raise TypeError("body must be a TwoPhaseMovingBodyPlan or None.")
         alpha = two_phase.alpha(state)

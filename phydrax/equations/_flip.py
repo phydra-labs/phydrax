@@ -35,6 +35,7 @@ from ..discretization.flip import (
     FLIPStepResult,
     PreparedFLIPParticleTransfer,
 )
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -202,11 +203,10 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
             valid.append(current & permitted)
         return tuple(values), tuple(valid)
 
+    @checked
     def step_detailed(
         self, state: FLIPRuntimeState, step_size: ArrayLike, /
     ) -> FLIPStepResult:
-        if not isinstance(state, FLIPRuntimeState):
-            raise TypeError("state must be FLIPRuntimeState.")
         expected_geometry_id = (
             "" if self.geometry is None else self.geometry.realization_id
         )

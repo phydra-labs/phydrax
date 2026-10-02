@@ -33,7 +33,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
 from ..optim import OptimizationTermination
-from ..typing import parse
+from ..typing import checked, parse
 from ._adaptation import (
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
@@ -129,6 +129,7 @@ class _AbstractMeshProposal(StrictModule, NonTrainableState):
     proposer_id: str = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: CellMeshingResult,
@@ -139,8 +140,6 @@ class _AbstractMeshProposal(StrictModule, NonTrainableState):
         value_shape: tuple[int, ...],
         proposer_id: str,
     ) -> None:
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be CellMeshingResult.")
         _scope_rows(source, scope)
         if scope.entity_dimension != dimension:
             raise ValueError("Proposal scope has the wrong entity dimension.")
@@ -339,6 +338,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
     spatial_dimension: int | None = eqx.field(static=True)
     proposer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -350,8 +350,6 @@ class LearnedMeshProposer(AbstractMeshProposer):
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
         kind = parse(kind, MeshProposerKind, "kind")
         if (kind == "metric") != (spatial_dimension is not None):
             raise ValueError(
@@ -415,6 +413,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
             lambda row: binding.call(self.model, row, key=None, iter_=None, kwargs={})
         )(rows)
 
+    @checked
     def propose(
         self,
         source: CellMeshingResult,
@@ -423,8 +422,6 @@ class LearnedMeshProposer(AbstractMeshProposer):
         *,
         scope: MeshingScope | None = None,
     ) -> MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal:
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be CellMeshingResult.")
         if self.kind == "metric" and (
             self.spatial_dimension != source.mesh.ambient_dimension
         ):
@@ -480,6 +477,7 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
     maximum_optimization_iterations: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: CellMeshingResult,
@@ -497,8 +495,6 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
         maximum_marked_cells: int = 100_000,
         maximum_optimization_iterations: int = 50,
     ) -> None:
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be CellMeshingResult.")
         minimum, maximum = float(minimum_size), float(maximum_size)
         anisotropy, gradation = float(maximum_anisotropy), float(maximum_gradation)
         displacement = float(maximum_displacement)

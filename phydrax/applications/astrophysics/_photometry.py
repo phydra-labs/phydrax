@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._likelihoods import ScalarNaturalExponentialFamilyLikelihood
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._observation_status import AstrophysicsObservationStatus
 
 
@@ -34,6 +35,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
     differentiation: DerivativeContract
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -50,8 +52,6 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
         )
         if any(not value for value in values):
             raise ValueError("Observation provenance fields must be non-empty.")
-        if not isinstance(differentiation, DerivativeContract):
-            raise TypeError("differentiation must be a DerivativeContract.")
         (
             self.producer,
             self.producer_version,
@@ -99,6 +99,7 @@ class PhotonCountingBandpass(StrictModule, NonTrainableState):
     band_id: str = eqx.field(static=True)
     response_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wavelength: ArrayLike,
@@ -108,8 +109,6 @@ class PhotonCountingBandpass(StrictModule, NonTrainableState):
         *,
         band_id: str,
     ) -> None:
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         identifier = str(band_id).strip()
         if not identifier:
             raise ValueError("band_id must be non-empty.")

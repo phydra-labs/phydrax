@@ -17,6 +17,7 @@ from jax import Array
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 
 
 type RegularityPieces = Literal["none", "polynomial", "smooth"]
@@ -607,7 +608,8 @@ def _runtime_derivative_evidence(
         raise ValueError("runtime_valid and runtime_status must be supplied together.")
     if valid is None:
         return None, None
-    assert status is not None
+    if status is None:
+        raise RuntimeError("Validated derivative evidence is missing its status array.")
     valid_ = jnp.asarray(valid)
     status_ = jnp.asarray(status)
     if valid_.dtype != jnp.bool_:
@@ -645,6 +647,7 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
     runtime_valid: Array | None
     runtime_status: Array | None
 
+    @checked
     def __init__(
         self,
         request: DifferentiationRequest,
@@ -658,8 +661,6 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         runtime_valid: Array | None = None,
         runtime_status: Array | None = None,
     ) -> None:
-        if not isinstance(request, DifferentiationRequest):
-            raise TypeError("request must be a DifferentiationRequest.")
         levels_ = tuple(_require_level(level) for level in levels)
         if len(levels_) != len(request.surfaces):
             raise ValueError("Admission levels must align with the requested surfaces.")
@@ -720,7 +721,8 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         """Return checked numerical evidence; unresolved evidence stays unresolved."""
         if self.runtime_valid is None:
             return self
-        assert self.runtime_status is not None
+        if self.runtime_status is None:
+            raise RuntimeError("Resolved derivative evidence is missing its status array.")
         checked = eqx.error_if(
             self.runtime_valid,
             ~self.runtime_valid,
@@ -1049,6 +1051,7 @@ class DerivativeContract(StrictModule, NonTrainableState):
                 return entry.level
         return GradientLevel.NONE
 
+    @checked
     def admit(
         self,
         request: DifferentiationRequest,
@@ -1066,8 +1069,6 @@ class DerivativeContract(StrictModule, NonTrainableState):
         request with the reason `"route-stopped"`. Conditions collect the
         contract, requested-surface, and regularity conditions.
         """
-        if not isinstance(request, DifferentiationRequest):
-            raise TypeError("request must be a DifferentiationRequest.")
         bound = admit_regularity(
             self.regularity, request, route=self.route, policy=_require_policy(policy)
         )
@@ -1153,6 +1154,7 @@ class DerivativeContract(StrictModule, NonTrainableState):
             contracts, _met_surfaces(contracts), regularity, composition_route
         )
 
+    @checked
     def compose(
         self,
         downstream: DerivativeContract,
@@ -1176,8 +1178,6 @@ class DerivativeContract(StrictModule, NonTrainableState):
         is undeclared if either stage's is. Routes, conditions, and
         nondifferentiable outputs combine as in `meet`.
         """
-        if not isinstance(downstream, DerivativeContract):
-            raise TypeError("compose requires a DerivativeContract.")
         regularity = (
             None
             if self.regularity is None or downstream.regularity is None

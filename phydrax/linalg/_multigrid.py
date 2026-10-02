@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import parse
+from ..typing import checked, parse
 from ._assembly import PreparedSparseAssembly
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -109,6 +109,7 @@ class MultigridLevel(StrictModule):
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -120,14 +121,10 @@ class MultigridLevel(StrictModule):
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
             raise ValueError(
                 "A multigrid level operator must be an unbatched endomorphism."
             )
-        if not isinstance(smoother, AbstractPreconditioner):
-            raise TypeError("smoother must be an AbstractPreconditioner.")
         if not smoother.space.compatible(operator.source):
             raise ValueError("The smoother must act on the level space.")
         if (restriction is None) != (prolongation is None):
@@ -475,6 +472,7 @@ class MultigridPreconditioner(AbstractPreconditioner):
     hierarchy: MultigridHierarchy
     cycle_policy: MultigridCyclePolicy = fixed_field()
 
+    @checked
     def __init__(
         self,
         hierarchy: MultigridHierarchy,
@@ -482,8 +480,6 @@ class MultigridPreconditioner(AbstractPreconditioner):
         *,
         cycle_policy: MultigridCyclePolicy | None = None,
     ) -> None:
-        if not isinstance(hierarchy, MultigridHierarchy):
-            raise TypeError("hierarchy must be a MultigridHierarchy.")
         policy = MultigridCyclePolicy() if cycle_policy is None else cycle_policy
         if not isinstance(policy, MultigridCyclePolicy):
             raise TypeError("cycle_policy must be a MultigridCyclePolicy.")
@@ -633,6 +629,7 @@ class MultigridLevelBuilder(StrictModule):
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -644,8 +641,6 @@ class MultigridLevelBuilder(StrictModule):
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
             raise ValueError(
                 "A multigrid level operator must be an unbatched endomorphism."

@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class MPMGridConstraintResult(StrictModule):
@@ -106,6 +107,7 @@ class RigidMPMContactPlan(StrictModule, NonTrainableState):
     smooth_normal_regularization: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: Any,
@@ -119,8 +121,6 @@ class RigidMPMContactPlan(StrictModule, NonTrainableState):
     ) -> None:
         if geometry is None:
             raise TypeError("geometry must provide signed_distance and boundary_normal.")
-        if not isinstance(friction, AbstractMPMFrictionPlan):
-            raise TypeError("friction must be AbstractMPMFrictionPlan.")
         band = float(contact_band)
         regularization = (
             None

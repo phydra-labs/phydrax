@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
 from ...sparse import linear_apply, linear_transpose_apply, SparseCoordinateOperator
+from ...typing import checked
 from ._neighbors import _integer
 from ._stencils import LocalStencilEvidence, MeshfreeFunctional, PreparedLocalStencils
 
@@ -25,6 +26,7 @@ class MeshfreeOperator(StrictModule):
     evidence: LocalStencilEvidence
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stencils: PreparedLocalStencils,
@@ -33,8 +35,6 @@ class MeshfreeOperator(StrictModule):
         source: ArraySpace | None = None,
         target: ArraySpace | None = None,
     ) -> None:
-        if not isinstance(stencils, PreparedLocalStencils):
-            raise TypeError("stencils must be PreparedLocalStencils.")
         index = _integer(functional_index, "functional_index", 0)
         if not index < len(stencils.functionals):
             raise ValueError("functional_index is outside the prepared functional tuple.")

@@ -45,6 +45,7 @@ from ...nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ...typing import checked
 from ._rigid_body import (
     _rigid_body_close_kick,
     _rigid_body_half_kick,
@@ -216,6 +217,7 @@ class RigidConstraintDynamicsPlan(StrictModule, NonTrainableState):
     solver: RigidConstraintSolverPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         joints: RigidJointGraphPlan,
@@ -224,8 +226,6 @@ class RigidConstraintDynamicsPlan(StrictModule, NonTrainableState):
         solver: RigidConstraintSolverPlan | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(joints, RigidJointGraphPlan):
-            raise TypeError("joints must be a RigidJointGraphPlan.")
         solver_ = RigidConstraintSolverPlan() if solver is None else solver
         if not isinstance(solver_, RigidConstraintSolverPlan):
             raise TypeError("solver must be a RigidConstraintSolverPlan or None.")
@@ -801,6 +801,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def step(
         self,
         state: RigidConstraintState,
@@ -809,8 +810,6 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> RigidConstraintStepResult:
-        if not isinstance(state, RigidConstraintState):
-            raise TypeError("state must be a RigidConstraintState.")
         time_ = jnp.asarray(time, dtype=state.kinematics.position.dtype)
         step_ = jnp.asarray(step_size, dtype=state.kinematics.position.dtype)
         valid_step = jnp.isfinite(time_) & jnp.isfinite(step_) & (step_ > 0.0)

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..fidelity import FidelityLevelSpec, FidelityPath
+from ..typing import checked
 from ._multilevel import MultilevelSampleBatch
 from ._targets import MultilevelTarget
 
@@ -96,6 +97,7 @@ class FidelityMultilevelSampler(StrictModule):
     input_sampler_id: str = eqx.field(static=True)
     evaluator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: FidelityPath,
@@ -107,8 +109,6 @@ class FidelityMultilevelSampler(StrictModule):
         input_sampler_id: str,
         evaluator_id: str,
     ) -> None:
-        if not isinstance(path, FidelityPath):
-            raise TypeError("path must be a FidelityPath.")
         if not callable(input_sampler) or not callable(level_evaluator):
             raise TypeError("input_sampler and level_evaluator must be callable.")
         sampler = str(sampler_id)

@@ -33,7 +33,7 @@ from ..equations._radiation_interactions import (
     sample_compton_profile_momentum,
     sample_sauter_cosine,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ..units import conversion_factor, ELECTRONVOLT
 from ._secondary_stack import (
     empty_secondary_stack,
@@ -280,6 +280,7 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
     electron_stack: SecondaryStackSpec | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: VoxelRadiationGeometryPlan,
@@ -292,10 +293,6 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
         compton_kinematics: ComptonKinematics = "free-electron",
         electron_stack: SecondaryStackSpec | None = None,
     ) -> None:
-        if not isinstance(geometry, VoxelRadiationGeometryPlan):
-            raise TypeError("geometry must be VoxelRadiationGeometryPlan.")
-        if not isinstance(cross_sections, RadiationCrossSectionLibrary):
-            raise TypeError("cross_sections must be RadiationCrossSectionLibrary.")
         if electron_stack is not None and not isinstance(
             electron_stack, SecondaryStackSpec
         ):

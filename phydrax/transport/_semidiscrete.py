@@ -35,6 +35,7 @@ from ..integration._targets import (
     ProbabilityTarget,
     WeightedSampleTarget,
 )
+from ..typing import checked
 from ._costs import AbstractGroundCost
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
 from ._status import TransportStatus
@@ -87,6 +88,7 @@ class SemidiscreteTransportProblem(StrictModule):
     mass_tolerance: float = eqx.field(static=True)
     provenance: SemidiscreteProblemProvenance
 
+    @checked
     def __init__(
         self,
         source: DensityTarget,
@@ -99,10 +101,6 @@ class SemidiscreteTransportProblem(StrictModule):
         target_encoder: EventEncoder | None = None,
         mass_tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(source, DensityTarget):
-            raise TypeError("source must be a DensityTarget.")
-        if not isinstance(realization, IntegrationRealization):
-            raise TypeError("realization must be an IntegrationRealization.")
         if realization.target is not source:
             raise ValueError(
                 "realization.target must be the exact DensityTarget passed as source."
@@ -111,8 +109,6 @@ class SemidiscreteTransportProblem(StrictModule):
             raise ValueError(
                 "Semidiscrete transport requires a materialized fixed integration batch."
             )
-        if not isinstance(cost, AbstractGroundCost):
-            raise TypeError("cost must be an AbstractGroundCost.")
         tolerance = float(mass_tolerance)
         if not math.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("mass_tolerance must be finite and nonnegative.")
@@ -433,6 +429,7 @@ class SemidiscreteSinkhorn(StrictModule):
         self.early_stop = bool(early_stop)
         self.store_history = bool(store_history)
 
+    @checked
     def __call__(
         self,
         problem: SemidiscreteTransportProblem,
@@ -440,8 +437,6 @@ class SemidiscreteSinkhorn(StrictModule):
         *,
         initial_target_potential: ArrayLike | None = None,
     ) -> SemidiscreteTransportResult:
-        if not isinstance(problem, SemidiscreteTransportProblem):
-            raise TypeError("problem must be a SemidiscreteTransportProblem.")
         count = problem.num_target_atoms
         dtype = jnp.result_type(problem._target.points, self.epsilon)
         if initial_target_potential is None:
@@ -766,6 +761,7 @@ class SemidiscreteQuantizer(StrictModule):
     support_transform: Callable[[Array], Array] | None
     num_steps: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         solver: SemidiscreteSinkhorn,
@@ -775,10 +771,6 @@ class SemidiscreteQuantizer(StrictModule):
         num_steps: int,
         support_transform: Callable[[Array], Array] | None = None,
     ) -> None:
-        if not isinstance(solver, SemidiscreteSinkhorn):
-            raise TypeError("solver must be a SemidiscreteSinkhorn.")
-        if not isinstance(optimizer, optax.GradientTransformation):
-            raise TypeError("optimizer must be an Optax GradientTransformation.")
         steps = int(num_steps)
         if steps < 1:
             raise ValueError("num_steps must be positive.")
@@ -811,6 +803,7 @@ class SemidiscreteQuantizer(StrictModule):
             "Semidiscrete support optimization requires converged integration and transport.",
         )
 
+    @checked
     def __call__(
         self,
         problem: SemidiscreteTransportProblem,
@@ -818,8 +811,6 @@ class SemidiscreteQuantizer(StrictModule):
         *,
         initial_parameters: ArrayLike | None = None,
     ) -> SemidiscreteQuantizationResult:
-        if not isinstance(problem, SemidiscreteTransportProblem):
-            raise TypeError("problem must be a SemidiscreteTransportProblem.")
         parameters = jnp.asarray(
             problem.target_support if initial_parameters is None else initial_parameters,
             dtype=jnp.float64,

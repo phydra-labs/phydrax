@@ -12,6 +12,7 @@ from phydrax.ein import contract
 
 from ....._doc import DOC_KEY0
 from ....._strict import StrictModule
+from .....typing import checked
 from ...._keys import EvalKey
 from ...data import FunctionSamples, OperatorBatch
 from ...engine import AbstractOperatorModel
@@ -70,6 +71,7 @@ class OrthogonalEquivariantPointCNO(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: TensorFieldLayout,
@@ -79,8 +81,6 @@ class OrthogonalEquivariantPointCNO(AbstractOperatorModel):
         topology: OrthogonalPointTopology | None = None,
         initial_length_scale: float = 1.0,
     ) -> None:
-        if not isinstance(layout, TensorFieldLayout):
-            raise TypeError("layout must be TensorFieldLayout.")
         if layout.dimension not in (2, 3) or any(
             block.tensor_type.rank > 2 for block in layout.blocks
         ):

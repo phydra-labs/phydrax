@@ -18,7 +18,7 @@ from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._trainable import NonTrainableState
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from ...particle import ParticlePopulationPlan
 from .._charge_state import PICSpeciesPlan, PICSpeciesState
 from .._process import (
@@ -148,9 +148,8 @@ class FieldIonizationProcess(_AbstractIonizationProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FieldIonizationPlan, ions: int, electrons: int, /) -> None:
-        if not isinstance(plan, FieldIonizationPlan):
-            raise TypeError("plan must be FieldIonizationPlan.")
         ion_index, electron_index = _species_pair(ions, electrons)
         self.plan = plan
         self.ions = ion_index
@@ -253,11 +252,10 @@ class ImpactIonizationProcess(_AbstractIonizationProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: ElectronImpactIonizationPlan, ions: int, electrons: int, /
     ) -> None:
-        if not isinstance(plan, ElectronImpactIonizationPlan):
-            raise TypeError("plan must be ElectronImpactIonizationPlan.")
         ion_index, electron_index = _species_pair(ions, electrons)
         self.plan = plan
         self.ions = ion_index

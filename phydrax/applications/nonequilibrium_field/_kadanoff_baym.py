@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._keldysh import (
     ClosedTimePathGrid,
     KeldyshTwoPointFunctions,
@@ -81,6 +81,7 @@ class KadanoffBaym2PIPlan(StrictModule, NonTrainableState):
     time_step: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: ClosedTimePathGrid,
@@ -93,8 +94,6 @@ class KadanoffBaym2PIPlan(StrictModule, NonTrainableState):
         maximum_work_elements: int = 20_000_000,
         energy_tolerance: float = 5.0e-3,
     ) -> None:
-        if not isinstance(grid, ClosedTimePathGrid):
-            raise TypeError("grid must be ClosedTimePathGrid.")
         coupling_ = float(coupling)
         memory = int(memory_steps)
         mode_capacity = int(maximum_modes)
@@ -154,9 +153,8 @@ class PreparedKadanoffBaym2PI(StrictModule, NonTrainableState):
     retarded_support_mask: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: KadanoffBaym2PIPlan, frequencies: ArrayLike, /) -> None:
-        if not isinstance(plan, KadanoffBaym2PIPlan):
-            raise TypeError("plan must be KadanoffBaym2PIPlan.")
         frequency = np.asarray(frequencies, dtype=np.float64)
         time_count = plan.grid.plan.time_nodes.size
         work = time_count * time_count * frequency.size * 4

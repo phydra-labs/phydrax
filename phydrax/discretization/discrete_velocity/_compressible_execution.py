@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_rules import CompressibleVelocityRule
 
@@ -92,14 +92,13 @@ class CompressibleKineticPrecisionPolicy(StrictModule, NonTrainableState):
         mantissa = (blocks / scale[:, None, None]).astype(self.storage_dtype)
         return ScaledPopulationField(mantissa, scale, str(values.dtype))
 
+    @checked
     def decode(
         self,
         encoded: ScaledPopulationField,
         shape: tuple[int, ...],
         /,
     ) -> Array:
-        if not isinstance(encoded, ScaledPopulationField):
-            raise TypeError("encoded must be a ScaledPopulationField.")
         if not shape or shape[-1] != encoded.mantissa.shape[-1]:
             raise ValueError("Requested decoded shape is incompatible.")
         values = (
@@ -186,6 +185,7 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
     storage: KineticStoragePlan
     transport_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rule: CompressibleVelocityRule,
@@ -195,8 +195,6 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
         periodic_axes: tuple[bool, ...] | None = None,
         storage: KineticStoragePlan | None = None,
     ) -> None:
-        if not isinstance(rule, CompressibleVelocityRule):
-            raise TypeError("rule must be a CompressibleVelocityRule.")
         if not rule.exact_streaming:
             raise ValueError(
                 "IntegerLatticeTransportPlan requires exact-streaming velocities."
@@ -318,9 +316,8 @@ class KineticVelocityPartitionPlan(StrictModule, NonTrainableState):
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, rule: CompressibleVelocityRule, shard_count: int, /) -> None:
-        if not isinstance(rule, CompressibleVelocityRule):
-            raise TypeError("rule must be a CompressibleVelocityRule.")
         count = int(shard_count)
         if count < 1 or count > rule.population_count:
             raise ValueError("shard_count must lie in [1, population_count].")

@@ -20,7 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration._deformed_measure import DeformedMeasureState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 MechanicalLoadSupport: TypeAlias = Literal["body", "boundary", "discrete"]
@@ -298,6 +298,7 @@ class AbstractMechanicalLoad(StrictModule, NonTrainableState):
     ) -> MechanicalLoadEvaluation:
         raise NotImplementedError
 
+    @checked
     def evaluate(
         self,
         reference_coordinates: ArrayLike,
@@ -310,8 +311,6 @@ class AbstractMechanicalLoad(StrictModule, NonTrainableState):
         reference_normal: ArrayLike | None = None,
         current_normal: ArrayLike | None = None,
     ) -> MechanicalLoadEvaluation:
-        if not isinstance(state, MechanicalLoadState):
-            raise TypeError("state must be a MechanicalLoadState.")
         reference, current = _coordinates(
             reference_coordinates, current_coordinates, measure
         )

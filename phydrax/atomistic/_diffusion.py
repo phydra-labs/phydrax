@@ -16,7 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..stochastic._categorical_diffusion import CategoricalDiffusionSchedule
 from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._types import AtomisticBatch
 
 
@@ -46,6 +46,7 @@ class AtomisticCoordinateDiffusion(StrictModule):
     active_count: Array
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         template: AtomisticBatch,
@@ -54,10 +55,6 @@ class AtomisticCoordinateDiffusion(StrictModule):
         *,
         process_id: str | None = None,
     ) -> None:
-        if not isinstance(template, AtomisticBatch):
-            raise TypeError("template must be an AtomisticBatch.")
-        if not isinstance(process, AbstractGaussianDiffusion):
-            raise TypeError("process must implement AbstractGaussianDiffusion.")
         if template.has_periodic_metadata:
             raise ValueError(
                 "Atomistic coordinate diffusion initially excludes periodic cells."
@@ -85,9 +82,8 @@ class AtomisticCoordinateDiffusion(StrictModule):
             }
         )
 
+    @checked
     def _require_batch(self, batch: AtomisticBatch, /) -> AtomisticBatch:
-        if not isinstance(batch, AtomisticBatch):
-            raise TypeError("batch must be an AtomisticBatch.")
         if batch.atom_topology_id != self.template.atom_topology_id:
             raise ValueError(
                 "Atomistic diffusion requires the template candidate topology."
@@ -147,6 +143,7 @@ class AtomisticHybridDiffusion(StrictModule):
     species_to_index: Array
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinate: AtomisticCoordinateDiffusion,
@@ -154,10 +151,6 @@ class AtomisticHybridDiffusion(StrictModule):
         species: Sequence[int],
         /,
     ) -> None:
-        if not isinstance(coordinate, AtomisticCoordinateDiffusion):
-            raise TypeError("coordinate must be an AtomisticCoordinateDiffusion.")
-        if not isinstance(species_schedule, CategoricalDiffusionSchedule):
-            raise TypeError("species_schedule must be categorical diffusion.")
         values = tuple(species)
         if len(values) != species_schedule.num_classes or len(set(values)) != len(values):
             raise ValueError("species must uniquely map every categorical class.")

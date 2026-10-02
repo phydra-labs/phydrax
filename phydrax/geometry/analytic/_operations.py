@@ -24,7 +24,7 @@ from phydrax._strict import StrictModule
 from ..._mass import EstimatedMass, Mass, scale_mass
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._polynomial._cubature import CubatureReference
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -294,13 +294,10 @@ class RigidTransform(GeometrySource):
     frame: RigidFrame
     feature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, child: GeometrySource, frame: RigidFrame, *, feature_id: str | None = None
     ) -> None:
-        if not isinstance(child, GeometrySource):
-            raise TypeError("child must be a GeometrySource.")
-        if not isinstance(frame, RigidFrame):
-            raise TypeError("frame must be a RigidFrame.")
         self.child = child
         self.frame = frame
         self.feature_id = feature_id or f"rigid-transform-{uuid4().hex}"
@@ -563,6 +560,7 @@ class Scaling(GeometrySource):
     uniform: bool = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         child: GeometrySource,
@@ -571,8 +569,6 @@ class Scaling(GeometrySource):
         center: Any | None = None,
         feature_id: str | None = None,
     ) -> None:
-        if not isinstance(child, GeometrySource):
-            raise TypeError("child must be a GeometrySource.")
         scale_host = np.asarray(scale, dtype=np.float64)
         if scale_host.ndim == 0:
             if not np.isfinite(scale_host) or float(scale_host) <= 0.0:

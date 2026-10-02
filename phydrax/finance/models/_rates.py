@@ -24,7 +24,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic import WienerRealization
-from ...typing import parse
+from ...typing import checked, parse
 from ..core import PhysicalLaw, PricingLaw, StressLaw
 
 
@@ -228,6 +228,7 @@ class CIRPlusPlusModel(StrictModule):
     shift_values: Array
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: CIRModel,
@@ -237,8 +238,6 @@ class CIRPlusPlusModel(StrictModule):
         *,
         model_id: str,
     ) -> None:
-        if not isinstance(base, CIRModel):
-            raise TypeError("base must be a CIRModel.")
         times = _strict_grid(shift_times, "shift_times")
         values = _finite_vector(shift_values, "shift_values", minimum_size=2)
         if values.shape != times.shape:

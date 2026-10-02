@@ -25,7 +25,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....integration import GaussLegendreRule, interval_rule_data
 from ....special import ive
-from ....typing import parse
+from ....typing import checked, parse
 from ....uq import AbstractPosteriorTerm
 from .._photometry import ObservationDataProvenance
 from ._likelihood import GravitationalWaveLikelihoodPlan
@@ -216,6 +216,7 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
     convention: CalibrationCorrectionConvention = eqx.field(static=True)
     ensemble_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frequency: ArrayLike,
@@ -264,8 +265,6 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
             if not np.isfinite(normalizer):
                 raise ValueError("Calibration log weights have no finite mass.")
             logs = logs - normalizer
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         label = _identifier(ensemble_id, "calibration ensemble ID")
         self.frequency = jnp.asarray(frequencies)
         self.template_multipliers = jnp.asarray(multipliers)
@@ -304,6 +303,7 @@ class CalibrationMarginalizationPlan(StrictModule, NonTrainableState):
     parameter: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ensemble: CalibrationResponseEnsemble,
@@ -311,8 +311,6 @@ class CalibrationMarginalizationPlan(StrictModule, NonTrainableState):
         *,
         parameter: str = "calibration_index",
     ) -> None:
-        if not isinstance(ensemble, CalibrationResponseEnsemble):
-            raise TypeError("ensemble must be CalibrationResponseEnsemble.")
         self.ensemble = ensemble
         self.parameter = _identifier(parameter, "calibration parameter")
         self.plan_id = canonical_fingerprint(
@@ -344,6 +342,7 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
     maximum_grid_points: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         likelihood: GravitationalWaveLikelihoodPlan,
@@ -356,8 +355,6 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
         maximum_grid_points: int = 1_000_000,
         phase_separable_calibration: bool = False,
     ) -> None:
-        if not isinstance(likelihood, GravitationalWaveLikelihoodPlan):
-            raise TypeError("likelihood must be GravitationalWaveLikelihoodPlan.")
         values = (phase, time, distance, calibration)
         expected = (
             PhaseMarginalizationPlan,
@@ -547,6 +544,7 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
 class GravitationalWaveMarginalizedPosteriorTerm(AbstractPosteriorTerm):
     marginalization: GravitationalWaveMarginalizationPlan
 
+    @checked
     def __init__(
         self,
         marginalization: GravitationalWaveMarginalizationPlan,
@@ -554,10 +552,6 @@ class GravitationalWaveMarginalizedPosteriorTerm(AbstractPosteriorTerm):
         *,
         label: str = "gravitational_wave_marginalized_network",
     ) -> None:
-        if not isinstance(marginalization, GravitationalWaveMarginalizationPlan):
-            raise TypeError(
-                "marginalization must be GravitationalWaveMarginalizationPlan."
-            )
         self.marginalization = marginalization
         self.label = _identifier(label, "posterior-term label")
 

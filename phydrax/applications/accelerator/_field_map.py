@@ -50,7 +50,18 @@ from ...discretization.pic import (
     RelativisticPushPlan,
 )
 from ...electromagnetics import ChargedTrajectory
-from ...typing import Bool, Dim, Float64, Identifier, Int32, parse, Scalar, Scope, Size
+from ...typing import (
+    Bool,
+    checked,
+    Dim,
+    Float64,
+    Identifier,
+    Int32,
+    parse,
+    Scalar,
+    Scope,
+    Size,
+)
 from ._beam import _late_sign, AcceleratorBunch, AcceleratorConvention
 
 
@@ -259,12 +270,11 @@ class InsertionDeviceField(StrictModule, NonTrainableState):
         magnetic = jnp.stack((horizontal_field, jnp.real(profile), longitudinal), axis=-1)
         return _analytic_sample(magnetic, points, self.half_width, self.half_gap)
 
+    @checked
     def resonance(
         self, scale: ElectromagneticScaleContract, lorentz_factor: float, /
     ) -> InsertionDeviceResonance:
         """Return ``K`` and the resonant and critical frequencies for electrons."""
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         gamma = positive_finite_float(lorentz_factor, "lorentz_factor")
         if gamma <= 1.0:
             raise ValueError("lorentz_factor must exceed one.")
@@ -518,6 +528,7 @@ class FieldMapBeamline(StrictModule, NonTrainableState):
     element_ids: tuple[str, ...] = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -526,8 +537,6 @@ class FieldMapBeamline(StrictModule, NonTrainableState):
         *,
         element_ids: tuple[str, ...],
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         elements_ = tuple(elements)
         if not elements_:
             raise ValueError("A field-map beamline needs at least one element.")
@@ -612,6 +621,7 @@ class FieldMapTrackingPlan(StrictModule, NonTrainableState):
     maximum_trajectory_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         beamline: FieldMapBeamline,
@@ -626,8 +636,6 @@ class FieldMapTrackingPlan(StrictModule, NonTrainableState):
         reference_time: float = 0.0,
         maximum_trajectory_bytes: int = 2**31,
     ) -> None:
-        if not isinstance(beamline, FieldMapBeamline):
-            raise TypeError("beamline must be a FieldMapBeamline.")
         entrance = finite_real_scalar(entrance_plane, "entrance_plane")
         exit_ = finite_real_scalar(exit_plane, "exit_plane")
         if not exit_ > entrance:

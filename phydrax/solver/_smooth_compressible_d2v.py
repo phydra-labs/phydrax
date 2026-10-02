@@ -17,6 +17,7 @@ from ..discretization.discrete_velocity._smooth_compressible import (
 from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
 )
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -26,13 +27,10 @@ class OracleSmoothCompressibleD2V17FixedStepMethod(AbstractFixedStepMethod):
     dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics, /
     ) -> None:
-        if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
-            raise TypeError(
-                "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."
-            )
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {

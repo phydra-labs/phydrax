@@ -21,7 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...nonlinear import Bisection, NonlinearTermination, scalar_root, ScalarRootProblem
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import ENERGY, UnitDefinition
 from ..excited import ElectronicManifoldResult, RandomPhaseApproximationPlan
 from ..excited._tda import ExcitedStateManifoldPlan, TammDancoffPlan
@@ -91,6 +91,7 @@ class GWQuasiparticleResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mean_field_energies: ArrayLike,
@@ -114,8 +115,6 @@ class GWQuasiparticleResult(StrictModule, NonTrainableState):
             or factors.shape != mean_field.shape
         ):
             raise ValueError("GW quasiparticle arrays do not align.")
-        if not isinstance(evidence, GWQuasiparticleEvidence):
-            raise TypeError("evidence must be GWQuasiparticleEvidence.")
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise TypeError("GW energy_unit must have energy dimension.")
         identifiers = tuple(
@@ -184,6 +183,7 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
     energy_unit: UnitDefinition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mean_field_energies: ArrayLike,
@@ -225,8 +225,6 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Supplied GW energies, brackets, provider kernel, or solve policy is invalid."
             )
-        if not isinstance(source_manifest, PeriodicProvenanceManifest):
-            raise TypeError("GW source_manifest must be PeriodicProvenanceManifest.")
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise TypeError("GW energy_unit must have energy dimension.")
         self.mean_field_energies = energies
@@ -394,6 +392,7 @@ class BSEPostprocessResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         manifold: ElectronicManifoldResult,
@@ -402,10 +401,6 @@ class BSEPostprocessResult(StrictModule, NonTrainableState):
         plan_id: str,
         /,
     ) -> None:
-        if not isinstance(manifold, ElectronicManifoldResult):
-            raise TypeError("manifold must be ElectronicManifoldResult.")
-        if not isinstance(evidence, BSEPostprocessEvidence):
-            raise TypeError("evidence must be BSEPostprocessEvidence.")
         approximation = parse(approximation, BSEApproximation, "approximation")
         plan = str(plan_id).strip()
         if not plan:
@@ -446,6 +441,7 @@ class BetheSalpeterPlan(StrictModule, NonTrainableState):
     transition_dipole_unit: UnitDefinition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transition_ids: tuple[str, ...],
@@ -535,10 +531,6 @@ class BetheSalpeterPlan(StrictModule, NonTrainableState):
             )
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise TypeError("BSE energy_unit must have energy dimension.")
-        if not isinstance(transition_dipole_unit, UnitDefinition):
-            raise TypeError("transition_dipole_unit must be UnitDefinition.")
-        if not isinstance(source_manifest, PeriodicProvenanceManifest):
-            raise TypeError("BSE source_manifest must be PeriodicProvenanceManifest.")
         self.transition_energies = transitions
         self.screened_direct = direct
         self.bare_exchange = exchange

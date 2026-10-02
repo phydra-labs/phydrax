@@ -28,6 +28,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...sparse import EdgeRelation
+from ...typing import checked
 
 
 class PeriodicResourceError(RuntimeError):
@@ -66,6 +67,7 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
     rank: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -78,8 +80,6 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
         maximum_dense_entries: int = 4_000_000,
         maximum_finite_entries: int = 8_000_000,
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be phydrax.sparse.EdgeRelation.")
         translations_ = np.asarray(translations)
         reverse = np.asarray(reverse_indices)
         valid = np.asarray(relation.valid, dtype=np.bool_)
@@ -169,6 +169,7 @@ class PeriodicTranslationFamilyState(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     numeric_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicTranslationFamilyPlan,
@@ -177,8 +178,6 @@ class PeriodicTranslationFamilyState(StrictModule, NonTrainableState):
         *,
         hermiticity_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(plan, PeriodicTranslationFamilyPlan):
-            raise TypeError("plan must be PeriodicTranslationFamilyPlan.")
         value = np.asarray(values)
         if (
             value.ndim != 3

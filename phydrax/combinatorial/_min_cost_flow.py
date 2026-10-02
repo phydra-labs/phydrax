@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..sparse import EdgeRelation
+from ..typing import checked
 from ._method import (
     AbstractLinearCombinatorialMethod,
     CombinatorialPlan,
@@ -53,6 +54,7 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
     balanced: bool = eqx.field(static=True)
     _structure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -60,8 +62,6 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
         capacities: Any,
         /,
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be an EdgeRelation.")
         if relation.source_size != relation.target_size:
             raise ValueError("flow relations require one shared vertex space.")
         vertices = relation.source_size
@@ -119,9 +119,8 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.edge_count,), jnp.float32)
 
+    @checked
     def canonicalize(self, decision: FlowDecision, /) -> FlowDecision:
-        if not isinstance(decision, FlowDecision):
-            raise TypeError("flow decisions must be FlowDecision values.")
         flow = jnp.asarray(decision.flow)
         if not jnp.issubdtype(flow.dtype, jnp.integer):
             raise TypeError("flow decisions must have an integer dtype.")

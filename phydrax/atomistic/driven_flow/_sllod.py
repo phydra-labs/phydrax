@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._driven_stress import (
     _atomistic_driven_stress_from_components,
     AtomisticDrivenStressPlan,
@@ -115,6 +115,7 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
     stress_plan: AtomisticDrivenStressPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SLLODIntegratorPlan,
@@ -122,12 +123,6 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
         cell: EvolvingFlowCellPlan,
         /,
     ) -> None:
-        if not isinstance(plan, SLLODIntegratorPlan):
-            raise TypeError("plan must be SLLODIntegratorPlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(cell, EvolvingFlowCellPlan):
-            raise TypeError("cell must be EvolvingFlowCellPlan.")
         if (
             dynamics.system.cell is None
             or dynamics.system.cell.cell_id != cell.cell.cell_id

@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._conduction_network import (
     make_purkinje_stimulus_batch,
     PurkinjeEventKind,
@@ -51,6 +52,7 @@ class PMJExchangePlan(StrictModule, NonTrainableState):
     event_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         junction_ids: ArrayLike,
@@ -81,8 +83,6 @@ class PMJExchangePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Active PMJ IDs must be unique and -1 is the inactive sentinel."
             )
-        if not isinstance(purkinje_plan, PurkinjeNetworkPlan):
-            raise TypeError("purkinje_plan must be a PurkinjeNetworkPlan.")
         purkinje_count = purkinje_plan.node_ids.shape[0]
         tissue_count = int(tissue_node_count)
         capacity = int(event_capacity)

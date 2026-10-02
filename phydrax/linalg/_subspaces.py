@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._certificates import KernelCertificate
 from ._spaces import _coordinate_dtype, AbstractVectorSpace
 
@@ -62,6 +62,7 @@ class LinearSubspace(StrictModule):
     orthonormal: bool = eqx.field(static=True)
     subspace_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: AbstractVectorSpace,
@@ -72,8 +73,6 @@ class LinearSubspace(StrictModule):
         orthonormal: bool = False,
         subspace_id: str | None = None,
     ) -> None:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         basis_ = jnp.asarray(basis)
         if basis_.ndim < 2 or basis_.shape[-2] != space.size:
             raise ValueError(

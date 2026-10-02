@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ._stochastic_estimators import (
     _directional_second_derivative,
     _prepare_hessian_action,
@@ -124,6 +124,7 @@ class DimensionOperatorSamples(StrictModule):
     replace: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         indices: ArrayLike,
@@ -131,8 +132,6 @@ class DimensionOperatorSamples(StrictModule):
         policy: DimensionSamplingPolicy,
         /,
     ) -> None:
-        if not isinstance(policy, DimensionSamplingPolicy):
-            raise TypeError("policy must be a DimensionSamplingPolicy.")
         sampled_indices = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         samples = jnp.asarray(values)
         if sampled_indices.shape != (policy.subset_size,):

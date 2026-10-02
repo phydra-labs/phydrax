@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticUnitSystem
+from ..typing import checked
 from ._provider import AbstractPreparedElectronicCalculation
 from ._result import (
     ElectronicEnergyEvaluation,
@@ -150,11 +151,8 @@ class ElectronicPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     surface_id: str = eqx.field(static=True)
     capabilities: PotentialEnergySurfaceCapabilities
 
+    @checked
     def __init__(self, calculation: AbstractPreparedElectronicCalculation, /) -> None:
-        if not isinstance(calculation, AbstractPreparedElectronicCalculation):
-            raise TypeError(
-                "calculation must implement AbstractPreparedElectronicCalculation."
-            )
         request = calculation.calculation.task
         from ._task import ElectronicProperty
 
@@ -222,6 +220,7 @@ class CallablePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     surface_id: str = eqx.field(static=True)
     capabilities: PotentialEnergySurfaceCapabilities
 
+    @checked
     def __init__(
         self,
         evaluator: SurfaceEvaluator,
@@ -233,13 +232,9 @@ class CallablePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         identifiers = tuple(str(value).strip() for value in (system_id, provider_id))
         if any(not value for value in identifiers):
             raise ValueError("Surface identifiers must be non-empty.")
-        if not isinstance(capabilities, PotentialEnergySurfaceCapabilities):
-            raise TypeError("capabilities must be PotentialEnergySurfaceCapabilities.")
         self.evaluator = evaluator
         self.system_id, self.provider_id = identifiers
         self.units = units

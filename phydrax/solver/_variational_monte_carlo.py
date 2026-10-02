@@ -77,7 +77,7 @@ from ..operators.quantum import (
     LogAmplitude,
     sampling_log_weight,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -219,6 +219,7 @@ class VariationalMonteCarloProblem(StrictModule):
     target_kind: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: Any,
@@ -235,10 +236,6 @@ class VariationalMonteCarloProblem(StrictModule):
     ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(operator, AbstractLocalQuantumOperator):
-            raise TypeError("operator must implement AbstractLocalQuantumOperator.")
-        if not isinstance(kernel, MetropolisHastings):
-            raise TypeError("kernel must be a MetropolisHastings instance.")
         configs = jnp.asarray(initial_configurations)
         expected_rank = 1 + len(operator.configuration_shape)
         if (

@@ -37,6 +37,7 @@ from ..artifacts import (
 from ..ein import contract
 from ..typing import (
     Bool,
+    checked,
     Dim,
     Float,
     HostFloat64,
@@ -247,6 +248,7 @@ class TabulatedColorMatchingFunctions(AbstractColorMatchingFunctions):
     source_sha256: str = eqx.field(static=True)
     color_matching_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         artifact: AdmittedExternalArtifact,
@@ -255,8 +257,6 @@ class TabulatedColorMatchingFunctions(AbstractColorMatchingFunctions):
         *,
         policy: ExternalArtifactPolicy,
     ) -> None:
-        if not isinstance(manifest, ArtifactManifest):
-            raise TypeError("manifest must be an ArtifactManifest.")
         if manifest.model != COLOR_MATCHING_TABLE_MODEL:
             raise ValueError(
                 "The color-matching manifest model must be "
@@ -502,6 +502,7 @@ class SpectralColorimetryPlan(StrictModule, NonTrainableState):
     maximum_wavelength_spacing: float = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wavelengths: ArrayLike,
@@ -513,8 +514,6 @@ class SpectralColorimetryPlan(StrictModule, NonTrainableState):
         exposure: float = 1.0,
     ) -> None:
         grid = _plan_grid(wavelengths)
-        if not isinstance(illuminant, SpectralIlluminant):
-            raise TypeError("illuminant must be a SpectralIlluminant.")
         observer_functions = (
             AnalyticColorMatchingFunctions() if color_matching is None else color_matching
         )

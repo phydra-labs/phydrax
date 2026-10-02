@@ -17,7 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..imaging import ImagePlaneSupport
 from ..imaging.camera import CameraRig, project_points
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._point import GaussianRasterizer, GaussianRasterResult
 
 
@@ -110,14 +110,13 @@ class ParticleImageFormation(StrictModule, NonTrainableState):
     response: PhotometricResponse
     formation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rasterizer: GaussianRasterizer,
         response: PhotometricResponse | None = None,
         /,
     ) -> None:
-        if not isinstance(rasterizer, GaussianRasterizer):
-            raise TypeError("rasterizer must be GaussianRasterizer.")
         response_ = PhotometricResponse() if response is None else response
         if not isinstance(response_, PhotometricResponse):
             raise TypeError("response must be PhotometricResponse or None.")

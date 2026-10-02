@@ -20,7 +20,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._costs import PreconditionerCostEstimate
 from ._hermitian_spectral import HermitianSpectrum
 from ._materialization import MaterializationPolicy
@@ -122,6 +122,7 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
     shift: Array
     diagnostics: RandomizedNystromDiagnostics
 
+    @checked
     def __init__(
         self,
         basis: Array,
@@ -142,8 +143,6 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
             )
         if values.shape != (basis_.shape[1],):
             raise ValueError("Randomized Nyström Ritz values must match basis rank.")
-        if not isinstance(diagnostics, RandomizedNystromDiagnostics):
-            raise TypeError("diagnostics must be RandomizedNystromDiagnostics.")
         self.space = space
         self.basis = jax.lax.stop_gradient(basis_)
         self.ritz_values = jax.lax.stop_gradient(values)
@@ -426,6 +425,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             ),
         )
 
+    @checked
     def prepare(
         self,
         setup_operator: AbstractLinearOperator,
@@ -433,10 +433,9 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy,
     ) -> RandomizedNystromPreconditioner:
-        if not isinstance(materialization, MaterializationPolicy):
-            raise TypeError("materialization must be a MaterializationPolicy.")
         return self._prepare(setup_operator, refresh_count=0)
 
+    @checked
     def refresh(
         self,
         preconditioner: AbstractPreconditioner,
@@ -449,8 +448,6 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             raise TypeError(
                 "Randomized Nyström refresh requires a RandomizedNystromPreconditioner."
             )
-        if not isinstance(materialization, MaterializationPolicy):
-            raise TypeError("materialization must be a MaterializationPolicy.")
         return self._prepare(
             setup_operator,
             refresh_count=preconditioner.diagnostics.refresh_count + 1,

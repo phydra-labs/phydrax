@@ -17,6 +17,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...linalg import inverse
+from ...typing import checked
 from ._keldysh import ClosedTimePathGrid
 
 
@@ -235,6 +236,7 @@ class FermionicSecondBornPlan(StrictModule, NonTrainableState):
     maximum_matrix_elements: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: ClosedTimePathGrid,
@@ -248,8 +250,6 @@ class FermionicSecondBornPlan(StrictModule, NonTrainableState):
         conservation_tolerance: float = 1.0e-6,
         maximum_matrix_elements: int = 4_000_000,
     ) -> None:
-        if not isinstance(grid, ClosedTimePathGrid):
-            raise TypeError("grid must be ClosedTimePathGrid.")
         hamiltonian = np.asarray(one_particle_hamiltonian, dtype=np.complex128)
         coupling = np.asarray(interaction, dtype=np.float64)
         modes = hamiltonian.shape[0] if hamiltonian.ndim == 2 else 0

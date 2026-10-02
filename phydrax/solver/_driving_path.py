@@ -19,7 +19,7 @@ from .._dtype_names import inexact_result_type
 from .._interpolation import bspline_evaluate, BSplineGrid
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
-from ..typing import parse
+from ..typing import checked, parse
 
 
 DrivingPathSide: TypeAlias = Literal["left", "right"]
@@ -668,6 +668,7 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
     coefficients: Array = parameter_field()
     _support: Array = fixed_field()
 
+    @checked
     def __init__(
         self,
         grid: BSplineGrid,
@@ -676,8 +677,6 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
         *,
         path_id: str,
     ) -> None:
-        if not isinstance(grid, BSplineGrid):
-            raise TypeError("grid must be a BSplineGrid.")
         if grid.degree < 1:
             raise ValueError("Differentiable B-spline paths require positive degree.")
         if any(order < 0 for order in grid.continuity_orders):

@@ -18,6 +18,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import FieldTransfer
+from ....typing import checked
 
 
 class CardiacTransferConfiguration(StrictModule, NonTrainableState):
@@ -89,6 +90,7 @@ class CardiacTransferConfiguration(StrictModule, NonTrainableState):
             self.configuration_id = identifier
 
     @classmethod
+    @checked
     def for_transfer(
         cls,
         transfer: FieldTransfer,
@@ -101,8 +103,6 @@ class CardiacTransferConfiguration(StrictModule, NonTrainableState):
         component_axes: Sequence[str] = (),
         configuration_id: str | None = None,
     ) -> CardiacTransferConfiguration:
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be a FieldTransfer.")
         return cls(
             quantity_id,
             value_unit,
@@ -152,9 +152,8 @@ class CardiacTransferEpoch(StrictModule, NonTrainableState):
         self.source_reference = values[2]
         self.target_reference = values[3]
 
+    @checked
     def matches(self, other: CardiacTransferEpoch, /) -> Array:
-        if not isinstance(other, CardiacTransferEpoch):
-            raise TypeError("other must be a CardiacTransferEpoch.")
         return (
             (self.source_geometry == other.source_geometry)
             & (self.target_geometry == other.target_geometry)
@@ -202,6 +201,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
     adjoint_tolerance: float = eqx.field(static=True)
     cardiac_transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: FieldTransfer,
@@ -215,12 +215,6 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
         adjoint_tolerance: float = 1.0e-7,
         cardiac_transfer_id: str | None = None,
     ) -> None:
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be a FieldTransfer.")
-        if not isinstance(configuration, CardiacTransferConfiguration):
-            raise TypeError("configuration must be a CardiacTransferConfiguration.")
-        if not isinstance(prepared_epoch, CardiacTransferEpoch):
-            raise TypeError("prepared_epoch must be a CardiacTransferEpoch.")
         if configuration.source_field_space_id != transfer.source.field_space_id:
             raise ValueError(
                 "The configured source field space does not match the transfer."
@@ -306,6 +300,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
         scale = jnp.sqrt(jnp.sum(jnp.real(coordinates * jnp.conj(coordinates))))
         return space.unflatten(coordinates / scale)
 
+    @checked
     def evidence(
         self,
         source_probe: PyTree[Any],
@@ -314,8 +309,6 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
         *,
         configuration_id: str,
     ) -> CardiacTransferEvidence:
-        if not isinstance(current_epoch, CardiacTransferEpoch):
-            raise TypeError("current_epoch must be a CardiacTransferEpoch.")
         source = self.transfer.source.vector_space.validate(source_probe)
         image = self.transfer.primal_operator(source)
         image = self.transfer.target.vector_space.validate(image)

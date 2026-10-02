@@ -22,7 +22,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
@@ -216,6 +216,7 @@ class SpectralLayout(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         global_shape: Sequence[int],
@@ -231,8 +232,6 @@ class SpectralLayout(StrictModule, NonTrainableState):
         if len(entries) != len(shape):
             raise ValueError("partition must explicitly describe every array dimension.")
         representation = parse(representation, SpectralRepresentation, "representation")
-        if not isinstance(topology, SpectralMeshTopology):
-            raise TypeError("topology must be SpectralMeshTopology.")
         mesh_sizes = dict(zip(topology.mesh_axis_names, topology.mesh_shape, strict=True))
         used: list[str] = []
         for entry in entries:
@@ -532,6 +531,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
     report: DistributedSpectralPreparationReport
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: SpectralMeshTopology,
@@ -552,8 +552,6 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         maximum_bytes: int = 2 * 1024**3,
         horizontal_axes: Sequence[int] = (0, 2),
     ) -> None:
-        if not isinstance(topology, SpectralMeshTopology):
-            raise TypeError("topology must be SpectralMeshTopology.")
         shape = _positive_shape(spatial_shape, "spatial_shape")
         padded = (
             shape

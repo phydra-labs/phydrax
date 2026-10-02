@@ -24,7 +24,7 @@ from ..exterior._complex import ComplexBoundary
 from ..linalg._assembly import assemble_diagonal
 from ..linalg._complexes import _coordinate_mass, HarmonicSubspace
 from ..sparse import EdgeRelation
-from ..typing import parse
+from ..typing import checked, parse
 from ._cochain_execution import CochainGraphBinding
 from ._ir import GraphIR
 
@@ -51,6 +51,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
     cell_offsets: tuple[int, ...] = eqx.field(static=True)
     fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: CochainDiscretization,
@@ -59,8 +60,6 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         boundary: ComplexBoundary = "absolute",
         harmonic: Sequence[HarmonicSubspace | None] | None = None,
     ) -> None:
-        if not isinstance(discretization, CochainDiscretization):
-            raise TypeError("Graph lowering requires a CochainDiscretization.")
         boundary_ = parse(boundary, ComplexBoundary, "boundary")
         counts = discretization.cell_counts
         bases = (None,) * len(counts) if harmonic is None else tuple(harmonic)

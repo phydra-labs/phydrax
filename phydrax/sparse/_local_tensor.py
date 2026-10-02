@@ -21,7 +21,7 @@ from ..linalg import (
     LocalEliminationResult,
     OperatorProperties,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._execution import (
     RelationAccumulation,
     RelationExecutionPlan,
@@ -249,6 +249,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def condense(
         self,
         plan: LocalEliminationPlan,
@@ -257,8 +258,6 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         retained_global_size: int,
         /,
     ) -> tuple["ElementTensorOperator", LocalEliminationResult]:
-        if not isinstance(plan, LocalEliminationPlan):
-            raise TypeError("plan must be LocalEliminationPlan.")
         if (
             self.local_matrices.shape[1] != self.local_matrices.shape[2]
             or self.local_matrices.shape[1] != plan.local_size

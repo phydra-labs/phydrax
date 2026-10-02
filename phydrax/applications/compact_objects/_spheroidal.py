@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, eigen as eigen_api, OperatorProperties
+from ...typing import checked
 from ._perturbation import PerturbationStatus, SeparatedMode
 
 
@@ -65,6 +66,7 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -76,8 +78,6 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
         minimum_target_overlap: float = 1.0e-6,
         maximum_condition: float = 1.0e10,
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         if isinstance(maximum_ell, bool) or not isinstance(maximum_ell, Integral):
             raise TypeError("maximum_ell must be an integer.")
         maximum = int(maximum_ell)

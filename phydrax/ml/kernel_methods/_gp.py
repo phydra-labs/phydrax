@@ -20,6 +20,7 @@ from ..._differentiation import (
 )
 from ..._model._binding import ModelBinding
 from ..._trainable import fixed_field
+from ...typing import checked
 from ...uq._gp_classification import (
     BernoulliGaussianProcessPosterior,
     CategoricalGaussianProcessPosterior,
@@ -143,6 +144,7 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
     curvature_floor: Array
     weight_policy: WeightPolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: GaussianProcessLikelihoodState,
@@ -153,8 +155,6 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
         curvature_floor: ArrayLike = 1e-6,
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if not isinstance(state, GaussianProcessLikelihoodState):
-            raise TypeError("state must be a GaussianProcessLikelihoodState.")
         if int(class_count) < 2 or int(iterations) <= 0:
             raise ValueError("class_count must be at least two and iterations positive.")
         floor = jnp.asarray(curvature_floor, dtype=jnp.float64)

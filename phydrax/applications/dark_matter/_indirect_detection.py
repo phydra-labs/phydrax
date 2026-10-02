@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..astrophysics._operators import (
     BinnedResponsePlan,
     BinnedResponseResult,
@@ -374,6 +375,7 @@ class BinnedIndirectDetectionPlan(StrictModule, NonTrainableState):
     exposure_cm2_s: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energy_bin_edges_gev: ArrayLike,
@@ -392,8 +394,6 @@ class BinnedIndirectDetectionPlan(StrictModule, NonTrainableState):
             or np.any(np.diff(edges) <= 0.0)
         ):
             raise ValueError("Energy-bin edges must be positive, finite, and increasing.")
-        if not isinstance(response, BinnedResponsePlan):
-            raise TypeError("response must be a BinnedResponsePlan.")
         if response.matrix.shape[1] != edges.size - 1:
             raise ValueError(
                 "BinnedResponse input count must equal the number of energy bins."
@@ -412,9 +412,8 @@ class BinnedIndirectDetectionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(self, flux: IndirectFluxResult, /) -> BinnedIndirectDetectionResult:
-        if not isinstance(flux, IndirectFluxResult):
-            raise TypeError("flux must be an IndirectFluxResult.")
         weights = _piecewise_linear_bin_weights(
             flux.continuum.coordinate, self.energy_bin_edges_gev
         )

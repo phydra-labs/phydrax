@@ -24,6 +24,7 @@ from ..optim import (
     minimize,
     OptimizationTermination,
 )
+from ..typing import checked
 from ._gp_backend import exact_gp_cholesky
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_multioutput import (
@@ -45,6 +46,7 @@ class GaussianProcessKernelFitPolicy(StrictModule):
     minimum_data_count: int = eqx.field(static=True)
     refit_interval: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_space: ParameterSpace,
@@ -55,15 +57,11 @@ class GaussianProcessKernelFitPolicy(StrictModule):
         minimum_data_count: int = 4,
         refit_interval: int = 1,
     ) -> None:
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         constrained = parameter_space.constrain(parameter_space.initial)
         if not isinstance(constrained, GaussianProcessLikelihoodState):
             raise TypeError(
                 "parameter_space constrained values must be GaussianProcessLikelihoodState objects."
             )
-        if not isinstance(method, AbstractMinimizationMethod):
-            raise TypeError("method must implement AbstractMinimizationMethod.")
         resolved_termination = (
             OptimizationTermination() if termination is None else termination
         )
@@ -98,6 +96,7 @@ class MultiOutputGaussianProcessKernelFitPolicy(StrictModule):
     minimum_data_count: int = eqx.field(static=True)
     refit_interval: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_space: ParameterSpace,
@@ -108,15 +107,11 @@ class MultiOutputGaussianProcessKernelFitPolicy(StrictModule):
         minimum_data_count: int = 4,
         refit_interval: int = 1,
     ) -> None:
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         constrained = parameter_space.constrain(parameter_space.initial)
         if not isinstance(constrained, MultiOutputGaussianProcessLikelihoodState):
             raise TypeError(
                 "parameter_space constrained values must be MultiOutputGaussianProcessLikelihoodState objects."
             )
-        if not isinstance(method, AbstractMinimizationMethod):
-            raise TypeError("method must implement AbstractMinimizationMethod.")
         resolved_termination = (
             OptimizationTermination() if termination is None else termination
         )

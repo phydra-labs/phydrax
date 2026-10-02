@@ -40,6 +40,7 @@ from ...qualification._trust import (
     CanonicalRecord,
     SignedQualificationRecord,
 )
+from ...typing import checked
 from ._release_contracts import battery_release_contract, RESOURCE_METRICS
 from ._rights import ReferenceRightsAttestation
 from ._validity import BATTERY_NUMERICAL_ENVELOPES, BatteryValidityEnvelope
@@ -289,6 +290,7 @@ class BatteryReleaseBundle:
             raise ValueError(f"Exactly one authenticated {role} record is required.")
         return matches[0]
 
+    @checked
     def verify(
         self,
         candidate: CapabilityProfile,
@@ -308,8 +310,6 @@ class BatteryReleaseBundle:
             validate_battery_candidate_profile,
         )
 
-        if not isinstance(policy, AsymmetricReleaseTrustPolicy):
-            raise TypeError("Production release proofs require asymmetric role trust.")
         self.envelope.require_production_bounds()
         support = candidate.support_tuples[0]
         validate_battery_candidate_profile(candidate, support)

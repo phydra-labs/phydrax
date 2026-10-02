@@ -39,7 +39,7 @@ from ...linalg import (
     PreparedFactorization,
     RankPolicy,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 class GreenFunctionStatus(IntEnum):
@@ -621,6 +621,7 @@ class DLRGreenFunction(StrictModule):
     evidence: GreenRepresentationEvidence
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: PreparedDLRBasis,
@@ -631,8 +632,6 @@ class DLRGreenFunction(StrictModule):
         evidence: GreenRepresentationEvidence | DLRTransformEvidence | None = None,
         representation_id: str | None = None,
     ) -> None:
-        if not isinstance(basis, PreparedDLRBasis):
-            raise TypeError("basis must be a PreparedDLRBasis.")
         values = jnp.asarray(coefficients)
         if values.ndim < 1 or values.shape[0] != basis.frequencies.shape[0]:
             raise ValueError(

@@ -17,6 +17,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._frozendict import frozendict
 from ...._validation import positive_finite_float
 from ....operators.mechanics import HyperelasticResponse
+from ....typing import checked
 from .._case import CardiovascularCaseManifest
 from .._execution import CardiovascularExecutionManifest
 from .._quantities import CardiovascularQuantitySpec
@@ -294,6 +295,7 @@ class FullNativeReanalysisRequest:
         object.__setattr__(self, "request_id", request_id)
 
     @classmethod
+    @checked
     def from_proposal(
         cls,
         case_manifest: CardiovascularCaseManifest,
@@ -303,16 +305,12 @@ class FullNativeReanalysisRequest:
         geometry: GenerativeGeometryCandidate,
         /,
     ) -> FullNativeReanalysisRequest:
-        if not isinstance(proposal, CardiacSurrogateProposal):
-            raise TypeError("proposal must be CardiacSurrogateProposal.")
         if not proposal.qualified_for_reanalysis or proposal.predicted_state is None:
             raise ValueError(
                 "Only a qualified proposal may initialize full native reanalysis."
             )
         if proposal.geometry_evidence is None or not proposal.geometry_evidence.qualified:
             raise ValueError("Reanalysis requires qualified generated geometry evidence.")
-        if not isinstance(geometry, GenerativeGeometryCandidate):
-            raise TypeError("geometry must be GenerativeGeometryCandidate.")
         if proposal.geometry_evidence.candidate_id != geometry.candidate_id:
             raise ValueError(
                 "Geometry does not match the proposal's qualification evidence."
@@ -343,6 +341,7 @@ class NativeDomainSolveReceipt:
     output_artifact_id: str
     receipt_id: str
 
+    @checked
     def __init__(
         self,
         domain: NativeDomain,
@@ -354,8 +353,6 @@ class NativeDomainSolveReceipt:
         if not isinstance(domain, NativeDomain):
             raise TypeError("domain must be a NativeDomain.")
         route = _identifier(reanalysis_route_id, "reanalysis_route_id")
-        if not isinstance(execution_manifest, CardiovascularExecutionManifest):
-            raise TypeError("execution_manifest must be CardiovascularExecutionManifest.")
         expected_type = {
             NativeDomain.ELECTROPHYSIOLOGY: AlievPanfilovCandidate,
             NativeDomain.MECHANICS: HyperelasticResponse,

@@ -11,7 +11,7 @@ from jax.typing import ArrayLike
 
 from ....._probability import AbstractProbabilityLaw
 from ....._strict import StrictModule
-from .....typing import PRNGKey
+from .....typing import checked, PRNGKey
 from ...data import FunctionSamples, OperatorBatch
 from ..conditioning._function_frame import (
     FunctionFrameEncoding,
@@ -42,6 +42,7 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
     field_space_id: str = eqx.field(static=True)
     reference_measure: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         encoder: FunctionFrameReconstructor,
@@ -50,8 +51,6 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
         *,
         field_space_id: str,
     ) -> None:
-        if not isinstance(encoder, FunctionFrameReconstructor):
-            raise TypeError("encoder must be FunctionFrameReconstructor.")
         if not callable(coefficient_law_factory):
             raise TypeError("coefficient_law_factory must be callable.")
         if not field_space_id:

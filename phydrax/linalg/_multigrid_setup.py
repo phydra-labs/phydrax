@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import parse
+from ..typing import checked, parse
 from ._assembly import (
     plan_sparse_assembly,
     prepare_sparse_assembly,
@@ -480,6 +480,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
     _properties_supplied: bool = eqx.field(static=True)
     _builder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: SmoothedAggregationPolicy,
@@ -492,8 +493,6 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         cycle_policy: MultigridCyclePolicy | None = None,
         refresh_mode: MultigridRefreshMode = "rebuild-all",
     ) -> None:
-        if not isinstance(policy, SmoothedAggregationPolicy):
-            raise TypeError("policy must be SmoothedAggregationPolicy.")
         _validate_preconditioner_source(smoother)
         _validate_preconditioner_source(coarse_solver)
         near_nullspaces_ = tuple(near_nullspaces)

@@ -21,6 +21,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._availability import probe_backend
 from ._types import (
     BackendAvailability,
@@ -134,6 +135,7 @@ class LatticeProviderStatus(StrictModule, NonTrainableState):
     versions: tuple[tuple[str, str], ...] = eqx.field(static=True)
     status_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capabilities: LatticeKernelCapabilities,
@@ -143,8 +145,6 @@ class LatticeProviderStatus(StrictModule, NonTrainableState):
         reason: str,
         versions: Sequence[tuple[str, str]] = (),
     ) -> None:
-        if not isinstance(capabilities, LatticeKernelCapabilities):
-            raise TypeError("capabilities must be LatticeKernelCapabilities.")
         reason_ = str(reason).strip()
         versions_ = tuple(
             (str(name).strip(), str(version).strip()) for name, version in versions

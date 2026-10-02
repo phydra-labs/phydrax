@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ..multiblock import InterfaceOrientation
 from ._discretization import LatticeBoltzmannDiscretization
 from ._geometry import LatticeBoltzmannGeometryKind
@@ -62,6 +62,7 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
     geometry_kind: LatticeBoltzmannGeometryKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left: LatticeBoltzmannDiscretization,
@@ -79,8 +80,6 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
             right, LatticeBoltzmannDiscretization
         ):
             raise TypeError("Block interfaces require two LBM discretizations.")
-        if not isinstance(orientation, InterfaceOrientation):
-            raise TypeError("orientation must be an InterfaceOrientation.")
         left_axis_ = int(left_axis)
         right_axis_ = int(right_axis)
         dimension = left.velocity_set.dimension
@@ -235,6 +234,7 @@ class LatticeBoltzmannBlockConnection(StrictModule, NonTrainableState):
     right_block: int = eqx.field(static=True)
     connection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left_block: int,
@@ -248,8 +248,6 @@ class LatticeBoltzmannBlockConnection(StrictModule, NonTrainableState):
             raise ValueError(
                 "A block connection requires two distinct nonnegative indices."
             )
-        if not isinstance(interface, LatticeBoltzmannBlockInterfacePlan):
-            raise TypeError("interface must be LatticeBoltzmannBlockInterfacePlan.")
         self.interface = interface
         self.left_block = left
         self.right_block = right
@@ -368,11 +366,10 @@ class LatticeBoltzmannMultiblockCouplingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def exchange(
         self, state: LatticeBoltzmannMultiblockState, /
     ) -> LatticeBoltzmannMultiblockExchangeResult:
-        if not isinstance(state, LatticeBoltzmannMultiblockState):
-            raise TypeError("state must be LatticeBoltzmannMultiblockState.")
         if len(state.populations) != len(self.blocks):
             raise ValueError("Multiblock state and plan block counts do not match.")
         source = tuple(

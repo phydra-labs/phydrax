@@ -14,7 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 SplatAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
@@ -206,6 +206,7 @@ class SplatDepositResult(StrictModule):
     balance: SplatBalanceEvidence
     successful: Array
 
+    @checked
     def __init__(
         self,
         content: ArrayLike,
@@ -214,8 +215,6 @@ class SplatDepositResult(StrictModule):
         successful: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(balance, SplatBalanceEvidence):
-            raise TypeError("balance must be SplatBalanceEvidence.")
         content_ = jnp.asarray(content)
         density_ = jnp.asarray(density)
         if content_.shape != density_.shape:

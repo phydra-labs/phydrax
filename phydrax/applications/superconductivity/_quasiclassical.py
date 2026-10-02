@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 _REDUCED_PLANCK = 1.054571817e-34
@@ -145,6 +146,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fermi_surface: FermiSurfacePlan,
@@ -154,8 +156,6 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
         vector_potential_coupling: float = 0.0,
         tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(fermi_surface, FermiSurfacePlan):
-            raise TypeError("fermi_surface must be FermiSurfacePlan.")
         lengths = np.asarray(segment_lengths, dtype=np.float64)
         coupling, tolerance_ = float(vector_potential_coupling), float(tolerance)
         if (
@@ -193,6 +193,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
         denominator = frequency + omega
         return gap / denominator, jnp.conj(gap) / denominator
 
+    @checked
     def evaluate(
         self,
         matsubara: MatsubaraQuadraturePlan,
@@ -200,8 +201,6 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
         vector_potential_shift: ArrayLike = 0.0,
         /,
     ) -> RiccatiTrajectoryResult:
-        if not isinstance(matsubara, MatsubaraQuadraturePlan):
-            raise TypeError("matsubara must be MatsubaraQuadraturePlan.")
         gap_ = jnp.asarray(gap)
         expected = (self.fermi_surface.trajectory_count, self.segment_count)
         if gap_.shape != expected or not jnp.iscomplexobj(gap_):
@@ -465,6 +464,7 @@ class RetardedSpectroscopyPlan(StrictModule, NonTrainableState):
     broadening: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         equilibrium: QuasiclassicalSuperconductivityPlan,
@@ -473,8 +473,6 @@ class RetardedSpectroscopyPlan(StrictModule, NonTrainableState):
         *,
         broadening: float,
     ) -> None:
-        if not isinstance(equilibrium, QuasiclassicalSuperconductivityPlan):
-            raise TypeError("equilibrium must be QuasiclassicalSuperconductivityPlan.")
         energy = np.asarray(energies, dtype=np.float64)
         broadening_ = float(broadening)
         if (

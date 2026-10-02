@@ -27,6 +27,7 @@ from ....observation import (
 )
 from ....optim import least_squares, LevenbergMarquardt, OptimizationTermination
 from ....qualification import ReferenceArtifactManifest
+from ....typing import checked
 from ....units import conversion_factor, SECOND, UnitDefinition
 from .._construct import NucleicAcidConstruct, NucleotideKey
 
@@ -81,6 +82,7 @@ class ChemicalMappingObservation(StrictModule):
     observation_id: str = eqx.field(static=True)
     covariance_semantics: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         construct: NucleicAcidConstruct,
@@ -97,10 +99,6 @@ class ChemicalMappingObservation(StrictModule):
         covariance_lower: npt.ArrayLike | None = None,
         requested_use: Mapping[str, bool] | None = None,
     ) -> None:
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError(
-                "Chemical mapping requires source rights and uncertainty provenance."
-            )
         source.require_rights(**({} if requested_use is None else requested_use))
         keys = tuple(nucleotide_keys)
         values, errors = (

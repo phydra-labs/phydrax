@@ -43,6 +43,7 @@ from ..operators.integral.layer_potential import (
     LaplaceSingleLayerDP0AssemblyReport3D,
     LaplaceSingleLayerDP0Galerkin3D,
 )
+from ..typing import checked
 
 
 class LaplaceCapacitanceSensitivityEvidence3D(StrictModule, NonTrainableState):
@@ -90,6 +91,7 @@ class LaplaceCapacitancePlan3D(StrictModule, NonTrainableState):
     conductor_names: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         epoch: BoundaryMeshEpoch,
@@ -99,10 +101,6 @@ class LaplaceCapacitancePlan3D(StrictModule, NonTrainableState):
         *,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(epoch, BoundaryMeshEpoch):
-            raise TypeError("epoch must be BoundaryMeshEpoch.")
-        if not isinstance(galerkin, LaplaceSingleLayerDP0Galerkin3D):
-            raise TypeError("galerkin must be LaplaceSingleLayerDP0Galerkin3D.")
         if epoch.mesh.geometry_id != galerkin._binding.mesh.geometry_id:
             raise ValueError("Capacitance epoch and Galerkin geometry differ.")
         if not bool(galerkin.assembly_report.accuracy_supported):
@@ -167,9 +165,8 @@ class PreparedLaplaceCapacitance3D(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: LaplaceCapacitancePlan3D, /) -> None:
-        if not isinstance(plan, LaplaceCapacitancePlan3D):
-            raise TypeError("plan must be LaplaceCapacitancePlan3D.")
         problem = LinearSystem(
             plan.galerkin.strong_operator,
             problem_id=f"laplace-capacitance:{plan.epoch.epoch_id}",

@@ -37,6 +37,7 @@ from ...solver._block_amr_runtime import (
     BlockAMRRuntimeState,
     PreparedBlockAMRRuntime,
 )
+from ...typing import checked
 from ._particles import CosmologicalParticleState
 
 
@@ -98,6 +99,7 @@ class BlockAMRParticleRoutingPlan(StrictModule, NonTrainableState):
     box_size: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: BlockHierarchyTopology,
@@ -105,8 +107,6 @@ class BlockAMRParticleRoutingPlan(StrictModule, NonTrainableState):
         *,
         dtype: Any = np.float64,
     ) -> None:
-        if not isinstance(topology, BlockHierarchyTopology):
-            raise TypeError("topology must be BlockHierarchyTopology.")
         axes = topology.plan.grid.structured_axes
         if not axes or not all(
             axis.periodic and axis.bounds is not None for axis in axes
@@ -400,6 +400,7 @@ class BlockAMRGravityPlan(StrictModule, NonTrainableState):
     gravity_argument: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: PreparedCompositeAMRDiffusion,
@@ -410,10 +411,6 @@ class BlockAMRGravityPlan(StrictModule, NonTrainableState):
         gravity_argument: str | None = None,
         solve_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(operator, PreparedCompositeAMRDiffusion):
-            raise TypeError("operator must be PreparedCompositeAMRDiffusion.")
-        if not isinstance(routing, BlockAMRParticleRoutingPlan):
-            raise TypeError("routing must be BlockAMRParticleRoutingPlan.")
         layout = operator.layout
         if layout.component_shape or layout.layout_id != routing.layout.layout_id:
             raise ValueError(
@@ -652,16 +649,13 @@ class BlockAMREpochPlan(StrictModule):
     routing: BlockAMRParticleRoutingPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedBlockAMRRuntime,
         routing: BlockAMRParticleRoutingPlan,
         /,
     ) -> None:
-        if not isinstance(runtime, PreparedBlockAMRRuntime):
-            raise TypeError("runtime must be PreparedBlockAMRRuntime.")
-        if not isinstance(routing, BlockAMRParticleRoutingPlan):
-            raise TypeError("routing must be BlockAMRParticleRoutingPlan.")
         topology = runtime.dynamics.topology
         if (
             topology.epoch.epoch_id != routing.topology.epoch.epoch_id

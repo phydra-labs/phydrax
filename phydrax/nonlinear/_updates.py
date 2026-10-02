@@ -33,6 +33,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractVectorSpace
+from ..typing import checked
 from ._newton import NewtonKrylov, NewtonTrustRegion
 from ._prepared import (
     prepare_nonlinear,
@@ -303,6 +304,7 @@ class NonlinearUpdateDiagnostics(StrictModule):
         self.counts_complete = work_.complete
 
     @classmethod
+    @checked
     def from_nonlinear(
         cls,
         diagnostics: NonlinearDiagnostics,
@@ -310,8 +312,6 @@ class NonlinearUpdateDiagnostics(StrictModule):
         *,
         step_norm: Any | None = None,
     ) -> NonlinearUpdateDiagnostics:
-        if not isinstance(diagnostics, NonlinearDiagnostics):
-            raise TypeError("diagnostics must be NonlinearDiagnostics.")
         return cls(
             initial_residual_norm=diagnostics.initial_residual_norm,
             final_residual_norm=diagnostics.final_residual_norm,
@@ -366,6 +366,7 @@ class NonlinearUpdateResult(StrictModule):
     components: tuple[NonlinearUpdateResult, ...]
     evidence: NonlinearAttemptEvidence
 
+    @checked
     def __init__(
         self,
         *,
@@ -379,10 +380,6 @@ class NonlinearUpdateResult(StrictModule):
         components: tuple[NonlinearUpdateResult, ...] = (),
         evidence: NonlinearAttemptEvidence | None = None,
     ) -> None:
-        if not isinstance(diagnostics, NonlinearUpdateDiagnostics):
-            raise TypeError("diagnostics must be NonlinearUpdateDiagnostics.")
-        if not isinstance(provenance, NonlinearUpdateProvenance):
-            raise TypeError("provenance must be NonlinearUpdateProvenance.")
         components_ = tuple(components)
         if not all(isinstance(value, NonlinearUpdateResult) for value in components_):
             raise TypeError("components must contain NonlinearUpdateResult values.")
@@ -471,6 +468,7 @@ class PreparedNonlinearUpdate(StrictModule):
     reference_auxiliary: Any
     numeric_version: Array = fixed_field()
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
@@ -484,12 +482,6 @@ class PreparedNonlinearUpdate(StrictModule):
         *,
         numeric_version: Any,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(update, AbstractNonlinearUpdate):
-            raise TypeError("update must be AbstractNonlinearUpdate.")
-        if not isinstance(plan, NonlinearUpdatePlan):
-            raise TypeError("plan must be NonlinearUpdatePlan.")
         if plan.problem_id != problem.problem_id or plan.update_id != update.update_id:
             raise ValueError("Prepared update identity does not match its plan.")
         version = jnp.asarray(numeric_version, dtype=jnp.int32)

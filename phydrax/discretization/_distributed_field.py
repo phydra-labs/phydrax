@@ -18,6 +18,7 @@ from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 def _color_directed_pairs(
@@ -271,6 +272,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
     )
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         halo: DistributedHaloPlan,
@@ -280,8 +282,6 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         *,
         operator_name: str,
     ) -> None:
-        if not isinstance(halo, DistributedHaloPlan):
-            raise TypeError("Distributed local operator requires a halo plan.")
         if not callable(local_action) or not callable(local_transpose):
             raise TypeError(
                 "Distributed local forward and transpose actions are required."

@@ -33,6 +33,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._mac_stage_inverse_general import (
     MACOperatorStageInverseMomentum,
     MACVariableDensityStageInverseMomentum,
@@ -237,6 +238,7 @@ class MACDFIBProjectionPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: MACDivergenceFreeMarkerTransfer,
@@ -245,8 +247,6 @@ class MACDFIBProjectionPlan(StrictModule, NonTrainableState):
         linear_policy: LinearSolvePolicy | None = None,
         tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(transfer, MACDivergenceFreeMarkerTransfer):
-            raise TypeError("transfer must be MACDivergenceFreeMarkerTransfer.")
         tolerance_ = float(tolerance)
         if tolerance_ <= 0.0 or not np.isfinite(tolerance_):
             raise ValueError("DFIB projection tolerance must be positive and finite.")

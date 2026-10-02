@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core import PhysicalLaw
 from ..market import MarketState, RiskFactorLayout
 
@@ -26,6 +27,7 @@ class FactorRiskModel(StrictModule):
     asset_ids: tuple[str, ...] = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         asset_ids: tuple[str, ...],
@@ -45,10 +47,6 @@ class FactorRiskModel(StrictModule):
             or len(set(assets)) != len(assets)
         ):
             raise ValueError("asset_ids must be non-empty and unique.")
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
-        if not isinstance(law, PhysicalLaw):
-            raise TypeError("Factor risk requires a PhysicalLaw.")
         if law.factor_layout_id != layout.layout_id:
             raise ValueError("Physical law and factor layout are incompatible.")
         loading = jnp.asarray(asset_factor_loading)

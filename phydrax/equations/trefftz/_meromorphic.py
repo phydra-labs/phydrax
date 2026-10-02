@@ -26,6 +26,7 @@ from ...optim import (
     VariableProjectionProblem,
     VariableProjectionResult,
 )
+from ...typing import checked
 from ._holomorphic_constraints import HolomorphicAffineCoefficientMap
 from ._holomorphic_frame import HolomorphicPolynomialFrame
 
@@ -187,6 +188,7 @@ class PoleClearanceReport(StrictModule, NonTrainableState):
     domain_id: str = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         poles: PoleSet,
@@ -196,8 +198,6 @@ class PoleClearanceReport(StrictModule, NonTrainableState):
         radius: float,
         required_clearance: float = 0.0,
     ) -> None:
-        if not isinstance(poles, PoleSet):
-            raise TypeError("poles must be PoleSet.")
         center_ = complex(center)
         radius_ = float(radius)
         clearance_ = float(required_clearance)
@@ -257,16 +257,13 @@ class DomainHolomorphicCertificate(StrictModule, NonTrainableState):
     clearance_report_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         meromorphic: MeromorphicMapCertificate,
         clearance: PoleClearanceReport,
         /,
     ) -> None:
-        if not isinstance(meromorphic, MeromorphicMapCertificate):
-            raise TypeError("meromorphic must be MeromorphicMapCertificate.")
-        if not isinstance(clearance, PoleClearanceReport):
-            raise TypeError("clearance must be PoleClearanceReport.")
         if not bool(clearance.valid):
             raise ValueError("Pole clearance is insufficient for domain holomorphy.")
         self.meromorphic_certificate_id = meromorphic.certificate_id
@@ -298,6 +295,7 @@ class MeromorphicLinearFrame(StrictModule, NonTrainableState):
     complex_output_size: int = eqx.field(static=True)
     _certificate: MeromorphicLinearFrameCertificate
 
+    @checked
     def __init__(
         self,
         regular_degree: int,
@@ -313,8 +311,6 @@ class MeromorphicLinearFrame(StrictModule, NonTrainableState):
         derivative = int(maximum_derivative_order)
         if degree < 0 or output <= 0 or derivative < 0:
             raise ValueError("Meromorphic frame dimensions are invalid.")
-        if not isinstance(poles, PoleSet):
-            raise TypeError("poles must be PoleSet.")
         regular = HolomorphicPolynomialFrame.one_variable(
             degree,
             1,

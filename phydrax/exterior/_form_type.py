@@ -8,6 +8,7 @@ from typing import Any, final, Literal, Mapping
 from .._fingerprint import canonical_fingerprint
 from .._strict import Strict
 from .._validation import nonnegative_integer, positive_integer
+from ..typing import checked
 
 
 type FormTwist = Literal["untwisted", "twisted"]
@@ -125,13 +126,12 @@ class FormType(Strict):
             raise ValueError("Interior product of a zero form has no valid degree.")
         return self._derive(self.degree - 1)
 
+    @checked
     def wedge_type(
         self, other: FormType, /, *, product: FiberProduct = "scalar"
     ) -> FormType:
         from ..typing import parse
 
-        if not isinstance(other, FormType):
-            raise TypeError("wedge_type requires a FormType.")
         if (self.dimension, self.ambient_dimension) != (
             other.dimension,
             other.ambient_dimension,
@@ -204,11 +204,10 @@ class FormValueSpec(Strict):
     proxy: FormProxy
     value_spec_id: str
 
+    @checked
     def __init__(self, form_type: FormType, /, *, proxy: FormProxy) -> None:
         from ..typing import parse
 
-        if not isinstance(form_type, FormType):
-            raise TypeError("form_type must be a FormType.")
         proxy_ = parse(proxy, FormProxy, "proxy")
         n, k = form_type.dimension, form_type.degree
         match proxy_:

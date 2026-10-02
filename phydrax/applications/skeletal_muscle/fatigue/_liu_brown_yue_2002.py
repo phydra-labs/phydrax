@@ -29,6 +29,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 _SOURCE_DOI = "10.1016/S0006-3495(02)75580-X"
@@ -72,6 +73,7 @@ class LiuBrownYue2002Plan(StrictModule):
     protocol_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: LiuBrownYue2002Parameters,
@@ -80,8 +82,6 @@ class LiuBrownYue2002Plan(StrictModule):
         muscle_id: str,
         protocol_id: str,
     ) -> None:
-        if not isinstance(parameters, LiuBrownYue2002Parameters):
-            raise TypeError("parameters must be LiuBrownYue2002Parameters.")
         if not isinstance(muscle_id, str) or not muscle_id:
             raise ValueError("muscle_id must be a nonempty string.")
         if not isinstance(protocol_id, str) or not protocol_id:
@@ -213,6 +213,7 @@ class PreparedLiuBrownYue2002(StrictModule):
             self.plan.model_id,
         )
 
+    @checked
     def evaluate(
         self,
         state: LiuBrownYue2002State,
@@ -222,8 +223,6 @@ class PreparedLiuBrownYue2002(StrictModule):
     ) -> LiuBrownYue2002Candidate:
         """Propose the exact source solution for constant ``B`` over one step."""
 
-        if not isinstance(state, LiuBrownYue2002State):
-            raise TypeError("state must be LiuBrownYue2002State.")
         if state.model_id != self.plan.model_id:
             raise ValueError("state does not belong to this prepared model.")
         dtype = state.active_fraction.dtype
@@ -368,11 +367,10 @@ class PreparedLiuBrownYue2002(StrictModule):
             ),
         )
 
+    @checked
     def capacity(self, state: LiuBrownYue2002State, /) -> LiuBrownYue2002Capacity:
         """Observe active force and available nonfatigued fractions."""
 
-        if not isinstance(state, LiuBrownYue2002State):
-            raise TypeError("state must be LiuBrownYue2002State.")
         if state.model_id != self.plan.model_id:
             raise ValueError("state does not belong to this prepared model.")
         return LiuBrownYue2002Capacity(

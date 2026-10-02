@@ -14,6 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import RowRelation
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
 
@@ -64,9 +65,8 @@ class ExplicitPolygonH1DofMap(StrictModule, NonTrainableState):
     local_width: int = eqx.field(static=True)
     dof_map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mesh: CellMesh, /) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError("Explicit polygon H1 requires polygon connectivity.")
         validate_conforming_polygon_segments(mesh)

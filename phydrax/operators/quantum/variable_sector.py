@@ -28,7 +28,7 @@ from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration import discrete, integrate
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._amplitude import amplitude_ratio, LogAmplitude
 
 
@@ -188,9 +188,8 @@ class VariableSectorSpace(StrictModule, NonTrainableState):
             jnp.zeros((self.capacity,), dtype=jnp.int32),
         )
 
+    @checked
     def valid(self, configuration: VariableParticleConfiguration, /) -> Array:
-        if not isinstance(configuration, VariableParticleConfiguration):
-            raise TypeError("configuration must be VariableParticleConfiguration.")
         if configuration.coordinates.shape != (self.capacity, self.dimension):
             raise ValueError(
                 "configuration coordinates do not match the variable-sector space."
@@ -215,11 +214,10 @@ class VariableSectorMeasure(StrictModule, NonTrainableState):
     space: VariableSectorSpace
     measure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, space: VariableSectorSpace, /, *, measure_id: str | None = None
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         identifier = (
             canonical_fingerprint(
                 {
@@ -334,6 +332,7 @@ class VariableSectorProposal(AbstractProposal):
     pair_relative_scale: float = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -350,8 +349,6 @@ class VariableSectorProposal(AbstractProposal):
         pair_relative_scale: float = 0.5,
         proposal_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         weights = np.asarray(tuple(move_weights), dtype=np.float64)
         if weights.shape != (6,) or np.any(~np.isfinite(weights)) or np.any(weights < 0):
             raise ValueError("move_weights must contain six finite nonnegative values.")
@@ -881,6 +878,7 @@ class ContinuumKineticPlan(StrictModule, NonTrainableState):
     maximum_coordinate_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -889,8 +887,6 @@ class ContinuumKineticPlan(StrictModule, NonTrainableState):
         coordinate_chunk_size: int = 16,
         maximum_coordinate_count: int = 4096,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         chunk, maximum = int(coordinate_chunk_size), int(maximum_coordinate_count)
         coordinate_count = space.capacity * space.dimension
         if chunk < 1 or maximum < 1 or coordinate_count > maximum:
@@ -915,6 +911,7 @@ class ContinuumKineticOperator(AbstractVariableSectorLocalOperator):
     plan: ContinuumKineticPlan
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -924,8 +921,6 @@ class ContinuumKineticOperator(AbstractVariableSectorLocalOperator):
         plan: ContinuumKineticPlan | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         mass = np.asarray(masses, dtype=np.float64)
         if (
             mass.shape != (space.species_count,)
@@ -1104,6 +1099,7 @@ class QuadraticExternalPotential(AbstractVariableSectorLocalOperator):
     offsets: Array
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -1114,8 +1110,6 @@ class QuadraticExternalPotential(AbstractVariableSectorLocalOperator):
         offsets: ArrayLike | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         matrix = np.asarray(stiffness, dtype=np.float64)
         if matrix.shape == (space.species_count,):
             matrix = np.asarray([np.eye(space.dimension) * value for value in matrix])
@@ -1194,6 +1188,7 @@ class PairPotentialOperator(AbstractVariableSectorLocalOperator):
     power: float = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -1204,8 +1199,6 @@ class PairPotentialOperator(AbstractVariableSectorLocalOperator):
         softening: float = 0.0,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         matrix = np.asarray(coupling, dtype=np.float64)
         if matrix.shape != (space.species_count, space.species_count):
             raise ValueError("coupling must have shape (species_count, species_count).")
@@ -1289,6 +1282,7 @@ class ContactInteractionOperator(AbstractVariableSectorLocalOperator):
     width: float = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -1298,8 +1292,6 @@ class ContactInteractionOperator(AbstractVariableSectorLocalOperator):
         *,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         matrix = np.asarray(coupling, dtype=np.float64)
         width_ = float(width)
         if matrix.shape != (space.species_count, space.species_count):
@@ -1388,6 +1380,7 @@ class ParticleChangingLocalOperator(AbstractVariableSectorLocalOperator):
     quadrature_targets: tuple[Any, ...]
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -1400,8 +1393,6 @@ class ParticleChangingLocalOperator(AbstractVariableSectorLocalOperator):
         mode_id: str | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         nodes = np.asarray(quadrature_nodes, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         coupling = np.asarray(source_coupling)

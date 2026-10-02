@@ -17,6 +17,7 @@ from ..equations._relativistic_multigroup_radiation import (
     GRMultigroupM1RadiationSystem,
 )
 from ..metrix._adm_exchange import StressEnergyProjection
+from ..typing import checked
 from ._gr_m1_finite_volume import (
     FixedGridGRM1SSPRK3Plan,
     GRM1StepResult,
@@ -50,14 +51,13 @@ class FixedGridGRMultigroupM1SSPRK3Plan(StrictModule, NonTrainableState):
     groups: tuple[FixedGridGRM1SSPRK3Plan, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: GRMultigroupM1RadiationSystem,
         groups: tuple[FixedGridGRM1SSPRK3Plan, ...],
         /,
     ) -> None:
-        if not isinstance(system, GRMultigroupM1RadiationSystem):
-            raise TypeError("system must be GRMultigroupM1RadiationSystem.")
         plans = tuple(groups)
         if len(plans) != system.group_count or any(
             not isinstance(value, FixedGridGRM1SSPRK3Plan) for value in plans
@@ -112,6 +112,7 @@ class FixedGridGRMultigroupM1SSPRK3Plan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=jnp.int32),
         )
 
+    @checked
     def advance(
         self,
         state: GRMultigroupM1State,
@@ -126,8 +127,6 @@ class FixedGridGRMultigroupM1SSPRK3Plan(StrictModule, NonTrainableState):
         *,
         transport_extinction: ArrayLike = 0.0,
     ) -> GRMultigroupM1StepResult:
-        if not isinstance(state, GRMultigroupM1State):
-            raise TypeError("state must be GRMultigroupM1State.")
         expected = self.cell_shape + (self.system.group_count, 4)
         if state.densitized_moments.shape != expected:
             raise ValueError(f"Multigroup densitized moments must have shape {expected}.")

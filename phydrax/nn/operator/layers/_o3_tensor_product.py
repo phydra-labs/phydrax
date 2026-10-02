@@ -21,7 +21,7 @@ from phydrax.ein import contract
 from phydrax.nn.operator.representations import O3Representation
 from phydrax.nn.operator.representations._o3 import _tensor_basis
 
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 
 
 O3TensorProductConnectionMode = Literal["uvw"]
@@ -99,6 +99,7 @@ class O3TensorProductPlan(StrictModule, NonTrainableState):
     maximum_coefficients: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left_representation: O3Representation,
@@ -113,12 +114,6 @@ class O3TensorProductPlan(StrictModule, NonTrainableState):
         maximum_multiply_adds: int = 2_000_000_000,
         maximum_coefficients: int = 1_000_000,
     ) -> None:
-        if not isinstance(left_representation, O3Representation):
-            raise TypeError("left_representation must be an O3Representation.")
-        if not isinstance(right_representation, O3Representation):
-            raise TypeError("right_representation must be an O3Representation.")
-        if not isinstance(output_representation, O3Representation):
-            raise TypeError("output_representation must be an O3Representation.")
         if connection_mode != "uvw":
             raise ValueError("Low-degree O(3) tensor products support only 'uvw'.")
         if normalization != "component":

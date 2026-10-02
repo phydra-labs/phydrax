@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._basis import axes_bitmap, bitmap_axes, exterior_indices
+from ...typing import checked
 from ._spec import CliffordAlgebraSpec
 
 
@@ -43,14 +44,13 @@ class CliffordBladeLayout(StrictModule, NonTrainableState):
     axes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: CliffordAlgebraSpec,
         bitmaps: Sequence[int],
         /,
     ) -> None:
-        if not isinstance(algebra, CliffordAlgebraSpec):
-            raise TypeError("algebra must be a CliffordAlgebraSpec.")
         resolved = _canonical_bitmaps(algebra, bitmaps)
         algebra.budget.admit_blades(len(resolved))
         axes = tuple(bitmap_axes(value, algebra.dimension) for value in resolved)

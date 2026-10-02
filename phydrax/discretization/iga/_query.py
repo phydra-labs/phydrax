@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ._realization import BasisRealization
 
 
@@ -144,13 +145,12 @@ class ContinuityEvidence:
         )
 
     @classmethod
+    @checked
     def interior(
         cls, realization: BasisRealization, route: FixedParametricRoute, /
     ) -> ContinuityEvidence:
         if not isinstance(realization, BasisRealization):
             raise TypeError("realization must be a BasisRealization.")
-        if not isinstance(route, FixedParametricRoute):
-            raise TypeError("route must be a FixedParametricRoute.")
         certificate = canonical_fingerprint(
             {
                 "kind": "interior-parametric-route",
@@ -279,13 +279,12 @@ class ParametricQueryPlan:
     provider: BasisQueryProvider
     plan_id: str
 
+    @checked
     def __init__(
         self, realization: BasisRealization, provider: BasisQueryProvider, /
     ) -> None:
         if not isinstance(realization, BasisRealization):
             raise TypeError("realization must be a BasisRealization.")
-        if not isinstance(provider, BasisQueryProvider):
-            raise TypeError("provider must be a BasisQueryProvider.")
         identifier = canonical_fingerprint(
             {
                 "kind": "parametric-query-plan",
@@ -297,14 +296,13 @@ class ParametricQueryPlan:
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "plan_id", identifier)
 
+    @checked
     def _indices(
         self,
         route: FixedParametricRoute,
         multi_indices: Sequence[Sequence[int]],
         /,
     ) -> tuple[MultiIndex, ...]:
-        if not isinstance(route, FixedParametricRoute):
-            raise TypeError("route must be a FixedParametricRoute.")
         indices = tuple(tuple(item) for item in multi_indices)
         if not indices:
             raise ValueError("A parametric jet requires at least one multi-index.")
@@ -319,6 +317,7 @@ class ParametricQueryPlan:
             raise ValueError("Jet multi-indices must be unique.")
         return indices
 
+    @checked
     def _evidence(
         self,
         route: FixedParametricRoute,
@@ -327,8 +326,6 @@ class ParametricQueryPlan:
         sides: Sequence[SideEvidence],
         /,
     ) -> tuple[SideEvidence, ...]:
-        if not isinstance(continuity, ContinuityEvidence):
-            raise TypeError("continuity must be ContinuityEvidence.")
         if (
             continuity.realization_id != self.realization.realization_id
             or continuity.route_id != route.route_id
@@ -437,6 +434,7 @@ class ParametricQueryPlan:
             query_id,
         )
 
+    @checked
     def trace(
         self,
         coefficients: ArrayLike,
@@ -447,8 +445,6 @@ class ParametricQueryPlan:
         continuity: ContinuityEvidence,
         multi_indices: Sequence[Sequence[int]] | None = None,
     ) -> ParametricTraceResult:
-        if not isinstance(side, SideEvidence):
-            raise TypeError("side must be SideEvidence.")
         if (
             side.realization_id != self.realization.realization_id
             or side.route_id != route.route_id

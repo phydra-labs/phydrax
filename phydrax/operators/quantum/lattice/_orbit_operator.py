@@ -22,6 +22,7 @@ from ....linalg import (
     OperatorProperties,
 )
 from ....sparse import EdgeRelation
+from ....typing import checked
 from ._compile import PreparedQuantumLattice
 from ._operator import apply_compiled_to_coordinate
 from ._orbit_sector import PreparedOrbitSectorBasis
@@ -97,6 +98,7 @@ class QuantumOrbitSectorOperator(AbstractLinearOperator):
     resources: OrbitOperatorResourcePolicy = eqx.field(static=True)
     action_workspace_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedQuantumLattice,
@@ -109,16 +111,6 @@ class QuantumOrbitSectorOperator(AbstractLinearOperator):
         *,
         action_workspace_bytes: int,
     ) -> None:
-        if not isinstance(prepared, PreparedQuantumLattice):
-            raise TypeError("prepared must be PreparedQuantumLattice.")
-        if not isinstance(basis, PreparedOrbitSectorBasis):
-            raise TypeError("basis must be PreparedOrbitSectorBasis.")
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be EdgeRelation.")
-        if not isinstance(evidence, OrbitOperatorEvidence):
-            raise TypeError("evidence must be OrbitOperatorEvidence.")
-        if not isinstance(resources, OrbitOperatorResourcePolicy):
-            raise TypeError("resources must be OrbitOperatorResourcePolicy.")
         values = jnp.asarray(amplitudes, dtype=jnp.complex128)
         if values.shape != relation.route_shape:
             raise ValueError("Orbit-route amplitudes must match the edge relation.")

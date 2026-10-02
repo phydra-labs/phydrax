@@ -24,6 +24,7 @@ from ..equations._unstructured_les import (
     UnstructuredLowMachLESState,
 )
 from ..linalg import LinearSolvePolicy
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
@@ -92,6 +93,7 @@ class UnstructuredLowMachLESRestartState(StrictModule):
     pressure_increment: Array
     accepted_steps: Array
 
+    @checked
     def __init__(
         self,
         conservative: UnstructuredLowMachLESState,
@@ -103,8 +105,6 @@ class UnstructuredLowMachLESRestartState(StrictModule):
         accepted_steps: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(conservative, UnstructuredLowMachLESState):
-            raise TypeError("conservative must be UnstructuredLowMachLESState.")
         enthalpy = _real_inexact(enthalpy_density, "enthalpy_density")
         pressure_ = _real_inexact(pressure, "pressure")
         face_velocity = _real_inexact(face_normal_velocity, "face_normal_velocity")
@@ -208,6 +208,7 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
     _required_step_size: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedUnstructuredLowMachLES,
@@ -221,8 +222,6 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
         pressure_iterations: int = 200,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedUnstructuredLowMachLES):
-            raise TypeError("dynamics must be PreparedUnstructuredLowMachLES.")
         raw_step = np.asarray(step_size)
         if (
             np.iscomplexobj(raw_step)
@@ -274,6 +273,7 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
     def allows_step_reduction(self) -> bool:
         return False
 
+    @checked
     def initialize(
         self,
         conservative: UnstructuredLowMachLESState,
@@ -283,8 +283,6 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
     ) -> UnstructuredLowMachLESRestartState:
         """Construct a restart-complete state after validating every initial field."""
 
-        if not isinstance(conservative, UnstructuredLowMachLESState):
-            raise TypeError("conservative must be UnstructuredLowMachLESState.")
         arguments = self._validate_inputs(args)
         density = jnp.asarray(conservative.density)
         pressure_ = self.dynamics.operators.gauge_project(
@@ -444,9 +442,8 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
             raise TypeError("args must be UnstructuredLowMachLESStepInputs.")
         return args
 
+    @checked
     def _validate_restart(self, state: UnstructuredLowMachLESRestartState, /) -> None:
-        if not isinstance(state, UnstructuredLowMachLESRestartState):
-            raise TypeError("state must be UnstructuredLowMachLESRestartState.")
         cells = self.dynamics.operators.discretization.cell_count
         faces = self.dynamics.operators.discretization.face_measures.size
         species = len(self.dynamics.plan.favre_model.fields.species_names)

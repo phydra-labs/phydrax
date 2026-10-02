@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
+from ...typing import checked
 from ._experiment import BatteryRuntimeInputs
 from ._properties import ConstantPropertyLaw, TabulatedPropertyLaw
 from ._results import BatteryModelOutput
@@ -282,9 +283,8 @@ class PreparedThermalEquivalentCircuit(StrictModule, NonTrainableState):
     plan: ThermalEquivalentCircuitPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ThermalEquivalentCircuitPlan, /) -> None:
-        if not isinstance(plan, ThermalEquivalentCircuitPlan):
-            raise TypeError("plan must be ThermalEquivalentCircuitPlan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {
@@ -556,9 +556,8 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ThermalEquivalentCircuitPlan, /) -> None:
-        if not isinstance(plan, ThermalEquivalentCircuitPlan):
-            raise TypeError("plan must be ThermalEquivalentCircuitPlan.")
         self.plan = plan
         self.model_id = "battery:ecm:thermal-prescribed-current"
         self.equation_form = "ode"
@@ -568,6 +567,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedThermalEquivalentCircuit:
         return self.plan.prepare()
 
+    @checked
     def initial_state(
         self,
         prepared_model: PreparedThermalEquivalentCircuit,
@@ -577,10 +577,6 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
     ) -> ThermalEquivalentCircuitState:
         _check_prepared(self.plan, prepared_model)
         _check_parameters(prepared_model, parameters)
-        if not isinstance(initial_condition, ThermalEquivalentCircuitInitialCondition):
-            raise TypeError(
-                "initial_condition must be ThermalEquivalentCircuitInitialCondition."
-            )
         if initial_condition.relaxed:
             polarization = jnp.zeros(
                 (prepared_model.plan.branch_count,),
@@ -602,6 +598,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
             initial_condition.temperature_k,
         )
 
+    @checked
     def problem(
         self,
         prepared_model: PreparedThermalEquivalentCircuit,
@@ -611,8 +608,6 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
     ) -> DifferentialProblem:
         _check_prepared(self.plan, prepared_model)
         _check_state_shape(prepared_model, initial_state)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         _check_parameters(prepared_model, runtime_inputs.parameters)
         return DifferentialProblem(
             _thermal_ecm_drift,
@@ -631,6 +626,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def observe(
         self,
         prepared_model: PreparedThermalEquivalentCircuit,
@@ -641,8 +637,6 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
     ) -> BatteryModelOutput:
         _check_prepared(self.plan, prepared_model)
         _check_state_shape(prepared_model, states)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         parameters = runtime_inputs.parameters
         _check_parameters(prepared_model, parameters)
         times = _real_array(times_s, "times_s")
@@ -678,6 +672,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
         domain_valid = support & jnp.isfinite(times) & jnp.isfinite(terminal_power)
         return BatteryModelOutput(values, domain_valid)
 
+    @checked
     def ledger(
         self,
         prepared_model: PreparedThermalEquivalentCircuit,
@@ -686,8 +681,6 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
         /,
     ) -> ThermalEquivalentCircuitLedger:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         parameters = runtime_inputs.parameters
         _check_parameters(prepared_model, parameters)
         states = native_solution.states

@@ -18,7 +18,7 @@ from ..._holomorphic import HolomorphicPotentialProvider
 from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ..._strict import StrictModule
 from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 
 
@@ -263,6 +263,7 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
     out_size: int = eqx.field(static=True)
     _certificate: TrialSpaceCertificate
 
+    @checked
     def __init__(
         self,
         potential: HolomorphicPotentialProvider,
@@ -275,8 +276,6 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
     ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
-        if not isinstance(material, PlaneIsotropicMaterial):
-            raise TypeError("material must be PlaneIsotropicMaterial.")
         if output not in ("mixed", "stress"):
             raise ValueError("Plane elasticity output must be 'mixed' or 'stress'.")
         holomorphic = potential.holomorphic_certificate()

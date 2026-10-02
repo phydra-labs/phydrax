@@ -32,6 +32,7 @@ from ...linalg import (
     RealTrigonometricTransform,
     SimilarityScaledLinearTransform,
 )
+from ...typing import checked
 from .._axis import AxisDiscretization
 from .._axis_domain import AxisDomain
 from .._spectral import ModalTransform
@@ -237,6 +238,7 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
     derivative_residual: float = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: AbstractSpectralBasisPlan,
@@ -256,18 +258,8 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         derivative_residual: float = 0.0,
         modal_transform: ModalTransform | None = None,
     ) -> None:
-        if not isinstance(plan, AbstractSpectralBasisPlan):
-            raise TypeError("plan must be an AbstractSpectralBasisPlan.")
-        if not isinstance(domain, AxisDomain):
-            raise TypeError("domain must be an AxisDomain.")
         if plan.periodic != domain.periodic_axis:
             raise ValueError("Basis periodicity must match its prepared axis domain.")
-        if not isinstance(modes, SpectralModeLayout):
-            raise TypeError("modes must be a SpectralModeLayout.")
-        if not isinstance(execution_transform, AbstractLinearTransform):
-            raise TypeError("execution_transform must be an AbstractLinearTransform.")
-        if not isinstance(precision, SpectralPrecisionPolicy):
-            raise TypeError("precision must be a SpectralPrecisionPolicy.")
         nodes_ = jnp.asarray(nodes, dtype=jnp.dtype(precision.physical_dtype)).reshape(
             (-1,)
         )

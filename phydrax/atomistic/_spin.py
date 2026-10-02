@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
+from ..typing import checked
 from ._graph import AtomisticGraph
 from ._system import PreparedAtomisticSystem
 
@@ -83,6 +84,7 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
     validation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -94,10 +96,6 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
         moment_unit: str,
         validation_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
-        if not isinstance(graph, AtomisticGraph):
-            raise TypeError("graph must be AtomisticGraph.")
         tolerance = float(validation_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("validation_tolerance must be finite and positive.")

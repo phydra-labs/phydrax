@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 
@@ -32,6 +33,7 @@ class ElectrolyteTransportParameters(StrictModule, NonTrainableState):
     permittivity: Array
     parameters_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
@@ -40,8 +42,6 @@ class ElectrolyteTransportParameters(StrictModule, NonTrainableState):
         permittivity: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be ChemicalSpeciesSchema.")
         diffusivity = jnp.asarray(diffusivities)
         temperature_ = jnp.asarray(temperature, dtype=diffusivity.dtype)
         permittivity_ = jnp.asarray(permittivity, dtype=diffusivity.dtype)
@@ -106,6 +106,7 @@ class AbstractElectrochemicalClosure(StrictModule, NonTrainableState, abc.ABC):
 class IdealDiluteElectrochemicalClosure(AbstractElectrochemicalClosure):
     standard_concentrations: Array
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
@@ -113,8 +114,6 @@ class IdealDiluteElectrochemicalClosure(AbstractElectrochemicalClosure):
         *,
         standard_concentrations: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be ChemicalSpeciesSchema.")
         if standard_concentrations is None:
             values = np.asarray(
                 [

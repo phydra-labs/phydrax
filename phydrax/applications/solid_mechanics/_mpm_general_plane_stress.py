@@ -26,6 +26,7 @@ from ...equations import (
 )
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ...nonlinear import VectorLocalRootPlan
+from ...typing import checked
 
 
 # Per-particle (stress, trial state, energy, wave speed, dissipation, branch,
@@ -65,18 +66,15 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractImplicitMPMConstitutivePlan,
         orientation: MPMMaterialOrientation,
         /,
     ) -> None:
-        if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
-            raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3:
             raise ValueError("Oriented material wrapper currently requires 3-D base.")
-        if not isinstance(orientation, MPMMaterialOrientation):
-            raise TypeError("orientation must be MPMMaterialOrientation.")
         self.base = base
         self.orientation = orientation
         self.dimension = 3
@@ -189,6 +187,7 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractImplicitMPMConstitutivePlan,
@@ -196,8 +195,6 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
         *,
         root: VectorLocalRootPlan | None = None,
     ) -> None:
-        if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
-            raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":
             raise ValueError("General plane stress requires one 3-D base material.")
         root_ = (

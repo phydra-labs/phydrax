@@ -26,7 +26,7 @@ from ...backends import (
     BackendCapabilities,
 )
 from ...logging import emit
-from ...typing import parse
+from ...typing import checked, parse
 from ._closure import (
     CosmologyPhysicalState,
     CosmologyRealizationSignature,
@@ -122,6 +122,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
     request_id: str = eqx.field(static=True)
     model_form_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: CosmologyScaleContract,
@@ -147,8 +148,6 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         gauge: str = "synchronous",
         power_field: str = "cold_baryon",
     ) -> None:
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be CosmologyScaleContract.")
         scalar_values = tuple(
             float(value)
             for value in (
@@ -400,9 +399,8 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             versions=((self.backend_name, self.backend_version),),
         )
 
+    @checked
     def run(self, request: CosmologyModelRequest, /) -> CosmologyModelResult:
-        if not isinstance(request, CosmologyModelRequest):
-            raise TypeError("request must be CosmologyModelRequest.")
         availability = self.availability()
         if not availability.available:
             raise RuntimeError(

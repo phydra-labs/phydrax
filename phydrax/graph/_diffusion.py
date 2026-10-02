@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._ir import GraphIR
 
 
@@ -61,6 +61,7 @@ class FixedTopologyGraphDiffusion(StrictModule):
     payload_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         template: GraphIR,
@@ -73,8 +74,6 @@ class FixedTopologyGraphDiffusion(StrictModule):
     ) -> None:
         from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
 
-        if not isinstance(template, GraphIR):
-            raise TypeError("template must be a GraphIR.")
         if not isinstance(process, AbstractGaussianDiffusion):
             raise TypeError("process must implement AbstractGaussianDiffusion.")
         payload_kind = parse(payload_kind, GraphPayloadKind, "payload_kind")
@@ -100,9 +99,8 @@ class FixedTopologyGraphDiffusion(StrictModule):
             }
         )
 
+    @checked
     def _require_topology(self, graph: GraphIR, /) -> Array:
-        if not isinstance(graph, GraphIR):
-            raise TypeError("graph must be a GraphIR.")
         if not (
             _optional_array_equal(graph.senders, self.template.senders)
             and _optional_array_equal(graph.receivers, self.template.receivers)

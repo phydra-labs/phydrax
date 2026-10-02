@@ -12,6 +12,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._execution import (
     _realize_lattice_boltzmann,
     lattice_boltzmann_equivalence,
@@ -40,6 +41,7 @@ class FusedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
     backend: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: ReferenceLatticeBoltzmannExecutionPlan,
@@ -47,8 +49,6 @@ class FusedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         *,
         backend: str = "jax",
     ) -> None:
-        if not isinstance(reference, ReferenceLatticeBoltzmannExecutionPlan):
-            raise TypeError("reference must be a reference LBM execution plan.")
         if backend != "jax":
             raise ValueError("Fused LBM execution supports only the JAX backend.")
         self.reference = reference

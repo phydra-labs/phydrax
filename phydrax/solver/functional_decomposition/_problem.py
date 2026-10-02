@@ -25,7 +25,7 @@ from ...domain import (
 )
 from ...enforcement import EnforcementProgram
 from ...terms import ResidualPenalty
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 
 
 ScopeKind = Literal["patch", "pair", "global"]
@@ -66,9 +66,8 @@ class ScopedFunctionalTerm(StrictModule):
     term: AbstractScalarTerm
     scope: TermScope
 
+    @checked
     def __init__(self, term: AbstractScalarTerm, scope: TermScope, /) -> None:
-        if not isinstance(term, AbstractScalarTerm):
-            raise TypeError("term must be an AbstractScalarTerm.")
         if not isinstance(scope, (PatchScope, PairScope, GlobalScope)):
             raise TypeError("scope must be PatchScope, PairScope, or GlobalScope.")
         self.term = term

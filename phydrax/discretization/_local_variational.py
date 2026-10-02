@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._integration_domain import IntegrationDomain
 from ._lifecycle import AbstractPreparedDiscretization
 from ._spaces import DiscreteFieldSpace
@@ -299,11 +300,10 @@ class LocalVariationalOffer(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def select(
         self, request: LocalVariationalRequest, /
     ) -> LocalVariationalSelection | None:
-        if not isinstance(request, LocalVariationalRequest):
-            raise TypeError("request must be LocalVariationalRequest.")
         kernel = (
             self.automatic_kernel_mode
             if request.requested_kernel_mode == "auto"
@@ -376,9 +376,8 @@ class LocalVariationalCapabilities(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def select(self, request: LocalVariationalRequest, /) -> LocalVariationalSelection:
-        if not isinstance(request, LocalVariationalRequest):
-            raise TypeError("request must be LocalVariationalRequest.")
         for offer in self.offers:
             selection = offer.select(request)
             if selection is not None:
@@ -405,6 +404,7 @@ class LocalFieldBinding(StrictModule, NonTrainableState):
     layout_id: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -418,8 +418,6 @@ class LocalFieldBinding(StrictModule, NonTrainableState):
         layout_id: str,
     ) -> None:
         name_ = str(name)
-        if not isinstance(field_space, DiscreteFieldSpace):
-            raise TypeError("field_space must be a DiscreteFieldSpace.")
         components = tuple(component_shape)
         public = tuple(public_shape)
         execution = tuple(execution_shape)
@@ -715,6 +713,7 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
     valid: Array
     region_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain: IntegrationDomain,
@@ -735,8 +734,6 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
         trace_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be an IntegrationDomain.")
         block = str(block_name)
         cell = str(cell_kind)
         if not block or not cell:

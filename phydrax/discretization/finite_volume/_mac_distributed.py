@@ -20,6 +20,7 @@ from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import FaceVelocity, PreparedMACOperators
 from ._mac_momentum import PreparedMACMomentumOperators
 
@@ -384,6 +385,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
     layout_id: str = eqx.field(static=True)
     execution_group_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -395,12 +397,6 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
         halo_width: int = 1,
         execution_group_id: str | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
-        if not isinstance(mesh, Mesh):
-            raise TypeError("mesh must be a caller-owned jax.sharding.Mesh.")
-        if not isinstance(pressure_sharding, NamedSharding):
-            raise TypeError("pressure_sharding must be NamedSharding.")
         faces = tuple(face_shardings)
         dimension = len(operators.discretization.cell_shape)
         if len(faces) != dimension or any(
@@ -637,14 +633,13 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
     status: MACDistributedPlanStatus
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MACDistributedTopologyPlan,
         momentum: PreparedMACMomentumOperators | None = None,
         /,
     ) -> None:
-        if not isinstance(plan, MACDistributedTopologyPlan):
-            raise TypeError("plan must be MACDistributedTopologyPlan.")
         if momentum is not None and not isinstance(
             momentum, PreparedMACMomentumOperators
         ):
@@ -914,10 +909,9 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
             for value, sharding in zip(values, self.plan.face_shardings, strict=True)
         )
 
+    @checked
     def validate(self, state: MACDistributedState, /) -> MACDistributedState:
         self._require_ready()
-        if not isinstance(state, MACDistributedState):
-            raise TypeError("state must be MACDistributedState.")
         if (
             state.topology_id != self.plan.topology_id
             or state.layout_id != self.plan.layout_id

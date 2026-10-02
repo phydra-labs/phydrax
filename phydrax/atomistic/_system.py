@@ -21,6 +21,7 @@ from ..discretization import (
     ParticleSetPlan,
     PeriodicCell,
 )
+from ..typing import checked
 from ._sites import AtomisticCoordinateMapPlan, PreparedAtomisticCoordinateMap
 from ._topology import MolecularTopologyPlan, PreparedMolecularTopology
 from ._types import AtomicStructure
@@ -48,6 +49,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
     coordinate_dtype: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_ids: ArrayLike,
@@ -70,8 +72,6 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         coordinate_dtype: Any = "float64",
         system_id: str | None = None,
     ) -> None:
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be an AtomisticUnitSystem.")
         ids = np.asarray(particle_ids)
         numbers = np.asarray(atomic_numbers)
         mass = np.asarray(masses)
@@ -226,6 +226,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         self.system_id = resolved
 
     @classmethod
+    @checked
     def from_structure(
         cls,
         structure: AtomicStructure,
@@ -233,8 +234,6 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         /,
         **kwargs: Any,
     ) -> "AtomisticSystemPlan":
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be an AtomicStructure.")
         if structure.scale.scale_id != units.scale.scale_id:
             raise ValueError("Structure and dynamics units must share one exact scale.")
         cell = kwargs.pop("cell", None)
@@ -257,6 +256,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
             **kwargs,
         )
 
+    @checked
     def with_cell(self, cell: PeriodicCell, /) -> "AtomisticSystemPlan":
         """Return the same particle identity, topology, and site map in another cell.
 
@@ -264,8 +264,6 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         ``system_id``; an explicitly supplied identifier never transfers to a
         different fixed cell.
         """
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
         return AtomisticSystemPlan(
             self.particle_ids,
             self.atomic_numbers,
@@ -305,11 +303,10 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: AtomisticSystemPlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, AtomisticSystemPlan):
-            raise TypeError("plan must be an AtomisticSystemPlan.")
         particles = ParticleSetPlan(
             plan.particle_ids,
             plan.masses,

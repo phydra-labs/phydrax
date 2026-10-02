@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._density import metric_volume_density, VolumeDensity
 from ._map import Immersion
@@ -27,14 +28,13 @@ class RiemannianHypersurface(StrictModule):
     metric: RiemannianMetric
     conormal_function: Callable[[Array], Array]
 
+    @checked
     def __init__(
         self,
         metric: RiemannianMetric,
         conormal: Callable[[Array], Array],
         /,
     ) -> None:
-        if not isinstance(metric, RiemannianMetric):
-            raise TypeError("RiemannianHypersurface requires a RiemannianMetric.")
         if not callable(conormal):
             raise TypeError("conormal must be callable.")
         self.metric = metric

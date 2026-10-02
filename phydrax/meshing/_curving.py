@@ -53,6 +53,7 @@ from ..linalg import (
     SmallLinearSolvePlan,
 )
 from ..optim import MinimizationResult, OptimizationStatus, OptimizationTermination
+from ..typing import checked
 from ._association import (
     _entity_rows,
     _incidence_pairs,
@@ -229,6 +230,7 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
     accepted: bool = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         certificate: CellValidityCertificate,
@@ -241,8 +243,6 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         maximum_distortion: float,
         /,
     ) -> None:
-        if not isinstance(certificate, CellValidityCertificate):
-            raise TypeError("certificate must be CellValidityCertificate.")
         dims = np.asarray(node_dimensions, dtype=np.int8)
         indices = np.asarray(node_indices, dtype=np.int32)
         mask = np.asarray(constrained, dtype=np.bool_)

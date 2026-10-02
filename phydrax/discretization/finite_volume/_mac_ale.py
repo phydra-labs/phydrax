@@ -25,6 +25,7 @@ from ...linalg import (
     SmallLinearSolvePlan,
     solve_small_linear,
 )
+from ...typing import checked
 from .._axis import broadcasted_grid
 from ._incompressible import _difference, FaceVelocity
 from ._structured import FiniteVolumeDiscretization
@@ -367,9 +368,8 @@ class PreparedMappedMACGeometry(StrictModule, NonTrainableState):
     report: MappedMACReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MappedMACGeometryPlan, /) -> None:
-        if not isinstance(plan, MappedMACGeometryPlan):
-            raise TypeError("plan must be MappedMACGeometryPlan.")
         (
             vertices,
             cell_centers,

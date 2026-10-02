@@ -37,6 +37,7 @@ from ...linalg import (
     prepare,
     solve,
 )
+from ...typing import checked
 from .._context import PermanentMultipoleEmbeddingState, PolarizableEmbeddingState
 from .._surface import (
     AbstractPreparedPotentialEnergySurface,
@@ -87,6 +88,7 @@ class PolarizableEmbeddedRegionEvaluation(StrictModule, NonTrainableState):
     provider_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         embedded: EmbeddedRegionEvaluation,
@@ -95,8 +97,6 @@ class PolarizableEmbeddedRegionEvaluation(StrictModule, NonTrainableState):
         provider_id: str,
         /,
     ) -> None:
-        if not isinstance(embedded, EmbeddedRegionEvaluation):
-            raise TypeError("embedded must be EmbeddedRegionEvaluation.")
         field = jnp.asarray(
             electric_field_at_sites, dtype=embedded.point_charge_forces.dtype
         )

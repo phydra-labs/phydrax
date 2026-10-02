@@ -64,6 +64,7 @@ from ...optim import (
     solve_quadratic_program,
     SQP,
 )
+from ...typing import checked
 from ..solid_mechanics._rod_reconstruction import (
     _integrate,
     _total_strain,
@@ -364,6 +365,7 @@ class ContinuumShapeTask(StrictModule, NonTrainableState):
     reconstruction_id: str = eqx.field(static=True)
     task_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: PreparedRodReconstruction,
@@ -374,8 +376,6 @@ class ContinuumShapeTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(reconstruction, PreparedRodReconstruction):
-            raise TypeError("reconstruction must be a PreparedRodReconstruction.")
         count = reconstruction.plan.queries.query_count
         dtype = reconstruction.reduced.coefficient_space.dtype
         target = _finite_real_array(target_positions, (count, 3), "target_positions")
@@ -408,6 +408,7 @@ class ContinuumPostureTask(StrictModule, NonTrainableState):
     reconstruction_id: str = eqx.field(static=True)
     task_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: PreparedRodReconstruction,
@@ -418,8 +419,6 @@ class ContinuumPostureTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(reconstruction, PreparedRodReconstruction):
-            raise TypeError("reconstruction must be a PreparedRodReconstruction.")
         space = reconstruction.reduced.coefficient_space
         count = space.size
         target = _finite_real_array(target_coefficients, (count,), "target_coefficients")
@@ -587,6 +586,7 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
     residual_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: PreparedRodReconstruction,
@@ -595,8 +595,6 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
         *,
         rotation_chart_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(reconstruction, PreparedRodReconstruction):
-            raise TypeError("reconstruction must be a PreparedRodReconstruction.")
         tasks_ = tuple(tasks)
         task_types = (
             ContinuumPositionTask,
@@ -839,6 +837,7 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
             problem_id=f"continuum-ik:sqp:{self.plan_id}",
         )
 
+    @checked
     def implicit_solution(
         self,
         initial_coefficients: ArrayLike,
@@ -849,14 +848,10 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
     ) -> Array:
         """Differentiate only an unbounded regular local NLS solution."""
 
-        if not isinstance(method, AbstractLeastSquaresMethod):
-            raise TypeError("method must be an AbstractLeastSquaresMethod.")
         if isinstance(method, AbstractBoundedLeastSquaresMethod):
             raise ValueError("Implicit continuum IK does not support coefficient bounds.")
         if not method.capabilities.implicit_differentiation:
             raise ValueError("method does not support implicit differentiation.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination.")
         initial = self._coefficients(initial_coefficients)
         return implicit_least_squares(
             self.least_squares_problem(),
@@ -973,6 +968,7 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def solve_least_squares(
         self,
         initial_coefficients: ArrayLike,
@@ -982,10 +978,6 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
         termination: OptimizationTermination,
         coefficient_bounds: Bounds | None = None,
     ) -> ContinuumInverseKinematicsResult:
-        if not isinstance(method, AbstractLeastSquaresMethod):
-            raise TypeError("method must be an AbstractLeastSquaresMethod.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination.")
         bounded = isinstance(method, AbstractBoundedLeastSquaresMethod)
         if bounded != (coefficient_bounds is not None):
             raise ValueError(
@@ -1001,6 +993,7 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
         )
         return self._result(source, optimizer, coefficient_bounds, "nls")
 
+    @checked
     def solve_sqp(
         self,
         initial_coefficients: ArrayLike,
@@ -1010,10 +1003,6 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
         termination: OptimizationTermination,
         coefficient_bounds: Bounds | None = None,
     ) -> ContinuumInverseKinematicsResult:
-        if not isinstance(method, SQP):
-            raise TypeError("method must be SQP.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination.")
         source = self._coefficients(initial_coefficients)
         self.reconstruction.evaluate(ReducedRodState(source, jnp.zeros_like(source)))
         optimizer = minimize(
@@ -1079,6 +1068,7 @@ class ContinuumDifferentialIKPlan(StrictModule, NonTrainableState):
     time_step: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         inverse_kinematics: ContinuumInverseKinematicsPlan,
@@ -1088,10 +1078,6 @@ class ContinuumDifferentialIKPlan(StrictModule, NonTrainableState):
         velocity_regularization: ArrayLike = 1.0e-8,
         time_step: float = 1.0,
     ) -> None:
-        if not isinstance(inverse_kinematics, ContinuumInverseKinematicsPlan):
-            raise TypeError(
-                "inverse_kinematics must be a ContinuumInverseKinematicsPlan."
-            )
         gain = _nonnegative_scalar(correction_gain, "correction_gain")
         step = _positive_scalar(time_step, "time_step")
         count = inverse_kinematics.coordinate_count
@@ -1496,6 +1482,7 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
     controlled: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plant: AbstractDiscretePlant,
@@ -1509,18 +1496,6 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
         profile: Literal["passive", "tendon"],
         running_control_weight: float = 1.0e-6,
     ) -> None:
-        if not isinstance(plant, AbstractDiscretePlant):
-            raise TypeError("plant must be an AbstractDiscretePlant.")
-        if not isinstance(state_codec, PlantStateVectorCodec):
-            raise TypeError("state_codec must be a PlantStateVectorCodec.")
-        if not isinstance(parameters, PlantParameters):
-            raise TypeError("parameters must be PlantParameters.")
-        if not isinstance(inverse_kinematics, ContinuumInverseKinematicsPlan):
-            raise TypeError(
-                "inverse_kinematics must be a ContinuumInverseKinematicsPlan."
-            )
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         if parameters.schema_id != plant.parameter_schema.schema_id:
             raise ValueError("parameters must bind the plant parameter schema.")
         if parameters.numeric_revision.revision_id != plant.numeric_revision.revision_id:
@@ -1643,9 +1618,8 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
         start = self.coefficient_offset
         return flat[start : start + self.coefficient_count]
 
+    @checked
     def _initial_point(self, initial_state: PlantRuntimeState, /) -> EncodedPlantState:
-        if not isinstance(initial_state, PlantRuntimeState):
-            raise TypeError("initial_state must be a PlantRuntimeState.")
         self.plant.checkpoint(initial_state)
         if initial_state.time.shape != () or initial_state.step_index.shape != ():
             raise ValueError("Trajectory initial runtime metadata must be scalar.")
@@ -1698,6 +1672,7 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
             problem_id=f"smooth-reduced-rod-control:{self.plan_id}",
         )
 
+    @checked
     def sqp_problem(
         self,
         initial_state: PlantRuntimeState,
@@ -1706,10 +1681,6 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
         *,
         control_bounds: Bounds | None = None,
     ) -> MinimizationProblem:
-        if not isinstance(parameterization, BSplineControlParameterization):
-            raise TypeError(
-                "Smooth trajectory SQP requires BSplineControlParameterization."
-            )
         problem = self.control_problem(initial_state)
         if parameterization.control_shape != problem.control_shape:
             raise ValueError("parameterization control shape does not match the plant.")
@@ -1815,6 +1786,7 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
             self.state_codec.codec_id,
         )
 
+    @checked
     def solve_sqp(
         self,
         initial_state: PlantRuntimeState,
@@ -1826,10 +1798,6 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
         termination: OptimizationTermination,
         control_bounds: Bounds | None = None,
     ) -> SmoothReducedRodTrajectoryResult:
-        if not isinstance(method, SQP):
-            raise TypeError("method must be SQP.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination.")
         initial = jnp.asarray(initial_coefficients)
         if initial.shape != parameterization.parameter_shape:
             raise ValueError(

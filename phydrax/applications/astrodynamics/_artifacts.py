@@ -22,6 +22,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import ArtifactManifest
+from ...typing import checked
 from ...units import (
     ANGLE,
     convert_value,
@@ -117,11 +118,10 @@ class AstrodynamicsDataStore(StrictModule, NonTrainableState):
             {"kind": "astrodynamics-data-store", "root": str(path)}
         )
 
+    @checked
     def resolve(
         self, relative_path: str, manifest: ArtifactManifest, /
     ) -> PinnedArtifact:
-        if not isinstance(manifest, ArtifactManifest):
-            raise TypeError("manifest must be an ArtifactManifest.")
         relative = Path(relative_path)
         if relative.is_absolute() or not relative.parts or ".." in relative.parts:
             raise ValueError("Artifact path escapes the configured store.")
@@ -151,6 +151,7 @@ class AstronomyCoefficientTable(StrictModule, NonTrainableState):
     provenance: AstrodynamicsDataProvenance
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: str,
@@ -165,8 +166,6 @@ class AstronomyCoefficientTable(StrictModule, NonTrainableState):
             jax.lax.stop_gradient(jnp.asarray(coefficients[name], dtype=jnp.float64))
             for name in names
         )
-        if not isinstance(angle_unit, UnitDefinition):
-            raise TypeError("angle_unit must be a UnitDefinition.")
         if (
             not model
             or not frame_id

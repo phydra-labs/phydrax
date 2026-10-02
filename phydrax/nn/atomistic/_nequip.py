@@ -35,7 +35,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ..layers import Linear
 from ..operator.layers import o3_gated_activation, O3TensorProduct, O3TensorProductPlan
 from ..operator.representations import O3Features, O3Representation
@@ -336,9 +336,8 @@ class NequIPPotential(AbstractAtomisticPotential):
             species_kind=self.configuration.species_kind
         )
 
+    @checked
     def _validate_batch(self, batch: AtomisticBatch, /) -> None:
-        if not isinstance(batch, AtomisticBatch):
-            raise TypeError("batch must be an AtomisticBatch.")
         if batch.scale.scale_id != self.scale.scale_id:
             raise ValueError(
                 "Potential and structure must share one exact scale contract."

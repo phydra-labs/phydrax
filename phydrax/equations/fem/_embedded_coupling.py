@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._moving_conservation import MovingTraceRoute
 
 
@@ -217,9 +218,8 @@ class ConservativeOversetPlan(StrictModule, NonTrainableState):
     connectivity: OversetConnectivity
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, connectivity: OversetConnectivity, /) -> None:
-        if not isinstance(connectivity, OversetConnectivity):
-            raise TypeError("connectivity must be OversetConnectivity.")
         self.connectivity = connectivity
         self.plan_id = canonical_fingerprint(
             {

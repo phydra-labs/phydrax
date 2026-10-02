@@ -56,6 +56,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import TopologyEpoch
 from ..sparse import EdgeRelation
+from ..typing import checked
 from ._film_contracts import PreparedFilmSurface
 from ._film_evidence import resolve_film_status
 from ._film_transport import outflow_courant, upwind_edge_flux
@@ -195,6 +196,7 @@ class SurfaceMeshMotion(StrictModule):
     area_rate_m2_s: Array
     evidence: SurfaceMotionEvidence
 
+    @checked
     def __init__(
         self,
         source: PreparedFilmSurface,
@@ -202,8 +204,6 @@ class SurfaceMeshMotion(StrictModule):
         step_size_s: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(source, PreparedFilmSurface):
-            raise TypeError("source must be a PreparedFilmSurface.")
         coordinates = jnp.asarray(target_coordinates, dtype=jnp.float64)
         if coordinates.shape != source.coordinates.shape:
             raise ValueError("target_coordinates must match the source coordinates.")

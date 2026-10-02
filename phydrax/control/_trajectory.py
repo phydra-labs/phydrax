@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..dynamics._system import DiscreteTransitionEvidence
+from ..typing import checked
 from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
 from ._problem import _identifier
@@ -48,6 +49,7 @@ class ControlTrajectory(StrictModule):
     discretization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -69,8 +71,6 @@ class ControlTrajectory(StrictModule):
         discretization_id: str,
         approximation_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("ControlTrajectory time_grid must be a TimeGrid.")
         cases = tuple(case_shape)
         states_shape = tuple(state_shape)
         controls_shape = tuple(control_shape)
@@ -168,6 +168,7 @@ class ControlResult(StrictModule):
     result_namespace: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -178,12 +179,6 @@ class ControlResult(StrictModule):
         result_namespace: str,
         method_id: str,
     ) -> None:
-        if not isinstance(trajectory, ControlTrajectory):
-            raise TypeError("ControlResult trajectory must be a ControlTrajectory.")
-        if not isinstance(sampled_loss, SampledControlLoss):
-            raise TypeError("sampled_loss must be a SampledControlLoss.")
-        if not isinstance(feasibility, SampledControlFeasibility):
-            raise TypeError("feasibility must be a SampledControlFeasibility.")
         if sampled_loss.case_shape != trajectory.case_shape:
             raise ValueError("sampled_loss case_shape must match the trajectory.")
         if feasibility.case_shape != trajectory.case_shape:

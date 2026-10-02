@@ -21,6 +21,7 @@ from ..discretization.fem import (
     vertex_interpolation_transfer,
 )
 from ..sparse import RowRelation, SparseLinearMap
+from ..typing import checked
 from ._result import CellMeshingResult
 
 
@@ -331,6 +332,7 @@ class CellMeshTransition(StrictModule, NonTrainableState):
     transition_kind: MeshTransitionKind = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_mesh_id: str,
@@ -346,10 +348,6 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         topology_id = str(source_topology_id).strip()
         if not mesh_id or not topology_id:
             raise ValueError("Transition source identities must be non-empty.")
-        if not isinstance(target, CellMeshingResult):
-            raise TypeError("target must be CellMeshingResult.")
-        if not isinstance(lineage, MeshLineage):
-            raise TypeError("lineage must be MeshLineage.")
         if (
             lineage.source_topology_id != topology_id
             or lineage.target_topology_id != target.mesh.topology_id

@@ -24,6 +24,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ...observation import CoordinateLayout, LinearObservationPlan, TheoryVector
+from ...typing import checked
 from ._full_dark_sector_runtime import FullDarkSectorStageLedger
 
 
@@ -92,6 +93,7 @@ class MetricStressObservables(StrictModule):
     source_ids: tuple[str, ...] = eqx.field(static=True)
     product_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: ADMGridGeometry,
@@ -104,10 +106,6 @@ class MetricStressObservables(StrictModule):
         frame_realization_id: str,
         source_ids: Sequence[str],
     ) -> None:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
-        if not isinstance(total_stress_energy, StressEnergyProjection):
-            raise TypeError("total_stress_energy must be StressEnergyProjection.")
         constraint = _real_array(constraint_defect, "constraint_defect")
         gauge = _real_array(gauge_defect, "gauge_defect", dtype=constraint.dtype)
         if constraint.size == 0 or gauge.size == 0:
@@ -717,11 +715,10 @@ class FullDarkSectorLedgerObservables(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_stage_ledger(
         cls, ledger: FullDarkSectorStageLedger, /
     ) -> "FullDarkSectorLedgerObservables":
-        if not isinstance(ledger, FullDarkSectorStageLedger):
-            raise TypeError("ledger must be FullDarkSectorStageLedger.")
         return cls(
             ledger.component_conservation,
             ledger.component_constraint,
@@ -915,11 +912,10 @@ class FullDarkSectorObservationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def apply(
         self, bundle: FullDarkSectorObservableBundle, /
     ) -> ObservedFullDarkSectorBundle:
-        if not isinstance(bundle, FullDarkSectorObservableBundle):
-            raise TypeError("bundle must be FullDarkSectorObservableBundle.")
         sources = bundle.theory_vectors()
         plans = (
             self.metric_stress,

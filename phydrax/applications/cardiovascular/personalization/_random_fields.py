@@ -25,7 +25,7 @@ from ....stochastic import (
     SpatialBasisSynthesis,
     StaticGaussianRandomField,
 )
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from ....uq import DenseCovariance
 from .._quantities import CardiovascularQuantitySpec
 
@@ -277,13 +277,12 @@ class CardiacRandomFieldRecipe:
         object.__setattr__(self, "rank", rank)
         object.__setattr__(self, "recipe_id", recipe_id)
 
+    @checked
     def instantiate(
         self, coordinates: CanonicalCardiacCoordinates, /
     ) -> CanonicalRandomField:
         """Prepare a native stochastic random field through a dense native eigensolve."""
 
-        if not isinstance(coordinates, CanonicalCardiacCoordinates):
-            raise TypeError("coordinates must be CanonicalCardiacCoordinates.")
         if len(self.correlation_lengths) != len(coordinates.axes):
             raise ValueError("A correlation length is required for every canonical axis.")
         if self.rank > coordinates.point_count:

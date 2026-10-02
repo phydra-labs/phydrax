@@ -18,7 +18,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractScalarTerm
 from ..domain import DomainFunction
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class DiffusionBridgeControlDataset(StrictModule):
@@ -77,6 +77,7 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
     field: str = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -88,8 +89,6 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
     ) -> None:
         if not field:
             raise ValueError("field must be non-empty.")
-        if not isinstance(dataset, DiffusionBridgeControlDataset):
-            raise TypeError("dataset must be DiffusionBridgeControlDataset.")
         if metric is not None and not callable(metric):
             raise TypeError("metric must be callable or None.")
         self.field = field

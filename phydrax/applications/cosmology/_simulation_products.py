@@ -37,6 +37,7 @@ from ...solver._runtime_lifecycle import (
     RuntimeCheckpointEnvelope,
     write_runtime_checkpoint,
 )
+from ...typing import checked
 from ._mixed_matter import (
     SharedPeriodicGravityResult,
     WaveParticleCosmologyResult,
@@ -295,9 +296,8 @@ class WaveSnapshotEvidence(StrictModule, NonTrainableState):
     producer_state_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, result: WaveDarkMatterResult, /) -> None:
-        if not isinstance(result, WaveDarkMatterResult):
-            raise TypeError("result must be WaveDarkMatterResult.")
         diagnostics = result.diagnostics
         values = (
             _scalar(diagnostics.norm[-1], "norm"),
@@ -384,6 +384,7 @@ class ParticleSnapshotEvidence(StrictModule, NonTrainableState):
     producer_scale_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         result: (
@@ -407,8 +408,6 @@ class ParticleSnapshotEvidence(StrictModule, NonTrainableState):
             ),
         ):
             raise TypeError("result must be a native cosmological particle result.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         if isinstance(
             result, (WaveParticleCosmologyResult, WaveParticleGasCosmologyResult)
         ):
@@ -519,13 +518,12 @@ class GasSnapshotEvidence(StrictModule, NonTrainableState):
     producer_identity: tuple[str, ...] = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         result: WaveParticleGasCosmologyResult,
         /,
     ) -> None:
-        if not isinstance(result, WaveParticleGasCosmologyResult):
-            raise TypeError("result must be WaveParticleGasCosmologyResult.")
         gas = result.state.gas
         fields = jnp.asarray(gas.cell_average)
         density = fields[..., 0]
@@ -618,9 +616,8 @@ class CommonGravitySnapshotEvidence(StrictModule, NonTrainableState):
     producer_result_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, result: SharedPeriodicGravityResult, /) -> None:
-        if not isinstance(result, SharedPeriodicGravityResult):
-            raise TypeError("result must be SharedPeriodicGravityResult.")
         values = (
             _scalar(result.poisson_relative_residual, "poisson_relative_residual"),
             _scalar(result.gauge_defect, "potential_zero_mode_absolute"),
@@ -693,6 +690,7 @@ class WaveSimulationSnapshot(StrictModule, NonTrainableState):
     poisson_result_id: str | None = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         psi: ArrayLike,
@@ -725,10 +723,6 @@ class WaveSimulationSnapshot(StrictModule, NonTrainableState):
             raise ValueError("Materialized wave density must match psi shape.")
         if potential_ is not None and potential_.shape != value.shape:
             raise ValueError("Materialized wave potential must match psi shape.")
-        if not isinstance(evidence, WaveSnapshotEvidence):
-            raise TypeError("evidence must be WaveSnapshotEvidence.")
-        if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         if prepared.prepared_id != evidence.producer_prepared_id:
             raise ValueError("Wave snapshot substituted its prepared solver identity.")
         state_id = _wave_state_content_id(value, scale)
@@ -867,6 +861,7 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
     producer_result_id: str = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stable_ids: ArrayLike,
@@ -926,8 +921,6 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
             or not jnp.issubdtype(lineage.dtype, jnp.integer)
         ):
             raise ValueError("Particle snapshot capacity arrays are inconsistent.")
-        if not isinstance(evidence, ParticleSnapshotEvidence):
-            raise TypeError("evidence must be ParticleSnapshotEvidence.")
         if not isinstance(
             producer_result,
             (
@@ -938,8 +931,6 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
             ),
         ):
             raise TypeError("producer_result must be a native particle result.")
-        if not isinstance(particle_support, ParticleDiscretization):
-            raise TypeError("particle_support must be ParticleDiscretization.")
         typed_state = (
             producer_result.state.particles
             if isinstance(
@@ -1116,6 +1107,7 @@ class GasSimulationSnapshot(StrictModule, NonTrainableState):
     producer_result_id: str = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         conserved_fields: ArrayLike,
@@ -1143,8 +1135,6 @@ class GasSimulationSnapshot(StrictModule, NonTrainableState):
             raise ValueError("Gas component names must be nonempty and unique.")
         if fields.ndim < 1 or fields.shape[-1] != len(components):
             raise ValueError("Gas conserved fields must end in the declared components.")
-        if not isinstance(evidence, GasSnapshotEvidence):
-            raise TypeError("evidence must be GasSnapshotEvidence.")
         density_names = {
             "density",
             "mass",
@@ -1239,6 +1229,7 @@ class CommonGravitySimulationSnapshot(StrictModule, NonTrainableState):
     potential_time_level: str = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         total_comoving_density: ArrayLike,
@@ -1265,10 +1256,6 @@ class CommonGravitySimulationSnapshot(StrictModule, NonTrainableState):
         scale = _scalar(scale_factor, "scale_factor")
         if potential_.shape != density.shape or acceleration.shape[:-1] != density.shape:
             raise ValueError("Common-gravity field shapes are inconsistent.")
-        if not isinstance(evidence, CommonGravitySnapshotEvidence):
-            raise TypeError("evidence must be CommonGravitySnapshotEvidence.")
-        if not isinstance(producer_result, SharedPeriodicGravityResult):
-            raise TypeError("producer_result must be SharedPeriodicGravityResult.")
         producer_id = _gravity_result_content_id(producer_result)
         if (
             evidence.producer_result_id != producer_id
@@ -1378,6 +1365,7 @@ class CosmologyOutputBundle(StrictModule, NonTrainableState):
     producer_result_id: str | None = eqx.field(static=True)
     bundle_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale_factor: ArrayLike,
@@ -1507,8 +1495,6 @@ class CosmologyOutputBundle(StrictModule, NonTrainableState):
         else:
             producer_result_id = None
         child_artifacts = tuple(child.artifact.artifact_id for child in children)
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be ScientificArtifactEnvelope.")
         if not set(child_artifacts).issubset(set(artifact.parent_artifact_ids)):
             raise ValueError(
                 "Bundle artifact must retain every child artifact as a parent."
@@ -1823,6 +1809,7 @@ class DarkMatterCheckpointPayload(StrictModule, NonTrainableState):
     contract_id: str = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         snapshot: DarkMatterRestartSnapshot,
@@ -1831,12 +1818,6 @@ class DarkMatterCheckpointPayload(StrictModule, NonTrainableState):
         contract_id: str,
         /,
     ) -> None:
-        if not isinstance(snapshot, DarkMatterRestartSnapshot):
-            raise TypeError("snapshot must be DarkMatterRestartSnapshot.")
-        if not isinstance(envelope, RuntimeCheckpointEnvelope):
-            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
-        if not isinstance(recovery, DarkMatterCheckpointRecoveryEvidence):
-            raise TypeError("recovery must be DarkMatterCheckpointRecoveryEvidence.")
         contract = _identifier(contract_id, "contract_id")
         if (
             recovery.contract_id != contract
@@ -1914,6 +1895,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
     runtime_id: str = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         /,
@@ -1940,8 +1922,6 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             raise TypeError(
                 "encoding_plan must be RuntimeCheckpointEncodingPlan or None."
             )
-        if not isinstance(restart_template, DarkMatterRestartSnapshot):
-            raise TypeError("restart_template must be DarkMatterRestartSnapshot.")
         profile = _identifier(profile_name, "profile_name")
         physics = _identifier(physics_id, "physics_id")
         supports = _identifiers(support_ids, "support_id")
@@ -2036,9 +2016,8 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             dtype=self.state_dtype,
         )
 
+    @checked
     def _require_snapshot_schema(self, snapshot: DarkMatterRestartSnapshot, /) -> None:
-        if not isinstance(snapshot, DarkMatterRestartSnapshot):
-            raise TypeError("snapshot must be DarkMatterRestartSnapshot.")
         stable_layout = canonical_fingerprint(
             {
                 "kind": "dark-matter-stable-id-layout",
@@ -2104,6 +2083,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             parent_chain_verified=snapshot.parent_checkpoint_id is None,
         )
 
+    @checked
     def _snapshot_from_envelope(
         self,
         envelope: RuntimeCheckpointEnvelope,
@@ -2112,8 +2092,6 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
         *,
         expected_parent_checkpoint_id: str | None | object,
     ) -> DarkMatterRestartSnapshot:
-        if not isinstance(envelope, RuntimeCheckpointEnvelope):
-            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
         self._require_snapshot_schema(template)
         if (
             envelope.mesh_id != self.topology_id
@@ -2201,11 +2179,10 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             raise ValueError("Restored checkpoint did not round-trip exactly.")
         return rebuilt
 
+    @checked
     def _verified_payload(
         self, payload: DarkMatterCheckpointPayload, /
     ) -> DarkMatterCheckpointPayload:
-        if not isinstance(payload, DarkMatterCheckpointPayload):
-            raise TypeError("payload must be DarkMatterCheckpointPayload.")
         if payload.contract_id != self.contract_id:
             raise ValueError("Checkpoint payload belongs to another contract.")
         restored = self._snapshot_from_envelope(

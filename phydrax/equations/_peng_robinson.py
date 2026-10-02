@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_components import ChemicalComponentCatalog
 from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
@@ -34,6 +35,7 @@ class PengRobinsonParameters(StrictModule, NonTrainableState):
     provenance: str = eqx.field(static=True)
     parameter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         catalog: ChemicalComponentCatalog,
@@ -45,8 +47,6 @@ class PengRobinsonParameters(StrictModule, NonTrainableState):
         *,
         provenance: str,
     ) -> None:
-        if not isinstance(catalog, ChemicalComponentCatalog):
-            raise TypeError("catalog must be ChemicalComponentCatalog.")
         temperature = np.asarray(critical_temperature, dtype=np.float64)
         pressure = np.asarray(critical_pressure, dtype=np.float64)
         acentric = np.asarray(acentric_factor, dtype=np.float64)
@@ -99,16 +99,13 @@ class PengRobinsonResidualHelmholtzTerm(AbstractMolarHelmholtzTerm):
 
     parameters: PengRobinsonParameters
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
         parameters: PengRobinsonParameters,
         /,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be ChemicalSpeciesSchema.")
-        if not isinstance(parameters, PengRobinsonParameters):
-            raise TypeError("parameters must be PengRobinsonParameters.")
         if schema.catalog.catalog_id != parameters.catalog.catalog_id:
             raise ValueError("Peng-Robinson parameters and schema catalogs must match.")
         if schema.species_count != schema.component_count or not np.array_equal(

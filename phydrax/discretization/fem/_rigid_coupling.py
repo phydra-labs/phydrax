@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -344,13 +345,12 @@ class RigidDeformableAttachmentPlan(StrictModule, NonTrainableState):
             finite,
         )
 
+    @checked
     def linearization(
         self,
         evaluation: RigidDeformableAttachmentEvaluation,
         /,
     ) -> RigidDeformableKKTLinearization:
-        if not isinstance(evaluation, RigidDeformableAttachmentEvaluation):
-            raise TypeError("evaluation must be RigidDeformableAttachmentEvaluation.")
         return RigidDeformableKKTLinearization(
             self.interpolation,
             self.bodies,

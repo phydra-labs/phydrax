@@ -16,6 +16,8 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
+
 
 @dataclass(frozen=True, slots=True)
 class AxisKey:
@@ -341,9 +343,8 @@ class AxisArray:
         )
         return AxisArray(result, axes=layout)
 
+    @checked
     def broadcast_like(self, other: AxisArray, /) -> AxisArray:
-        if not isinstance(other, AxisArray):
-            raise TypeError("broadcast_like expects an AxisArray.")
         references = tuple(
             dict.fromkeys((*self.layout.named_axes, *other.layout.named_axes))
         )

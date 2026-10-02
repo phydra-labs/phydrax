@@ -25,6 +25,7 @@ from .._likelihoods import (
     GaussianLikelihood,
 )
 from .._strict import StrictModule
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
         Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None
     ) = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         predict: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray],
@@ -84,8 +86,6 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
     ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
-        if not isinstance(likelihood, AbstractLikelihood):
-            raise TypeError("likelihood must implement AbstractLikelihood.")
         if parameters is not None and not callable(parameters):
             raise TypeError("parameters must be callable or None.")
         target_array = _field_data(target)
@@ -124,6 +124,7 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
         Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None
     ) = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         residual: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray],
@@ -137,8 +138,6 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
     ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
-        if not isinstance(likelihood, AbstractLikelihood):
-            raise TypeError("likelihood must implement AbstractLikelihood.")
         if parameters is not None and not callable(parameters):
             raise TypeError("parameters must be callable or None.")
         target_array = jnp.asarray(target)

@@ -10,6 +10,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._hypersurface import ProjectiveHypersurface
 
 
@@ -52,11 +53,10 @@ class HypersurfacePatchGeometry(StrictModule):
     hypersurface: ProjectiveHypersurface
     tolerance: float
 
+    @checked
     def __init__(
         self, hypersurface: ProjectiveHypersurface, /, *, tolerance: float = 1e-9
     ) -> None:
-        if not isinstance(hypersurface, ProjectiveHypersurface):
-            raise TypeError("hypersurface must be a ProjectiveHypersurface.")
         self.hypersurface = hypersurface
         self.tolerance = float(tolerance)
 

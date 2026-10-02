@@ -32,6 +32,7 @@ from ...linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
+from ...typing import checked
 
 
 ContinuumStudyStatus: TypeAlias = Literal["complete", "abstained"]
@@ -279,6 +280,7 @@ class ContinuumStudyPlan(StrictModule, NonTrainableState):
     maximum_matrix_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale_setting: ScaleSettingCondition,
@@ -292,10 +294,6 @@ class ContinuumStudyPlan(StrictModule, NonTrainableState):
         maximum_matrix_entries: int = 1_000_000,
         maximum_matrix_bytes: int = 64 * 1024 * 1024,
     ) -> None:
-        if not isinstance(scale_setting, ScaleSettingCondition):
-            raise TypeError("scale_setting must be ScaleSettingCondition.")
-        if not isinstance(renormalization, RenormalizationCondition):
-            raise TypeError("renormalization must be RenormalizationCondition.")
         resolved = tuple(variations)
         if not resolved or any(
             not isinstance(value, ContinuumSystematicVariation) for value in resolved

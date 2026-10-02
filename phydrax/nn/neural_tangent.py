@@ -32,7 +32,7 @@ from ..linalg import (
     PyTreeSpace,
     stochastic_trace,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 TangentKernelKind = Literal["euclidean", "parameter_metric"]
@@ -49,6 +49,7 @@ class PreparedEmpiricalNTK(StrictModule):
     kind: TangentKernelKind = eqx.field(static=True)
     ntk_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         linearization: PreparedLinearization,
@@ -57,8 +58,6 @@ class PreparedEmpiricalNTK(StrictModule):
         parameter_geometry: Any = None,
         ntk_id: str | None = None,
     ) -> None:
-        if not isinstance(linearization, PreparedLinearization):
-            raise TypeError("linearization must be a PreparedLinearization.")
         jacobian = JacobianLinearOperator(
             linearization,
             operator_id=f"{linearization.linearization_id}:jacobian",
@@ -161,10 +160,9 @@ class PreparedEmpiricalNTK(StrictModule):
     def vjp(self, cotangent: PyTree[Any], /) -> PyTree[Array]:
         return self.linearization.vjp(cotangent)
 
+    @checked
     def cross_kernel(self, other: PreparedEmpiricalNTK, /) -> FunctionLinearOperator:
         """Return ``J_self G⁻¹ J_other*`` for a shared parameter point."""
-        if not isinstance(other, PreparedEmpiricalNTK):
-            raise TypeError("other must be a PreparedEmpiricalNTK.")
         if self.kind != other.kind or not self.parameter_space.compatible(
             other.parameter_space
         ):

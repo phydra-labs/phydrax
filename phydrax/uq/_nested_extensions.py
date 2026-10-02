@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class NestedSamplingCapacity(StrictModule):
@@ -415,6 +416,7 @@ class NestedSamplingPlan(StrictModule):
     initial_live: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capacity: NestedSamplingCapacity,
@@ -425,12 +427,6 @@ class NestedSamplingPlan(StrictModule):
         initial_live: int,
         dynamic: DynamicNestedPolicy | None = None,
     ) -> None:
-        if not isinstance(capacity, NestedSamplingCapacity):
-            raise TypeError("capacity must be NestedSamplingCapacity.")
-        if not isinstance(prior, NestedPriorPlan):
-            raise TypeError("prior must be NestedPriorPlan.")
-        if not isinstance(proposal, NestedProposalPlan):
-            raise TypeError("proposal must be NestedProposalPlan.")
         if dynamic is not None and not isinstance(dynamic, DynamicNestedPolicy):
             raise TypeError("dynamic must be DynamicNestedPolicy or None.")
         live = int(initial_live)

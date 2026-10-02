@@ -21,7 +21,7 @@ from phydrax.domain import DomainFunction, PointBatch
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class ObservationActionEvidence(StrictModule):
@@ -106,6 +106,7 @@ class PointObservationAction(AbstractConditionOperator):
     capabilities: OperatorCapabilities = eqx.field(static=True)
     evidence: ObservationActionEvidence
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -117,8 +118,6 @@ class PointObservationAction(AbstractConditionOperator):
         field_ = str(field)
         if not field_:
             raise ValueError("Point observation field name must be non-empty.")
-        if not isinstance(batch, PointBatch):
-            raise TypeError("PointObservationAction requires a PointBatch.")
         components_ = _validated_components(components)
         _, count = _point_axis_and_count(batch)
         action_id = canonical_fingerprint(

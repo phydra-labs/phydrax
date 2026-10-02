@@ -21,6 +21,7 @@ from .._model._ports import (
     ValuePort,
 )
 from .._strict import StrictModule
+from ..typing import checked
 from ._layout import InputLayout, StateLayout
 from ._system import ContinuousSystem, DiscreteStepContext, DiscreteSystem
 
@@ -103,6 +104,7 @@ class ContinuousModelVectorField(StrictModule):
     has_input: bool = eqx.field(static=True)
     port_binding: PortBindingEvidence | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -112,10 +114,6 @@ class ContinuousModelVectorField(StrictModule):
         input_layout: InputLayout | None = None,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         if _value_shape(model.out_size) != state_layout.shape:
@@ -196,6 +194,7 @@ class DiscreteModelTransition(StrictModule):
     step_atol: float = eqx.field(static=True)
     input_mode: Literal["fixed", "duration", "interval"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -209,10 +208,6 @@ class DiscreteModelTransition(StrictModule):
         input_mode: Literal["fixed", "duration", "interval"] = "fixed",
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         binding = model.input_binding()
@@ -272,14 +267,13 @@ class DiscreteModelTransition(StrictModule):
         self.input_mode = input_mode
         self.port_binding = port_binding
 
+    @checked
     def __call__(
         self,
         context: DiscreteStepContext,
         state: Array,
         *arguments: Any,
     ) -> Array:
-        if not isinstance(context, DiscreteStepContext):
-            raise TypeError("DiscreteModelTransition requires DiscreteStepContext.")
         binding = self.model.input_binding()
         if self.has_input:
             if len(arguments) != 2:

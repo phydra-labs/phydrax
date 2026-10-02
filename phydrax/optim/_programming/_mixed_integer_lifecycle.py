@@ -11,6 +11,7 @@ import equinox as eqx
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._mixed_integer import (
     MixedIntegerCandidate,
     MixedIntegerProgram,
@@ -73,14 +74,13 @@ class MixedIntegerProgramPlan(StrictModule, NonTrainableState):
     problem_signature: tuple[str, str] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         program: MixedIntegerProgram,
         policy: MixedIntegerSolvePolicy | None = None,
         /,
     ) -> None:
-        if not isinstance(program, MixedIntegerProgram):
-            raise TypeError("program must be a MixedIntegerProgram.")
         policy_ = MixedIntegerSolvePolicy() if policy is None else policy
         if not isinstance(policy_, MixedIntegerSolvePolicy):
             raise TypeError("policy must be a MixedIntegerSolvePolicy.")

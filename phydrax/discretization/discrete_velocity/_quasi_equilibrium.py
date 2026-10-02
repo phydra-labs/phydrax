@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import checked
 from .._kinetic_entropy import solve_kinetic_entropy_root
 from ._compressible_contracts import (
     CompressibleKineticConservationEvidence,
@@ -49,6 +50,7 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
     slow_family: QuasiEquilibriumSlowFamily = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: PositiveCompressibleKineticPlan,
@@ -56,8 +58,6 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
         *,
         prandtl_number: float,
     ) -> None:
-        if not isinstance(model, PositiveCompressibleKineticPlan):
-            raise TypeError("model must be a PositiveCompressibleKineticPlan.")
         prandtl = float(prandtl_number)
         if not np.isfinite(prandtl) or prandtl <= 0.0:
             raise ValueError("prandtl_number must be finite and positive.")

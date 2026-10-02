@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver._mac_ale import MACALEStageGeometry
+from ...typing import checked
 from ._free_surface_ale import FaceTuple, PreparedGraphSurfaceALE
 
 
@@ -61,6 +62,7 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def stage(
         self,
         surface: PreparedGraphSurfaceALE,
@@ -75,8 +77,6 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         prescribed_velocity: FaceTuple | None = None,
         stage_tag: Any = None,
     ) -> FreeSurfaceBoundaryStage:
-        if not isinstance(surface, PreparedGraphSurfaceALE):
-            raise TypeError("surface must be PreparedGraphSurfaceALE.")
         eta_ = jnp.asarray(eta, dtype=geometry.cell_volumes.dtype)
         if eta_.shape != surface.eta_shape:
             raise ValueError("Boundary eta shape is invalid.")

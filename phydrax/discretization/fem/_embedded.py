@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator
+from ...typing import checked
 from ._generic import IntegrationDomain
 
 
@@ -123,14 +124,13 @@ class MultiscaleFiniteElementBasis(StrictModule, NonTrainableState):
     coefficient_version: str = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prolongation: AbstractLinearOperator,
         coefficient_version: str,
         /,
     ) -> None:
-        if not isinstance(prolongation, AbstractLinearOperator):
-            raise TypeError("prolongation must be AbstractLinearOperator.")
         version = str(coefficient_version)
         if not version:
             raise ValueError("coefficient_version must be non-empty.")

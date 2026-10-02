@@ -37,7 +37,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ...._validation import finite_real_scalar, positive_finite_float
 from ....special import jv
-from ....typing import ConvertibleToArray
+from ....typing import checked, ConvertibleToArray
 from .._field_map import InsertionDeviceField, InsertionDevicePolarization
 
 
@@ -145,6 +145,7 @@ class FELUndulatorSegment(StrictModule, NonTrainableState):
     phase_shift: float = eqx.field(static=True)
     segment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         device: InsertionDeviceField,
@@ -155,8 +156,6 @@ class FELUndulatorSegment(StrictModule, NonTrainableState):
         quadrupole_integrated_gradient: float = 0.0,
         phase_shift: float = 0.0,
     ) -> None:
-        if not isinstance(device, InsertionDeviceField):
-            raise TypeError("device must be an InsertionDeviceField.")
         drift = finite_real_scalar(drift_length, "drift_length")
         if drift < 0.0:
             raise ValueError("drift_length must be nonnegative.")
@@ -225,6 +224,7 @@ class FELUndulatorLattice(StrictModule, NonTrainableState):
     fundamental_couplings: tuple[float, ...] = eqx.field(static=True)
     lattice_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -233,8 +233,6 @@ class FELUndulatorLattice(StrictModule, NonTrainableState):
         *,
         step_length: float,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         segments_ = tuple(segments)
         if not segments_:
             raise ValueError("An FEL lattice needs at least one undulator segment.")

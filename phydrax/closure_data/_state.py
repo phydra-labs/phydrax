@@ -16,7 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ..units import DimensionSignature, parse_unit
 
 
@@ -216,6 +216,7 @@ class ClosureSnapshot(StrictModule, NonTrainableState):
     parent_ids: tuple[str, ...] = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -231,8 +232,6 @@ class ClosureSnapshot(StrictModule, NonTrainableState):
         representation: StateRepresentation = "nondimensional",
         parent_ids: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(schema, FlowStateSchema):
-            raise TypeError("schema must be a FlowStateSchema.")
         array = schema.validate(values, owner="Closure snapshot")
         time_value = float(time)
         identifiers = tuple(

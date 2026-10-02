@@ -20,6 +20,7 @@ from ..equations._matter_radiation_interactions import (
     cherenkov_yield_in_band,
     FoilStackTransitionRadiationPlan,
 )
+from ..typing import checked
 from ._charged_particle_transport import ChargedStepBank
 from ._secondary_stack import SecondaryParticleStack, SecondaryStackSpec
 
@@ -61,6 +62,7 @@ class ChargedStepRadiationPlan(StrictModule, NonTrainableState):
     photon_stack: SecondaryStackSpec
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         refractive_index: ArrayLike,
@@ -85,8 +87,6 @@ class ChargedStepRadiationPlan(StrictModule, NonTrainableState):
             or not 0.0 < lower < upper
         ):
             raise ValueError("Cherenkov indices and wavelength band are invalid.")
-        if not isinstance(photon_stack, SecondaryStackSpec):
-            raise TypeError("photon_stack must be SecondaryStackSpec.")
         if transition_radiation is not None and not isinstance(
             transition_radiation, FoilStackTransitionRadiationPlan
         ):
@@ -162,9 +162,8 @@ class ChargedStepRadiationPlan(StrictModule, NonTrainableState):
         )
         return count, radiated_energy
 
+    @checked
     def evaluate(self, step_bank: ChargedStepBank, /) -> ChargedStepRadiationResult:
-        if not isinstance(step_bank, ChargedStepBank):
-            raise TypeError("step_bank must be ChargedStepBank.")
         material_supported = jnp.all(
             ~step_bank.active
             | (

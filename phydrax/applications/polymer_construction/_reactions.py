@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticSystemPlan, MolecularTopologyPlan
+from ...typing import checked
 from ._recipes import PolymerConstructionResult, RealizedPolymerConnectionPort
 
 
@@ -145,6 +146,7 @@ class PolymerReactionState(StrictModule, NonTrainableState):
     initial_port_capacity: int = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -154,8 +156,6 @@ class PolymerReactionState(StrictModule, NonTrainableState):
         initial_port_capacity: int,
         /,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         port_values = tuple(ports)
         event_values = tuple(ledger)
         rank = 0 if system.cell is None else system.cell.vectors.shape[0]

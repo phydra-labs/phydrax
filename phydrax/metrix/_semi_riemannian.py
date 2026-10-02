@@ -14,6 +14,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._connection import LeviCivitaConnection
 from ._metric import (
     AbstractSemiRiemannianMetric,
@@ -178,14 +179,13 @@ class TimeOrientation(StrictModule):
     metric: LorentzianMetric
     vector_field: Callable[[Array], Array]
 
+    @checked
     def __init__(
         self,
         metric: LorentzianMetric,
         vector_field: Callable[[Array], Array],
         /,
     ) -> None:
-        if not isinstance(metric, LorentzianMetric):
-            raise TypeError("TimeOrientation requires a LorentzianMetric.")
         if not callable(vector_field):
             raise TypeError("Time-orientation vector_field must be callable.")
         self.metric = metric

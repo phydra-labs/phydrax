@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import LinearSolveStatus
 from ...optim import OptimizationStatus
+from ...typing import checked
 from ._topology import TopologyMechanicsProblem, TopologyOptimizationResult
 from ._topology_state import certify_state_adjoint, StateAdjointEvidence
 
@@ -106,6 +107,7 @@ class TopologyReanalysisPlan(StrictModule, NonTrainableState):
     uniform_reference_objective: Array | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference_problem: TopologyMechanicsProblem,
@@ -121,8 +123,6 @@ class TopologyReanalysisPlan(StrictModule, NonTrainableState):
         uniform_reference_objective: ArrayLike | None = None,
         plan_id: str = "topology-fe-reanalysis",
     ) -> None:
-        if not isinstance(reference_problem, TopologyMechanicsProblem):
-            raise TypeError("reference_problem must be TopologyMechanicsProblem.")
         if not callable(transfer) or not callable(finite_element_solve):
             raise TypeError("transfer and finite_element_solve must be callable.")
         if proposal is not None and not callable(proposal):

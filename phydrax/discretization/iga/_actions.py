@@ -18,6 +18,7 @@ from ..._interpolation._bspline import bspline_jet_stencil
 from ..._interpolation._rational_spline import RationalSplineJet
 from ..._interpolation._tensor_bspline import TensorBSplineJetPlan
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...typing import checked
 from .._local_variational import (
     LocalGeometryActions,
     LocalMetricResult,
@@ -174,6 +175,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
     kernel_modes: tuple[str, ...] = eqx.field(static=True)
     is_trace: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tensor_plan: TensorBSplineJetPlan,
@@ -191,8 +193,6 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         is_trace: bool,
         field_weights_from_geometry: bool = False,
     ) -> None:
-        if not isinstance(tensor_plan, TensorBSplineJetPlan):
-            raise TypeError("tensor_plan must be a TensorBSplineJetPlan.")
         rows = jnp.asarray(entity_rows, dtype=jnp.int32)
         weights = None if field_weights is None else jnp.asarray(field_weights)
         dynamic_weights = bool(field_weights_from_geometry)
@@ -396,6 +396,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
     facet_axis: int = eqx.field(static=True)
     facet_side: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tensor_plan: TensorBSplineJetPlan,
@@ -415,10 +416,6 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         facet_axis: int = -1,
         facet_side: int = 0,
     ) -> None:
-        if not isinstance(tensor_plan, TensorBSplineJetPlan):
-            raise TypeError("tensor_plan must be a TensorBSplineJetPlan.")
-        if not isinstance(qualification_policy, IsogeometricH1QualificationPolicy):
-            raise TypeError("qualification_policy is invalid.")
         kind = str(domain_kind)
         if kind not in ("cell", "exterior_facet"):
             raise ValueError("S1 IGA geometry supports only cell and exterior facets.")

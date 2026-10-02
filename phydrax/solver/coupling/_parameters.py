@@ -42,7 +42,7 @@ from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
 from ...linalg import LinearSolvePolicy
 from ...linalg._policies import DifferentiationMode
-from ...typing import parse
+from ...typing import checked, parse
 
 
 ParameterRole: TypeAlias = Literal["coefficient", "source", "boundary", "control"]
@@ -107,6 +107,7 @@ class ParameterBinding(StrictModule, NonTrainableState):
     derivative: DerivativeSurface | None = eqx.field(static=True)
     change: ParameterChange = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binding_id: str,
@@ -119,8 +120,6 @@ class ParameterBinding(StrictModule, NonTrainableState):
         change: ParameterChange = "refresh",
     ) -> None:
         identifier = canonical_identifier(binding_id, "binding_id")
-        if not isinstance(port, ValuePort):
-            raise TypeError("port must be a ValuePort.")
         if (
             not isinstance(targets, tuple)
             or not targets

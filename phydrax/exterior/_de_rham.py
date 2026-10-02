@@ -28,7 +28,7 @@ from ..metrix import (
     RiemannianMetric,
 )
 from ..operators.differential import domain_exterior_derivative, DomainDifferentialForm
-from ..typing import Dim, Float64
+from ..typing import checked, Dim, Float64
 from ._algebra import pullback
 from ._complex import AbstractDeRhamComplex, DiscreteForm
 
@@ -166,6 +166,7 @@ class DeRhamBridge(StrictModule):
     chart: CoordinateChart
     parameterizations: tuple[CellParameterization, ...]
 
+    @checked
     def __init__(
         self,
         complex: AbstractDeRhamComplex,
@@ -173,10 +174,6 @@ class DeRhamBridge(StrictModule):
         parameterizations: Sequence[CellParameterization],
         /,
     ) -> None:
-        if not isinstance(complex, AbstractDeRhamComplex):
-            raise TypeError("complex must be an AbstractDeRhamComplex.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         parameters = tuple(parameterizations)
         if len(parameters) != complex.dimension + 1:
             raise ValueError("One cell parameterization is required for every degree.")

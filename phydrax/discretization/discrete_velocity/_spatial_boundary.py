@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._quadrature import CertifiedDiscreteVelocityQuadrature
 from ._smooth_compressible import SmoothCompressibleKineticState
 
@@ -91,6 +92,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
     owner_counts: tuple[int, ...] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -102,8 +104,6 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         periodic_axes: tuple[bool, bool],
         physical_owner: SmoothCompressibleD2VLinkOwner,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if (
             quadrature.name != "D2V17"
             or quadrature.dimension != 2
@@ -277,9 +277,8 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
     def boundary_mask(self) -> Array:
         return self.owner >= int(SmoothCompressibleD2VLinkOwner.SPECULAR_ADIABATIC_WALL)
 
+    @checked
     def validate_state(self, state: SmoothCompressibleKineticState, /) -> None:
-        if not isinstance(state, SmoothCompressibleKineticState):
-            raise TypeError("state must be SmoothCompressibleKineticState.")
         if (
             state.particle_populations.shape != self.population_shape
             or state.total_energy_populations.shape != self.population_shape

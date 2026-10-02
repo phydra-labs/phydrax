@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._core import AbstractLayerKernel, BoundaryPanelization2D, KernelActionSide
 
 
@@ -93,6 +94,7 @@ class StokesLayerPotential2D(StrictModule, NonTrainableState):
     kind: Literal["single", "double"] = eqx.field(static=True)
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: BoundaryPanelization2D,
@@ -103,8 +105,6 @@ class StokesLayerPotential2D(StrictModule, NonTrainableState):
         kind: Literal["single", "double"] = "single",
         minimum_clearance: float,
     ) -> None:
-        if not isinstance(panelization, BoundaryPanelization2D):
-            raise TypeError("panelization must be BoundaryPanelization2D.")
         values = jnp.asarray(density, dtype=jnp.float64)
         if values.shape != (panelization.node_count, 2):
             raise ValueError("density must have shape (node_count, 2).")

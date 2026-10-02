@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver._dark_sector_epoch_runtime import DarkSectorEpochPlan, DarkSectorEpochState
+from ...typing import checked
 from ._off_shell_transport import (
     off_shell_evidence,
     OffShellTransportPlan,
@@ -183,6 +184,7 @@ class KadanoffBaymTransportPlan(StrictModule, NonTrainableState):
     unit_contract_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         off_shell: OffShellTransportPlan,
@@ -195,12 +197,6 @@ class KadanoffBaymTransportPlan(StrictModule, NonTrainableState):
         maximum_memory_bytes: int = 512_000_000,
         production_evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(off_shell, OffShellTransportPlan):
-            raise TypeError("off_shell must be an OffShellTransportPlan.")
-        if not isinstance(gradient, WignerGradientPlan):
-            raise TypeError("gradient must be a WignerGradientPlan.")
-        if not isinstance(epoch, DarkSectorEpochPlan):
-            raise TypeError("epoch must be a DarkSectorEpochPlan.")
         if (
             off_shell.spectral_shape[: 2 * gradient.dimension]
             != gradient.phase_space_shape

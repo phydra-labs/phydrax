@@ -27,6 +27,7 @@ from ...discretization.finite_volume._hydrostatic_grid import (
     HydrostaticMetricEpoch,
 )
 from ...solver import AbstractFixedStepMethod, FixedStepResult
+from ...typing import checked
 from ._external_mode import ExternalModeSubcycleSchedule
 from ._hydrostatic import (
     _cell_from_faces,
@@ -89,14 +90,13 @@ class HydrostaticContinuationState(StrictModule):
     subcycle_schedule: ExternalModeSubcycleSchedule
 
     @classmethod
+    @checked
     def initialize(
         cls,
         ocean: PreparedHydrostaticOcean,
         state: HydrostaticOceanState,
         /,
     ) -> "HydrostaticContinuationState":
-        if not isinstance(ocean, PreparedHydrostaticOcean):
-            raise TypeError("ocean must be a PreparedHydrostaticOcean.")
         names = tuple(sorted(state.tracer_inventory))
         zero_x = jnp.zeros(state.transports[0].shape[:-1], dtype=state.eta.dtype)
         zero_y = jnp.zeros(state.transports[1].shape[:-1], dtype=state.eta.dtype)
@@ -194,9 +194,8 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
     ocean: PreparedHydrostaticOcean
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, ocean: PreparedHydrostaticOcean, /) -> None:
-        if not isinstance(ocean, PreparedHydrostaticOcean):
-            raise TypeError("ocean must be PreparedHydrostaticOcean.")
         self.ocean = ocean
         self.method_id = canonical_fingerprint(
             {

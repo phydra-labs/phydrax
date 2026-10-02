@@ -50,6 +50,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._les_closures import (
     LESFilterScale,
     LESParameterProvenance,
@@ -161,6 +162,7 @@ class KSGSInputs(StrictModule):
     molecular_kinematic_viscosity: Array
     diffusion_rate: Array
 
+    @checked
     def __init__(
         self,
         velocity_gradient: ArrayLike,
@@ -169,8 +171,6 @@ class KSGSInputs(StrictModule):
         diffusion_rate: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(filter_scale, LESFilterScale):
-            raise TypeError("filter_scale must be LESFilterScale.")
         gradient = _inexact(velocity_gradient)
         if gradient.ndim < 2 or gradient.shape[-2:] != (3, 3):
             raise ValueError("KSGS velocity_gradient must have trailing shape (3, 3).")
@@ -186,11 +186,10 @@ class BuoyancyKSGSInputs(StrictModule):
     base: KSGSInputs
     buoyancy_frequency_squared: Array
 
+    @checked
     def __init__(
         self, base: KSGSInputs, buoyancy_frequency_squared: ArrayLike, /
     ) -> None:
-        if not isinstance(base, KSGSInputs):
-            raise TypeError("base must be KSGSInputs.")
         self.base = base
         self.buoyancy_frequency_squared = _inexact(buoyancy_frequency_squared)
 
@@ -212,6 +211,7 @@ class DynamicKSGSInputs(StrictModule):
     averaging_weight: Array
     accept_update: Array
 
+    @checked
     def __init__(
         self,
         base: KSGSInputs,
@@ -221,8 +221,6 @@ class DynamicKSGSInputs(StrictModule):
         accept_update: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(base, KSGSInputs):
-            raise TypeError("base must be KSGSInputs.")
         leonard = _inexact(leonard_stress)
         modeled = _inexact(modeled_stress)
         if leonard.shape != modeled.shape or leonard.shape[-2:] != (3, 3):
@@ -243,6 +241,7 @@ class LowReKSGSInputs(StrictModule):
     wall_distance: Array
     sqrt_kinetic_energy_gradient: Array
 
+    @checked
     def __init__(
         self,
         base: KSGSInputs,
@@ -250,8 +249,6 @@ class LowReKSGSInputs(StrictModule):
         sqrt_kinetic_energy_gradient: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(base, KSGSInputs):
-            raise TypeError("base must be KSGSInputs.")
         distance = _inexact(wall_distance)
         gradient = _inexact(sqrt_kinetic_energy_gradient)
         if gradient.ndim < 1 or gradient.shape[-1] != 3:
@@ -410,6 +407,7 @@ class DynamicKSGSPlan(AbstractKSGSPlan):
     test_filter: ResolvedLESFilter
     test_filter_scale_ratio: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coefficients: KSGSCoefficients,
@@ -418,8 +416,6 @@ class DynamicKSGSPlan(AbstractKSGSPlan):
         test_filter_scale_ratio: float,
         /,
     ) -> None:
-        if not isinstance(test_filter, ResolvedLESFilter):
-            raise TypeError("test_filter must be ResolvedLESFilter.")
         ratio = float(test_filter_scale_ratio)
         if not math.isfinite(ratio) or ratio <= 1.0:
             raise ValueError("Dynamic KSGS test-filter scale ratio must exceed one.")
@@ -490,6 +486,7 @@ class LowReKSGSPlan(AbstractKSGSPlan):
 
     low_re_coefficients: LowReKSGSCoefficients
 
+    @checked
     def __init__(
         self,
         coefficients: KSGSCoefficients,
@@ -497,8 +494,6 @@ class LowReKSGSPlan(AbstractKSGSPlan):
         provenance: LESParameterProvenance,
         /,
     ) -> None:
-        if not isinstance(low_re_coefficients, LowReKSGSCoefficients):
-            raise TypeError("low_re_coefficients must be LowReKSGSCoefficients.")
         _assign_plan(self, coefficients, provenance, "low-re-ksgs", low_re_coefficients)
         self.low_re_coefficients = low_re_coefficients
 

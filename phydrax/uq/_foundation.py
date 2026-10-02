@@ -17,7 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._diagnostics import MCMCDiagnostics
 from ._mcmc import MCMCResult
 from ._posterior import PosteriorProblem
@@ -38,6 +38,7 @@ class UncertainVariable(StrictModule):
     role: UncertainVariableRole = eqx.field(static=True)
     unit: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         variable_id: str,
@@ -48,8 +49,6 @@ class UncertainVariable(StrictModule):
         unit: str | None = None,
     ) -> None:
         identifier = _identifier(variable_id, "variable_id")
-        if not isinstance(law, AbstractProbabilityLaw):
-            raise TypeError("law must implement AbstractProbabilityLaw.")
         role = parse(role, UncertainVariableRole, "role")
         if unit is not None and (not isinstance(unit, str) or not unit):
             raise ValueError("unit must be a non-empty string or None.")
@@ -183,6 +182,7 @@ class PosteriorRecord(StrictModule):
     diagnostic_ids: tuple[str, ...] = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: UQPlan,
@@ -194,8 +194,6 @@ class PosteriorRecord(StrictModule):
     ) -> None:
         if not isinstance(plan, UQPlan) or plan.product != "calibration":
             raise TypeError("plan must be a calibration UQPlan.")
-        if not isinstance(result, MCMCResult):
-            raise TypeError("result must be an MCMCResult.")
         if result.algorithm not in ("hmc", "nuts"):
             raise ValueError(
                 "PosteriorRecord supports authoritative HMC or NUTS results."

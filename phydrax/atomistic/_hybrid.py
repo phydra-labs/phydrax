@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import ParticleNeighborhoodState
+from ..typing import checked
 from ._dynamics import (
     AtomisticDynamicsState,
     AtomisticEnergyLedgerState,
@@ -91,6 +92,7 @@ class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
+    @checked
     def __init__(
         self,
         term: AbstractAtomisticEnergyTerm,
@@ -99,8 +101,6 @@ class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
         *,
         name: str | None = None,
     ) -> None:
-        if not isinstance(term, AbstractAtomisticEnergyTerm):
-            raise TypeError("term must be AbstractAtomisticEnergyTerm.")
         if not term.capabilities.local_energy:
             raise ValueError("Region masking requires a local atom-energy decomposition.")
         identifier = (

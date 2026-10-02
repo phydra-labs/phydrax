@@ -14,7 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, BlockSpace
-from ...typing import parse
+from ...typing import checked, parse
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from .._core import (
@@ -126,6 +126,7 @@ class ExplicitPolygonH1Plan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -138,14 +139,10 @@ class ExplicitPolygonH1Plan(AbstractDiscretizationPlan):
         admissibility_policy: PolygonAdmissibilityPolicy | None = None,
         resource_budget: ExplicitPolygonH1ResourceBudget | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
             raise ValueError("Explicit polygon H1 requires a planar 2-D CellMesh.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError("Explicit polygon H1 requires polygon connectivity.")
-        if not isinstance(field, ExplicitPolygonH1FieldSpec):
-            raise TypeError("field must be ExplicitPolygonH1FieldSpec.")
         quadrature = (
             ExplicitPolygonH1QuadraturePolicy()
             if quadrature_policy is None
@@ -250,11 +247,10 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
+    @checked
     def __init__(
         self, plan: ExplicitPolygonH1Plan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, ExplicitPolygonH1Plan):
-            raise TypeError("plan must be ExplicitPolygonH1Plan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")

@@ -27,6 +27,7 @@ from ...dynamics import (
     InputLayout,
     TimeGrid,
 )
+from ...typing import checked
 from ._layout import PlayerControlPartition
 from ._linear_quadratic import (
     finite_horizon_lq_feedback_nash,
@@ -155,6 +156,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
     dynamics_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         nominal_states: ArrayLike,
@@ -171,12 +173,6 @@ class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
         case_shape: tuple[int, ...] = (),
         policy_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(input_layout, InputLayout):
-            raise TypeError("input_layout must be an InputLayout.")
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         if not isinstance(policy_id, str) or not policy_id:
             raise ValueError("policy_id must be a non-empty string.")
         if not isinstance(dynamics_id, str) or not dynamics_id:
@@ -329,6 +325,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
         index = jnp.clip(index, 0, self.time_grid.num_steps - 1)
         return self._evaluate_index(index, state)
 
+    @checked
     def evaluate_step(
         self,
         context: DiscreteStepContext,
@@ -339,8 +336,6 @@ class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
         """Evaluate the physical law at the context's exact stage index."""
 
         del args
-        if not isinstance(context, DiscreteStepContext):
-            raise TypeError("evaluate_step requires DiscreteStepContext.")
         index = eqx.error_if(
             context.step_index,
             (context.step_index < 0) | (context.step_index >= self.time_grid.num_steps),

@@ -43,6 +43,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._discretization import LatticeBoltzmannDiscretization
 from ._interfacial import isotropic_gradient
 from ._lattice import LatticeBoltzmannVelocitySet
@@ -187,6 +188,7 @@ class PreparedNearContactRepulsion(StrictModule, NonTrainableState):
     grid_shape: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: NearContactRepulsionPlan,
@@ -194,10 +196,6 @@ class PreparedNearContactRepulsion(StrictModule, NonTrainableState):
         discretization: LatticeBoltzmannDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, NearContactRepulsionPlan):
-            raise TypeError("plan must be NearContactRepulsionPlan.")
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be an LBM discretization.")
         identifiers = tuple(str(value) for value in component_ids)
         unknown = sorted(
             {value for pair in plan.repelling_pairs for value in pair} - set(identifiers)

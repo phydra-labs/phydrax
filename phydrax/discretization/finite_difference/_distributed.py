@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._boundary import HaloPlan
 from ._precision import FDExecutionPrecisionPolicy
 
@@ -34,6 +35,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
     precision: FDExecutionPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         global_shape: Sequence[int],
@@ -55,8 +57,6 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
             or axis >= len(shape)
         ):
             raise ValueError("Invalid distributed global shape or partition axis.")
-        if not isinstance(halo_plan, HaloPlan):
-            raise TypeError("halo_plan must be a HaloPlan.")
         selected = tuple(jax.devices() if devices is None else devices)
         if not selected or shape[axis] % len(selected):
             raise ValueError("Partition axis size must divide the selected device count.")

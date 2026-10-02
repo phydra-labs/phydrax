@@ -35,6 +35,7 @@ from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float, positive_integer
 from ...geometry import ConstrainedDelaunayTriangulation, TriangulationEvidence
 from ...geometry.simplicial import TriangleMesh
+from ...typing import checked
 
 
 _INLET, _OUTLET, _WIRE, _RIM = 0, 1, 2, 3
@@ -55,6 +56,7 @@ class SoapFilmTunnelMesh(StrictModule, NonTrainableState):
     triangulation: TriangulationEvidence
     mesh_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: TriangleMesh,
@@ -67,10 +69,6 @@ class SoapFilmTunnelMesh(StrictModule, NonTrainableState):
         *,
         geometry_id: str,
     ) -> None:
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("mesh must be a TriangleMesh.")
-        if not isinstance(triangulation, TriangulationEvidence):
-            raise TypeError("triangulation must be TriangulationEvidence.")
         self.mesh = mesh
         self.inlet_vertices = jnp.asarray(inlet_vertices, dtype=jnp.int32)
         self.outlet_vertices = jnp.asarray(outlet_vertices, dtype=jnp.int32)

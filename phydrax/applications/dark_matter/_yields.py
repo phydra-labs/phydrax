@@ -20,7 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...qualification import ReferenceArtifactManifest
-from ...typing import parse
+from ...typing import checked, parse
 from ..astrophysics._operators import SpectralField
 from ..astrophysics._photometry import ObservationDataProvenance
 
@@ -205,6 +205,7 @@ class ParticleYieldSpectrum(StrictModule, NonTrainableState):
     product_species: str = eqx.field(static=True)
     yield_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         continuum: SpectralField,
@@ -214,8 +215,6 @@ class ParticleYieldSpectrum(StrictModule, NonTrainableState):
         *,
         product_species: str,
     ) -> None:
-        if not isinstance(continuum, SpectralField):
-            raise TypeError("continuum must be a SpectralField.")
         if not isinstance(lines, ExactLineTable) or not isinstance(
             uncertainty, YieldUncertainty
         ):

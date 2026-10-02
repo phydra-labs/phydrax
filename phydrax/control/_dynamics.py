@@ -18,6 +18,7 @@ from ..dynamics import ContinuousSystem, DiscreteStepContext, DiscreteSystem, Ti
 from ..dynamics._system import DiscreteTransitionEvidence, DiscreteTransitionResult
 from ..solver._differential import DifferentialProblem, DifferentialSolution
 from ..solver._diffrax_backend import solve_diffrax
+from ..typing import checked
 from ._parameterization import (
     _validate_parameterization_grid,
     AbstractControlParameterization,
@@ -100,6 +101,7 @@ class DiscreteControlDynamics(StrictModule):
     system: DiscreteSystem
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: DiscreteSystem,
@@ -107,8 +109,6 @@ class DiscreteControlDynamics(StrictModule):
         *,
         method_id: str = "explicit-discrete-transition",
     ) -> None:
-        if not isinstance(system, DiscreteSystem):
-            raise TypeError("DiscreteControlDynamics system must be a DiscreteSystem.")
         if system.input_layout is None:
             raise ValueError("DiscreteControlDynamics requires a system with inputs.")
         self.system = system
@@ -127,6 +127,7 @@ class DiscreteControlDynamics(StrictModule):
     def dynamics_id(self) -> str:
         return self.system.system_id
 
+    @checked
     def rollout(
         self,
         time_grid: TimeGrid,
@@ -138,12 +139,6 @@ class DiscreteControlDynamics(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> ControlTrajectory:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(parameterization, AbstractControlParameterization):
-            raise TypeError(
-                "parameterization must implement AbstractControlParameterization."
-            )
         if parameterization.control_shape != self.control_shape:
             raise ValueError("parameterization control_shape does not match dynamics.")
         state, cases = _case_and_state(initial_state, self.state_shape)
@@ -352,6 +347,7 @@ class DifferentialControlDynamics(StrictModule):
     system: ContinuousSystem
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: ContinuousSystem,
@@ -359,10 +355,6 @@ class DifferentialControlDynamics(StrictModule):
         *,
         method_id: str = "canonical-differential-problem",
     ) -> None:
-        if not isinstance(system, ContinuousSystem):
-            raise TypeError(
-                "DifferentialControlDynamics system must be a ContinuousSystem."
-            )
         if system.input_layout is None:
             raise ValueError("DifferentialControlDynamics requires a system with inputs.")
         self.system = system
@@ -381,6 +373,7 @@ class DifferentialControlDynamics(StrictModule):
     def dynamics_id(self) -> str:
         return self.system.system_id
 
+    @checked
     def rollout(
         self,
         time_grid: TimeGrid,
@@ -401,12 +394,6 @@ class DifferentialControlDynamics(StrictModule):
         max_steps: int | None = 4096,
         throw: bool = False,
     ) -> ControlTrajectory:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(parameterization, AbstractControlParameterization):
-            raise TypeError(
-                "parameterization must implement AbstractControlParameterization."
-            )
         if parameterization.control_shape != self.control_shape:
             raise ValueError("parameterization control_shape does not match dynamics.")
         state, cases = _case_and_state(initial_state, self.state_shape)

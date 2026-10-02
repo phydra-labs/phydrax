@@ -13,6 +13,7 @@ import numpy as np
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -217,6 +218,7 @@ class GraphIR(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_edge_relation(
         cls,
         relation: EdgeRelation,
@@ -234,8 +236,6 @@ class GraphIR(StrictModule, NonTrainableState):
         Invalid routes carry node `0` as a safe endpoint and `edge_mask=False`;
         the relation validity array becomes the graph edge mask unchanged.
         """
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be an EdgeRelation.")
         if relation.source_size != relation.target_size:
             raise ValueError(
                 "A GraphIR view requires a relation from one node space onto itself."

@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._transfer import PreparedPICParticleCochainTransfer
 from ._types import PICTransferState
 
@@ -43,9 +44,8 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
     transfer: PreparedPICParticleCochainTransfer
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, transfer: PreparedPICParticleCochainTransfer, /) -> None:
-        if not isinstance(transfer, PreparedPICParticleCochainTransfer):
-            raise TypeError("transfer must be PreparedPICParticleCochainTransfer.")
         if transfer.bridge.dimension != 3:
             raise ValueError("Particle response currently requires three dimensions.")
         self.transfer = transfer

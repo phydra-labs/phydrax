@@ -14,7 +14,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ..core import FinancialTimestamp
 from ..market import MarketDataSnapshot, QuoteKey, QuoteObservation, ReferenceDataSnapshot
 
@@ -31,6 +31,7 @@ class PointInTimePanelDefinition(StrictModule):
     clock: PanelClock = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quote_keys: Sequence[QuoteKey],
@@ -47,8 +48,6 @@ class PointInTimePanelDefinition(StrictModule):
             raise ValueError("quote_keys must be unique and canonically ordered.")
         if tuple(sorted(key.key_id for key in keys)) != tuple(key.key_id for key in keys):
             raise ValueError("quote_keys must be ordered by key_id.")
-        if not isinstance(analysis_time, FinancialTimestamp):
-            raise TypeError("analysis_time must be a FinancialTimestamp.")
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("capacity must be a positive integer.")
         capacity_ = capacity

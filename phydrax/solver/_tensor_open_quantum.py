@@ -26,6 +26,7 @@ from ..tensor_network import (
     mpo_hermiticity_residual,
 )
 from ..tensor_network._mpo import adjoint_mpo, apply_mpo_exact
+from ..typing import checked
 from ._purified_lindblad import apply_local_kraus_channel, LocalKrausChannel
 
 
@@ -40,11 +41,10 @@ class MPOHamiltonian(StrictModule):
     tolerance: float = eqx.field(static=True)
     hamiltonian_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, operator: MatrixProductOperator, /, *, tolerance: float = 1e-8
     ) -> None:
-        if not isinstance(operator, MatrixProductOperator):
-            raise TypeError("operator must be MatrixProductOperator.")
         tolerance_ = float(tolerance)
         if not isfinite(tolerance_) or tolerance_ < 0.0:
             raise ValueError("Hamiltonian tolerance must be finite and nonnegative.")
@@ -81,6 +81,7 @@ class MPOLindbladian(StrictModule):
     tolerance: float = eqx.field(static=True)
     lindbladian_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         generator: MatrixProductOperator,
@@ -88,8 +89,6 @@ class MPOLindbladian(StrictModule):
         *,
         tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(generator, MatrixProductOperator):
-            raise TypeError("generator must be MatrixProductOperator.")
         if generator.output_dimensions != generator.input_dimensions:
             raise ValueError("Lindbladian MPO must be square.")
         tolerance_ = float(tolerance)

@@ -26,6 +26,7 @@ from ....dynamics import (
     InputLayout,
     StateLayout,
 )
+from ....typing import checked
 
 
 POTVIN_FUGLEVAND_2017_DOI = "10.1371/journal.pcbi.1005581"
@@ -371,16 +372,13 @@ class PreparedPotvinFuglevand2017(StrictModule):
     parameters: PotvinFuglevand2017Parameters = parameter_field()
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PotvinFuglevand2017Plan,
         parameters: PotvinFuglevand2017Parameters,
         /,
     ) -> None:
-        if not isinstance(plan, PotvinFuglevand2017Plan):
-            raise TypeError("plan must be PotvinFuglevand2017Plan.")
-        if not isinstance(parameters, PotvinFuglevand2017Parameters):
-            raise TypeError("parameters must be PotvinFuglevand2017Parameters.")
         _validate_parameters_host(parameters, plan.unit_count)
         self.plan = plan
         self.parameters = parameters

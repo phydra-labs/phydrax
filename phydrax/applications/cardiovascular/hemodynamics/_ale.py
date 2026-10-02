@@ -18,6 +18,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....solver._mac_ale import MACALEGeometryPlan, MACALEResult, MACALEStageGeometry
+from ....typing import checked
 
 
 ALEGapProvider = Callable[[MACALEStageGeometry, Any], ArrayLike]
@@ -134,6 +135,7 @@ class CardiovascularALEPlan(StrictModule, NonTrainableState):
     gcl_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         motion: MACALEGeometryPlan,
@@ -145,12 +147,6 @@ class CardiovascularALEPlan(StrictModule, NonTrainableState):
         minimum_dual_measure: float = 1.0e-12,
         gcl_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(motion, MACALEGeometryPlan):
-            raise TypeError("motion must be MACALEGeometryPlan.")
-        if not isinstance(gap_route, ALEMinimumGapRoute):
-            raise TypeError(
-                "gap_route must be ALEMinimumGapRoute; true contact belongs to the leaflet contact workflow."
-            )
         measures = (
             float(minimum_cell_volume),
             float(minimum_face_measure),
@@ -190,9 +186,8 @@ class PreparedCardiovascularALE(StrictModule, NonTrainableState):
     plan: CardiovascularALEPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CardiovascularALEPlan, /) -> None:
-        if not isinstance(plan, CardiovascularALEPlan):
-            raise TypeError("plan must be CardiovascularALEPlan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-cardio-ale", "plan": plan.plan_id}
@@ -224,6 +219,7 @@ class PreparedCardiovascularALE(StrictModule, NonTrainableState):
             self.plan.gap_route.route_id,
         )
 
+    @checked
     def evidence(
         self,
         geometry: MACALEStageGeometry,
@@ -232,8 +228,6 @@ class PreparedCardiovascularALE(StrictModule, NonTrainableState):
         *,
         gap_evidence: ALEGapEvidence | None = None,
     ) -> ALEMeshEvidence:
-        if not isinstance(geometry, MACALEStageGeometry):
-            raise TypeError("geometry must be MACALEStageGeometry.")
         gap_evidence_ = (
             self._gap_evidence(
                 self.plan.gap_route.gap_provider(geometry, args),
@@ -286,6 +280,7 @@ class PreparedCardiovascularALE(StrictModule, NonTrainableState):
         geometry = self.plan.motion.evaluate(time, args)
         return geometry, self.evidence(geometry, args)
 
+    @checked
     def advance(
         self,
         state: CardiovascularALEState,
@@ -298,8 +293,6 @@ class PreparedCardiovascularALE(StrictModule, NonTrainableState):
         density: ArrayLike = 1.0,
         forcing: FaceVelocity | None = None,
     ) -> CardiovascularALETransition:
-        if not isinstance(state, CardiovascularALEState):
-            raise TypeError("state must be CardiovascularALEState.")
         start = jnp.asarray(start_time)
         step = jnp.asarray(step_size)
         end = start + step

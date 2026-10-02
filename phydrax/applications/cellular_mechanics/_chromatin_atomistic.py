@@ -22,6 +22,7 @@ from ...atomistic import (
     PreparedThermodynamicStateTable,
 )
 from ...discretization import PairSpringEvaluation
+from ...typing import checked
 from ._active_polymers import (
     ChromatinState,
     ChromatinStepResult,
@@ -107,6 +108,7 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
     site_slots: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ChromatinAtomisticCouplingPlan,
@@ -114,12 +116,6 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         chromatin: PreparedChromatinDynamics,
         /,
     ) -> None:
-        if not isinstance(plan, ChromatinAtomisticCouplingPlan):
-            raise TypeError("plan must be ChromatinAtomisticCouplingPlan.")
-        if not isinstance(atomistic, PreparedAtomisticDynamics):
-            raise TypeError("atomistic must be PreparedAtomisticDynamics.")
-        if not isinstance(chromatin, PreparedChromatinDynamics):
-            raise TypeError("chromatin must be PreparedChromatinDynamics.")
         if chromatin.plan.ambient_dimension != 3:
             raise ValueError(
                 "Atomistic chromatin coupling requires ambient dimension three."
@@ -187,6 +183,7 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         kinematics = eqx.tree_at(lambda value: value.momenta, state.kinematics, momentum)
         return eqx.tree_at(lambda value: value.kinematics, state, kinematics)
 
+    @checked
     def step(
         self,
         state: ChromatinAtomisticState,
@@ -194,8 +191,6 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         key: Array,
         /,
     ) -> ChromatinAtomisticStepResult:
-        if not isinstance(state, ChromatinAtomisticState):
-            raise TypeError("state must be ChromatinAtomisticState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("Coupled state belongs to another prepared runtime.")
         thermodynamic.validate_dynamics(self.atomistic)
@@ -243,9 +238,8 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         )
         return ChromatinAtomisticStepResult(candidate, accepted, evidence, successful)
 
+    @checked
     def _validate_state(self, state: ChromatinAtomisticState, /) -> None:
-        if not isinstance(state, ChromatinAtomisticState):
-            raise TypeError("state must be ChromatinAtomisticState.")
         if (
             state.prepared_id != self.prepared_id
             or state.atomistic.prepared_dynamics_id != self.atomistic.prepared_id
@@ -304,11 +298,10 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         identifier = self._checkpoint_id(state)
         return ChromatinAtomisticCheckpoint(state, identifier, self.prepared_id)
 
+    @checked
     def restore(
         self, checkpoint: ChromatinAtomisticCheckpoint, /
     ) -> ChromatinAtomisticState:
-        if not isinstance(checkpoint, ChromatinAtomisticCheckpoint):
-            raise TypeError("checkpoint must be a ChromatinAtomisticCheckpoint.")
         if checkpoint.prepared_id != self.prepared_id:
             raise ValueError("Checkpoint belongs to another coupling runtime.")
         self._validate_state(checkpoint.state)

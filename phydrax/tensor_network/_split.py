@@ -14,7 +14,7 @@ from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -31,6 +31,7 @@ class TensorTruncationEvidence(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     precision_policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         retained_rank: int,
@@ -51,8 +52,6 @@ class TensorTruncationEvidence(StrictModule):
         available = int(available_rank)
         if available < 1 or not 1 <= retained <= available:
             raise ValueError("Truncation ranks must satisfy 1 <= retained <= available.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         discarded = jnp.asarray(discarded_weight)
         if discarded.shape != ():
             raise ValueError("discarded_weight must be scalar.")

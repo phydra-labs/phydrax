@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
 from ._base import _as_real_array, AbstractPositiveDefiniteKernel
 from ._spectral import AbstractSpectralMultiplier
 
@@ -103,6 +104,7 @@ class HammingSpectralKernel(AbstractPositiveDefiniteKernel):
     max_level: int = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dimension: int,
@@ -119,8 +121,6 @@ class HammingSpectralKernel(AbstractPositiveDefiniteKernel):
             raise ValueError("Hamming dimension must be positive.")
         if resolved_alphabet < 2:
             raise ValueError("Hamming alphabet_size must be at least two.")
-        if not isinstance(multiplier, AbstractSpectralMultiplier):
-            raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         resolved_level = resolved_dimension if max_level is None else int(max_level)
         if resolved_level < 0 or resolved_level > resolved_dimension:
             raise ValueError("max_level must lie between zero and the Hamming dimension.")

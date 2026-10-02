@@ -25,7 +25,7 @@ from ...continuation._bifurcation import (
 )
 from ...continuation._core import ContinuationBranch, ContinuationCurveProblem
 from ...nonlinear import AbstractNonlinearMethod, NonlinearTermination
-from ...typing import parse
+from ...typing import checked, parse
 from ._equilibrium import MechanicsEquilibriumProblem
 from ._stability import DynamicStabilityProblem, PhysicalStaticStabilityProblem
 
@@ -131,6 +131,7 @@ class MechanicsBifurcationDetector(StrictModule):
     equilibrium: MechanicsEquilibriumProblem
     detector_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         equilibrium: MechanicsEquilibriumProblem,
@@ -138,8 +139,6 @@ class MechanicsBifurcationDetector(StrictModule):
         *,
         detector_id: str | None = None,
     ) -> None:
-        if not isinstance(equilibrium, MechanicsEquilibriumProblem):
-            raise TypeError("equilibrium must be a MechanicsEquilibriumProblem.")
         identifier = (
             canonical_fingerprint(
                 {
@@ -155,6 +154,7 @@ class MechanicsBifurcationDetector(StrictModule):
         self.equilibrium = equilibrium
         self.detector_id = identifier
 
+    @checked
     def detect(
         self,
         certificate: BifurcationCertificate,
@@ -173,8 +173,6 @@ class MechanicsBifurcationDetector(StrictModule):
         localization_id: str | None = None,
     ) -> MechanicsBifurcationRecord:
         """Interpret one theorem without promoting parameter Hessians or static Hopf."""
-        if not isinstance(certificate, BifurcationCertificate):
-            raise TypeError("certificate must be a BifurcationCertificate.")
         kind_map: dict[str, MechanicsBifurcationKind] = {
             "fold": "limit-point",
             "branch-point": "branch-point",
@@ -536,16 +534,13 @@ class MechanicsBranchGraph(StrictModule):
                 return branch
         raise KeyError(identifier)
 
+    @checked
     def add(
         self,
         branch: MechanicsBranch,
         edge: MechanicsBranchEdge,
         /,
     ) -> MechanicsBranchGraph:
-        if not isinstance(branch, MechanicsBranch):
-            raise TypeError("branch must be a MechanicsBranch.")
-        if not isinstance(edge, MechanicsBranchEdge):
-            raise TypeError("edge must be a MechanicsBranchEdge.")
         if edge.child_branch_id != branch.branch_id:
             raise ValueError("The edge child must be the added mechanics branch.")
         return MechanicsBranchGraph(self.branches + (branch,), self.edges + (edge,))
@@ -916,6 +911,7 @@ class ImperfectionStudy(StrictModule):
     limit_resolved: Array
     study_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         family: ImperfectionFamily,
@@ -926,8 +922,6 @@ class ImperfectionStudy(StrictModule):
         limit_resolved: Any,
         study_id: str | None = None,
     ) -> None:
-        if not isinstance(family, ImperfectionFamily):
-            raise TypeError("family must be an ImperfectionFamily.")
         amplitudes_ = jnp.asarray(amplitudes)
         if (
             amplitudes_.ndim != 1
@@ -1167,9 +1161,8 @@ class MechanicsSelectionResult(StrictModule):
     status: MechanicsSelectionStatus = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def disagrees_with(self, other: MechanicsSelectionResult, /) -> bool:
-        if not isinstance(other, MechanicsSelectionResult):
-            raise TypeError("other must be a MechanicsSelectionResult.")
         return (
             self.status == "selected"
             and other.status == "selected"

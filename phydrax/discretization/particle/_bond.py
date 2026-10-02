@@ -15,6 +15,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._rigid_body import (
     PreparedRigidBodySet,
     quaternion_rotation_matrix,
@@ -151,11 +152,8 @@ class PreparedFixedBondGraph(StrictModule, NonTrainableState):
     rest_direction: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FixedBondGraphPlan, bodies: PreparedRigidBodySet, /) -> None:
-        if not isinstance(plan, FixedBondGraphPlan):
-            raise TypeError("plan must be a FixedBondGraphPlan.")
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be a PreparedRigidBodySet.")
         if plan.anchor_left.shape[1] != bodies.ambient_dimension:
             raise ValueError("Bond dimension does not match rigid bodies.")
         sorted_ids = jnp.sort(bodies.particles.particle_ids)

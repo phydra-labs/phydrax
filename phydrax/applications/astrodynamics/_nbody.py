@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import ParticleDiscretization
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -36,6 +37,7 @@ class NBodyState(StrictModule):
     particles: ParticleDiscretization
     context: AstrodynamicsContext
 
+    @checked
     def __init__(
         self,
         position: ArrayLike,
@@ -44,10 +46,6 @@ class NBodyState(StrictModule):
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         if particles.ambient_dimension != 3:
             raise ValueError("Astrodynamics N-body state requires three dimensions.")
         position_ = jnp.asarray(position)
@@ -81,6 +79,7 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
     collision_distance: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -91,14 +90,10 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         softening: ArrayLike = 0.0,
         collision_distance: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if particles.ambient_dimension != 3:
             raise ValueError(
                 "Direct N-body gravity requires three-dimensional particles."
             )
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         coupling = jnp.asarray(gravitational_constant).reshape(())
         smoothing = jnp.asarray(softening, dtype=coupling.dtype).reshape(())
         collision = jnp.asarray(collision_distance, dtype=coupling.dtype).reshape(())
@@ -206,9 +201,8 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
     times: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, gravity: DirectNBodyGravityPlan, times: ArrayLike, /) -> None:
-        if not isinstance(gravity, DirectNBodyGravityPlan):
-            raise TypeError("gravity must be a DirectNBodyGravityPlan.")
         times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
@@ -227,9 +221,8 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def rollout(self, initial_state: NBodyState, /) -> NBodyPropagationResult:
-        if not isinstance(initial_state, NBodyState):
-            raise TypeError("initial_state must be an NBodyState.")
         if initial_state.particles.prepared_id != self.gravity.particles.prepared_id:
             raise ValueError("N-body state and gravity particle identities differ.")
         self.gravity.context.require_compatible(initial_state.context)

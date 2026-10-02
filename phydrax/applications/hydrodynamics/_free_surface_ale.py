@@ -31,6 +31,7 @@ from ...linalg import (
     TolerancePolicy,
 )
 from ...solver._mac_ale import MACALEGeometryPlan, MACALEStageGeometry
+from ...typing import checked
 
 
 FaceTuple = tuple[Array, ...]
@@ -141,6 +142,7 @@ class GraphSurfaceALEPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: FiniteVolumeDiscretization,
@@ -152,8 +154,6 @@ class GraphSurfaceALEPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
     ) -> None:
-        if not isinstance(reference, FiniteVolumeDiscretization):
-            raise TypeError("reference must be FiniteVolumeDiscretization.")
         if len(reference.cell_shape) != 3:
             raise ValueError("Graph free-surface ALE requires three dimensions.")
         if reference.grid.structured_axes[2].periodic:

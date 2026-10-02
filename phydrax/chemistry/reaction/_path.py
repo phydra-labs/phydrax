@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan
+from ...typing import checked
 from .._optimization import _require_structure_matches_system
 from .._surface import AbstractPreparedPotentialEnergySurface
 from ..vibration._harmonic import StationaryPointKind, VibrationalAnalysisResult
@@ -109,6 +110,7 @@ class NudgedElasticBandPlan(StrictModule, NonTrainableState):
     climbing_start: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -123,10 +125,6 @@ class NudgedElasticBandPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 500,
         climbing_start: int = 20,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
-        if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
-            raise TypeError("surface must be a prepared potential-energy surface.")
         if surface.system_id != system.system_id or not surface.capabilities.forces:
             raise ValueError("NEB requires a force-capable surface for the same system.")
         if surface.units.unit_system_id != system.units.unit_system_id:

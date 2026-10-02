@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field
 from .._tree_math import tree_allfinite
 from ..linalg import AbstractVectorSpace
+from ..typing import checked
 from ._types import NonlinearSystemProblem
 from ._updates import (
     AbstractNonlinearUpdate,
@@ -74,6 +75,7 @@ class NonlinearSubdomain(StrictModule):
     weight: float = eqx.field(static=True)
     subdomain_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         restrict_state: Any,
@@ -98,8 +100,6 @@ class NonlinearSubdomain(StrictModule):
             raise TypeError(
                 "Nonlinear subdomain transfer and residual values must be callable."
             )
-        if not isinstance(update, AbstractNonlinearUpdate):
-            raise TypeError("update must be AbstractNonlinearUpdate.")
         if not isinstance(state_space, AbstractVectorSpace) or not isinstance(
             residual_space, AbstractVectorSpace
         ):

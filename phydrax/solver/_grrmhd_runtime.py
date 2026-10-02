@@ -20,6 +20,7 @@ from ..metrix._adm_exchange import (
     combine_stress_energy_projections,
     StressEnergyProjection,
 )
+from ..typing import checked
 from ._balance_law_composition import AdditiveIMEXTableau
 from ._gr_m1_finite_volume import (
     FixedGridGRM1SSPRK3Plan,
@@ -150,6 +151,7 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
     balance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material_transport: GRMHDSSPRK3Plan,
@@ -159,12 +161,6 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
         *,
         balance_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(material_transport, GRMHDSSPRK3Plan):
-            raise TypeError("material_transport must be GRMHDSSPRK3Plan.")
-        if not isinstance(radiation_transport, FixedGridGRM1SSPRK3Plan):
-            raise TypeError("radiation_transport must be FixedGridGRM1SSPRK3Plan.")
-        if not isinstance(source, GRRMHDImplicitSourcePlan):
-            raise TypeError("source must be GRRMHDImplicitSourcePlan.")
         if source.material.system_id != material_transport.system.system_id:
             raise ValueError("GRRMHD source and transport material systems differ.")
         if source.interaction.radiation.system_id != radiation_transport.system.system_id:
@@ -542,6 +538,7 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
             derivative,
         )
 
+    @checked
     def advance(
         self,
         state: GRRMHDState,
@@ -556,8 +553,6 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
         *,
         transport_extinction: ArrayLike = 0.0,
     ) -> GRRMHDStepResult:
-        if not isinstance(state, GRRMHDState):
-            raise TypeError("state must be GRRMHDState.")
         geometries = tuple(stage_geometries)
         if len(geometries) != 2:
             raise ValueError("GRRMHD IMEX-SSP2 requires two stage geometries.")

@@ -32,7 +32,7 @@ from ..operators.quantum.variable_sector import (
     VariableSectorProposal,
     VariableSectorSpace,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 VariableSectorVMCStatus: TypeAlias = Literal[0, 1, 2, 3, 4]
@@ -144,6 +144,7 @@ class PreparedVariableSectorVMC(StrictModule):
     initial_species: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: VariableSectorVMCPlan,
@@ -154,14 +155,8 @@ class PreparedVariableSectorVMC(StrictModule):
         initial_configurations: Sequence[VariableParticleConfiguration],
         /,
     ) -> None:
-        if not isinstance(plan, VariableSectorVMCPlan):
-            raise TypeError("plan must be VariableSectorVMCPlan.")
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(operator, AbstractVariableSectorLocalOperator):
-            raise TypeError(
-                "operator must implement AbstractVariableSectorLocalOperator."
-            )
         if not isinstance(proposal, VariableSectorProposal) or not isinstance(
             measure, VariableSectorMeasure
         ):

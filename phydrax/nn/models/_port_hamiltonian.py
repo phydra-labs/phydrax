@@ -13,7 +13,7 @@ from jax import Array
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from .._contracts import (
     AFFINE,
@@ -72,6 +72,7 @@ class FeatureNormPotential(_AbstractBaseModel):
     in_size: int
     out_size: Literal["scalar"]
 
+    @checked
     def __init__(
         self,
         features: AbstractArrayModel,
@@ -80,8 +81,6 @@ class FeatureNormPotential(_AbstractBaseModel):
         initial_quadratic: float = 1e-2,
         minimum_quadratic: float = 1e-8,
     ) -> None:
-        if not isinstance(features, AbstractArrayModel):
-            raise TypeError("features must be a Phydrax array model.")
         input_shape = _get_value_shape(features.in_size)
         if len(input_shape) != 1:
             raise ValueError("FeatureNormPotential requires a vector input model.")

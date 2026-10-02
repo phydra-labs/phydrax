@@ -16,6 +16,7 @@ from ...exterior import _algebra as algebra
 from ...exterior._basis import exterior_indices
 from ...exterior._form_type import FiberProduct, FormTwist, FormType
 from ...metrix import AbstractSemiRiemannianMetric, CoordinateChart, LorentzianMetric
+from ...typing import checked
 from ._domain_ops import _factor_and_dim, _resolve_var
 from ._form_derivative import (
     _DerivativeOptions,
@@ -76,6 +77,7 @@ class DomainDifferentialForm(StrictModule):
     var: str = eqx.field(static=True)
     form_type: FormType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coefficients: DomainFunction,
@@ -87,10 +89,6 @@ class DomainDifferentialForm(StrictModule):
         fiber_shape: tuple[int, ...] = (),
         var: str | None = None,
     ) -> None:
-        if not isinstance(coefficients, DomainFunction):
-            raise TypeError("coefficients must be a DomainFunction.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         form_type = FormType(
             chart.dimension, degree, twist=twist, fiber_shape=fiber_shape
         )

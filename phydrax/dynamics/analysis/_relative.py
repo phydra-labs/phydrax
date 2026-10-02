@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
 from ...nonlinear import NonlinearSystemProblem
+from ...typing import checked
 from .._evolution import AbstractDifferentiableEvolution
 
 
@@ -128,6 +129,7 @@ class RelativePeriodicOrbitProblem(StrictModule):
     num_segments: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
@@ -139,8 +141,6 @@ class RelativePeriodicOrbitProblem(StrictModule):
         num_segments: int = 1,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(evolution, AbstractDifferentiableEvolution):
-            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         phases = tuple(spatial_phases)
         if not callable(group_action) or not callable(temporal_phase):
             raise TypeError("group_action and temporal_phase must be callable.")

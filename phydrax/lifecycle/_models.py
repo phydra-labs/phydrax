@@ -13,7 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._identity import ArtifactBindingIdentity, NumericRevision
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 RunStatus: TypeAlias = Literal[
@@ -40,6 +40,7 @@ class RevisionLineage(StrictModule, NonTrainableState):
     metadata: MetadataRecord = eqx.field(static=True)
     lineage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         revision: NumericRevision,
@@ -50,8 +51,6 @@ class RevisionLineage(StrictModule, NonTrainableState):
         parent_lineage_id: str | None = None,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
     ) -> None:
-        if not isinstance(revision, NumericRevision):
-            raise TypeError("revision must be a canonical phydrax.NumericRevision.")
         label_ = str(label).strip()
         parent_revision = _optional_identifier("parent_revision_id", parent_revision_id)
         parent_lineage = _optional_identifier("parent_lineage_id", parent_lineage_id)
@@ -457,6 +456,7 @@ class ResultRevision(StrictModule, NonTrainableState):
     parent_revision_id: str | None = eqx.field(static=True)
     revision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         manifest: ResultManifest,
@@ -465,8 +465,6 @@ class ResultRevision(StrictModule, NonTrainableState):
         *,
         parent_revision_id: str | None = None,
     ) -> None:
-        if not isinstance(manifest, ResultManifest):
-            raise TypeError("manifest must be a ResultManifest.")
         parent = _optional_identifier("parent_result_id", parent_result_id)
         parent_revision = _optional_identifier("parent_revision_id", parent_revision_id)
         if (parent is None) != (parent_revision is None):

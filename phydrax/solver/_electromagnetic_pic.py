@@ -64,7 +64,7 @@ from ..discretization.pic import (
     RadiationOwnership,
     RelativisticPushPlan,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._maxwell_dispersion import CherenkovRegimeEvidence
 from ._pic_cherenkov_guard import PICCherenkovGuard
@@ -1407,6 +1407,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             exited,
         )
 
+    @checked
     def step_detailed(
         self, state: ElectromagneticPICState, step_size: ArrayLike, /
     ) -> ElectromagneticPICStepResult:
@@ -1417,8 +1418,6 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         centralized so no extracted phase can observe or publish a partially
         accepted state. Numerical branch bodies remain in their owning helpers.
         """
-        if not isinstance(state, ElectromagneticPICState):
-            raise TypeError("state must be ElectromagneticPICState.")
         dt = jnp.asarray(step_size, dtype=state.time.dtype).reshape(())
         step = state.accepted_step
         gathered = self._gather(state.species, state.field, state.time)
@@ -1826,10 +1825,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         )
         return PICRestartCheckpoint(tuple(components))
 
+    @checked
     def restore(self, checkpoint: PICRestartCheckpoint, /) -> ElectromagneticPICState:
         """Admit every component against this plan's owners and rebuild the state."""
-        if not isinstance(checkpoint, PICRestartCheckpoint):
-            raise TypeError("checkpoint must be PICRestartCheckpoint.")
         solver = self.solver
         if not isinstance(solver, PICRestartState):
             raise TypeError("The PIC field solver does not implement PICRestartState.")
@@ -1870,9 +1868,8 @@ class ElectromagneticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableSta
     plan: ElectromagneticPICPlan
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ElectromagneticPICPlan, /) -> None:
-        if not isinstance(plan, ElectromagneticPICPlan):
-            raise TypeError("plan must be ElectromagneticPICPlan.")
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "electromagnetic-pic-fixed-step", "plan": plan.plan_id}

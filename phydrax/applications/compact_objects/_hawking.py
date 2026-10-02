@@ -24,7 +24,7 @@ from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
-from ...typing import parse
+from ...typing import checked, parse
 
 
 QuantumStatistics: TypeAlias = Literal["boson", "fermion"]
@@ -181,6 +181,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
     mode_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -200,8 +201,6 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         graybody_tolerance: float = 1.0e-10,
         corotation_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError("Hawking flux requires explicit hbar and k_B constants.")
         species_ = tuple(species)
@@ -387,6 +386,7 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     scattering_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: HawkingSpectrumPlan,
@@ -403,10 +403,6 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
         source_ids: Sequence[Sequence[str]],
         qualification_id: str,
     ) -> None:
-        if not isinstance(plan, HawkingSpectrumPlan):
-            raise TypeError("plan must be a HawkingSpectrumPlan.")
-        if not isinstance(tail_evidence, HawkingTailEvidence):
-            raise TypeError("tail_evidence must be HawkingTailEvidence.")
         expected = (plan.mode_capacity, plan.frequency_capacity)
         graybody = np.asarray(graybody_factors, dtype=np.float64)
         slopes = np.asarray(corotation_slopes, dtype=np.float64)
@@ -515,11 +511,10 @@ class HawkingSpectrumResult(StrictModule):
     def successful(self) -> Array:
         return self.finite & self.converged & self.physically_valid & self.qualified
 
+    @checked
     def bound_to(self, state: KerrEvaporationState, /) -> Array:
         """Return whether this spectrum was evaluated for exactly ``state``."""
 
-        if not isinstance(state, KerrEvaporationState):
-            raise TypeError("state must be a KerrEvaporationState.")
         same_lineage = self.source_state.state_id == state.state_id
         return (
             jnp.asarray(same_lineage)
@@ -860,6 +855,7 @@ class KerrEvaporationPlan(StrictModule, NonTrainableState):
     extremality_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -872,8 +868,6 @@ class KerrEvaporationPlan(StrictModule, NonTrainableState):
         maximum_spin_change_per_step: float = 1.0e-2,
         extremality_margin: float = 1.0e-8,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError("Kerr evaporation requires explicit hbar and k_B constants.")
         times = np.asarray(time_offsets, dtype=np.float64)

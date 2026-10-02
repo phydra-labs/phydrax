@@ -17,6 +17,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, LinearSubspace
 from ...metrix.clifford import FiniteMetricIsometryGroup
+from ...typing import checked
 
 
 class MagneticSymmetryOperation(StrictModule, NonTrainableState):
@@ -52,6 +53,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
     composition_residual: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         group: FiniteMetricIsometryGroup,
@@ -65,8 +67,6 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         rank_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(group, FiniteMetricIsometryGroup):
-            raise TypeError("group must be FiniteMetricIsometryGroup.")
         if group.algebra.dimension != 3:
             raise ValueError("Magnetic symmetry initially requires a 3D point group.")
         flags = np.asarray(antiunitary, dtype=np.bool_)

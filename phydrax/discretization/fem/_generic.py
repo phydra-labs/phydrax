@@ -40,6 +40,7 @@ from ...sparse import (
     RowRelation,
     SparseLinearMap,
 )
+from ...typing import checked
 from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
     IntervalConnectivity,
@@ -1396,6 +1397,7 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
     numeric_version: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -1405,8 +1407,6 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
         numeric_version: str,
         geometry_layout_id: str | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         points = jnp.asarray(coordinates)
         if points.ndim != 2 or points.shape[1] != mesh.ambient_dimension:
             raise ValueError(
@@ -1665,6 +1665,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -1676,8 +1677,6 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         coefficient_dtype: DTypeLike = jnp.float64,
     ) -> None:
         dtype = _coefficient_dtype(coefficient_dtype)
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         _validate_mesh_geometry(mesh)
         _validate_vertex_usage(mesh)
         field_specs = (
@@ -1923,9 +1922,8 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
+    @checked
     def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0") -> None:
-        if not isinstance(plan, FiniteElementPlan):
-            raise TypeError("plan must be a FiniteElementPlan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
@@ -2115,6 +2113,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             raise ValueError("boundary_dof_mask is only unambiguous for one field.")
         return self.dof_maps[0].boundary_dof_mask
 
+    @checked
     def dof_indices(
         self,
         field_name: str,
@@ -2123,8 +2122,6 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     ) -> Array:
         """Return sorted P1 DOFs incident to selected cells or facets."""
 
-        if not isinstance(selection, EntitySelection):
-            raise TypeError("selection must be EntitySelection.")
         field_index = self._field_index(field_name)
         dof_map = self.dof_maps[field_index]
         field_elements = self.elements[field_index]
@@ -2461,14 +2458,13 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             precision_policy=self.precision_policy,
         )
 
+    @checked
     def assemble_field_operators(
         self,
         field_name: str,
         runtime: FiniteElementRuntimeData,
         /,
     ) -> tuple[SparseLinearMap, SparseLinearMap]:
-        if not isinstance(runtime, FiniteElementRuntimeData):
-            raise TypeError("runtime must be FiniteElementRuntimeData.")
         if (
             runtime.topology_id != self.mesh.topology_id
             or runtime.geometry_layout_id != self.default_runtime.geometry_layout_id
@@ -2981,6 +2977,7 @@ class MaskedFiniteElementPlan(StrictModule, NonTrainableState):
     precision_policy: FiniteElementPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: MaskedSimplexMesh,
@@ -2989,8 +2986,6 @@ class MaskedFiniteElementPlan(StrictModule, NonTrainableState):
         degree: int = 1,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(mesh, MaskedSimplexMesh):
-            raise TypeError("mesh must be a MaskedSimplexMesh.")
         if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
             raise TypeError("degree must be an integer.")
         if degree != 1:

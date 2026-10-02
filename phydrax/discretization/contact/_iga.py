@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator
+from ...typing import checked
 from ..iga._overlay import IntegrationOverlay
 from ..iga._topology import PatchAtlas
 from ._interface import (
@@ -172,6 +173,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
     geometry_certificate_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: PatchAtlas,
@@ -185,12 +187,6 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         convex_hull_certified: bool,
         geometry_certificate_id: str,
     ) -> None:
-        if not isinstance(atlas, PatchAtlas):
-            raise TypeError("atlas must be PatchAtlas.")
-        if not isinstance(topology, CollisionSurfacePlan):
-            raise TypeError("topology must be CollisionSurfacePlan.")
-        if not isinstance(projection, IGATraceProjection):
-            raise TypeError("projection must be IGATraceProjection.")
         controls = np.asarray(patch_control_indices)
         vertex_patch = np.asarray(proxy_vertex_patch_indices)
         error = np.asarray(patch_approximation_error, dtype=np.float64)
@@ -572,6 +568,7 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
     minus_participant: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         overlay: IntegrationOverlay,
@@ -590,8 +587,6 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         minus_participant: str,
         coverage_certified: bool,
     ) -> None:
-        if not isinstance(overlay, IntegrationOverlay):
-            raise TypeError("overlay must be IntegrationOverlay.")
         if not isinstance(plus_projection, IGATraceProjection) or not isinstance(
             minus_projection, IGATraceProjection
         ):
@@ -717,6 +712,7 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         self.plan_id = plan_id
 
     @classmethod
+    @checked
     def from_bspline_traces(
         cls,
         overlay: IntegrationOverlay,
@@ -737,8 +733,6 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         minus_rational_weights: ArrayLike | None = None,
         coverage_certified: bool,
     ) -> IGACommonRefinementMortarPlan:
-        if not isinstance(overlay, IntegrationOverlay):
-            raise TypeError("overlay must be IntegrationOverlay.")
         plus_knot_values = tuple(plus_knots)
         minus_knot_values = tuple(minus_knots)
         plus_degree_values = tuple(plus_degrees)

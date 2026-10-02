@@ -24,6 +24,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import solve_tridiagonal_lines
 from ....solver import DifferentialProblem, solve_diffrax
+from ....typing import checked
 from ._bundle import PrescribedFiberStimulusSchedule
 from ._reaction import AbstractFiberReaction
 from ._territories import MotorUnitEndplateStimulus
@@ -368,6 +369,7 @@ class PreparedStructuredFiberResponse(StrictModule):
     numeric_revision_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: StructuredFiberResponsePlan,
@@ -375,12 +377,6 @@ class PreparedStructuredFiberResponse(StrictModule):
         diffusivity_mm2_per_ms: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, StructuredFiberResponsePlan):
-            raise TypeError("plan must be StructuredFiberResponsePlan.")
-        if not isinstance(reaction, AbstractFiberReaction):
-            raise TypeError(
-                "reaction must be an explicitly source-bound AbstractFiberReaction."
-            )
         if (
             not reaction.source_id
             or reaction.state_count < 1
@@ -581,6 +577,7 @@ class PreparedStructuredFiberResponse(StrictModule):
         )
         return solved.value, successful, relative, balance, solved.minimum_pivot
 
+    @checked
     def candidate(
         self,
         state: StructuredFiberResponseState,
@@ -588,8 +585,6 @@ class PreparedStructuredFiberResponse(StrictModule):
         geometry_path_mm: ArrayLike,
         /,
     ) -> StructuredFiberResponseCandidate:
-        if not isinstance(state, StructuredFiberResponseState):
-            raise TypeError("state must be StructuredFiberResponseState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("Fiber state belongs to a different prepared response.")
         expected = (

@@ -21,6 +21,7 @@ from ...discretization.vem import (
 )
 from ...linalg import OperatorProperties
 from ...sparse import RelationAccumulation
+from ...typing import checked
 from .._variational import (
     BoundaryLoadAction,
     coefficient,
@@ -202,6 +203,7 @@ class VirtualElementExecutionContext(StrictModule):
     lift_rate: object
     user_args: object
 
+    @checked
     def __init__(
         self,
         runtime: VirtualElementRuntimeData,
@@ -212,8 +214,6 @@ class VirtualElementExecutionContext(StrictModule):
         lift_rate: object = None,
         user_args: object = None,
     ) -> None:
-        if not isinstance(runtime, VirtualElementRuntimeData):
-            raise TypeError("runtime must be VirtualElementRuntimeData.")
         self.runtime = runtime
         self.time = jnp.asarray(time)
         self.lift = lift

@@ -28,6 +28,7 @@ from ....operators.mechanics import (
     HyperelasticResponse,
     VolumetricConstraint,
 )
+from ....typing import checked
 from ....variational import (
     FieldJetSpec,
     Functional,
@@ -444,6 +445,7 @@ class ExactIncompressibleCardiacMaterial(StrictModule, NonTrainableState):
             form_id=form_id,
         )
 
+    @checked
     def prepare_qualified(
         self,
         plan: MixedFiniteElementConstraintPlan,
@@ -453,8 +455,6 @@ class ExactIncompressibleCardiacMaterial(StrictModule, NonTrainableState):
         args: object = None,
         form_id: str = "cardiac-exact-incompressible-equilibrium",
     ) -> QualifiedExactIncompressibleProblem:
-        if not isinstance(plan, MixedFiniteElementConstraintPlan):
-            raise TypeError("plan must be MixedFiniteElementConstraintPlan.")
         if plan.formulation != "exact" or plan.bulk_modulus is not None:
             raise ValueError("Exact cardiac material requires an exact mixed FE plan.")
         prepared = prepare_mixed_hyperelastic_problem(

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import DiscretizationBundle
+from ..typing import checked
 
 
 SecondOrderResidual: TypeAlias = Callable[[Array, Array, Array, Array, Any], ArrayLike]
@@ -117,6 +118,7 @@ class SecondOrderDifferentialProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: SecondOrderDifferentialSystem,
@@ -129,8 +131,6 @@ class SecondOrderDifferentialProblem(StrictModule):
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(system, SecondOrderDifferentialSystem):
-            raise TypeError("system must be SecondOrderDifferentialSystem.")
         configuration = jnp.asarray(initial_configuration)
         velocity = jnp.asarray(initial_velocity)
         acceleration = (

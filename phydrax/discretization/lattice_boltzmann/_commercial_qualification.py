@@ -19,6 +19,7 @@ from ...qualification._evidence import (
     SupportDependency,
 )
 from ...qualification._registry import SupportTuple, SupportValue
+from ...typing import checked
 from ._collision import BGKCollisionPlan, CentralMomentCollisionPlan, TRTCollisionPlan
 from ._conjugate_thermal import ConjugateThermalPlan
 from ._forcing import GuoForcingPlan
@@ -327,6 +328,7 @@ class LatticeBoltzmannQualificationProfile(StrictModule, NonTrainableState):
     released: bool = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -346,8 +348,6 @@ class LatticeBoltzmannQualificationProfile(StrictModule, NonTrainableState):
         name_ = _identifier(name, "profile name")
         if not isinstance(tier, LatticeBoltzmannCommercialTier):
             raise TypeError("tier must be a LatticeBoltzmannCommercialTier.")
-        if not isinstance(envelope, LatticeBoltzmannOperatingEnvelopePlan):
-            raise TypeError("envelope must be a LatticeBoltzmannOperatingEnvelopePlan.")
         claims = tuple(required_claims)
         if not claims or any(
             not isinstance(value, LatticeBoltzmannQualificationClaim) for value in claims
@@ -502,11 +502,10 @@ class LatticeBoltzmannQualificationProfile(StrictModule, NonTrainableState):
             "released": self.released,
         }
 
+    @checked
     def deployment_compatibility(
         self, deployment: LatticeBoltzmannDeploymentRecord, /
     ) -> LatticeBoltzmannDeploymentCompatibility:
-        if not isinstance(deployment, LatticeBoltzmannDeploymentRecord):
-            raise TypeError("deployment must be a LatticeBoltzmannDeploymentRecord.")
         failed: list[str] = []
         if deployment.execution_mode not in self.execution_modes:
             failed.append("execution-mode")
@@ -529,6 +528,7 @@ class LatticeBoltzmannQualificationProfile(StrictModule, NonTrainableState):
             failed,
         )
 
+    @checked
     def evaluate(
         self,
         evidence: Sequence[QualificationEvidence],
@@ -539,8 +539,6 @@ class LatticeBoltzmannQualificationProfile(StrictModule, NonTrainableState):
         at_time: int,
         satisfied_dependencies: Sequence[SupportDependency] = (),
     ) -> "LatticeBoltzmannCommercialEvidence":
-        if not isinstance(admission, LatticeBoltzmannEnvelopeAdmission):
-            raise TypeError("admission must be LatticeBoltzmannEnvelopeAdmission.")
         if admission.envelope_id != self.envelope.envelope_id:
             raise ValueError("Operating admission belongs to a different LBM envelope.")
         evidence_ = tuple(evidence)
@@ -581,6 +579,7 @@ class LatticeBoltzmannCommercialEvidence(StrictModule, NonTrainableState):
     passed: bool = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: LatticeBoltzmannQualificationProfile,
@@ -591,14 +590,6 @@ class LatticeBoltzmannCommercialEvidence(StrictModule, NonTrainableState):
         satisfied_dependencies: Sequence[SupportDependency],
         /,
     ) -> None:
-        if not isinstance(profile, LatticeBoltzmannQualificationProfile):
-            raise TypeError("profile must be LatticeBoltzmannQualificationProfile.")
-        if not isinstance(coverage, QualificationCoverageReport):
-            raise TypeError("coverage must be QualificationCoverageReport.")
-        if not isinstance(admission, LatticeBoltzmannEnvelopeAdmission):
-            raise TypeError("admission must be LatticeBoltzmannEnvelopeAdmission.")
-        if not isinstance(deployment, LatticeBoltzmannDeploymentCompatibility):
-            raise TypeError("deployment must be LatticeBoltzmannDeploymentCompatibility.")
         evidence_ = tuple(evidence)
         if any(not isinstance(value, QualificationEvidence) for value in evidence_):
             raise TypeError("evidence must contain QualificationEvidence values.")

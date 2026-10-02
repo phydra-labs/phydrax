@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._diffusion import (
     ConservativeAdvectionPlan,
     ConservativeBoundaryCondition,
@@ -64,14 +64,13 @@ class MACScalarLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
         field_names: Sequence[str],
         /,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         names = _canonical_names(field_names)
         cell_size = operators.pressure_space.size
         self.operators = operators
@@ -254,6 +253,7 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
     ]
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: MACScalarLayout,
@@ -271,8 +271,6 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
         ]
         | None = None,
     ) -> None:
-        if not isinstance(layout, MACScalarLayout):
-            raise TypeError("layout must be MACScalarLayout.")
         supplied = (
             {}
             if walls is None
@@ -577,6 +575,7 @@ class MACScalarSGSPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         transport: PreparedMACScalarTransport,
@@ -584,8 +583,6 @@ class MACScalarSGSPlan(StrictModule, NonTrainableState):
         *,
         field_names: Sequence[str] | None = None,
     ) -> PreparedMACScalarSGS:
-        if not isinstance(transport, PreparedMACScalarTransport):
-            raise TypeError("transport must be PreparedMACScalarTransport.")
         names = (
             transport.layout.field_names
             if field_names is None
@@ -603,6 +600,7 @@ class PreparedMACScalarSGS(StrictModule, NonTrainableState):
     field_names: tuple[str, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MACScalarSGSPlan,
@@ -610,10 +608,6 @@ class PreparedMACScalarSGS(StrictModule, NonTrainableState):
         field_names: Sequence[str],
         /,
     ) -> None:
-        if not isinstance(plan, MACScalarSGSPlan):
-            raise TypeError("plan must be MACScalarSGSPlan.")
-        if not isinstance(transport, PreparedMACScalarTransport):
-            raise TypeError("transport must be PreparedMACScalarTransport.")
         names = _canonical_names(field_names)
         if not set(names).issubset(transport.layout.field_names):
             raise ValueError("MAC scalar SGS fields must belong to the transport.")
@@ -836,6 +830,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
     diffusion: tuple[PreparedConservativeDiffusion, ...]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: MACScalarProblem,
@@ -843,12 +838,6 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         boundaries: MACScalarBoundarySet,
         /,
     ) -> None:
-        if not isinstance(problem, MACScalarProblem):
-            raise TypeError("problem must be MACScalarProblem.")
-        if not isinstance(layout, MACScalarLayout):
-            raise TypeError("layout must be MACScalarLayout.")
-        if not isinstance(boundaries, MACScalarBoundarySet):
-            raise TypeError("boundaries must be MACScalarBoundarySet.")
         if problem.field_names != layout.field_names:
             raise ValueError("MAC scalar problem and layout fields must agree by name.")
         if boundaries.layout.layout_id != layout.layout_id:

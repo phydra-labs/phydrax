@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticUnitSystem
+from ..typing import checked
 from ..units import UnitDefinition
 
 
@@ -44,6 +45,7 @@ class ElectronicEnergyLedger(StrictModule, NonTrainableState):
     energy_unit: UnitDefinition
     ledger_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component_names: tuple[str, ...],
@@ -63,8 +65,6 @@ class ElectronicEnergyLedger(StrictModule, NonTrainableState):
             or len(set(names)) != len(names)
         ):
             raise ValueError("Energy ledger names and components must align uniquely.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         residual = jnp.abs(jnp.sum(values) - total)
         self.components = values
         self.reported_total = total
@@ -235,6 +235,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
     artifact_ids: tuple[str, ...] = eqx.field(static=True)
     header_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stable_particle_ids: ArrayLike,
@@ -260,12 +261,6 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
             raise ValueError(
                 "Header particle IDs and active mask must be aligned vectors."
             )
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
-        if not isinstance(convergence, ElectronicConvergenceEvidence):
-            raise TypeError("convergence must be ElectronicConvergenceEvidence.")
-        if not isinstance(work, ElectronicWorkEvidence):
-            raise TypeError("work must be ElectronicWorkEvidence.")
         status_ = jnp.asarray(status, dtype=jnp.int32).reshape(())
         ElectronicCalculationStatus(int(status_))
         identifiers = tuple(

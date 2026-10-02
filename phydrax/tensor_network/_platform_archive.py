@@ -31,6 +31,7 @@ from .._host_io import open_regular_file
 from .._strict import StrictModule
 from .._tensor_network_precision import TensorNetworkPrecisionPolicy
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._core import LocallyPurifiedDensity, MatrixProductOperator, MatrixProductState
 from ._platform_support import _identifier, _positive_integer, TensorNetworkFailure
 
@@ -176,6 +177,7 @@ class TensorNetworkArchiveValidation(StrictModule, NonTrainableState):
     valid: bool = eqx.field(static=True)
     validation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         record: TensorNetworkArchiveRecord,
@@ -185,8 +187,6 @@ class TensorNetworkArchiveValidation(StrictModule, NonTrainableState):
         valid: bool,
         /,
     ) -> None:
-        if not isinstance(record, TensorNetworkArchiveRecord):
-            raise TypeError("record must be TensorNetworkArchiveRecord.")
         limits = _identifier(limits_id, "limits_id")
         archive_bytes_ = _positive_integer(archive_bytes, "archive_bytes")
         members = _positive_integer(member_count, "member_count")

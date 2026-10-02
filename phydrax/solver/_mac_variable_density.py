@@ -36,6 +36,7 @@ from ..linalg import (
     solve_many,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 def _maximum_abs(values: tuple[Array, ...], dtype: jnp.dtype, /) -> Array:
@@ -255,6 +256,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
     preconditioner_setup_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -265,8 +267,6 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         solve_method: str = "auto",
         jacobi_preconditioning: bool = True,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0 or iterations <= 0:

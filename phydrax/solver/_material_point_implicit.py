@@ -40,6 +40,7 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ..typing import checked
 
 
 class ImplicitMPMMethodPlan(StrictModule, NonTrainableState):
@@ -119,14 +120,13 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
     method: ImplicitMPMMethodPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         explicit: PreparedMPMDynamics,
         method: ImplicitMPMMethodPlan | None = None,
         /,
     ) -> None:
-        if not isinstance(explicit, PreparedMPMDynamics):
-            raise TypeError("explicit must be PreparedMPMDynamics.")
         method_ = ImplicitMPMMethodPlan() if method is None else method
         if not isinstance(method_, ImplicitMPMMethodPlan):
             raise TypeError("method must be ImplicitMPMMethodPlan or None.")

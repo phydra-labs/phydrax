@@ -33,7 +33,7 @@ from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_finite_float
-from ..typing import parse
+from ..typing import checked, parse
 
 
 NonuniformFourierType: TypeAlias = Literal[1, 2]
@@ -452,6 +452,7 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
     plan: NonuniformFourierPlan = eqx.field(static=True)
     evidence: NonuniformFourierGridEvidence | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: NonuniformFourierPlan,
@@ -459,8 +460,6 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
         *,
         dtype: DTypeLike,
     ) -> None:
-        if not isinstance(plan, NonuniformFourierPlan):
-            raise TypeError("plan must be a NonuniformFourierPlan.")
         resolved_dtype = _real_floating_dtype(dtype)
         integer_modes = tuple(
             np.arange(size, dtype=np.int64) - size // 2
@@ -813,9 +812,8 @@ class PreparedNonuniformFourierType3(StrictModule, NonTrainableState):
     plan: NonuniformFourierType3Plan = eqx.field(static=True)
     evidence: NonuniformFourierGridEvidence = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: NonuniformFourierType3Plan, /, *, dtype: DTypeLike) -> None:
-        if not isinstance(plan, NonuniformFourierType3Plan):
-            raise TypeError("plan must be a NonuniformFourierType3Plan.")
         resolved_dtype = _real_floating_dtype(dtype)
         _validate_precision(plan.tolerance, resolved_dtype)
         self.source_center = jnp.asarray(plan.source_center, dtype=resolved_dtype)

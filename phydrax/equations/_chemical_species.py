@@ -20,6 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_components import ChemicalComponentCatalog
 
 
@@ -137,6 +138,7 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
     phase_count: int = eqx.field(static=True)
     schema_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         catalog: ChemicalComponentCatalog,
@@ -148,8 +150,6 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
         *,
         schema_id: str | None = None,
     ) -> None:
-        if not isinstance(catalog, ChemicalComponentCatalog):
-            raise TypeError("catalog must be ChemicalComponentCatalog.")
         names = tuple(str(value) for value in species_names)
         component_indices = np.asarray(species_component_indices)
         specs = tuple(phase_specs)

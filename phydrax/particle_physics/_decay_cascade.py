@@ -48,6 +48,7 @@ from ..solver._dark_sector_epoch_runtime import (
     encode_content_id,
     finalize_dark_sector_epoch,
 )
+from ..typing import checked
 from ._host_events import HostEventRecord
 from ._identity import ParticleRole
 from ._species import ParticleSpeciesTable
@@ -78,9 +79,8 @@ class DarkDecayChannel(StrictModule, NonTrainableState):
     decay: TwoBodyDecayPlan
     channel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, decay: TwoBodyDecayPlan, /) -> None:
-        if not isinstance(decay, TwoBodyDecayPlan):
-            raise TypeError("decay must be the existing TwoBodyDecayPlan owner.")
         self.decay = decay
         self.channel_id = canonical_fingerprint(
             {"kind": "dark-decay-channel", "two_body_decay": decay.plan_id}
@@ -160,6 +160,7 @@ class DarkDecayCascadePlan(StrictModule, NonTrainableState):
     differentiation_mode: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime_plan: DarkSectorEpochPlan,
@@ -174,16 +175,10 @@ class DarkDecayCascadePlan(StrictModule, NonTrainableState):
         prompt_lifetime_cutoff: float,
         production_evidence_ids: Sequence[str],
     ) -> None:
-        if not isinstance(runtime_plan, DarkSectorEpochPlan):
-            raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
-        if not isinstance(species, ParticleSpeciesTable):
-            raise TypeError("species must be ParticleSpeciesTable.")
         if runtime_plan.species_revision_id != species.table_id:
             raise ValueError(
                 "runtime_plan species revision must match the decay species table."
             )
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be RelativisticUnitContract.")
         if species.energy_unit.unit_id != units.energy_unit.unit_id:
             raise ValueError(
                 "species and decay cascade must share the exact relativistic energy unit."

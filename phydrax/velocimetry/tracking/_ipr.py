@@ -23,6 +23,7 @@ from ...rendering import (
     ParticleImageFormation,
     render_camera_stack,
 )
+from ...typing import checked
 from ._association import (
     associate_multiview,
     MultiViewAssociationPlan,
@@ -65,6 +66,7 @@ class IPRPlan(StrictModule, NonTrainableState):
     minimum_loss_reduction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         detection: ParticleDetectionPlan,
@@ -77,12 +79,6 @@ class IPRPlan(StrictModule, NonTrainableState):
         minimum_candidate_intensity: float = 0.0,
         minimum_loss_reduction: float = 0.0,
     ) -> None:
-        if not isinstance(detection, ParticleDetectionPlan):
-            raise TypeError("detection must be ParticleDetectionPlan.")
-        if not isinstance(association, MultiViewAssociationPlan):
-            raise TypeError("association must be MultiViewAssociationPlan.")
-        if not isinstance(triangulation, TriangulationPlan):
-            raise TypeError("triangulation must be TriangulationPlan.")
         capacity = int(particle_capacity)
         iterations_ = int(iterations)
         duplicate = float(duplicate_distance)

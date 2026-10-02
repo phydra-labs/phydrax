@@ -18,7 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._cell_polynomial import (
     CellPolynomialReconstructionPlan,
     PreparedCellPolynomialReconstruction,
@@ -118,16 +118,13 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: UnstructuredWENOZReconstructionPlan,
         discretization: UnstructuredFiniteVolumeDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, UnstructuredWENOZReconstructionPlan):
-            raise TypeError("plan must be UnstructuredWENOZReconstructionPlan.")
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Unstructured WENO-Z requires unstructured FV geometry.")
         optimal = CellPolynomialReconstructionPlan(
             plan.degree,
             weight_power=plan.weight_power,

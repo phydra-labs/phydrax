@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._metric import LorentzianMetric
+from ...typing import checked
 from ...units import (
     derived_unit,
     KILOGRAM,
@@ -151,6 +152,7 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
     active_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         segment_lengths: ArrayLike,
@@ -180,8 +182,6 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Transfer segments must be finite, nonnegative, nonempty, and use a nonempty active prefix."
             )
-        if not isinstance(units, InvariantTransferUnitContract):
-            raise TypeError("units must be an InvariantTransferUnitContract.")
         self.segment_lengths = jax.lax.stop_gradient(jnp.asarray(lengths))
         self.active = jax.lax.stop_gradient(jnp.asarray(active_host))
         self.units = units
@@ -384,6 +384,7 @@ class PolarizedRayPath(StrictModule, NonTrainableState):
     metric_semantic_id: str | None = eqx.field(static=True)
     metric_numeric_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ray_result: GRRayResult,
@@ -395,8 +396,6 @@ class PolarizedRayPath(StrictModule, NonTrainableState):
         metric_numeric_id: str | None = None,
         basis_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(ray_result, GRRayResult):
-            raise TypeError("ray_result must be a GRRayResult.")
         if not isinstance(metric, LorentzianMetric) or metric.chart.dimension != 4:
             raise TypeError("metric must be a four-dimensional LorentzianMetric.")
         if ray_result.ray_kind != "null":
@@ -591,6 +590,7 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
     cone_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: PolarizedRayPath,
@@ -599,10 +599,6 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
         *,
         cone_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(path, PolarizedRayPath):
-            raise TypeError("path must be a PolarizedRayPath.")
-        if not isinstance(units, InvariantTransferUnitContract):
-            raise TypeError("units must be an InvariantTransferUnitContract.")
         if units.path_parameter_unit.unit_id != path.affine_parameter_unit_id:
             raise ValueError(
                 "Transfer path-parameter unit must exactly match the GR ray path."

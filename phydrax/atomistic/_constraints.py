@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._system import PreparedAtomisticSystem
 
 
@@ -66,13 +67,10 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: DistanceConstraintPlan, system: PreparedAtomisticSystem, /
     ) -> None:
-        if not isinstance(plan, DistanceConstraintPlan):
-            raise TypeError("plan must be DistanceConstraintPlan.")
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
         constraint_indices = np.asarray(system.topology.constraint_indices)
         if constraint_indices.size:
             constrained_mobile = np.asarray(system.mobile_mask)[constraint_indices]

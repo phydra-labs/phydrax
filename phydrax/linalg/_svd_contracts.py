@@ -15,7 +15,18 @@ from .._differentiation import DerivativeRoute
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._validation import nonnegative_integer, positive_integer
-from ..typing import Bool, Dim, Float, Inexact, Int32, parse, PRNGKey, Scalar, Scope
+from ..typing import (
+    Bool,
+    checked,
+    Dim,
+    Float,
+    Inexact,
+    Int32,
+    parse,
+    PRNGKey,
+    Scalar,
+    Scope,
+)
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
 from ._policies import FailurePolicy, RankPolicy
@@ -54,11 +65,10 @@ class SVDProblem(StrictModule):
     operator: AbstractLinearOperator
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, operator: AbstractLinearOperator, /, *, problem_id: str | None = None
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("SVDProblem requires an unbatched operator.")
         source_dtype, target_dtype = (
@@ -522,6 +532,7 @@ class PreparedSVDSolve(StrictModule):
     state: DenseSVDState | RandomizedSVDState
     numeric_version: Array
 
+    @checked
     def __init__(
         self,
         problem: SVDProblem,
@@ -530,10 +541,6 @@ class PreparedSVDSolve(StrictModule):
         /,
         numeric_version: int | Array = 0,
     ) -> None:
-        if not isinstance(problem, SVDProblem) or not isinstance(plan, SVDSolvePlan):
-            raise TypeError("Expected SVDProblem and SVDSolvePlan.")
-        if not isinstance(state, (DenseSVDState, RandomizedSVDState)):
-            raise TypeError("Expected a method-specific SVD state.")
         if problem.problem_id != plan.problem_id:
             raise ValueError("Prepared SVD problem and plan IDs must match.")
         dense = isinstance(plan.policy.method, DenseSVD)

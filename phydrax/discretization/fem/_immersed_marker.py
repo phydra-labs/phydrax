@@ -15,6 +15,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractVectorSpace, DenseLinearOperator
+from ...typing import checked
 from .._lagrangian_marker import (
     LagrangianMarkerDiscretization,
     LagrangianMarkerKinematics,
@@ -29,6 +30,7 @@ class FiniteElementImmersedMarkerMapPlan(StrictModule, NonTrainableState):
     interpolation_matrix: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         markers: LagrangianMarkerDiscretization,
@@ -36,10 +38,6 @@ class FiniteElementImmersedMarkerMapPlan(StrictModule, NonTrainableState):
         interpolation_matrix: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(markers, LagrangianMarkerDiscretization):
-            raise TypeError("markers must be LagrangianMarkerDiscretization.")
-        if not isinstance(configuration_space, AbstractVectorSpace):
-            raise TypeError("configuration_space must be AbstractVectorSpace.")
         matrix = np.asarray(interpolation_matrix)
         expected = (
             markers.active_velocity_space.size,
@@ -75,9 +73,8 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
     interpolation: DenseLinearOperator
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FiniteElementImmersedMarkerMapPlan, /) -> None:
-        if not isinstance(plan, FiniteElementImmersedMarkerMapPlan):
-            raise TypeError("plan must be FiniteElementImmersedMarkerMapPlan.")
         interpolation = DenseLinearOperator(
             plan.interpolation_matrix,
             source=plan.configuration_space,

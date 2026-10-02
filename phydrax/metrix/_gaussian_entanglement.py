@@ -25,6 +25,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._bosonic_gaussian import BosonicGaussianState, canonical_commutation_matrix
 
 
@@ -265,9 +266,8 @@ class PreparedGaussianSubsystem(StrictModule, NonTrainableState):
     quadrature_indices: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: GaussianSubsystemPlan, /) -> None:
-        if not isinstance(plan, GaussianSubsystemPlan):
-            raise TypeError("plan must be a GaussianSubsystemPlan.")
         indices = _quadrature_indices(plan.modes)
         self.plan = plan
         self.quadrature_indices = jnp.asarray(indices)
@@ -279,9 +279,8 @@ class PreparedGaussianSubsystem(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def select(self, state: BosonicGaussianState, /) -> BosonicGaussianState:
-        if not isinstance(state, BosonicGaussianState):
-            raise TypeError("state must be a BosonicGaussianState.")
         if state.mode_count != self.plan.mode_count:
             raise ValueError("Gaussian state mode count does not match the plan.")
         indices = self.quadrature_indices
@@ -380,9 +379,8 @@ class PreparedGaussianEntanglement(StrictModule, NonTrainableState):
     symplectic_form: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: GaussianEntanglementPlan, /) -> None:
-        if not isinstance(plan, GaussianEntanglementPlan):
-            raise TypeError("plan must be a GaussianEntanglementPlan.")
         indices = _quadrature_indices(plan.subsystem_modes)
         local_lookup = {
             global_mode: local_mode
@@ -404,11 +402,10 @@ class PreparedGaussianEntanglement(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(self, state: BosonicGaussianState, /) -> GaussianEntanglementReport:
         """Execute reduction and report physical, PPT, and entropic evidence."""
 
-        if not isinstance(state, BosonicGaussianState):
-            raise TypeError("state must be a BosonicGaussianState.")
         if state.mode_count != self.plan.mode_count:
             raise ValueError("Gaussian state mode count does not match the plan.")
         indices = self.quadrature_indices

@@ -11,6 +11,7 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._availability import import_backend_module, probe_backend
 from ._types import AbstractExternalBackend, BackendAvailability, BackendCapabilities
 
@@ -118,6 +119,7 @@ class PreparedClarabel(StrictModule):
     settings: object
     backend_version: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ClarabelPlan,
@@ -127,8 +129,6 @@ class PreparedClarabel(StrictModule):
         *,
         backend_version: str,
     ) -> None:
-        if not isinstance(plan, ClarabelPlan):
-            raise TypeError("plan must be a ClarabelPlan.")
         version = str(backend_version)
         if not version:
             raise ValueError("backend_version must be non-empty.")

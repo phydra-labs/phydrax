@@ -21,6 +21,7 @@ from ..discretization._lagrangian_marker import (
     LagrangianMarkerKinematics,
     LagrangianMarkerSetPlan,
 )
+from ..typing import checked
 from ._atlas import BoundaryAtlas
 
 
@@ -105,6 +106,7 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def materialize(
         self,
         atlas: BoundaryAtlas,
@@ -113,8 +115,6 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         *,
         velocity: MarkerVelocityProvider | ArrayLike | None = None,
     ) -> ImmersedMarkerMaterialization:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("atlas must be a BoundaryAtlas.")
         if atlas.reference_dimension != self.reference_coordinates.shape[1]:
             raise ValueError("Atlas and marker reference dimensions differ.")
         chart_indices = eqx.error_if(

@@ -20,7 +20,7 @@ from .._dtype_names import canonical_dtype
 from .._fingerprint import canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._axis_domain import AxisDomain
 from ._core import (
     DiscretizationCapability,
@@ -64,6 +64,7 @@ class AxisDiscretization(StrictModule):
     lower_endpoint_included: bool = eqx.field(static=True)
     upper_endpoint_included: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -78,8 +79,6 @@ class AxisDiscretization(StrictModule):
         level: ArrayLike | None = None,
         parent_interval: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(domain, AxisDomain):
-            raise TypeError("domain must be an AxisDomain.")
         basis = parse(basis, AxisBasis, "basis")
         nodes_ = jnp.asarray(nodes, dtype=canonical_dtype(jnp.float64)).reshape((-1,))
         if nodes_.size == 0:

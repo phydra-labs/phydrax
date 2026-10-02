@@ -22,6 +22,7 @@ from ...discretization.contact import (
     evaluate_contact_stencils,
     PreparedCollisionScene,
 )
+from ...typing import checked
 from ._barrier import (
     clamped_log_barrier_first_derivative,
     physical_barrier_scale,
@@ -128,6 +129,7 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
     contact: PreparedConvergentContactPotential
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LaggedCoulombFrictionPlan,
@@ -135,10 +137,6 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         contact: PreparedConvergentContactPotential,
         /,
     ) -> None:
-        if not isinstance(plan, LaggedCoulombFrictionPlan):
-            raise TypeError("plan must be LaggedCoulombFrictionPlan.")
-        if not isinstance(scene, PreparedCollisionScene):
-            raise TypeError("scene must be PreparedCollisionScene.")
         if (
             not isinstance(contact, PreparedConvergentContactPotential)
             or contact.scene.scene_id != scene.scene_id

@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._assembly import (
     assemble_diagonal,
     assemble_uniform_blocks,
@@ -1062,6 +1062,7 @@ class PreconditionerPlan(StrictModule):
     compute_dtype: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: PreconditioningPolicy,
@@ -1072,10 +1073,6 @@ class PreconditionerPlan(StrictModule):
         materialization: MaterializationPolicy | None = None,
         compute_dtype: str | None = None,
     ) -> None:
-        if not isinstance(policy, PreconditioningPolicy):
-            raise TypeError("policy must be a PreconditioningPolicy.")
-        if not isinstance(system_operator, AbstractLinearOperator):
-            raise TypeError("system_operator must be an AbstractLinearOperator.")
         if side not in ("left", "right"):
             raise ValueError("side must be 'left' or 'right'.")
         materialization_ = (
@@ -1171,6 +1168,7 @@ class PreparedPreconditioner(StrictModule):
     built_numeric_version: Any
     refresh_kind: PreconditionerRefreshKind = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action: AbstractPreconditioner,
@@ -1182,8 +1180,6 @@ class PreparedPreconditioner(StrictModule):
         built_numeric_version: Any,
         refresh_kind: PreconditionerRefreshKind,
     ) -> None:
-        if not isinstance(plan, PreconditionerPlan):
-            raise TypeError("plan must be a PreconditionerPlan.")
         if setup_operator is not None and not isinstance(
             setup_operator, AbstractLinearOperator
         ):

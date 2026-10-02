@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class EmpiricalAgingStatus(IntEnum):
@@ -162,11 +163,10 @@ class EmpiricalAgingTopology(StrictModule, NonTrainableState):
     history_node_count: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, support: EmpiricalAgingSupport, history_node_count: int, /
     ) -> None:
-        if not isinstance(support, EmpiricalAgingSupport):
-            raise TypeError("support must be EmpiricalAgingSupport.")
         if isinstance(history_node_count, bool) or not isinstance(
             history_node_count, int
         ):

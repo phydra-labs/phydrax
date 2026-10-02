@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ..stochastic import JUMP_SUCCESS, JumpEventBatch, WienerRealization
+from ..typing import checked
 from ._delay import DelayDifferentialProblem, DelayHistory, DelayValues, DerivativeDelay
 from ._delay_history import DelayHistoryView
 from ._delay_segmented import DelaySegmentArchive
@@ -48,6 +49,7 @@ class JumpDelayProblem(StrictModule):
     mark_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         delay_problem: DelayDifferentialProblem,
@@ -57,8 +59,6 @@ class JumpDelayProblem(StrictModule):
         mark_shape: Sequence[int] = (),
         problem_id: str = "jump-delay-problem",
     ) -> None:
-        if not isinstance(delay_problem, DelayDifferentialProblem):
-            raise TypeError("delay_problem must be a DelayDifferentialProblem.")
         if not callable(jump):
             raise TypeError("jump must be callable.")
         if any(isinstance(term, DerivativeDelay) for term in delay_problem.delay_terms):

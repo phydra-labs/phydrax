@@ -26,6 +26,7 @@ from phydrax.operators.path_integral import AbstractPseudofermionDiracOperator
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._actions import TwistedSYMConfiguration
 from ._twisted_n2 import TwistedN2SYMPlan, TwistedSYMCoordinateLayout
 
@@ -69,6 +70,7 @@ class TwistedKahlerDiracOperator(AbstractPseudofermionDiracOperator):
     fermion_space: ArraySpace
     component_labels: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         theory: TwistedN2SYMPlan,
@@ -76,10 +78,6 @@ class TwistedKahlerDiracOperator(AbstractPseudofermionDiracOperator):
         links: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(theory, TwistedN2SYMPlan):
-            raise TypeError("theory must be TwistedN2SYMPlan.")
-        if not isinstance(layout, TwistedSYMCoordinateLayout):
-            raise TypeError("layout must be TwistedSYMCoordinateLayout.")
         if layout.prepared.plan.plan_id != theory.bosonic_plan.plan_id:
             raise ValueError("Fermion coordinate layout does not match the theory plan.")
         coordinates = jnp.asarray(links)
@@ -215,14 +213,13 @@ class RegulatedTwistedDiracOperator(AbstractPseudofermionDiracOperator):
     links: Array
     regulator_mass: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kahler_dirac: TwistedKahlerDiracOperator,
         regulator_mass: float,
         /,
     ) -> None:
-        if not isinstance(kahler_dirac, TwistedKahlerDiracOperator):
-            raise TypeError("kahler_dirac must be TwistedKahlerDiracOperator.")
         mass = float(regulator_mass)
         if not np.isfinite(mass) or mass <= 0.0:
             raise ValueError("regulator_mass must be positive and finite.")

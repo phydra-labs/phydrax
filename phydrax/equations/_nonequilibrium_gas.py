@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import (
     AbstractSpeciesThermodynamicsPlan,
@@ -694,6 +695,7 @@ class TwoTemperatureMixtureNavierStokesSystem(
     transport: AbstractTransportClosure
     mode_diffusivities: tuple[float, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: TwoTemperatureThermodynamicsPlan,
@@ -706,8 +708,6 @@ class TwoTemperatureMixtureNavierStokesSystem(
         pressure_floor: float = 1.0e-12,
         maximum_thermal_iterations: int | None = None,
     ) -> None:
-        if not isinstance(transport, AbstractTransportClosure):
-            raise TypeError("Two-temperature transport must be AbstractTransportClosure.")
         inviscid = TwoTemperatureMixtureEulerSystem(
             thermodynamics,
             dimension,

@@ -23,6 +23,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...discretization.particle import PreparedReducedArticulation
 from ...linalg import ArraySpace, FunctionLinearOperator
+from ...typing import checked
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -186,6 +187,7 @@ class PreparedFixedBodyRoute(StrictModule):
     segment_route_indices: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FixedBodyRoutePlan,
@@ -195,10 +197,6 @@ class PreparedFixedBodyRoute(StrictModule):
         *,
         minimum_segment_length_m: float,
     ) -> None:
-        if not isinstance(plan, FixedBodyRoutePlan):
-            raise TypeError("plan must be FixedBodyRoutePlan.")
-        if not isinstance(articulation, PreparedReducedArticulation):
-            raise TypeError("articulation must be PreparedReducedArticulation.")
         local = jnp.asarray(
             local_positions_m, dtype=articulation.reference_position.dtype
         )

@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._alchemical import AlchemicalControlKind, PreparedControlledHamiltonian
 from .._thermodynamic import PreparedThermodynamicStateTable
 
@@ -83,6 +84,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
     charge_evidence_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hamiltonian: PreparedControlledHamiltonian,
@@ -90,10 +92,6 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
         state_index: int,
         /,
     ) -> None:
-        if not isinstance(hamiltonian, PreparedControlledHamiltonian):
-            raise TypeError("hamiltonian must be PreparedControlledHamiltonian.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         index = int(state_index)
         if index < 0 or index >= thermodynamic.state_count:
             raise ValueError("state_index must identify a prepared thermodynamic state.")

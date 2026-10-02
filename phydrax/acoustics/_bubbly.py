@@ -35,6 +35,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field, parameter_field
 from ..bubble_dynamics import linear_bubble_response, RadialBubbleModel
 from ..qualification import CapabilityProfile, SupportTuple
+from ..typing import checked
 
 
 _DECIBEL_PER_NEPER = 20.0 * log10(e)
@@ -92,6 +93,7 @@ class BubblyMediumDispersionPlan(StrictModule):
     bin_batch_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: RadialBubbleModel,
@@ -103,8 +105,6 @@ class BubblyMediumDispersionPlan(StrictModule):
         maximum_void_fraction: float = 1.0e-2,
         bin_batch_size: int = 32,
     ) -> None:
-        if not isinstance(model, RadialBubbleModel):
-            raise TypeError("model must be a RadialBubbleModel.")
         _positive_host(model.far_field_density(), "liquid density")
         _positive_host(model.far_field_sound_speed(), "liquid sound speed")
         radii = _host_vector(bin_radii, "bin_radii")

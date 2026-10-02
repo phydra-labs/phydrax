@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
 from ..linalg import AbstractLinearOperator
+from ..typing import checked
 
 
 class GraphMetricPrior(StrictModule, NonTrainableState):
@@ -344,6 +345,7 @@ class SPDEPrecisionPrior(StrictModule, NonTrainableState):
     logdet_precision: Array | None
     normalized: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         precision: AbstractLinearOperator,
@@ -352,8 +354,6 @@ class SPDEPrecisionPrior(StrictModule, NonTrainableState):
         *,
         logdet_precision: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(precision, AbstractLinearOperator):
-            raise TypeError("SPDE precision must be a native linear operator.")
         if (
             not precision.source.compatible(precision.target)
             or not precision.properties.certifies("self_adjoint")

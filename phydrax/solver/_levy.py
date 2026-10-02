@@ -26,7 +26,7 @@ from ..stochastic import (
     StochasticTrajectory,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
-from ..typing import parse
+from ..typing import checked, parse
 from ._solution_validation import validate_solution_arrays
 
 
@@ -62,6 +62,7 @@ class LevySDEProblem(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         drift: LevySDEVectorField,
@@ -77,8 +78,6 @@ class LevySDEProblem(StrictModule):
     ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
-        if not isinstance(driver, AbstractLevyProcess):
-            raise TypeError("driver must implement AbstractLevyProcess.")
         state = jnp.asarray(initial_state)
         state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
@@ -199,6 +198,7 @@ class LevySDESolution(StrictModule):
     solver_name: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -213,12 +213,6 @@ class LevySDESolution(StrictModule):
         approximation_id: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(realization, LevyProcessRealization):
-            raise TypeError("realization must be a LevyProcessRealization.")
-        if not isinstance(series, LevyJumpSeries):
-            raise TypeError("series must be a LevyJumpSeries.")
-        if not isinstance(diagnostics, LevySDESolverDiagnostics):
-            raise TypeError("diagnostics must be LevySDESolverDiagnostics.")
         arrays = validate_solution_arrays(
             times,
             states,

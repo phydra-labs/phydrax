@@ -20,7 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
-from ..typing import parse
+from ..typing import checked, parse
 from ._fourier_laguerre import FourierLaguerrePlan
 from ._laguerre import RadialLaguerrePlan
 from ._spherical import SphericalExecution
@@ -224,6 +224,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
     admissibility_defect: float
     fingerprint: str
 
+    @checked
     def __init__(
         self,
         fourier_laguerre: FourierLaguerrePlan,
@@ -239,8 +240,6 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         max_precompute_bytes: int = _DEFAULT_RESOURCE_BYTES,
         max_runtime_bytes: int = _DEFAULT_RESOURCE_BYTES,
     ) -> None:
-        if not isinstance(fourier_laguerre, FourierLaguerrePlan):
-            raise TypeError("fourier_laguerre must be a FourierLaguerrePlan.")
         angular = fourier_laguerre.angular
         if angular.spin != 0:
             raise ValueError("directional ball wavelets currently require spin zero.")
@@ -637,10 +636,9 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
             transform_id=self.transform_id,
         )
 
+    @checked
     def synthesis(self, coefficients: BallWaveletCoefficients, /) -> Array:
         """Synthesize radial-spherical samples from scaling and detail leaves."""
-        if not isinstance(coefficients, BallWaveletCoefficients):
-            raise TypeError("coefficients must be BallWaveletCoefficients.")
         if coefficients.transform_id != self.transform_id:
             raise ValueError("ball wavelet coefficients belong to another transform.")
         if coefficients.scale_pairs != self.scale_pairs:

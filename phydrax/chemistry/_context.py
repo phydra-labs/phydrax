@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticUnitSystem, PermanentMultipoleSiteData
+from ..typing import checked
 
 
 class ElectrostaticEmbeddingState(StrictModule, NonTrainableState):
@@ -28,6 +29,7 @@ class ElectrostaticEmbeddingState(StrictModule, NonTrainableState):
     units: AtomisticUnitSystem
     embedding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         point_ids: ArrayLike,
@@ -66,8 +68,6 @@ class ElectrostaticEmbeddingState(StrictModule, NonTrainableState):
             ~np.isfinite(np.asarray(charge)[active_host])
         ):
             raise ValueError("Active embedding positions and charges must be finite.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         self.point_ids = ids
         self.positions = coordinate
         self.charges = charge
@@ -100,6 +100,7 @@ class ExternalFieldState(StrictModule, NonTrainableState):
     units: AtomisticUnitSystem
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         electric: ArrayLike,
@@ -111,8 +112,6 @@ class ExternalFieldState(StrictModule, NonTrainableState):
         damping: ArrayLike = 0.0,
         gauge: str = "length",
     ) -> None:
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         electric_ = jnp.asarray(electric)
         magnetic_ = jnp.asarray(magnetic, dtype=electric_.dtype)
         if electric_.shape != (3,) or magnetic_.shape != (3,):
@@ -246,6 +245,7 @@ class PermanentMultipoleEmbeddingState(StrictModule, NonTrainableState):
     units: AtomisticUnitSystem
     embedding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         point_ids: ArrayLike,
@@ -258,10 +258,6 @@ class PermanentMultipoleEmbeddingState(StrictModule, NonTrainableState):
     ) -> None:
         ids = jnp.asarray(point_ids, dtype=jnp.int64)
         positions_ = jnp.asarray(positions)
-        if not isinstance(multipoles, PermanentMultipoleSiteData):
-            raise TypeError("multipoles must be PermanentMultipoleSiteData.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         if ids.ndim != 1 or positions_.shape != (ids.size, 3):
             raise ValueError(
                 "Multipole IDs and positions must have shapes (P,) and (P, 3)."
@@ -312,6 +308,7 @@ class PolarizableEmbeddingState(StrictModule, NonTrainableState):
     solver_state_id: str = eqx.field(static=True)
     embedding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         permanent: PermanentMultipoleEmbeddingState,
@@ -320,8 +317,6 @@ class PolarizableEmbeddingState(StrictModule, NonTrainableState):
         solver_state_id: str,
         /,
     ) -> None:
-        if not isinstance(permanent, PermanentMultipoleEmbeddingState):
-            raise TypeError("permanent must be PermanentMultipoleEmbeddingState.")
         induced = jnp.asarray(induced_dipoles, dtype=permanent.positions.dtype)
         residual_ = jnp.asarray(residual, dtype=induced.real.dtype).reshape(())
         solver = str(solver_state_id).strip()

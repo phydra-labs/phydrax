@@ -24,6 +24,7 @@ from ...integration._targets import (
     WeightedSampleTarget,
 )
 from ...stochastic._state_space import AbstractTransitionKernel, StateSpaceStepContext
+from ...typing import checked
 
 
 FiniteBridgeTarget = (
@@ -418,6 +419,7 @@ class SchrodingerBridgeProblem(StrictModule):
     mass_tolerance: float = eqx.field(static=True)
     time_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial: FiniteBridgeTarget,
@@ -430,15 +432,11 @@ class SchrodingerBridgeProblem(StrictModule):
         transition_tolerance: float = 1e-7,
         mass_tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(reference, AbstractTransitionKernel):
-            raise TypeError("reference must implement AbstractTransitionKernel.")
         if not reference.has_log_density:
             raise ValueError(
                 "Exact finite-state Schrödinger bridges require a reference transition "
                 "with a normalized log density; sampler-only kernels are unsupported."
             )
-        if not isinstance(context, StateSpaceStepContext):
-            raise TypeError("context must be an explicit StateSpaceStepContext.")
         transition_tolerance = float(transition_tolerance)
         mass_tolerance = float(mass_tolerance)
         if (

@@ -34,7 +34,7 @@ from .._likelihoods import (
 from ..ml._classification import ClassificationObjective
 from ..ml._schema import TargetSchema
 from ..ml.metrics._base import METRIC_INVALID_INPUT, METRIC_SUCCESS
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._likelihood import (
     _AbstractSupervisedDatasetObservationTerm,
     _AbstractSupervisedLikelihoodTerm,
@@ -232,6 +232,7 @@ class SupervisedClassificationTerm(_AbstractSupervisedLikelihoodTerm):
     classification_kind: ClassificationKind = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -250,8 +251,6 @@ class SupervisedClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         indices: ArrayLike | None = None,
         label: str | None = None,
     ) -> None:
-        if not isinstance(target_schema, TargetSchema):
-            raise TypeError("target_schema must be a TargetSchema.")
         kind = target_schema.kind
         match kind:
             case "binary":

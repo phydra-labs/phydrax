@@ -23,6 +23,7 @@ from ...linalg import (
     LinearSolveStatus,
     solve,
 )
+from ...typing import checked
 from .._models import AbstractScatteringComponent, ScatteringResponse
 from .._ports import WavePort
 
@@ -158,6 +159,7 @@ class RationalScatteringComponent(AbstractScatteringComponent):
     numeric_version: Array
     component_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: RationalMatrixModel,
@@ -167,8 +169,6 @@ class RationalScatteringComponent(AbstractScatteringComponent):
         numeric_version: ArrayLike = 0,
         component_id: str | None = None,
     ) -> None:
-        if not isinstance(model, RationalMatrixModel):
-            raise TypeError("model must be RationalMatrixModel.")
         port_tuple = tuple(ports)
         if sum(port.size for port in port_tuple) != model.port_count:
             raise ValueError("Rational scattering ports do not match model coordinates.")

@@ -14,6 +14,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..stochastic import StateSpaceProblem
+from ..typing import checked
 from ._posterior import ParameterSpace
 from ._state_space_path_density import state_space_path_log_density
 
@@ -47,6 +48,7 @@ class ParameterizedStateSpaceProblem(StrictModule):
     initial_log_prob_function: Callable[[PyTree[Any], Array], Array] | None
     parameterization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: StateSpaceProblem,
@@ -57,10 +59,6 @@ class ParameterizedStateSpaceProblem(StrictModule):
         initial_log_prob: Callable[[PyTree[Any], Array], Array] | None = None,
         parameterization_id: str = "parameterized-state-space",
     ) -> None:
-        if not isinstance(problem, StateSpaceProblem):
-            raise TypeError("problem must be a StateSpaceProblem.")
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         if not callable(bind_args):
             raise TypeError("bind_args must be callable.")
         if initial_log_prob is not None and not callable(initial_log_prob):

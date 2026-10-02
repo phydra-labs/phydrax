@@ -23,7 +23,7 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._wiener import LevyAreaKind, WienerRealization
 
 
@@ -332,6 +332,7 @@ class StochasticPathEnsemblePlan(StrictModule):
     configuration_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -356,8 +357,6 @@ class StochasticPathEnsemblePlan(StrictModule):
         throw: bool = False,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         count = int(path_count)
         maximum = int(max_steps)
         if count <= 0 or maximum <= 0:

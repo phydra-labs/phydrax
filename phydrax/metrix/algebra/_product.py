@@ -18,7 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._core import AbstractFiniteRealAlgebraSpec
 from ._layout import AlgebraElementLayout
 from ._resources import AlgebraResourceEvidence
@@ -84,6 +84,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
     evidence: AlgebraProductEvidence
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: AbstractFiniteRealAlgebraSpec,
@@ -92,8 +93,6 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         layout: AlgebraElementLayout | None = None,
         backend: Literal["auto", "sparse", "dense"] = "auto",
     ) -> None:
-        if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
-            raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         layout_ = AlgebraElementLayout(algebra) if layout is None else layout
         if not isinstance(layout_, AlgebraElementLayout):
             raise TypeError("layout must be AlgebraElementLayout or None.")

@@ -25,6 +25,7 @@ from ..equations._gas_dynamics import (
     HomogeneousMixtureEulerSystem,
 )
 from ..equations._homogeneous_thermodynamics import ZeroResidualHelmholtzTerm
+from ..typing import checked
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -56,6 +57,7 @@ class ThermochemistryProcessPlan(AbstractBalanceLawProcessPlan):
     nonlinear_iterations: int = eqx.field(static=True)
     nonlinear_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -69,8 +71,6 @@ class ThermochemistryProcessPlan(AbstractBalanceLawProcessPlan):
         nonlinear_iterations: int = 12,
         nonlinear_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         count = int(subcycles)
         fraction = float(safety_fraction)
         iterations = int(nonlinear_iterations)

@@ -41,7 +41,7 @@ from ..linalg import (
     transpose,
 )
 from ..sparse import SparseCoordinateOperator
-from ..typing import parse
+from ..typing import checked, parse
 from ._point_cloud import PreparedPointCloudDiscretization
 
 
@@ -199,6 +199,7 @@ class PointDiffusionOperator(StrictModule, NonTrainableState):
     form: PointDiffusionForm = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: PreparedPointCloudDiscretization,
@@ -207,8 +208,6 @@ class PointDiffusionOperator(StrictModule, NonTrainableState):
         *,
         form: PointDiffusionForm = "dissipative",
     ) -> None:
-        if not isinstance(discretization, PreparedPointCloudDiscretization):
-            raise TypeError("discretization must be PreparedPointCloudDiscretization.")
         form = parse(form, PointDiffusionForm, "form")
         coefficient = jnp.broadcast_to(
             jnp.asarray(diffusivity, dtype=jnp.float64), discretization.state_shape
@@ -506,11 +505,10 @@ class PreparedPointCloudPoisson(StrictModule, NonTrainableState):
     linear_solve: PreparedLinearSolve
     hierarchy: PreparedMeshfreeHierarchy | None
 
+    @checked
     def __init__(
         self, plan: PointCloudPoissonPlan, diffusivity: ArrayLike = 1.0, /
     ) -> None:
-        if not isinstance(plan, PointCloudPoissonPlan):
-            raise TypeError("plan must be PointCloudPoissonPlan.")
         diffusion = PointDiffusionOperator(
             plan.discretization, diffusivity, form=plan.form
         )

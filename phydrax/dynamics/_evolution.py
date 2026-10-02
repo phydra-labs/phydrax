@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import ArraySpace, prepare_linearization, PreparedLinearization
+from ..typing import checked
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import StateLayout
 from ._system import (
@@ -231,6 +232,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
     eventful: bool = eqx.field(static=True)
     stochastic: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: DiscreteSystem,
@@ -239,8 +241,6 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         input_policy: AbstractInputPolicy | None = None,
         evolution_id: str | None = None,
     ) -> None:
-        if not isinstance(system, DiscreteSystem):
-            raise TypeError("DiscreteEvolution system must be a DiscreteSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
             raise TypeError("input_policy must be an AbstractInputPolicy or None.")
         system_input_layout = system.input_layout

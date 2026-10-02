@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractVectorSpace, ArraySpace, HilbertComplex
 from ...sparse import EdgeRelation, SparseCoordinateOperator, SparseLinearMap
+from ...typing import checked
 from .._cochain_hodge import CochainHodge, DiagonalHodge
 from .._topology import CellComplexTopology, EntitySet, OrientedIncidence
 from ._patches import BlockHierarchyCapacityPlan
@@ -242,6 +243,7 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
     incidence_capacity: tuple[int, ...] = eqx.field(static=True)
     complex_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: VariablePatchHierarchyTopology,
@@ -250,8 +252,6 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
         incidence_capacity: Sequence[int],
         /,
     ) -> None:
-        if not isinstance(topology, VariablePatchHierarchyTopology):
-            raise TypeError("Variable patch entity complex requires realized topology.")
         level_ = int(level)
         if level_ < 0 or level_ >= len(topology.levels):
             raise ValueError("Variable patch entity level is out of range.")
@@ -545,11 +545,8 @@ class VariablePatchEntityComplexPlan(StrictModule, NonTrainableState):
     capacity_plan: BlockHierarchyCapacityPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, capacity_plan: BlockHierarchyCapacityPlan, /) -> None:
-        if not isinstance(capacity_plan, BlockHierarchyCapacityPlan):
-            raise TypeError(
-                "Variable patch entity complex requires BlockHierarchyCapacityPlan."
-            )
         required_routes = sum(
             max(0, len(capacity) - 1) for capacity in capacity_plan.entity_capacities
         )

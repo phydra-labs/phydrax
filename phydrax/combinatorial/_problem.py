@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._types import CombinatorialFeasibility
 
 
@@ -129,6 +130,7 @@ class LinearCombinatorialProblem(StrictModule):
     structure_id: str = eqx.field(static=True)
     cost_tree_definition: Any = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: AbstractCombinatorialSpace,
@@ -137,8 +139,6 @@ class LinearCombinatorialProblem(StrictModule):
         *,
         problem_id: str = "linear-combinatorial-problem",
     ) -> None:
-        if not isinstance(space, AbstractCombinatorialSpace):
-            raise TypeError("space must be an AbstractCombinatorialSpace.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be nonempty.")

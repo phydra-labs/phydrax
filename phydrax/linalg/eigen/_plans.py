@@ -10,6 +10,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._materialization import MaterializationPolicy
 from .._preconditioning import PreconditionerPlan
 from .._spaces import _coordinate_dtype
@@ -93,6 +94,7 @@ class EigenSolvePlan(StrictModule):
     rejections: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: EigenproblemLike,
@@ -109,8 +111,6 @@ class EigenSolvePlan(StrictModule):
     ) -> None:
         if not isinstance(problem, (Eigenproblem, GeneralizedEigenproblem)):
             raise TypeError("problem must be an Eigenproblem or GeneralizedEigenproblem.")
-        if not isinstance(policy, EigenSolvePolicy):
-            raise TypeError("policy must be an EigenSolvePolicy.")
         if not isinstance(selected_method, (DenseEigh, LOBPCG, RestartedLanczos)):
             raise TypeError(
                 "selected_method must be DenseEigh, LOBPCG, or RestartedLanczos."

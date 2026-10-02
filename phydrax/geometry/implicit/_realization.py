@@ -25,6 +25,7 @@ from ...linalg import (
     OperatorProperties,
     solve,
 )
+from ...typing import checked
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryTolerance
 from ..design._schema import DesignState, ParameterSchema
 from ..simplicial import TriangleMesh
@@ -306,6 +307,7 @@ class ImplicitSurfacePlan(StrictModule):
     topology_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -326,8 +328,6 @@ class ImplicitSurfacePlan(StrictModule):
         source_id: str,
         topology_id: str,
     ) -> None:
-        if not isinstance(projection, ImplicitPointProjectionPlan):
-            raise TypeError("projection must be ImplicitPointProjectionPlan.")
         arrays = {
             "grid_points": np.asarray(grid_points, dtype=np.float64),
             "inside_pattern": np.asarray(inside_pattern, dtype=np.bool_),

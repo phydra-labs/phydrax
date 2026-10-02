@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan
+from ...typing import checked
 from ..wave._fields import PlaneFieldSpace, ScalarPlaneField
 from ._core import (
     beamlet_curvature,
@@ -36,6 +37,7 @@ class BeamletReconstructionPlan(StrictModule, NonTrainableState):
     solve_plan: SmallLinearSolvePlan
     caustic_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -47,8 +49,6 @@ class BeamletReconstructionPlan(StrictModule, NonTrainableState):
         maximum_condition: float = 1e12,
         caustic_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         coordinate = jnp.asarray(longitudinal_coordinate)
         if coordinate.shape != () or not jnp.issubdtype(coordinate.dtype, jnp.floating):
             raise ValueError("longitudinal_coordinate must be a real scalar.")
@@ -95,6 +95,7 @@ class PreparedBeamletReconstruction(StrictModule, NonTrainableState):
     point_count: int = eqx.field(static=True)
     tile_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: BeamletReconstructionPlan,
@@ -105,8 +106,6 @@ class PreparedBeamletReconstruction(StrictModule, NonTrainableState):
         point_count: int,
         tile_count: int,
     ) -> None:
-        if not isinstance(plan, BeamletReconstructionPlan):
-            raise TypeError("plan must be a BeamletReconstructionPlan.")
         points = jnp.asarray(world_point_tiles)
         active = jnp.asarray(active_tiles, dtype=jnp.bool_)
         expected_points = (int(tile_count), plan.tile_size, 3)

@@ -24,7 +24,7 @@ from ..nn.neural_tangent import (
 )
 from ..nn.parameters import ParameterSubspace
 from ..terms import ResidualBlockRef
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._functional_residual import (
     FunctionalResidualLayout,
     prepare_functional_residual,
@@ -58,6 +58,7 @@ class PreparedFunctionalNTK(StrictModule):
     discretization_bundle_id: str = eqx.field(static=True)
     parameter_paths: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ntk: PreparedEmpiricalNTK,
@@ -69,10 +70,6 @@ class PreparedFunctionalNTK(StrictModule):
         discretization_bundle_id: str,
         parameter_paths: tuple[str, ...],
     ) -> None:
-        if not isinstance(ntk, PreparedEmpiricalNTK):
-            raise TypeError("ntk must be a PreparedEmpiricalNTK.")
-        if not isinstance(residual, PreparedFunctionalResidual):
-            raise TypeError("residual must be a PreparedFunctionalResidual.")
         view = parse(view, FunctionalNTKView, "view")
         self.ntk = ntk
         self.residual = residual
@@ -98,10 +95,9 @@ class PreparedFunctionalNTK(StrictModule):
     ) -> NTKDiagnostics:
         return analyze_ntk(self.ntk, policy=policy, key=key)
 
+    @checked
     def block(self, reference: ResidualBlockRef, /) -> PreparedEmpiricalNTK:
         """Prepare one term or named residual-block kernel from shared roots."""
-        if not isinstance(reference, ResidualBlockRef):
-            raise TypeError("reference must be a ResidualBlockRef.")
         if reference.block_name is None:
             pieces = tuple(
                 jnp.arange(entry.start, entry.stop, dtype=jnp.int32)

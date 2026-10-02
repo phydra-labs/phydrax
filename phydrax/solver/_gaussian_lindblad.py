@@ -23,6 +23,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..metrix import BosonicGaussianState, canonical_commutation_matrix
+from ..typing import checked
 
 
 class GaussianLindbladProblem(StrictModule):
@@ -35,6 +36,7 @@ class GaussianLindbladProblem(StrictModule):
     linear: LinearSolvePolicy
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         drift: ArrayLike,
@@ -46,8 +48,6 @@ class GaussianLindbladProblem(StrictModule):
         linear: LinearSolvePolicy | None = None,
         problem_id: str = "gaussian-lindblad",
     ) -> None:
-        if not isinstance(initial_state, BosonicGaussianState):
-            raise TypeError("initial_state must be BosonicGaussianState.")
         linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
         if not isinstance(linear_, LinearSolvePolicy):
             raise TypeError("linear must be LinearSolvePolicy or None.")
@@ -136,6 +136,7 @@ class GaussianLindbladSolution(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         means: ArrayLike,
@@ -149,8 +150,6 @@ class GaussianLindbladSolution(StrictModule):
         geometry_precision: GeometryPrecisionPolicy,
         hermitian_precision: HermitianPrecisionPolicy,
     ) -> None:
-        if not isinstance(precision, TemporalPrecisionPolicy):
-            raise TypeError("precision must be TemporalPrecisionPolicy.")
         means_ = jnp.asarray(means)
         covariances_ = jnp.asarray(covariances)
         times_ = jnp.asarray(times)

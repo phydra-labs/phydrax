@@ -37,6 +37,7 @@ from ..discretization._cell_geometry_validity import (
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._motion_validity import reference_corner_frames
 from ..discretization._reference_cell import reference_cell_topology
+from ..typing import checked
 from ._metric import interpolate_mesh_metric, MeshMetricField
 
 
@@ -93,9 +94,8 @@ class CellQualityReport(StrictModule, NonTrainableState):
     worst_cell_global_ids: tuple[int, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, evaluation: CellQualityEvaluation, /) -> None:
-        if not isinstance(evaluation, CellQualityEvaluation):
-            raise TypeError("evaluation must be CellQualityEvaluation.")
         measures = np.asarray(evaluation.measures, dtype=np.float64)
         ratios = np.asarray(evaluation.mean_ratios, dtype=np.float64)
         aspects = np.asarray(evaluation.aspect_ratios, dtype=np.float64)

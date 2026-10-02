@@ -39,7 +39,7 @@ from ...transport.diffusion._guidance import (
     GuidanceExactness,
     ScoreContext,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._topology import (
     TopologyContinuationStageEvidence,
     TopologyMechanicsProblem,
@@ -382,6 +382,7 @@ class MechanicsPotentialGuidance(AbstractScoreGuidance):
     exactness: GuidanceExactness = eqx.field(static=True)
     guidance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterization: StateDesignParameterization,
@@ -394,8 +395,6 @@ class MechanicsPotentialGuidance(AbstractScoreGuidance):
         linear_policy: LinearSolvePolicy | None = None,
         guidance_id: str = "mechanics-potential",
     ) -> None:
-        if not isinstance(parameterization, StateDesignParameterization):
-            raise TypeError("parameterization must be StateDesignParameterization.")
         if not isfinite(float(scale)) or float(scale) < 0.0:
             raise ValueError("scale must be finite and nonnegative.")
         if denoise is not None and not callable(denoise):

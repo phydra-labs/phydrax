@@ -19,7 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg._certificates import SpectralInterval
 from ...linalg._rational_functions import PartialFractionRationalFunction
-from ...typing import parse
+from ...typing import checked, parse
 
 
 RationalErrorMetric: TypeAlias = Literal["absolute", "relative"]
@@ -124,6 +124,7 @@ class RationalApproximationPlan(StrictModule):
     requested_tolerance: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         target: RationalApproximationTarget,
@@ -136,8 +137,6 @@ class RationalApproximationPlan(StrictModule):
         requested_tolerance: float | None = None,
         resources: RationalApproximationResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(target, RationalApproximationTarget):
-            raise TypeError("target must be a RationalApproximationTarget.")
         poles = int(num_poles)
         points = int(verification_points)
         span = float(pole_span)
@@ -204,6 +203,7 @@ class CertifiedRationalApproximation(StrictModule):
     evidence: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         target: RationalApproximationTarget,
@@ -222,12 +222,6 @@ class CertifiedRationalApproximation(StrictModule):
         verification_points: int,
         evidence: str,
     ) -> None:
-        if not isinstance(target, RationalApproximationTarget):
-            raise TypeError("target must be a RationalApproximationTarget.")
-        if not isinstance(spectral_interval, SpectralInterval):
-            raise TypeError("spectral_interval must be a SpectralInterval.")
-        if not isinstance(function, PartialFractionRationalFunction):
-            raise TypeError("function must be a PartialFractionRationalFunction.")
         points = jnp.asarray(extremal_points)
         errors = jnp.asarray(extremal_errors)
         absolute = jnp.asarray(maximum_absolute_error)

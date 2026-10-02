@@ -23,6 +23,7 @@ from ..discretization.spectral import (
 )
 from ..equations._channel_flow import CompiledChannelFlowDynamics
 from ..equations._channel_les import CompiledChannelLESDynamics
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._temporal_method import TemporalMethodCapabilities
 
@@ -309,6 +310,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
             operand=None,
         )
 
+    @checked
     def step_with_diagnostics(
         self,
         step_index: Array,
@@ -322,8 +324,6 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
         upper_tangential_traction: ArrayLike | None = None,
     ) -> _ChannelSBDF2Transition:
         del step_index
-        if not isinstance(state, ChannelSBDF2State):
-            raise TypeError("state must be a ChannelSBDF2State.")
         if state.current_velocity.shape != self.dynamics.state_shape:
             raise ValueError("Channel SBDF2 state shape does not match its dynamics.")
         step = jnp.asarray(

@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem, solve_diffrax
+from ...typing import checked
 from ._background import FLRWBackground
 from ._products import (
     CosmologyProductProvenance,
@@ -119,9 +120,8 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def expansion_history(self, background: FLRWBackground, /) -> ExpansionHistory:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         return ExpansionHistory(
             self.scale_factors,
             background.hubble(self.scale_factors),
@@ -130,9 +130,8 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             background.realization,
         )
 
+    @checked
     def solve(self, background: FLRWBackground, /) -> LagrangianGrowthHistory:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         start = self.scale_factors[0].astype(background.hubble_constant.dtype)
         start = background.require_flat(start)
         matter = background.matter_fraction(start)

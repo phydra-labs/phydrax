@@ -28,7 +28,7 @@ from ..discretization.spectral._space import TensorSpectralDiscretization
 from ..linalg import ArraySpace, DiagonalLinearOperator
 from ..solver._etdrk import ETDRKMethod, PreparedETDRKMethod
 from ..solver._semilinear_drift import SemilinearDrift
-from ..typing import parse
+from ..typing import checked, parse
 
 
 DissipationOrder: TypeAlias = Literal[1, 2, 3, 4]
@@ -112,6 +112,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
     reality_tolerance: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -125,8 +126,6 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
         reality_tolerance: float = 1.0e-10,
         maximum_coordinate_size: int = 10_000_000,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         beta_ = float(beta)
         drag = float(linear_drag)
         viscosity_ = float(viscosity)

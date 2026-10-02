@@ -23,6 +23,7 @@ from ..discretization._oriented_path import (
 )
 from ..metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 from ..metrix._gauge_representation import AbstractGaugeRepresentation
+from ..typing import checked
 from ._matrix_gauge import MatrixGaugeLinkSpace
 
 
@@ -57,6 +58,7 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
     boundary_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         link_space: MatrixGaugeLinkSpace,
@@ -67,14 +69,8 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
         boundary_phases: LatticeBoundaryPhasePlan,
         /,
     ) -> None:
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be MatrixGaugeLinkSpace.")
-        if not isinstance(representation, AbstractGaugeRepresentation):
-            raise TypeError("representation must implement AbstractGaugeRepresentation.")
         if representation.group.group_id != link_space.group.group_id:
             raise ValueError("Representation and link space must use the same group.")
-        if not isinstance(boundary_phases, LatticeBoundaryPhasePlan):
-            raise TypeError("boundary_phases must be LatticeBoundaryPhasePlan.")
         site_count = boundary_phases.site_count
         dimension = boundary_phases.dimension
         if link_space.num_vertices != site_count:
@@ -253,6 +249,7 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
     route_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         link_space: MatrixGaugeLinkSpace,
@@ -261,12 +258,8 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
         *,
         maximum_staples_per_link: int = 64,
     ) -> None:
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("Gauge staples require U(N) or SU(N) matrix links.")
-        if not isinstance(boundaries, CellBoundaryPathPlan):
-            raise TypeError("boundaries must be CellBoundaryPathPlan.")
         paths = boundaries.paths
         if paths.topology_id != link_space.topology.topology_id:
             raise ValueError("Staple boundaries and link space must share one topology.")

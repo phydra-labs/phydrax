@@ -81,7 +81,7 @@ from ..._validation import (
 )
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan, solve_small_linear
 from ...special import synchrotron_f
-from ...typing import Bool, Dim, Float64, Int32, parse, PRNGKey, Scalar, Size
+from ...typing import Bool, checked, Dim, Float64, Int32, parse, PRNGKey, Scalar, Size
 from ._advanced import _symplectic_form, SymplecticMapPlan
 from ._beam import _late_sign, AcceleratorBunch, AcceleratorConvention
 
@@ -858,6 +858,7 @@ class RingRadiationPlan(StrictModule, NonTrainableState):
     late_sign: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lattice: RingLattice,
@@ -872,10 +873,6 @@ class RingRadiationPlan(StrictModule, NonTrainableState):
         minimum_lorentz_factor: float = 100.0,
         maximum_quantum_parameter: float = 1.0e-2,
     ) -> None:
-        if not isinstance(lattice, RingLattice):
-            raise TypeError("lattice must be a RingLattice.")
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         convention_ = AcceleratorConvention() if convention is None else convention
         if not isinstance(convention_, AcceleratorConvention):
             raise TypeError("convention must be an AcceleratorConvention.")
@@ -1125,6 +1122,7 @@ class RadiativeRingTrackingPlan(StrictModule, NonTrainableState):
     maximum_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         radiation: RingRadiationPlan,
@@ -1138,8 +1136,6 @@ class RadiativeRingTrackingPlan(StrictModule, NonTrainableState):
         photon_overflow_probability: float = 1.0e-12,
         maximum_bytes: int = 2**30,
     ) -> None:
-        if not isinstance(radiation, RingRadiationPlan):
-            raise TypeError("radiation must be a RingRadiationPlan.")
         model_ = parse(model, RingRadiationModel, "model")
         turns = positive_integer(turn_count, "turn_count")
         horizontal = positive_finite_float(horizontal_aperture, "horizontal_aperture")

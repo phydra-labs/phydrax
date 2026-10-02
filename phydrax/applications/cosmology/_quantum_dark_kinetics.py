@@ -26,6 +26,7 @@ from ...equations._uehling_uhlenbeck import (
     UehlingUhlenbeckPlan,
     UUCollisionEvidence,
 )
+from ...typing import checked
 from ..relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
     RelativisticUnitContract,
@@ -125,6 +126,7 @@ class QuantumKineticState(StrictModule):
     frame_scope: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         occupancy: ArrayLike,
@@ -148,10 +150,6 @@ class QuantumKineticState(StrictModule):
             )
         if len({item.species_plan_id for item in species_}) != len(species_):
             raise ValueError("Quantum kinetic species identities must be unique.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be a LocalRelativisticFramePlan.")
         if frame.units.contract_id != units.contract_id:
             raise ValueError("Quantum kinetic frame and unit contract disagree.")
         mass_unit_id = units.scale.dimensional_scale.mass_unit.unit_id
@@ -379,6 +377,7 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
     frame_lane_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         species: Sequence[DarkSectorSpeciesPlan],
@@ -399,8 +398,6 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
             )
         if len({item.species_plan_id for item in species_}) != len(species_):
             raise ValueError("Quantum kinetic species identities must be unique.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
         if (
             not isinstance(frame, LocalRelativisticFramePlan)
             or frame.units.contract_id != units.contract_id
@@ -408,8 +405,6 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "frame must use the exact supplied relativistic unit contract."
             )
-        if not isinstance(collision, UehlingUhlenbeckPlan):
-            raise TypeError("collision must be a UehlingUhlenbeckPlan.")
         if collision.species_count != len(species_):
             raise ValueError(
                 "Collision species support disagrees with species identities."
@@ -559,13 +554,12 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
         normal = ein.contract("sxp,sp->", occupancy, self.collision.phase_space_weights)
         return normal if condensate is None else normal + jnp.sum(condensate)
 
+    @checked
     def advance(
         self, state: QuantumKineticState, step_size: ArrayLike, /
     ) -> QuantumKineticResult:
         """Advance collisions and optional condensate coupling with atomic rollback."""
 
-        if not isinstance(state, QuantumKineticState):
-            raise TypeError("state must be a QuantumKineticState.")
         compatible = (
             state.species_plan_ids == self.species_plan_ids
             and state.statistics_marks == self.statistics_marks

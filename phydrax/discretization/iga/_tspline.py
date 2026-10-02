@@ -28,6 +28,7 @@ from scipy.interpolate import BSpline
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 _BICUBIC_DEGREE = 3
@@ -219,6 +220,7 @@ class TAnchor2D(StrictModule, NonTrainableState):
     parameter: tuple[float, float] = eqx.field(static=True)
     local_knots: LocalKnotVector2D
 
+    @checked
     def __init__(
         self,
         anchor_id: int,
@@ -229,8 +231,6 @@ class TAnchor2D(StrictModule, NonTrainableState):
         identifier = int(anchor_id)
         if identifier < 0:
             raise ValueError("anchor_id must be nonnegative.")
-        if not isinstance(local_knots, LocalKnotVector2D):
-            raise TypeError("local_knots must be LocalKnotVector2D.")
         self.anchor_id = identifier
         self.parameter = _coordinate(parameter)
         self.local_knots = local_knots
@@ -982,11 +982,10 @@ class LocalExtractedBernsteinRealization(StrictModule, NonTrainableState):
     cell_ranks: Array
     cell_condition_numbers: Array
 
+    @checked
     def __init__(
         self, mesh: TMesh2D, extractions: Sequence[ExtractedBernstein], /
     ) -> None:
-        if not isinstance(mesh, TMesh2D):
-            raise TypeError("mesh must be TMesh2D.")
         extractions_ = tuple(extractions)
         if len(extractions_) != mesh.cell_count:
             raise ValueError("Every T-mesh cell requires one extraction operator.")

@@ -40,6 +40,7 @@ from ...linalg import (
     BlockSpace,
     DualSpace,
 )
+from ...typing import checked
 
 
 def _rigid_rotation(rotation_vector: Array) -> Array:
@@ -88,6 +89,7 @@ class RigidContactParticipant(AbstractContactParticipant):
     _participant_id: str = eqx.field(static=True)
     _capabilities: ContactCapability = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CollisionSurfacePlan,
@@ -97,8 +99,6 @@ class RigidContactParticipant(AbstractContactParticipant):
         *,
         body_count: int,
     ) -> None:
-        if not isinstance(plan, CollisionSurfacePlan):
-            raise TypeError("plan must be CollisionSurfacePlan.")
         vertices = jnp.asarray(local_vertices)
         owner = np.asarray(vertex_owner)
         bodies = int(body_count)

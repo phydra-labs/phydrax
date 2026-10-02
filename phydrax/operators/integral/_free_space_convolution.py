@@ -40,7 +40,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PreparedTensorGrid
-from ...typing import parse
+from ...typing import checked, parse
 
 
 FreeSpaceKernel: TypeAlias = Literal[
@@ -370,6 +370,7 @@ class FreeSpaceConvolutionPlan(StrictModule, NonTrainableState):
     gradient_kernel_transform: Array | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: FreeSpaceKernel,
@@ -381,8 +382,6 @@ class FreeSpaceConvolutionPlan(StrictModule, NonTrainableState):
         kernel_table: ArrayLike | None = None,
     ) -> None:
         kernel_ = parse(kernel, FreeSpaceKernel, "kernel")
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         if not isinstance(gradient, bool):
             raise TypeError("gradient must be a bool.")
         dimension = len(grid.shape)

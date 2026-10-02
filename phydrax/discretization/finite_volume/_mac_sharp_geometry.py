@@ -24,6 +24,7 @@ from ..._sharp_measures import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import PreparedMACOperators
 
 
@@ -115,6 +116,7 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
     face_sample_measure: tuple[Array, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -130,8 +132,6 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
         swept_cell_measure_rate: SweptMeasureRateProvider | None = None,
         gcl_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         if not callable(signed_distance):
             raise TypeError("signed_distance must be callable.")
         if not certificate.certifies_global_enclosure:

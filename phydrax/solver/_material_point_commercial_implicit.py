@@ -26,6 +26,7 @@ from ..discretization.mpm import (
 )
 from ..discretization.spatial import SparseBlockTopologyState
 from ..discretization.splatting import ParticleGridSplatState, PreparedParticleGridSplat
+from ..typing import checked
 
 
 class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
@@ -133,6 +134,7 @@ class MPMImplicitTopologyPlan(StrictModule, NonTrainableState):
     topology_generation: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: MPMImplicitUnknownLayout,
@@ -145,8 +147,6 @@ class MPMImplicitTopologyPlan(StrictModule, NonTrainableState):
         material_branch_digest: int,
         topology_generation: int,
     ) -> None:
-        if not isinstance(layout, MPMImplicitUnknownLayout):
-            raise TypeError("layout must be MPMImplicitUnknownLayout.")
         self.layout = layout
         self.route_digest = int(route_digest)
         self.block_digest = int(block_digest)
@@ -195,11 +195,10 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
     minimum_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, prepared: PreparedParticleGridSplat, /, *, minimum_margin: float = 1.0e-8
     ) -> None:
-        if not isinstance(prepared, PreparedParticleGridSplat):
-            raise TypeError("prepared must be PreparedParticleGridSplat.")
         margin = float(minimum_margin)
         if not np.isfinite(margin) or margin <= 0.0:
             raise ValueError("Route superset margin must be finite and positive.")
@@ -311,14 +310,13 @@ class MPMCompactImplicitOperator(StrictModule, NonTrainableState):
     active: SparseBlockTopologyState
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         storage: BlockSparseMPMNodalStoragePlan,
         active: SparseBlockTopologyState,
         /,
     ) -> None:
-        if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
-            raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         if not isinstance(active, SparseBlockTopologyState) or not bool(
             active.evidence.successful
         ):
@@ -415,6 +413,7 @@ class MPMTwoLevelMultigrid(StrictModule, NonTrainableState):
     coarse_solve: Callable[[Array], Array] = eqx.field(static=True)
     smoother: MPMBlockJacobiPreconditioner
 
+    @checked
     def __init__(
         self,
         restriction: Callable[[Array], Array],
@@ -427,8 +426,6 @@ class MPMTwoLevelMultigrid(StrictModule, NonTrainableState):
             callable(value) for value in (restriction, prolongation, coarse_solve)
         ):
             raise TypeError("Multigrid transfer/coarse solve must be callable.")
-        if not isinstance(smoother, MPMBlockJacobiPreconditioner):
-            raise TypeError("smoother must be MPMBlockJacobiPreconditioner.")
         self.restriction = restriction
         self.prolongation = prolongation
         self.coarse_solve = coarse_solve
@@ -498,6 +495,7 @@ class MPMSparseContactOperator(StrictModule, NonTrainableState):
     active: SparseBlockTopologyState
     contact: KWayMPMContactPlan
 
+    @checked
     def __init__(
         self,
         storage: BlockSparseMPMNodalStoragePlan,
@@ -505,12 +503,6 @@ class MPMSparseContactOperator(StrictModule, NonTrainableState):
         contact: KWayMPMContactPlan,
         /,
     ) -> None:
-        if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
-            raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
-        if not isinstance(active, SparseBlockTopologyState):
-            raise TypeError("active must be SparseBlockTopologyState.")
-        if not isinstance(contact, KWayMPMContactPlan):
-            raise TypeError("contact must be KWayMPMContactPlan.")
         self.storage = storage
         self.active = active
         self.contact = contact
@@ -537,6 +529,7 @@ class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
     spacing: tuple[float, ...] = eqx.field(static=True)
     periodic: tuple[bool, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         storage: BlockSparseMPMNodalStoragePlan,
@@ -545,8 +538,6 @@ class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
         periodic: Iterable[bool],
         /,
     ) -> None:
-        if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
-            raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         self.storage = storage
         self.active = active
         self.spacing = tuple(float(value) for value in spacing)

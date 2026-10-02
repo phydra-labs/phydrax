@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, RowRelation, SparseLinearMap, SparseRelation
+from ..typing import checked
 from ._core import nonempty_identifier, resolved_identifier
 from .spatial._dyadic import DyadicCellTopology
 
@@ -244,14 +245,13 @@ class EntitySelection(StrictModule, NonTrainableState):
     ) -> EntitySelection:
         return cls(entities, entities.subset(subset_name).mask)
 
+    @checked
     def _binary(
         self,
         other: EntitySelection,
         operation: str,
         /,
     ) -> EntitySelection:
-        if not isinstance(other, EntitySelection):
-            raise TypeError("Selection operands must be EntitySelection values.")
         if self.entity_set_id != other.entity_set_id:
             raise ValueError("Entity selections must share one entity set.")
         if operation == "union":
@@ -323,6 +323,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
     signs: Array
     incidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         degree: int,
@@ -341,8 +342,6 @@ class OrientedIncidence(StrictModule, NonTrainableState):
             raise ValueError("Lower entity dimension must equal degree - 1.")
         if upper.intrinsic_dimension != degree_:
             raise ValueError("Upper entity dimension must equal degree.")
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("Oriented incidence requires an EdgeRelation.")
         if relation.source_size != lower.count or relation.target_size != upper.count:
             raise ValueError("Incidence relation sizes must match the entity sets.")
         coefficients = np.asarray(signs)

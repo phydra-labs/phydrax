@@ -17,6 +17,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import AbstractPreparedParticleNeighborhood, PeriodicCell
+from ..typing import checked
 from ._alchemical import (
     ControlledHamiltonianEvaluation,
     PreparedControlledHamiltonian,
@@ -62,6 +63,7 @@ class AtomisticRerunPlan(StrictModule):
     reporter: AtomisticReporterPlan | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: AbstractAtomisticTrajectorySourcePlan,
@@ -74,8 +76,6 @@ class AtomisticRerunPlan(StrictModule):
         chunk_size: int = 64,
         reporter: AtomisticReporterPlan | None = None,
     ) -> None:
-        if not isinstance(source, AbstractAtomisticTrajectorySourcePlan):
-            raise TypeError("source must be an atomistic trajectory source plan.")
         if not isinstance(
             potential,
             (PreparedAtomisticPotentialProgram, PreparedControlledHamiltonian),
@@ -83,8 +83,6 @@ class AtomisticRerunPlan(StrictModule):
             raise TypeError(
                 "potential must be a prepared fixed or controlled Hamiltonian."
             )
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
         groups = tuple(force_groups)
         if any(value < 0 for value in groups):
             raise ValueError("Rerun force groups must be non-negative.")

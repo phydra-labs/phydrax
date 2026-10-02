@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..exterior._spectra import HodgeSectorSpectra
+from ..typing import checked
 from ._algebra import AmplitudeKernel, SumKernel
 from ._base import AbstractPositiveDefiniteKernel
 from ._finite_feature import (
@@ -33,6 +34,7 @@ class HodgeSpectralKernel(AbstractFiniteFeatureKernel):
     spectra: HodgeSectorSpectra
     sector_names: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spectra: HodgeSectorSpectra,
@@ -46,8 +48,6 @@ class HodgeSpectralKernel(AbstractFiniteFeatureKernel):
         coexact_amplitude: ArrayLike = 1.0,
         normalize_sectors: bool = True,
     ) -> None:
-        if not isinstance(spectra, HodgeSectorSpectra):
-            raise TypeError("spectra must be a HodgeSectorSpectra.")
         declarations = (
             (
                 "harmonic",

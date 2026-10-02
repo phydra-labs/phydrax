@@ -29,6 +29,7 @@ from ...qualification import (
     SupportDependency,
     SupportTuple,
 )
+from ...typing import checked
 from ._case import CardiovascularCaseManifest
 from ._execution import CardiovascularExecutionManifest
 
@@ -230,9 +231,8 @@ class CardiovascularClaimsMatrix:
             ),
         )
 
+    @checked
     def decision_for(self, support_tuple: SupportTuple, /) -> CardiovascularClaimDecision:
-        if not isinstance(support_tuple, SupportTuple):
-            raise TypeError("support_tuple must be SupportTuple.")
         for decision in self.decisions:
             if decision.support_tuple.support_tuple_id == support_tuple.support_tuple_id:
                 return decision
@@ -557,6 +557,7 @@ class CardiovascularSignedNonClaim:
         return canonical_json(self._unsigned_record()).encode("utf-8")
 
     @classmethod
+    @checked
     def issue(
         cls,
         support_tuple: SupportTuple,
@@ -569,8 +570,6 @@ class CardiovascularSignedNonClaim:
         expires_at: int,
         signer: ReleaseSigner,
     ) -> CardiovascularSignedNonClaim:
-        if not isinstance(support_tuple, SupportTuple):
-            raise TypeError("support_tuple must be SupportTuple.")
         unsigned = cls(
             support_tuple.support_tuple_id,
             excluded_use,

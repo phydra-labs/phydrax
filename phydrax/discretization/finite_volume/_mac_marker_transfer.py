@@ -20,7 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator, OperatorProperties
 from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
-from ...typing import parse
+from ...typing import checked, parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from .._tensor_entities import StructuredAxis, TensorEntityLayout
 from ._incompressible import FaceVelocity, PreparedMACOperators
@@ -409,6 +409,7 @@ class MACMarkerTransferPlan(StrictModule, NonTrainableState):
     maximum_resource_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -419,10 +420,6 @@ class MACMarkerTransferPlan(StrictModule, NonTrainableState):
         accumulation: MACMarkerAccumulation = "deterministic",
         maximum_resource_bytes: int = 1024**3,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
-        if not isinstance(markers, LagrangianMarkerDiscretization):
-            raise TypeError("markers must be LagrangianMarkerDiscretization.")
         dimension = len(operators.discretization.cell_shape)
         if markers.ambient_dimension != dimension:
             raise ValueError("Marker and MAC dimensions differ.")
@@ -488,9 +485,8 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     accumulation: MACMarkerAccumulation = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACMarkerTransferPlan, /) -> None:
-        if not isinstance(plan, MACMarkerTransferPlan):
-            raise TypeError("plan must be MACMarkerTransferPlan.")
         dimension = len(plan.operators.discretization.cell_shape)
         centers = tuple(
             value.reshape((-1, dimension))
@@ -627,6 +623,7 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def relation_on_routes(
         self,
         marker_positions: ArrayLike,
@@ -634,8 +631,6 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
         /,
     ) -> MACMarkerRelation:
         """Recompute smooth weights while certifying the frozen discrete routes."""
-        if not isinstance(routes, MACMarkerRouteState):
-            raise TypeError("routes must be MACMarkerRouteState.")
         if routes.transfer_id != self.prepared_id:
             raise ValueError("Marker route state belongs to another transfer.")
         current = self.relation(marker_positions)
@@ -671,12 +666,11 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def routes_match(
         self, relation: MACMarkerRelation, routes: MACMarkerRouteState, /
     ) -> Array:
         self._validate_relation(relation)
-        if not isinstance(routes, MACMarkerRouteState):
-            raise TypeError("routes must be MACMarkerRouteState.")
         if routes.transfer_id != self.prepared_id:
             raise ValueError("Marker route state belongs to another transfer.")
         return jnp.all(
@@ -916,9 +910,8 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def _validate_relation(self, relation: MACMarkerRelation, /) -> None:
-        if not isinstance(relation, MACMarkerRelation):
-            raise TypeError("relation must be MACMarkerRelation.")
         if relation.transfer_id != self.prepared_id:
             raise ValueError("MAC marker relation belongs to another transfer.")
 

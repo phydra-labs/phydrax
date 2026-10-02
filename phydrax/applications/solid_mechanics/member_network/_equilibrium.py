@@ -38,6 +38,7 @@ from ....nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ....typing import checked
 from ._blocks import MemberNetworkAssembly, MemberNetworkAssemblyState
 from ._reference import (
     MemberKinematics,
@@ -158,6 +159,7 @@ class MemberNetworkProblem(StrictModule, NonTrainableState):
     tolerances: MemberNetworkTolerances
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         definition: MemberNetworkDefinition,
@@ -167,10 +169,6 @@ class MemberNetworkProblem(StrictModule, NonTrainableState):
         tolerances: MemberNetworkTolerances | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(definition, MemberNetworkDefinition):
-            raise TypeError("definition must be a MemberNetworkDefinition.")
-        if not isinstance(assembly, MemberNetworkAssembly):
-            raise TypeError("assembly must be a MemberNetworkAssembly.")
         tolerances_ = MemberNetworkTolerances() if tolerances is None else tolerances
         self.definition = definition
         self.assembly = assembly

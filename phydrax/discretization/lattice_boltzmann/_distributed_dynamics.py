@@ -12,6 +12,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._distributed import (
     LatticeBoltzmannHaloSchedule,
     ShardedLatticeBoltzmannExecutionPlan,
@@ -37,16 +38,13 @@ class PreparedDistributedLatticeBoltzmannDynamics(StrictModule, NonTrainableStat
     execution: ShardedLatticeBoltzmannExecutionPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedLatticeBoltzmannDynamics,
         halo: LatticeBoltzmannHaloSchedule,
         /,
     ) -> None:
-        if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
-            raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
-        if not isinstance(halo, LatticeBoltzmannHaloSchedule):
-            raise TypeError("halo must be LatticeBoltzmannHaloSchedule.")
         if (
             halo.velocity_set.lattice_id
             != dynamics.discretization.velocity_set.lattice_id

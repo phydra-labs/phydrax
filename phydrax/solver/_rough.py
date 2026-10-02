@@ -26,6 +26,7 @@ from ..stochastic import (
     StochasticTrajectory,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
+from ..typing import checked
 from ._delay import _invalid_geometry_tangent
 from ._solution_validation import validate_solution_arrays
 
@@ -440,6 +441,7 @@ class RoughDifferentialSolution(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -454,10 +456,6 @@ class RoughDifferentialSolution(StrictModule):
         statistics: Mapping[str, ArrayLike],
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(control, AbstractRoughControl):
-            raise TypeError("control must be an AbstractRoughControl.")
-        if not isinstance(solver, AbstractRoughSolver):
-            raise TypeError("solver must be an AbstractRoughSolver.")
         arrays = validate_solution_arrays(
             times,
             states,

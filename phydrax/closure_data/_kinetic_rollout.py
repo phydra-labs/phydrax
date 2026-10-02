@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._dataset import (
     ClosureSample,
     ClosureSampleKey,
@@ -188,6 +188,7 @@ class SmoothCompressibleRolloutTrajectory(StrictModule, NonTrainableState):
     sample_count: int = eqx.field(static=True)
     parent_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         f: ArrayLike,
@@ -202,8 +203,6 @@ class SmoothCompressibleRolloutTrajectory(StrictModule, NonTrainableState):
         realization_id: str,
         time_block_id: str,
     ) -> None:
-        if not isinstance(schema, SmoothCompressibleRolloutSchema):
-            raise TypeError("schema must be a SmoothCompressibleRolloutSchema.")
         f_ = jnp.asarray(f)
         g_ = jnp.asarray(g)
         U_ = jnp.asarray(U)
@@ -317,13 +316,12 @@ class SmoothCompressibleRolloutWindowPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def anchors(
         self, trajectory: SmoothCompressibleRolloutTrajectory, /
     ) -> tuple[int, ...]:
         """Select valid anchors reproducibly, returning them in time order."""
 
-        if not isinstance(trajectory, SmoothCompressibleRolloutTrajectory):
-            raise TypeError("trajectory must be a SmoothCompressibleRolloutTrajectory.")
         last = trajectory.sample_count - self.horizon_steps
         candidates = tuple(range(self.history_steps, last + 1, self.stride))
         if not candidates:
@@ -387,6 +385,7 @@ class SmoothCompressibleRolloutWindow(StrictModule, NonTrainableState):
     window_plan_id: str = eqx.field(static=True)
     window_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trajectory: SmoothCompressibleRolloutTrajectory,
@@ -396,10 +395,6 @@ class SmoothCompressibleRolloutWindow(StrictModule, NonTrainableState):
         *,
         split: DatasetSplit,
     ) -> None:
-        if not isinstance(trajectory, SmoothCompressibleRolloutTrajectory):
-            raise TypeError("trajectory must be a SmoothCompressibleRolloutTrajectory.")
-        if not isinstance(plan, SmoothCompressibleRolloutWindowPlan):
-            raise TypeError("plan must be a SmoothCompressibleRolloutWindowPlan.")
         split_ = str(split).strip()
         split_ = parse(split_, DatasetSplit, "split_")
         anchor_ = plan.validate_anchor(trajectory, anchor)
@@ -605,6 +600,7 @@ class PreparedSmoothCompressibleRolloutDataset(StrictModule, NonTrainableState):
     schema_id: str = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trajectories: tuple[SmoothCompressibleRolloutTrajectory, ...],
@@ -631,12 +627,6 @@ class PreparedSmoothCompressibleRolloutDataset(StrictModule, NonTrainableState):
             not isinstance(value, SmoothCompressibleRolloutWindow) for value in windows_
         ):
             raise ValueError("Prepared rollout datasets require derived windows.")
-        if not isinstance(partition, LeakageSafePartition):
-            raise TypeError("partition must be a LeakageSafePartition.")
-        if not isinstance(window_plan, SmoothCompressibleRolloutWindowPlan):
-            raise TypeError("window_plan must be a SmoothCompressibleRolloutWindowPlan.")
-        if not isinstance(statistics, SmoothCompressibleRolloutStatistics):
-            raise TypeError("statistics must be SmoothCompressibleRolloutStatistics.")
         if len({value.parent_id for value in parents}) != len(parents):
             raise ValueError("Prepared rollout parent identities must be unique.")
         if len({value.sample_id for value in samples}) != len(samples):

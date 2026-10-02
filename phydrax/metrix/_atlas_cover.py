@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._atlas import CoordinateAtlas
 from ._chart import ChartTransition, CoordinateChart
 
@@ -23,6 +24,7 @@ class ChartSupport(StrictModule):
     predicate: Callable[[Array], Array]
     support_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chart: CoordinateChart,
@@ -31,8 +33,6 @@ class ChartSupport(StrictModule):
         *,
         support_id: str,
     ) -> None:
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if not callable(predicate):
             raise TypeError("predicate must be callable.")
         identifier = str(support_id)
@@ -61,6 +61,7 @@ class AtlasOverlap(StrictModule):
     source_index: int = eqx.field(static=True)
     target_index: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_index: int,
@@ -71,8 +72,6 @@ class AtlasOverlap(StrictModule):
         *,
         overlap_id: str,
     ) -> None:
-        if not isinstance(transition, ChartTransition):
-            raise TypeError("transition must be a ChartTransition.")
         if not callable(source_support):
             raise TypeError("source_support must be callable.")
         identifier = str(overlap_id)
@@ -100,6 +99,7 @@ class AtlasCover(StrictModule):
     overlaps: tuple[AtlasOverlap, ...]
     cover_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: CoordinateAtlas,
@@ -109,8 +109,6 @@ class AtlasCover(StrictModule):
         *,
         cover_id: str,
     ) -> None:
-        if not isinstance(atlas, CoordinateAtlas):
-            raise TypeError("atlas must be a CoordinateAtlas.")
         supports_ = tuple(supports)
         if len(supports_) != len(atlas.charts):
             raise ValueError("One support is required for every atlas chart.")

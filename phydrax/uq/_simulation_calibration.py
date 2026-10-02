@@ -21,7 +21,7 @@ from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..integration import WeightedSampleTarget
-from ..typing import parse
+from ..typing import checked, parse
 from ._multiple_testing import (
     adjust_p_values,
     MultipleTestingMethod,
@@ -62,6 +62,7 @@ class SimulationCalibrationCase(StrictModule, NonTrainableState):
     analysis_id: str = eqx.field(static=True)
     status: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         truth: PyTree[Any],
@@ -73,8 +74,6 @@ class SimulationCalibrationCase(StrictModule, NonTrainableState):
         valid: bool = True,
         status: str = "success",
     ) -> None:
-        if not isinstance(posterior, WeightedSampleTarget):
-            raise TypeError("posterior must be WeightedSampleTarget.")
         truth_ = jax.tree_util.tree_map(jnp.asarray, truth)
         if not jax.tree_util.tree_leaves(truth_) or any(
             bool(jnp.any(~jnp.isfinite(value)))

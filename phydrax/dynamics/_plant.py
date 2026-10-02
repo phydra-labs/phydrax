@@ -20,6 +20,7 @@ from .._array_tree import ArrayPyTreeSchema
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from .._strict import StrictModule
+from ..typing import checked
 from ._system import DiscreteStepContext, DiscreteSystem, DiscreteTransitionResult
 
 
@@ -248,6 +249,7 @@ class PlantParameters(StrictModule):
     schema_id: str = eqx.field(static=True)
     numeric_revision: NumericRevision
 
+    @checked
     def __init__(
         self,
         values: PyTree[Any],
@@ -255,8 +257,6 @@ class PlantParameters(StrictModule):
         numeric_revision: NumericRevision,
         /,
     ) -> None:
-        if not isinstance(numeric_revision, NumericRevision):
-            raise TypeError("numeric_revision must be a NumericRevision.")
         self.values = values
         self.schema_id = _identifier(schema_id, "PlantParameters schema_id")
         self.numeric_revision = numeric_revision
@@ -342,6 +342,7 @@ class PlantCheckpoint(StrictModule):
     state_schema_id: str = eqx.field(static=True)
     execution_signature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: PlantRuntimeState,
@@ -352,8 +353,6 @@ class PlantCheckpoint(StrictModule):
         execution_signature_id: str,
         /,
     ) -> None:
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("PlantCheckpoint state must be a PlantRuntimeState.")
         self.state = state
         self.digest = _identifier(digest, "PlantCheckpoint digest")
         self.semantic_provenance_id = _identifier(
@@ -911,9 +910,8 @@ class AbstractDiscretePlant(StrictModule):
             raise ValueError("PlantCheckpoint digest verification failed.")
         return checked
 
+    @checked
     def _validate_checkpoint_identity(self, checkpoint: PlantCheckpoint, /) -> None:
-        if not isinstance(checkpoint, PlantCheckpoint):
-            raise TypeError("checkpoint must be a PlantCheckpoint.")
         observed = (
             checkpoint.semantic_provenance_id,
             checkpoint.numeric_revision_id,
@@ -1036,6 +1034,7 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
     require_finite_parameters: bool = eqx.field(static=True)
     uses_parameters: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: DiscreteSystem,
@@ -1053,8 +1052,6 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
         require_finite_controls: bool = True,
         require_finite_parameters: bool = True,
     ) -> None:
-        if not isinstance(system, DiscreteSystem):
-            raise TypeError("system must be a DiscreteSystem.")
         if not callable(initializer):
             raise TypeError("initializer must be callable.")
         if isinstance(case_ndim, bool) or not isinstance(case_ndim, (int, np.integer)):

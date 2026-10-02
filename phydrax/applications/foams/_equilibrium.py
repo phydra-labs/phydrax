@@ -90,7 +90,7 @@ from ...optim import (
     OptimizationTermination,
     SQP,
 )
-from ...typing import Bool, Dim, Float, Float64, Identifier, Int32, Scalar
+from ...typing import Bool, checked, Dim, Float, Float64, Identifier, Int32, Scalar
 from ._contracts import (
     FoamDerivativeUnavailableError,
     FoamEquilibriumEvidence,
@@ -739,6 +739,7 @@ class PreparedFoamEquilibrium(StrictModule):
     tension_scale: float = eqx.field(static=True)
     prepared_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FoamEquilibriumPlan,
@@ -747,12 +748,6 @@ class PreparedFoamEquilibrium(StrictModule):
         state: MultiRegionSurfaceState,
         /,
     ) -> None:
-        if not isinstance(plan, FoamEquilibriumPlan):
-            raise TypeError("plan must be a FoamEquilibriumPlan.")
-        if not isinstance(surface, PreparedMultiRegionSurface):
-            raise TypeError("surface must be a PreparedMultiRegionSurface.")
-        if not isinstance(material, FoamMaterialPlan):
-            raise TypeError("material must be a FoamMaterialPlan.")
         topology = surface.topology
         state.require_topology(topology)
         face_first, face_second = material.face_tension_indices(topology)
@@ -1021,12 +1016,11 @@ class PreparedFoamEquilibrium(StrictModule):
 
     # --------------------------------------------------------------- execution
 
+    @checked
     def solve(
         self, state: MultiRegionSurfaceState, parameters: FoamEquilibriumParameters, /
     ) -> FoamEquilibriumResult:
         """Solve for the equilibrium reachable from ``state`` at fixed topology."""
-        if not isinstance(parameters, FoamEquilibriumParameters):
-            raise TypeError("parameters must be FoamEquilibriumParameters.")
         free, multipliers, status, iterations = _minimize_foam(
             self, self.free_coordinates(state), parameters
         )

@@ -29,6 +29,7 @@ from ..nn.operator.data import (
     OperatorPrediction,
 )
 from ..nn.operator.training import OperatorBatchLoader
+from ..typing import checked
 from ._minibatch_posterior import AbstractObservationFactor, LikelihoodBatch
 from ._operator import (
     _broadcast_named,
@@ -179,6 +180,7 @@ class OperatorLikelihoodData(StrictModule):
     field_name: str = eqx.field(static=True)
     query_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         batch: OperatorBatch,
@@ -194,10 +196,6 @@ class OperatorLikelihoodData(StrictModule):
         query_estimator_weights: ArrayLike | None = None,
         geometry_epoch: int = 0,
     ) -> None:
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("batch must be an OperatorBatch.")
-        if not isinstance(output_spec, OperatorOutputSpec):
-            raise TypeError("output_spec must be an OperatorOutputSpec.")
         selected_query_name = str(query_name)
         selected_field_name = str(field_name)
         if not selected_query_name or not selected_field_name:
@@ -266,6 +264,7 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
     factor_id: str = eqx.field(static=True)
     semantics: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         predict: Callable[[PyTree[Any], OperatorBatch], OperatorPrediction],
@@ -279,8 +278,6 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
     ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
-        if not isinstance(likelihood, AbstractLikelihood):
-            raise TypeError("likelihood must implement AbstractLikelihood.")
         if parameters is not None and not callable(parameters):
             raise TypeError("parameters must be callable or None.")
         self.likelihood = likelihood
@@ -296,14 +293,13 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
     def _likelihood_parameters(self, parameters: PyTree[Any], /) -> dict[str, Array]:
         return _likelihood_parameter_values(self.parameters_fn, parameters)
 
+    @checked
     def per_case_log_prob(
         self,
         parameters: PyTree[Any],
         data: OperatorLikelihoodData,
         /,
     ) -> Array:
-        if not isinstance(data, OperatorLikelihoodData):
-            raise TypeError("data must be OperatorLikelihoodData.")
         prediction = _validated_operator_prediction(
             self.predict_fn(parameters, data.batch),
             batch=data.batch,
@@ -322,14 +318,13 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
             case_count=data.case_count,
         )
 
+    @checked
     def log_factors(
         self,
         parameters: PyTree[Any],
         batch: LikelihoodBatch,
         /,
     ) -> Array:
-        if not isinstance(batch, LikelihoodBatch):
-            raise TypeError("batch must be a LikelihoodBatch.")
         factors = self.per_case_log_prob(parameters, batch.data)
         if factors.shape != batch.factor_mask.shape:
             raise ValueError(
@@ -341,6 +336,7 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
 class OperatorMinibatchSource:
     """Padded deterministic likelihood batches adapted from operator training data."""
 
+    @checked
     def __init__(
         self,
         loader: OperatorBatchLoader,
@@ -350,8 +346,6 @@ class OperatorMinibatchSource:
         observation_mask: ArrayLike | None = None,
         factor_sampling: OperatorFactorSamplingPlan | None = None,
     ) -> None:
-        if not isinstance(loader, OperatorBatchLoader):
-            raise TypeError("loader must be an OperatorBatchLoader.")
         if loader.drop_last:
             raise ValueError("Operator SG-MCMC does not permit drop_last=True.")
         if not loader.shuffle:
@@ -547,6 +541,7 @@ class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
     field_name: str = eqx.field(static=True)
     query_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         predict: Callable[[PyTree[Any]], OperatorPrediction],
@@ -568,12 +563,6 @@ class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
     ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("batch must be an OperatorBatch.")
-        if not isinstance(output_spec, OperatorOutputSpec):
-            raise TypeError("output_spec must be an OperatorOutputSpec.")
-        if not isinstance(likelihood, AbstractLikelihood):
-            raise TypeError("likelihood must implement AbstractLikelihood.")
         if parameters is not None and not callable(parameters):
             raise TypeError("parameters must be callable or None.")
 

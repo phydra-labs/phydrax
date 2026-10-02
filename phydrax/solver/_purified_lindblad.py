@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, prepare_local_lindblad_channel
 from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
+from ..typing import checked
 
 
 class LocalKrausChannel(StrictModule):
@@ -64,6 +65,7 @@ class PurificationTruncationEvidence(StrictModule):
     channel_completeness_residual: Array
     valid: Array
 
+    @checked
     def __init__(
         self,
         site: int,
@@ -71,8 +73,6 @@ class PurificationTruncationEvidence(StrictModule):
         channel_completeness_residual: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(truncation, TensorTruncationEvidence):
-            raise TypeError("truncation must be TensorTruncationEvidence.")
         residual = jnp.asarray(channel_completeness_residual)
         self.site = int(site)
         self.truncation = truncation

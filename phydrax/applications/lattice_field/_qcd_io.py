@@ -29,7 +29,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canon
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._lattice_distribution import LatticeDecompositionPlan
-from ...typing import parse
+from ...typing import checked, parse
 
 
 GaugeInterchangeKind: TypeAlias = Literal["nersc", "milc", "ildg"]
@@ -85,6 +85,7 @@ class GaugeIOPlan(StrictModule, NonTrainableState):
     maximum_payload_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         /,
@@ -96,8 +97,6 @@ class GaugeIOPlan(StrictModule, NonTrainableState):
         maximum_header_bytes: int = 1_048_576,
         maximum_payload_bytes: int = 4_294_967_296,
     ) -> None:
-        if not isinstance(archive_limits, ArrayArchiveLimits):
-            raise TypeError("archive_limits must be ArrayArchiveLimits.")
         values = tuple(
             (
                 maximum_sites,
@@ -243,6 +242,7 @@ class GaugeArchiveEvidence(StrictModule, NonTrainableState):
     byte_count: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: GaugeFieldRecord,
@@ -252,8 +252,6 @@ class GaugeArchiveEvidence(StrictModule, NonTrainableState):
         byte_count: int,
         /,
     ) -> None:
-        if not isinstance(field, GaugeFieldRecord):
-            raise TypeError("field must be GaugeFieldRecord.")
         path_ = str(Path(path))
         kind = str(container_kind).strip()
         digest = str(checksum).strip()

@@ -54,7 +54,7 @@ from ..linalg import (
     solve_recycled,
     TolerancePolicy,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._components import admit_residual_components
 from ._linearization import (
     _jacobian_solve_direction,
@@ -1646,6 +1646,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
             implicit_differentiation=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -1663,10 +1664,6 @@ class NewtonKrylov(AbstractNonlinearMethod):
         _iteration_limit: Array | None = None,
         _return_internal: bool = False,
     ) -> Any:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
@@ -2109,6 +2106,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             implicit_differentiation=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -2124,10 +2122,6 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         _iteration_limit: Array | None = None,
         _return_internal: bool = False,
     ) -> Any:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")

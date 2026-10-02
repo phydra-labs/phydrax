@@ -19,7 +19,7 @@ from ...sparse import (
     linear_transpose_apply,
     SparseCoordinateOperator,
 )
-from ...typing import Bool, Float64, Int32, Scalar
+from ...typing import Bool, checked, Float64, Int32, Scalar
 from ._exterior import (
     _ExteriorEdgeDim,
     _ExteriorNodeDim,
@@ -192,9 +192,8 @@ class MeshfreeAdvection(StrictModule):
 
     exterior: PreparedMeshfreeExteriorCalculus
 
+    @checked
     def __init__(self, exterior: PreparedMeshfreeExteriorCalculus, /) -> None:
-        if not isinstance(exterior, PreparedMeshfreeExteriorCalculus):
-            raise TypeError("Advection requires one prepared meshfree exterior owner.")
         self.exterior = exterior
 
     def step(

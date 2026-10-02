@@ -27,7 +27,7 @@ from .._sampling import (
     resolve_design,
 )
 from .._strict import StrictModule
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._bounded_search import _BoundedVectorDomain
 from ._finite import FiniteAxis
 from ._pareto import dominance_matrix
@@ -89,9 +89,8 @@ class DifferentialEvolutionInteger(StrictModule):
 class DifferentialEvolutionCategorical(StrictModule):
     axis: FiniteAxis
 
+    @checked
     def __init__(self, axis: FiniteAxis, /) -> None:
-        if not isinstance(axis, FiniteAxis):
-            raise TypeError("axis must be a FiniteAxis.")
         self.axis = axis
 
 

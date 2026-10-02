@@ -20,7 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout
 from ...linalg import AbstractLinearOperator, ArraySpace, BlockSpace, DualSpace
-from ...typing import parse
+from ...typing import checked, parse
 from ._rod_dynamics import (
     evaluate_rod,
     PreparedRod,
@@ -150,6 +150,7 @@ class ReducedRodPlan(StrictModule, NonTrainableState):
     label: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: RodStrainBasisPlan,
@@ -163,8 +164,6 @@ class ReducedRodPlan(StrictModule, NonTrainableState):
         certification_tolerance: float = 1.0e-6,
         label: str | None = None,
     ) -> None:
-        if not isinstance(basis, RodStrainBasisPlan):
-            raise TypeError("basis must be a RodStrainBasisPlan.")
         base_policy = parse(base_policy, ReducedRodBasePolicy, "base_policy")
         dtype = np.dtype(basis.polynomial_coefficients.dtype)
         coordinate_count = basis.coordinate_count
@@ -387,11 +386,8 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
     velocity_slice: slice = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, rod: PreparedRod, plan: ReducedRodPlan, /) -> None:
-        if not isinstance(rod, PreparedRod):
-            raise TypeError("rod must be a PreparedRod.")
-        if not isinstance(plan, ReducedRodPlan):
-            raise TypeError("plan must be a ReducedRodPlan.")
         if plan.dimension != rod.plan.dimension:
             raise ValueError(
                 "Reduced rod plan dimension is incompatible with the prepared rod."
@@ -503,9 +499,8 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
             jnp.zeros_like(self.reference_coefficients),
         )
 
+    @checked
     def validate_state(self, state: ReducedRodState, /) -> None:
-        if not isinstance(state, ReducedRodState):
-            raise TypeError("state must be a ReducedRodState.")
         if (
             state.coordinate_count != self.plan.coordinate_count
             or state.values.shape != self.state_layout.shape

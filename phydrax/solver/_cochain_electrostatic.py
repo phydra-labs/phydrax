@@ -29,6 +29,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 class ElectrostaticBoundaryKind(StrEnum):
@@ -53,6 +54,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
     gauge_required: bool = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -63,8 +65,6 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         dirichlet_values: ArrayLike = 0.0,
         neumann_source: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         if not isinstance(kind, ElectrostaticBoundaryKind):
             raise TypeError("kind must be ElectrostaticBoundaryKind.")
         count = bridge.cochain.cell_counts[0]
@@ -225,6 +225,7 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
     operator_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -237,10 +238,6 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
-        if not isinstance(boundary, CochainElectrostaticBoundaryPlan):
-            raise TypeError("boundary must be CochainElectrostaticBoundaryPlan.")
         tolerance_ = float(tolerance)
         compatibility_ = float(compatibility_tolerance)
         iterations = int(maximum_iterations)

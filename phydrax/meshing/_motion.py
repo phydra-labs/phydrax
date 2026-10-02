@@ -37,6 +37,7 @@ from ..discretization import (
     certify_cell_geometry_validity,
 )
 from ..optim import OptimizationTermination
+from ..typing import checked
 from ._adaptation import (
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
@@ -272,6 +273,7 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
     length_scale: float = eqx.field(static=True)
     monitor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: CellMesh,
@@ -279,8 +281,6 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
         *,
         policy: MeshMotionMonitorPolicy | None = None,
     ) -> None:
-        if not isinstance(reference, CellMesh):
-            raise TypeError("reference must be CellMesh.")
         policy_ = MeshMotionMonitorPolicy() if policy is None else policy
         if not isinstance(policy_, MeshMotionMonitorPolicy):
             raise TypeError("policy must be MeshMotionMonitorPolicy or None.")

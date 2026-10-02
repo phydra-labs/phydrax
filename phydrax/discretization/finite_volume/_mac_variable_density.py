@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import FaceVelocity, PreparedMACOperators
 from ._mac_boundary import MACBoundaryStageData
 from ._mac_momentum import PreparedMACMomentumOperators
@@ -149,9 +150,8 @@ class MACVariableDensityPlan(StrictModule, NonTrainableState):
     momentum: PreparedMACMomentumOperators
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, momentum: PreparedMACMomentumOperators, /) -> None:
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         unsupported = tuple(
             boundary.kind
             for boundary in momentum.boundaries.sides
@@ -183,9 +183,8 @@ class PreparedMACVariableDensityOperators(StrictModule, NonTrainableState):
     report: MACVariableDensityReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACVariableDensityPlan, /) -> None:
-        if not isinstance(plan, MACVariableDensityPlan):
-            raise TypeError("plan must be MACVariableDensityPlan.")
         identifier = canonical_fingerprint(
             {
                 "kind": "prepared-mac-variable-density",

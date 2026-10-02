@@ -26,6 +26,7 @@ from ...linalg import (
     FactorizationPolicy,
     factorize,
 )
+from ...typing import checked
 from .._axis_domain import AxisDomain
 from .._spectral import ModalTransform
 from ._basis import (
@@ -263,14 +264,13 @@ class ConstrainedBasisPlan(AbstractSpectralBasisPlan):
     conditions: SpectralBoundaryConditionPlan
     base_mode_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractSpectralBasisPlan,
         conditions: SpectralBoundaryConditionPlan,
         /,
     ) -> None:
-        if not isinstance(base, AbstractSpectralBasisPlan):
-            raise TypeError("base must be an AbstractSpectralBasisPlan.")
         if base.family not in (
             "chebyshev",
             "legendre",
@@ -280,8 +280,6 @@ class ConstrainedBasisPlan(AbstractSpectralBasisPlan):
             raise ValueError(
                 "Constrained bases require polynomial or rational Chebyshev modes."
             )
-        if not isinstance(conditions, SpectralBoundaryConditionPlan):
-            raise TypeError("conditions must be a SpectralBoundaryConditionPlan.")
         free = base.mode_count - len(conditions.constraints)
         if free <= 0:
             raise ValueError("Boundary constraints leave no spectral degrees of freedom.")
@@ -421,14 +419,13 @@ class BoundaryLiftPlan(StrictModule, NonTrainableState):
     values: Array
     lift_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         conditions: SpectralBoundaryConditionPlan,
         values: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(conditions, SpectralBoundaryConditionPlan):
-            raise TypeError("conditions must be a SpectralBoundaryConditionPlan.")
         values_ = jnp.asarray(values).reshape((-1,))
         if values_.shape != (len(conditions.constraints),):
             raise ValueError("Boundary lift values must match endpoint constraints.")

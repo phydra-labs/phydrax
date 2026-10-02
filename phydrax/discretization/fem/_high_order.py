@@ -28,6 +28,7 @@ from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior import FormType, FormValueSpec
+from ...typing import checked
 from ._reference import FiniteElementSpec
 
 
@@ -347,14 +348,13 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
     gradient_factors: tuple[Array, ...]
     tabulation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         family: ReferenceNodalFamily,
         points_by_axis: tuple[ArrayLike, ...],
         /,
     ) -> None:
-        if not isinstance(family, ReferenceNodalFamily):
-            raise TypeError("family must be ReferenceNodalFamily.")
         if (
             not isinstance(points_by_axis, tuple)
             or len(points_by_axis) != family.dimension
@@ -438,9 +438,8 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
     tabulation: TensorProductTabulation
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, tabulation: TensorProductTabulation, /) -> None:
-        if not isinstance(tabulation, TensorProductTabulation):
-            raise TypeError("tabulation must be TensorProductTabulation.")
         self.tabulation = tabulation
         self.plan_id = canonical_fingerprint(
             {"kind": "sum-factorization-plan", "tabulation": tabulation.tabulation_id}

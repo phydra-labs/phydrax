@@ -24,6 +24,7 @@ from ..discretization.particle import (
     PreparedWeaklyCompressibleSPHDynamics,
     WeaklyCompressibleSPHMethodPlan,
 )
+from ..typing import checked
 from ._barotropic import AbstractBarotropicMaterial
 
 
@@ -43,6 +44,7 @@ class WeaklyCompressibleFluidProblemIR(StrictModule, NonTrainableState):
     external_acceleration_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -56,8 +58,6 @@ class WeaklyCompressibleFluidProblemIR(StrictModule, NonTrainableState):
         name_ = str(name)
         if not name_:
             raise ValueError("Weakly compressible fluid problem name must be non-empty.")
-        if not isinstance(material, AbstractBarotropicMaterial):
-            raise TypeError("material must be an AbstractBarotropicMaterial.")
         if external_acceleration is not None and not callable(external_acceleration):
             raise TypeError("external_acceleration must be callable or None.")
         if external_acceleration is None and external_acceleration_id is not None:
@@ -90,6 +90,7 @@ class CompiledWeaklyCompressibleSPHProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: WeaklyCompressibleFluidProblemIR,
@@ -97,12 +98,6 @@ class CompiledWeaklyCompressibleSPHProblem(StrictModule, NonTrainableState):
         discretization_bundle: DiscretizationBundle,
         /,
     ) -> None:
-        if not isinstance(problem, WeaklyCompressibleFluidProblemIR):
-            raise TypeError("problem must be a WeaklyCompressibleFluidProblemIR.")
-        if not isinstance(dynamics, PreparedWeaklyCompressibleSPHDynamics):
-            raise TypeError("dynamics must be PreparedWeaklyCompressibleSPHDynamics.")
-        if not isinstance(discretization_bundle, DiscretizationBundle):
-            raise TypeError("discretization_bundle must be a DiscretizationBundle.")
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = discretization_bundle

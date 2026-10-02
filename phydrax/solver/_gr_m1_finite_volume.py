@@ -24,7 +24,7 @@ from ..equations._relativistic_hydrodynamics import (
 )
 from ..equations._relativistic_radiation import GRGrayM1RadiationSystem
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
-from ..typing import parse
+from ..typing import checked, parse
 from ._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
 
 
@@ -318,9 +318,8 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
     def cell_shape(self) -> tuple[int, ...]:
         return tuple(self.discretization.cell_shape)
 
+    @checked
     def _check_stage(self, stage: ValenciaFiniteVolumeStageGeometry, /) -> None:
-        if not isinstance(stage, ValenciaFiniteVolumeStageGeometry):
-            raise TypeError("stage must be ValenciaFiniteVolumeStageGeometry.")
         if stage.cell.leading_shape != self.cell_shape:
             raise ValueError("M1 cell geometry does not match its finite-volume grid.")
         if len(stage.faces) != len(self.cell_shape):
@@ -719,6 +718,7 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
             ledger.plan_id,
         )
 
+    @checked
     def advance(
         self,
         state: GRM1FiniteVolumeState,
@@ -733,8 +733,6 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
         *,
         transport_extinction: ArrayLike = 0.0,
     ) -> GRM1StepResult:
-        if not isinstance(state, GRM1FiniteVolumeState):
-            raise TypeError("state must be GRM1FiniteVolumeState.")
         stages_ = tuple(stage_geometries)
         if len(stages_) != 3:
             raise ValueError("GR M1 SSPRK3 requires three stage geometries.")

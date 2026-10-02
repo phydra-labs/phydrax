@@ -28,6 +28,7 @@ from ..._validation import canonical_identifier
 from ...lifecycle._archive import payload_digest
 from ...lifecycle._models import ResultManifest
 from ...qualification._registry import SupportTuple
+from ...typing import checked
 
 
 def _identifiers(
@@ -167,6 +168,7 @@ class FinanceArchiveRecord(StrictModule, NonTrainableState):
     law_ids: tuple[str, ...] = eqx.field(static=True)
     archive_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: str | Path,
@@ -178,8 +180,6 @@ class FinanceArchiveRecord(StrictModule, NonTrainableState):
         archive_id: str,
         /,
     ) -> None:
-        if not isinstance(result_manifest, ResultManifest):
-            raise TypeError("result_manifest must be a ResultManifest.")
         values = _named_arrays(arrays)
         _verify_arrays(result_manifest, dict(values))
         self.path = str(Path(path))

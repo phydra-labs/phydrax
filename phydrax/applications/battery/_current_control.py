@@ -31,6 +31,7 @@ from ...control import (
 )
 from ...dynamics import ContinuousSystem, HeldInputPolicy, StateLayout, TimeGrid
 from ...solver import DifferentialProblem
+from ...typing import checked
 from ._experiment import (
     BatteryDiffraxSolvePlan,
     BatteryRuntimeInputs,
@@ -526,6 +527,7 @@ class BatteryCurrentControlPlan(StrictModule, NonTrainableState):
     replay_constraint_tolerance: float = eqx.field(static=True)
     control_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         experiment: PreparedBatteryExperiment,
@@ -541,16 +543,6 @@ class BatteryCurrentControlPlan(StrictModule, NonTrainableState):
         ledger_criterion_id: str,
         replay_constraint_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(experiment, PreparedBatteryExperiment):
-            raise TypeError("experiment must be a PreparedBatteryExperiment.")
-        if not isinstance(bounds, BatteryCurrentControlBounds):
-            raise TypeError("bounds must be BatteryCurrentControlBounds.")
-        if not isinstance(terminal_target, BatteryCurrentControlTerminalTarget):
-            raise TypeError(
-                "terminal_target must be BatteryCurrentControlTerminalTarget."
-            )
-        if not isinstance(objective, BatteryCurrentControlObjective):
-            raise TypeError("objective must be BatteryCurrentControlObjective.")
         if not callable(ledger_success):
             raise TypeError("ledger_success must be callable.")
         parameter_source_id_ = _identifier(parameter_source_id, "Parameter source ID")

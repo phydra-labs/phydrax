@@ -21,6 +21,7 @@ from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._interpolation import apply_gather_stencil, GatherStencil, MaskMode
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 from .units import UnitDefinition
 
 
@@ -243,6 +244,7 @@ class PreparedObservationOperator(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stencil: GatherStencil,
@@ -253,8 +255,6 @@ class PreparedObservationOperator(StrictModule, NonTrainableState):
         plan_id: str,
         /,
     ) -> None:
-        if not isinstance(stencil, GatherStencil):
-            raise TypeError("stencil must be a GatherStencil.")
         shape = _shape(source_shape, "source_shape")
         if stencil.source_size != prod(shape):
             raise ValueError("Stencil source size does not match source_shape.")

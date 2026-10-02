@@ -25,6 +25,7 @@ from ..applications.relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
 )
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ..typing import checked
 from ._radiation_moments import MultigroupM1RadiationSystem
 
 
@@ -638,6 +639,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
             self.system_id,
         )
 
+    @checked
     def stress_energy_projection(
         self,
         state: ArrayLike,
@@ -646,8 +648,6 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         *,
         source_state_id: str,
     ) -> StressEnergyProjection:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         source = jnp.asarray(state)
         groups = self._groups(source)
         if source.shape[:-1] != geometry.leading_shape:
@@ -783,6 +783,7 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
     unit_contract_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wave_numbers: ArrayLike,
@@ -815,8 +816,6 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
             raise ValueError("Hierarchy quadrature nodes and weights are invalid.")
         tolerance = _nonnegative(closure_tolerance, "closure_tolerance")
         self_rate = _nonnegative(self_interaction_rate, "self_interaction_rate")
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be LocalRelativisticFramePlan.")
         frame_id = frame.frame_id
         units = frame.units.contract_id
         self.initial_frame = frame
@@ -961,6 +960,7 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
         # its adequacy is reported by closure_evidence.
         return rhs
 
+    @checked
     def rhs(
         self,
         state: DarkRadiationHierarchyState,
@@ -968,8 +968,6 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
         collision_rate: ArrayLike,
         /,
     ) -> DarkRadiationHierarchyState:
-        if not isinstance(state, DarkRadiationHierarchyState):
-            raise TypeError("state must be DarkRadiationHierarchyState.")
         metric = jnp.asarray(metric_source, dtype=state.intensity.dtype)
         collision = jnp.asarray(collision_rate, dtype=state.intensity.dtype)
         if metric.shape != (self.wave_numbers.size, 2):
@@ -1010,6 +1008,7 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
             state.unit_contract_id,
         )
 
+    @checked
     def advance(
         self,
         state: DarkRadiationHierarchyState,
@@ -1025,8 +1024,6 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
         dt = jnp.asarray(step_size, dtype=state.intensity.dtype)
         if dt.shape != ():
             raise ValueError("Hierarchy step size must be scalar.")
-        if not isinstance(end_frame, LocalRelativisticFramePlan):
-            raise TypeError("end_frame must be LocalRelativisticFramePlan.")
         if (
             end_frame.frame_id != state.frame_id
             or end_frame.units.contract_id != state.unit_contract_id

@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._data import ConformalDataPlan
 
 
@@ -360,6 +361,7 @@ class GlobalScalarBlockPlan(StrictModule):
     maximum_evaluations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         data: ConformalDataPlan,
@@ -374,8 +376,6 @@ class GlobalScalarBlockPlan(StrictModule):
         pole_tolerance: float = 1e-10,
         maximum_evaluations: int = 2_000_000,
     ) -> None:
-        if not isinstance(data, ConformalDataPlan):
-            raise TypeError("data must be ConformalDataPlan.")
         points = np.asarray(evaluation_points, dtype=np.float64)
         spin_values = tuple(spins)
         derivatives = tuple(

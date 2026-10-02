@@ -18,6 +18,7 @@ from ..._differentiation import (
 )
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -724,9 +725,8 @@ class CrossValidator(StrictModule):
     split_plan: AbstractSplitPlan
     scorer: Any
 
+    @checked
     def __init__(self, split_plan: AbstractSplitPlan, scorer: Any, /) -> None:
-        if not isinstance(split_plan, AbstractSplitPlan):
-            raise TypeError("split_plan must be an AbstractSplitPlan.")
         if not callable(scorer) and not isinstance(scorer, _Scorer):
             raise TypeError("scorer must be callable or expose a score method.")
         self.split_plan = split_plan

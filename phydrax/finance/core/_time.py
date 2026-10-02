@@ -21,7 +21,7 @@ from jax.typing import ArrayLike
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 
-from ...typing import parse
+from ...typing import checked, parse
 from ._identifiers import _canonical_text, _token
 
 
@@ -215,6 +215,7 @@ class FinancialTimestamp(StrictModule):
     vintage_id: str = eqx.field(static=True)
     policy: TemporalAdmissibilityPolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         event_ns: int,
@@ -225,8 +226,6 @@ class FinancialTimestamp(StrictModule):
         policy: TemporalAdmissibilityPolicy,
         /,
     ) -> None:
-        if not isinstance(policy, TemporalAdmissibilityPolicy):
-            raise TypeError("policy must be a TemporalAdmissibilityPolicy.")
         clocks = tuple(
             _integral(value, "UTC nanosecond clock", lower=_INT64_MIN, upper=_INT64_MAX)
             for value in (event_ns, published_ns, received_ns, available_ns)

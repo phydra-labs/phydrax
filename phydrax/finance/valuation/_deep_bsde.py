@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...solver._deep_bsde import DeepBSDEResult
+from ...typing import checked
 from ..core import FinanceEvidenceBinding, PricingLaw
 
 
@@ -32,6 +33,7 @@ class DeepBSDEApplicability(StrictModule):
     constraint_tolerance: float = eqx.field(static=True)
     minimum_valid_fraction: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pricing_law: PricingLaw,
@@ -49,8 +51,6 @@ class DeepBSDEApplicability(StrictModule):
         constraint_tolerance: float,
         minimum_valid_fraction: float = 1.0,
     ) -> None:
-        if not isinstance(pricing_law, PricingLaw):
-            raise TypeError("pricing_law must be a PricingLaw, not a P/stress law.")
         identifiers = tuple(
             str(value)
             for value in (

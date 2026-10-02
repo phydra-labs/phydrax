@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._binding import LinearSolveTemplate
 from ._preconditioning import PreparedPreconditioner
 from ._problems import AbstractLinearProblem
@@ -29,6 +30,7 @@ class PreparedLinearSolve(StrictModule):
     preconditioning_state: PreparedPreconditioner | None
     numeric_version: Array
 
+    @checked
     def __init__(
         self,
         problem: AbstractLinearProblem,
@@ -39,10 +41,6 @@ class PreparedLinearSolve(StrictModule):
         preconditioning_state: PreparedPreconditioner | None = None,
         numeric_version: Any = 0,
     ) -> None:
-        if not isinstance(problem, AbstractLinearProblem):
-            raise TypeError("problem must be an AbstractLinearProblem.")
-        if not isinstance(template, LinearSolveTemplate):
-            raise TypeError("template must be a LinearSolveTemplate.")
         if template.plan.problem_id != problem.problem_id:
             raise ValueError("Prepared template and problem IDs must match.")
         if preconditioning_state is not None and not isinstance(

@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ._strict import StrictModule
+from .typing import checked
 
 
 class AxisGather(StrictModule):
@@ -117,6 +118,7 @@ class AxisFactorizedField(StrictModule):
     plan: AxisContractionPlan
     factor_names: tuple[str, ...]
 
+    @checked
     def __init__(
         self,
         factors: Sequence[AxisFactor],
@@ -129,8 +131,6 @@ class AxisFactorizedField(StrictModule):
         names = tuple(factor.name for factor in factors_)
         if len(set(names)) != len(names):
             raise ValueError("AxisFactorizedField factor names must be unique.")
-        if not isinstance(plan, AxisContractionPlan):
-            raise TypeError("plan must be an AxisContractionPlan.")
         missing = tuple(
             name for term in plan.terms for name in term.factor_names if name not in names
         )

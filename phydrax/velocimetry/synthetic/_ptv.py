@@ -27,6 +27,7 @@ from ...rendering import (
     PhotometricResponse,
     render_camera_stack,
 )
+from ...typing import checked
 from ._common import PTVScenarioKind, SyntheticEvidence
 
 
@@ -266,6 +267,7 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
     scenario_id: str = eqx.field(static=True)
     world_coordinate_convention: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: ImagePlaneSupport,
@@ -289,12 +291,8 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
         plan_id: str,
         scenario_id: str,
     ) -> None:
-        if not isinstance(geometry, ImagePlaneSupport):
-            raise TypeError("geometry must be ImagePlaneSupport.")
         if not isinstance(true_rig, CameraRig) or not isinstance(nominal_rig, CameraRig):
             raise TypeError("true_rig and nominal_rig must be CameraRig values.")
-        if not isinstance(evidence, SyntheticEvidence):
-            raise TypeError("evidence must be SyntheticEvidence.")
         frames, capacity, components = world_positions_xyz.shape
         camera_count = true_rig.capacity
         if components != 3 or particle_active.shape != (frames, capacity):

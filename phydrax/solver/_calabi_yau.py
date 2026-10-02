@@ -36,6 +36,7 @@ from ..geometry.complex import (
     ProjectiveHypersurface,
     ProjectiveLineSamples,
 )
+from ..typing import checked
 
 
 class CalabiYauMetricProblem(StrictModule):
@@ -47,6 +48,7 @@ class CalabiYauMetricProblem(StrictModule):
     positivity_floor: float
     precision: GeometryPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         hypersurface: ProjectiveHypersurface,
@@ -59,10 +61,6 @@ class CalabiYauMetricProblem(StrictModule):
         positivity_floor: float = 1e-7,
         precision: GeometryPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(hypersurface, ProjectiveHypersurface):
-            raise TypeError("hypersurface must be a ProjectiveHypersurface.")
-        if not isinstance(samples, ProjectiveLineSamples):
-            raise TypeError("samples must be ProjectiveLineSamples.")
         if not callable(potential_model):
             raise TypeError("potential_model must be callable.")
         count = samples.homogeneous_points.shape[0]
@@ -125,6 +123,7 @@ class CalabiYauMetricResult(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
     precision: GeometryPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         potential_model: Any,
@@ -154,11 +153,7 @@ class CalabiYauMetricResult(StrictModule):
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.iteration_count = self.objective_history.shape[0]
         self.hypersurface_id = str(hypersurface_id)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
-        if not isinstance(precision, GeometryPrecisionPolicy):
-            raise TypeError("precision must be a GeometryPrecisionPolicy.")
         self.precision = precision
 
     def evaluate(

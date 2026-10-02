@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
+from ..typing import checked
 from ._linear_gaussian import degenerate_gaussian_log_prob
 from ._state_space import (
     AbstractTransitionKernel,
@@ -394,6 +395,7 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
     kernel: EulerMaruyamaTransitionKernel
     normalize_by_interval: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: EulerMaruyamaTransitionKernel,
@@ -401,8 +403,6 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
         *,
         normalize_by_interval: bool = False,
     ) -> None:
-        if not isinstance(kernel, EulerMaruyamaTransitionKernel):
-            raise TypeError("kernel must be an EulerMaruyamaTransitionKernel.")
         self.kernel = kernel
         self.normalize_by_interval = bool(normalize_by_interval)
 

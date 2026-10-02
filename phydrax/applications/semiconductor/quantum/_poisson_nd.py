@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 import phydrax.linalg as la
 
 from ...._strict import StrictModule
+from ....typing import checked
 from ._effective_mass_nd import EffectiveMassND
 
 
@@ -30,6 +31,7 @@ class QuantumPoissonND(StrictModule):
     grid_shape: tuple[int, ...] = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: EffectiveMassND,
@@ -38,8 +40,6 @@ class QuantumPoissonND(StrictModule):
         boundary_voltages: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(basis, EffectiveMassND):
-            raise TypeError("basis must be EffectiveMassND.")
         shape = basis.grid_shape
         dimension = basis.dimension
         size = int(np.prod(shape))

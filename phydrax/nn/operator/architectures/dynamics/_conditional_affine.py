@@ -30,7 +30,7 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from .....typing import parse
+from .....typing import checked, parse
 
 
 DriverOutputTransform: TypeAlias = Literal["direct", "softplus"]
@@ -238,6 +238,7 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chemistry: PreparedChemicalConditionalAffine,
@@ -253,12 +254,6 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
         pressure_name: str = "pressure",
         query_name: str = "time",
     ) -> None:
-        if not isinstance(chemistry, PreparedChemicalConditionalAffine):
-            raise TypeError("chemistry must be PreparedChemicalConditionalAffine.")
-        if not isinstance(driver_model, AbstractOperatorModel):
-            raise TypeError("driver_model must be AbstractOperatorModel.")
-        if not isinstance(scaling, ChemicalConditionalAffineScaling):
-            raise TypeError("scaling must be ChemicalConditionalAffineScaling.")
         if _get_size(driver_model.out_size) != chemistry.driver_size:
             raise ValueError("driver_model output size must match chemistry driver size.")
         species_count = chemistry.mechanism.schema.species_count

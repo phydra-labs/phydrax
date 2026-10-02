@@ -33,6 +33,7 @@ from ...optim import (
     StructuredStateDesignCompilation,
     StructuredStateDesignResult,
 )
+from ...typing import checked
 from ._force_density import (
     _physical_state,
     _validated_force_densities,
@@ -94,9 +95,8 @@ class ForceDensityStateSolver(AbstractStateSolver):
     plan: ForceDensityPlan
     decode_inputs: Callable = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ForceDensityPlan, decode_inputs: Callable, /) -> None:
-        if not isinstance(plan, ForceDensityPlan):
-            raise TypeError("plan must be a ForceDensityPlan.")
         if not callable(decode_inputs):
             raise TypeError("decode_inputs must be callable.")
         self.plan = plan
@@ -223,6 +223,7 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ForceDensityPlan,
@@ -235,8 +236,6 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         has_aux: bool = False,
         problem_id: str = "force-density-design",
     ) -> None:
-        if not isinstance(plan, ForceDensityPlan):
-            raise TypeError("plan must be a ForceDensityPlan.")
         if not callable(decode_inputs) or not callable(objective):
             raise TypeError("decode_inputs and objective must be callable.")
         if design_bounds is not None and not isinstance(design_bounds, Bounds):

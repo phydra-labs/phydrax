@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import CHARGE, ENERGY, UnitDefinition
 from ._identity import ParticleCatalogReference
 
@@ -30,6 +31,7 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
     capacity: int = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pdg_ids: ArrayLike,
@@ -54,8 +56,6 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
             raise OverflowError("pdg_ids must fit signed int32.")
         if energies.shape != identifiers.shape or charges_.shape != identifiers.shape:
             raise ValueError("Species energies and charges must align with pdg_ids.")
-        if not isinstance(catalog, ParticleCatalogReference):
-            raise TypeError("catalog must be ParticleCatalogReference.")
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise ValueError("energy_unit must have energy dimension.")
         if not isinstance(charge_unit, UnitDefinition) or charge_unit.dimension != CHARGE:

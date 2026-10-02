@@ -39,7 +39,7 @@ from ...linalg import (
     PreconditionerProperties,
     PyTreeSpace,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ..amr._composite import CompositeAMRCellLayout
 from ..amr._core import BlockHierarchyTopology
 from ._diffusion import ConservativeBoundaryCondition, ConservativeBoundaryKind
@@ -440,6 +440,7 @@ class CompositeAMRDiffusionPlan(StrictModule, NonTrainableState):
     precision_fingerprint: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: CompositeAMRCellLayout,
@@ -448,8 +449,6 @@ class CompositeAMRDiffusionPlan(StrictModule, NonTrainableState):
         boundaries: CompositeBoundaryInput | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(layout, CompositeAMRCellLayout):
-            raise TypeError("Composite AMR diffusion requires CompositeAMRCellLayout.")
         precision_ = (
             FiniteVolumePrecisionPolicy(layout.dtype.name)
             if precision is None
@@ -514,16 +513,13 @@ class PreparedCompositeAMRDiffusion(AbstractLinearOperator):
     coefficient_fingerprint: str = eqx.field(static=True)
     numeric_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CompositeAMRDiffusionPlan,
         coefficient: ArrayLike | Sequence[ArrayLike],
         /,
     ) -> None:
-        if not isinstance(plan, CompositeAMRDiffusionPlan):
-            raise TypeError(
-                "Prepared composite diffusion requires CompositeAMRDiffusionPlan."
-            )
         coefficient_levels, flat_coefficient = _coefficient(plan, coefficient)
         routes = plan.routes
         left_coefficient = flat_coefficient[routes.edge_left]

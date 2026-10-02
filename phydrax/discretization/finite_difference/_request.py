@@ -11,7 +11,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._tensor_support import GridLocation, PreparedTensorGrid
 
 
@@ -59,6 +59,7 @@ class DerivativeRequest(StrictModule, NonTrainableState):
     target_location: GridLocation
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -74,8 +75,6 @@ class DerivativeRequest(StrictModule, NonTrainableState):
         target_location: GridLocation | None = None,
         request_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         name_ = str(name)
         axis_ = str(axis)
         if not name_ or axis_ not in grid.axis_names:

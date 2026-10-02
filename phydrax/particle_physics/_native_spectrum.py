@@ -21,7 +21,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 
 
 NativeSpectrumModel: TypeAlias = Literal["sm-one-loop", "mssm-third-family-one-loop"]
@@ -830,6 +830,7 @@ class NativeSpectrumBVPPlan(StrictModule):
     trust_radius: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: NativeSpectrumModelPlan,
@@ -846,8 +847,6 @@ class NativeSpectrumBVPPlan(StrictModule):
         finite_difference_step: float = 1e-5,
         trust_radius: float = 1.0,
     ) -> None:
-        if not isinstance(model, NativeSpectrumModelPlan):
-            raise TypeError("model must be NativeSpectrumModelPlan.")
         unknown_raw = tuple(unknown_indices)
         target_raw = tuple(target_indices)
         if any(

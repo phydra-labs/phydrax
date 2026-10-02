@@ -94,7 +94,7 @@ from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float, positive_integer
-from ...typing import Dim, Float, Float64, Int32, Scalar, UInt32
+from ...typing import checked, Dim, Float, Float64, Int32, Scalar, UInt32
 from ..particle import (
     ParticleAllocationRequest,
     ParticlePopulationPlan,
@@ -603,6 +603,7 @@ class QEDCascadeProcess(AbstractPICProcess, NonTrainableState):
     species_indices: tuple[int, ...] = eqx.field(static=True)
     stateful: ClassVar[bool] = True
 
+    @checked
     def __init__(
         self,
         compton: NonlinearComptonPlan,
@@ -619,10 +620,6 @@ class QEDCascadeProcess(AbstractPICProcess, NonTrainableState):
         magnetic_moment_anomaly: float = ELECTRON_MAGNETIC_MOMENT_ANOMALY,
         polarization_reference: Sequence[float] = (0.0, 1.0, 0.0),
     ) -> None:
-        if not isinstance(compton, NonlinearComptonPlan):
-            raise TypeError("compton must be NonlinearComptonPlan.")
-        if not isinstance(photons, QEDPhotonSpeciesPlan):
-            raise TypeError("photons must be QEDPhotonSpeciesPlan.")
         if breit_wheeler is not None and not isinstance(
             breit_wheeler, NonlinearBreitWheelerPlan
         ):
@@ -884,12 +881,11 @@ class QEDCascadeProcess(AbstractPICProcess, NonTrainableState):
         """The photon bank's global population plan."""
         return (self.photons.population,)
 
+    @checked
     def partition_state(self, state: QEDCascadeState, /) -> PICProcessStatePartition:
         """Lepton and spin states move with their species' slots, the photon bank
         with its photons; escape and untracked records are additive totals and
         the history times are shared."""
-        if not isinstance(state, QEDCascadeState):
-            raise TypeError("The QED cascade partitions its QEDCascadeState.")
         photons = state.photons
         companions: list[tuple[Array, ...]] = [
             (

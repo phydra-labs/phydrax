@@ -18,6 +18,7 @@ from ...solver._kdk import (
     KDKProposal,
     KDKTransactionPlan,
 )
+from ...typing import checked
 from ._background import FLRWBackground
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
@@ -56,6 +57,7 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
     scale: CosmologyScaleContract
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -65,10 +67,6 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
     ) -> None:
         lengths = tuple(float(value) for value in box_size)
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be a CosmologyScaleContract.")
         if (
             not lengths
             or len(lengths) != particles.ambient_dimension
@@ -115,6 +113,7 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
         )
         return CosmologicalParticleState(position, momentum, scale)
 
+    @checked
     def propose(
         self,
         background: FLRWBackground,
@@ -123,10 +122,6 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
         acceleration_start: ArrayLike,
         /,
     ) -> _CosmologicalKDKProposal:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
-        if not isinstance(state, CosmologicalParticleState):
-            raise TypeError("state must be CosmologicalParticleState.")
         if background.scale.scale_id != self.scale.scale_id:
             raise ValueError("Background and KDK scale contracts disagree.")
         end = jnp.asarray(end_scale_factor, dtype=state.scale_factor.dtype)

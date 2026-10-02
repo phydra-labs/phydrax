@@ -41,6 +41,7 @@ from ...operators.quantum.gaussian import (
     PreparedDirectJK,
     PreparedGaussianBasis,
 )
+from ...typing import checked
 from ...units import BOHR, conversion_factor, HARTREE
 from .._context import ElectronicInitialGuessState
 from .._model import ElectronicReferenceKind
@@ -323,6 +324,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
     direct_jk: PreparedDirectJK | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -340,8 +342,6 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         factorized_eri: FactorizedERITensor | None = None,
         direct_jk: PreparedDirectJK | None = None,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         if (
             not isinstance(basis, PreparedGaussianBasis)
             or basis.system_id != system.system_id

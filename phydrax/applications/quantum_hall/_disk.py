@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._identity import HallChargeSector, MonopoleLandauLevel
 from ._multi_landau import (
     MultiLandauLevelSpherePlan,
@@ -35,6 +36,7 @@ class HallDiskPlan(StrictModule, NonTrainableState):
     edge_orbitals: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_count: int,
@@ -51,8 +53,6 @@ class HallDiskPlan(StrictModule, NonTrainableState):
         confinement_ = tuple(float(value) for value in confinement)
         interactions_ = tuple(interactions)
         edge = int(edge_orbitals)
-        if not isinstance(manifold, MonopoleLandauLevel):
-            raise TypeError("manifold must be MonopoleLandauLevel.")
         if (
             particles < 1
             or particles > manifold.orbital_count

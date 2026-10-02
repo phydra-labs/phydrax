@@ -70,6 +70,7 @@ from ...solver._production_runtime import (
     ProductionCaseManifest,
     ProductionRunPlan,
 )
+from ...typing import checked
 from ._all_speed import ShockAwareAllSpeedFluxPlan
 from ._contracts import (
     CompressibleFlowCaseSpec,
@@ -254,9 +255,8 @@ class FiniteVolumeRuntimeFixedStepAdapter(AbstractFixedStepMethod):
     runtime: PreparedFiniteVolumeRuntime
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, runtime: PreparedFiniteVolumeRuntime, /) -> None:
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         self.runtime = runtime
         self.method_id = canonical_fingerprint(
             {
@@ -397,14 +397,13 @@ class PreparedCompressibleProduction(StrictModule):
             restart_id,
         )
 
+    @checked
     def restore(
         self,
         restart: CompressibleProductionRestart,
         topology_id: str,
         /,
     ) -> tuple[PyTree[Array], Array, Array]:
-        if not isinstance(restart, CompressibleProductionRestart):
-            raise TypeError("restart must be CompressibleProductionRestart.")
         if (
             restart.method_id != self.method.method_id
             or restart.route_id != self.route_id
@@ -437,6 +436,7 @@ class PreparedCompressibleProduction(StrictModule):
             segment_steps=segment_steps,
         )
 
+    @checked
     def manifest(
         self,
         case: CompressibleFlowCaseSpec,
@@ -447,8 +447,6 @@ class PreparedCompressibleProduction(StrictModule):
         geometry_layout_id: str,
         dtype: str,
     ) -> ProductionCaseManifest:
-        if not isinstance(case, CompressibleFlowCaseSpec):
-            raise TypeError("case must be CompressibleFlowCaseSpec.")
         return ProductionCaseManifest(
             problem_id=case.case_id,
             method_id=self.method.method_id,
@@ -512,6 +510,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
             }
         )
 
+    @checked
     def prepare_explicit(
         self,
         dynamics: PreparedDGSEMConservationDynamics,
@@ -519,8 +518,6 @@ class SmoothCompressibleProductionPlan(StrictModule):
         *,
         order: int = 3,
     ) -> PreparedCompressibleProduction:
-        if not isinstance(dynamics, PreparedDGSEMConservationDynamics):
-            raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
         compatibility = self.method.compatibility
@@ -547,6 +544,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
             temporal, self.route_label, dynamics.dynamics_id
         )
 
+    @checked
     def prepare_imex(
         self,
         dynamics: PreparedDGSEMConservationDynamics,
@@ -556,8 +554,6 @@ class SmoothCompressibleProductionPlan(StrictModule):
         explicit_operator_id: str,
         implicit_operator_id: str,
     ) -> PreparedCompressibleProduction:
-        if not isinstance(dynamics, PreparedDGSEMConservationDynamics):
-            raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
         compatibility = self.method.compatibility
@@ -664,6 +660,7 @@ class NodalDGCompressibleProductionPlan(StrictModule):
             }
         )
 
+    @checked
     def prepare_explicit(
         self,
         dynamics: PreparedNodalDGConservationDynamics,
@@ -671,8 +668,6 @@ class NodalDGCompressibleProductionPlan(StrictModule):
         *,
         order: int = 3,
     ) -> PreparedCompressibleProduction:
-        if not isinstance(dynamics, PreparedNodalDGConservationDynamics):
-            raise TypeError("Nodal production requires prepared nodal-DG dynamics.")
         if not isinstance(
             dynamics.system,
             (
@@ -760,6 +755,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
             }
         )
 
+    @checked
     def prepare_runtime(
         self,
         dynamics: PreparedFiniteVolumeDynamics,
@@ -767,8 +763,6 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
         *,
         step_policy: FiniteVolumeStepPolicy | None = None,
     ) -> PreparedFiniteVolumeRuntime:
-        if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
-            raise TypeError("Structured FV production requires prepared FV dynamics.")
         if not isinstance(
             dynamics.system,
             (

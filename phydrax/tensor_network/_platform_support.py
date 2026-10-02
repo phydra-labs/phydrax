@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..backends._types import BackendAvailability
 from ..qualification import SupportTuple
+from ..typing import checked
 from ._core import LocallyPurifiedDensity, MatrixProductOperator, MatrixProductState
 
 
@@ -309,6 +310,7 @@ class TensorNetworkResourceAdmission(StrictModule, NonTrainableState):
     reasons: tuple[str, ...] = eqx.field(static=True)
     admission_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         forecast: TensorNetworkResourceForecast,
@@ -318,8 +320,6 @@ class TensorNetworkResourceAdmission(StrictModule, NonTrainableState):
         failure: TensorNetworkFailure,
         reasons: Sequence[str],
     ) -> None:
-        if not isinstance(forecast, TensorNetworkResourceForecast):
-            raise TypeError("forecast must be TensorNetworkResourceForecast.")
         failure_ = TensorNetworkFailure(failure)
         reasons_ = tuple(_identifier(value, "admission reason") for value in reasons)
         admitted_ = bool(admitted)
@@ -551,6 +551,7 @@ class TensorNetworkExecutionManifest(StrictModule, NonTrainableState):
     backend_evidence_id: str = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: TensorNetworkSupportTuple,
@@ -564,12 +565,6 @@ class TensorNetworkExecutionManifest(StrictModule, NonTrainableState):
         source_id: str,
         input_id: str,
     ) -> None:
-        if not isinstance(support, TensorNetworkSupportTuple):
-            raise TypeError("support must be TensorNetworkSupportTuple.")
-        if not isinstance(admission, TensorNetworkResourceAdmission):
-            raise TypeError("admission must be TensorNetworkResourceAdmission.")
-        if not isinstance(backend_evidence, BackendAvailability):
-            raise TypeError("backend_evidence must be BackendAvailability.")
         admission.require_admitted()
         if admission.forecast.support_tuple_id != support.support_tuple_id:
             raise TensorNetworkAdmissionError(

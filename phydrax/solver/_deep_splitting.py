@@ -27,7 +27,7 @@ from ..terms._deep_splitting import (
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -56,6 +56,7 @@ class DeepSplittingSolution(StrictModule):
     slices: tuple[DomainFunction, ...]
     interpolation: DeepSplittingInterpolation = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: BSDEProblem,
@@ -65,8 +66,6 @@ class DeepSplittingSolution(StrictModule):
         *,
         interpolation: DeepSplittingInterpolation = "linear",
     ) -> None:
-        if not isinstance(problem, BSDEProblem):
-            raise TypeError("problem must be a BSDEProblem.")
         time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim != 1 or time_values.shape[0] < 2:
             raise ValueError("Deep splitting times must contain at least two nodes.")

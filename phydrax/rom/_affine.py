@@ -34,6 +34,7 @@ from ..linalg import (
     refresh,
     solve,
 )
+from ..typing import checked
 from ._production import ROMAdmissionEvidence, ROMAdmissionStatus
 from ._reduction import TrialTestReduction
 
@@ -286,6 +287,7 @@ class AffineLinearROMProblem(StrictModule, NonTrainableState):
     source_artifact_ids: tuple[str, ...] = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: TrialTestReduction,
@@ -301,8 +303,6 @@ class AffineLinearROMProblem(StrictModule, NonTrainableState):
         source_artifact_ids: Sequence[str],
         family_id: str | None = None,
     ) -> None:
-        if not isinstance(reduction, TrialTestReduction):
-            raise TypeError("reduction must be a TrialTestReduction.")
         if not reduction.square:
             raise ValueError(
                 "AffineLinearROMProblem requires equal trial and test ranks; "
@@ -594,16 +594,13 @@ class AffineLinearROMPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         problem: AffineLinearROMProblem,
         coefficient_map: AbstractAffineCoefficientMap,
         /,
     ) -> PreparedAffineLinearROM:
-        if not isinstance(problem, AffineLinearROMProblem):
-            raise TypeError("problem must be an AffineLinearROMProblem.")
-        if not isinstance(coefficient_map, AbstractAffineCoefficientMap):
-            raise TypeError("coefficient_map must be an AbstractAffineCoefficientMap.")
         if coefficient_map.operator_term_ids != problem.operator_term_ids:
             raise ValueError("Coefficient-map operator term ordering does not match.")
         if coefficient_map.right_hand_side_term_ids != problem.right_hand_side_term_ids:

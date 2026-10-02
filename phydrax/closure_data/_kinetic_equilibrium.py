@@ -22,6 +22,7 @@ from ..discretization.discrete_velocity._energy_equilibrium import (
     PositiveEnergyEquilibriumPlan,
 )
 from ..equations._materials import IdealGasMaterial
+from ..typing import checked
 from ._dataset import (
     ChunkedClosureDatasetManifest,
     ClosureSample,
@@ -68,6 +69,7 @@ class EnergyEquilibriumTrainingPair(StrictModule, NonTrainableState):
     oracle_plan_id: str = eqx.field(static=True)
     pair_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         conserved: ClosureSample,
@@ -78,10 +80,6 @@ class EnergyEquilibriumTrainingPair(StrictModule, NonTrainableState):
         material_id: str,
         oracle_plan_id: str,
     ) -> None:
-        if not isinstance(conserved, ClosureSample):
-            raise TypeError("conserved must be a ClosureSample.")
-        if not isinstance(oracle_dual, ClosureSample):
-            raise TypeError("oracle_dual must be a ClosureSample.")
         quadrature, material, oracle = tuple(
             str(value).strip() for value in (quadrature_id, material_id, oracle_plan_id)
         )
@@ -141,6 +139,7 @@ class PreparedEnergyEquilibriumDataset(StrictModule, NonTrainableState):
     oracle_plan_id: str = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pairs: tuple[EnergyEquilibriumTrainingPair, ...],
@@ -154,12 +153,6 @@ class PreparedEnergyEquilibriumDataset(StrictModule, NonTrainableState):
             not isinstance(value, EnergyEquilibriumTrainingPair) for value in values
         ):
             raise ValueError("Energy-equilibrium preparation requires aligned pairs.")
-        if not isinstance(manifest, ChunkedClosureDatasetManifest):
-            raise TypeError("manifest must be a ChunkedClosureDatasetManifest.")
-        if not isinstance(partition, LeakageSafePartition):
-            raise TypeError("partition must be a LeakageSafePartition.")
-        if not isinstance(normalizer, TrainOnlyNormalizer):
-            raise TypeError("normalizer must be a TrainOnlyNormalizer.")
         if len({value.pair_id for value in values}) != len(values) or len(
             {value.conserved.key.sample_id for value in values}
         ) != len(values):
@@ -472,6 +465,7 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
     normalizer_provenance_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         equilibrium_plan: PositiveEnergyEquilibriumPlan,
@@ -486,16 +480,6 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
         training_preparation_id: str,
         parent_artifact_id: str | None = None,
     ) -> None:
-        if not isinstance(equilibrium_plan, PositiveEnergyEquilibriumPlan):
-            raise TypeError("equilibrium_plan must be a PositiveEnergyEquilibriumPlan.")
-        if not isinstance(schema, FlowStateSchema):
-            raise TypeError("schema must be a FlowStateSchema.")
-        if not isinstance(material, IdealGasMaterial):
-            raise TypeError("material must be an IdealGasMaterial.")
-        if not isinstance(normalizer, TrainOnlyNormalizer):
-            raise TypeError("normalizer must be a TrainOnlyNormalizer.")
-        if not isinstance(support, EnergyEquilibriumSupportEnvelope):
-            raise TypeError("support must be an EnergyEquilibriumSupportEnvelope.")
         components = tuple(str(value).strip() for value in input_component_names)
         semantic = str(semantic_id).strip()
         training = str(training_preparation_id).strip()
@@ -740,6 +724,7 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
             primitive_supported,
         )
 
+    @checked
     def predict_dual_with_evidence(
         self,
         model: AbstractArrayModel,
@@ -748,8 +733,6 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
     ) -> tuple[Array, EnergyEquilibriumSupportEvidence]:
         """Evaluate an explicit model safely while retaining per-lane support evidence."""
 
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
         if model.in_size != 4 or model.out_size != 2:
             raise ValueError("Energy-equilibrium models must have sizes 4→2.")
         values = self.schema.validate(
@@ -816,6 +799,7 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
         )
         return dual, evidence
 
+    @checked
     def prepare(
         self,
         model: AbstractArrayModel,
@@ -824,12 +808,8 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
     ) -> PreparedLearnedEnergyEquilibriumBinding:
         """Validate numeric identity and freeze one deterministic 4→2 model."""
 
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
         if model.in_size != 4 or model.out_size != 2:
             raise ValueError("Energy-equilibrium models must have sizes 4→2.")
-        if not isinstance(numeric_revision, NumericRevision):
-            raise TypeError("numeric_revision must be a NumericRevision.")
         expected_revision = energy_equilibrium_numeric_revision(self.semantic_id, model)
         if (
             numeric_revision.semantic_id != self.semantic_id
@@ -851,6 +831,7 @@ class PreparedLearnedEnergyEquilibriumBinding(StrictModule, NonTrainableState):
     plan: LearnedEnergyEquilibriumBindingPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: FrozenModel,
@@ -858,12 +839,6 @@ class PreparedLearnedEnergyEquilibriumBinding(StrictModule, NonTrainableState):
         plan: LearnedEnergyEquilibriumBindingPlan,
         /,
     ) -> None:
-        if not isinstance(model, FrozenModel):
-            raise TypeError("model must be a FrozenModel.")
-        if not isinstance(numeric_revision, NumericRevision):
-            raise TypeError("numeric_revision must be a NumericRevision.")
-        if not isinstance(plan, LearnedEnergyEquilibriumBindingPlan):
-            raise TypeError("plan must be a LearnedEnergyEquilibriumBindingPlan.")
         expected_revision = energy_equilibrium_numeric_revision(
             plan.semantic_id, model.as_trainable()
         )

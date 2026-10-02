@@ -37,7 +37,7 @@ from ...discretization.finite_volume import (
     PreparedFiniteVolumeDecomposition,
 )
 from ...exterior._form_type import FormType
-from ...typing import parse
+from ...typing import checked, parse
 
 
 NumericalRelativityFormulation: TypeAlias = Literal[
@@ -145,6 +145,7 @@ class DistributedCochainState(StrictModule):
     layout_id: str = eqx.field(static=True)
     distribution_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         components: tuple[Array, ...],
@@ -155,8 +156,6 @@ class DistributedCochainState(StrictModule):
         layout_id: str,
         distribution_id: str,
     ) -> None:
-        if not isinstance(form_type, FormType):
-            raise TypeError("form_type must be a FormType.")
         if form_type.fiber_shape or form_type.dimension != form_type.ambient_dimension:
             raise ValueError(
                 "Distributed structured cochains require intrinsic scalar forms."
@@ -362,6 +361,7 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
             raise ValueError("NR scalar field does not match the distributed grid.")
         return self.decomposition.periodic_halo(field, axis)
 
+    @checked
     def shard_cochain(
         self,
         bridge: StructuredCochainBridge,
@@ -371,12 +371,8 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
     ) -> DistributedCochainState:
         """Shard each oriented cochain component without flattening its topology."""
 
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
         if tuple(bridge.grid.shape) != self.plan.decomposition.global_shape:
             raise ValueError("Cochain bridge and distributed NR grid shapes differ.")
-        if not isinstance(form_type, FormType):
-            raise TypeError("form_type must be a FormType.")
         if (
             form_type.dimension != bridge.dimension
             or form_type.ambient_dimension != bridge.dimension
@@ -409,6 +405,7 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
             distribution_id=self.prepared_id,
         )
 
+    @checked
     def cochain_component_shardings(
         self,
         bridge: StructuredCochainBridge,
@@ -416,8 +413,6 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
         /,
     ) -> tuple[NamedSharding, ...]:
         degree_ = int(degree)
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
         if degree_ < 0 or degree_ > bridge.dimension:
             raise ValueError("Cochain degree is outside the bridge dimension.")
         split_factors = self.plan.decomposition.split_factors

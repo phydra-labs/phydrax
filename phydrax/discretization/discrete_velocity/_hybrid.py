@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
 from ...equations._hyperbolic_systems import AbstractAdmissibleSystem
 from ...equations._materials import IdealGasMaterial
+from ...typing import checked
 from ._energy_equilibrium import PositiveEnergyEquilibriumPlan
 from ._smooth_compressible import (
     SmoothCompressibleD2VKineticMethod,
@@ -51,6 +52,7 @@ class KineticShockSensorPlan(StrictModule, NonTrainableState):
     shock_owner: str = eqx.field(static=True)
     sensor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: IdealGasMaterial,
@@ -62,8 +64,6 @@ class KineticShockSensorPlan(StrictModule, NonTrainableState):
         threshold: float = 0.2,
         transition_width: float = 0.025,
     ) -> None:
-        if not isinstance(material, IdealGasMaterial):
-            raise TypeError("Shock sensing requires an IdealGasMaterial.")
         values = tuple(
             float(value)
             for value in (
@@ -214,6 +214,7 @@ class ConformingFVKineticState(StrictModule):
     finite_volume_conserved: Array
     kinetic: SmoothCompressibleKineticState
 
+    @checked
     def __init__(
         self,
         finite_volume_conserved: ArrayLike,
@@ -221,8 +222,6 @@ class ConformingFVKineticState(StrictModule):
         /,
     ) -> None:
         conserved = jnp.asarray(finite_volume_conserved)
-        if not isinstance(kinetic, SmoothCompressibleKineticState):
-            raise TypeError("kinetic must be SmoothCompressibleKineticState.")
         if (
             conserved.ndim == 0
             or conserved.shape[:-1] != kinetic.particle_populations.shape[:-1]
@@ -285,6 +284,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule):
     population_floor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: SmoothCompressibleD2VKineticMethod,
@@ -295,10 +295,6 @@ class FixedConformingFVKineticInterfacePlan(StrictModule):
         *,
         population_floor: float = 0.0,
     ) -> None:
-        if not isinstance(method, SmoothCompressibleD2VKineticMethod):
-            raise TypeError("method must be SmoothCompressibleD2VKineticMethod.")
-        if not isinstance(finite_volume_system, AbstractAdmissibleSystem):
-            raise TypeError("finite_volume_system must be AbstractAdmissibleSystem.")
         if (
             finite_volume_system.dimension != method.quadrature.dimension
             or finite_volume_system.component_count != method.quadrature.dimension + 2
@@ -437,6 +433,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule):
         )
         return self._common_flux_from_lift(conserved, kinetic_state, lifted, evidence)
 
+    @checked
     def atomic_update(
         self,
         previous: ConformingFVKineticState,
@@ -445,10 +442,6 @@ class FixedConformingFVKineticInterfacePlan(StrictModule):
         kinetic_scale: ArrayLike,
         /,
     ) -> AtomicHybridUpdateResult:
-        if not isinstance(previous, ConformingFVKineticState):
-            raise TypeError("previous must be ConformingFVKineticState.")
-        if not isinstance(flux, CommonFVKineticFluxEvidence):
-            raise TypeError("flux must be CommonFVKineticFluxEvidence.")
         fv_scale = jnp.asarray(
             finite_volume_scale, dtype=previous.finite_volume_conserved.dtype
         )

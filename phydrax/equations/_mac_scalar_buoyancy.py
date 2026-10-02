@@ -44,6 +44,7 @@ from ..discretization.finite_volume._mac_variational_viscosity import (
     MACVariationalViscosityResult,
     PreparedMACVariationalViscosityAction,
 )
+from ..typing import checked
 from ._incompressible import IncompressibleFlowProblem
 from ._ksgs import (
     AbstractKSGSPlan,
@@ -214,6 +215,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         self.enforce_exchange = bool(enforce_exchange)
         self.law_id = identifier
 
+    @checked
     def evaluate(
         self,
         velocity: FaceVelocity,
@@ -224,10 +226,6 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         *,
         projection_id: str,
     ) -> MACBuoyancyLedger:
-        if not isinstance(transport, PreparedMACScalarTransport):
-            raise TypeError("transport must be PreparedMACScalarTransport.")
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         if transport.layout.operators.prepared_id != momentum.operators.prepared_id:
             raise ValueError("MAC buoyancy momentum and scalar transport grids differ.")
         if len(self.gravity) != momentum.dimension:
@@ -439,6 +437,7 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
     viscosity_action: PreparedMACVariationalViscosityAction
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: AbstractKSGSPlan,
@@ -451,8 +450,6 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
             (StaticKSGSPlan, BuoyancyKSGSPlan, DynamicKSGSPlan, LowReKSGSPlan),
         ):
             raise TypeError("Unsupported MAC KSGS plan.")
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         field_name = str(scalar_field_name)
         if not field_name:
             raise ValueError("MAC KSGS requires a non-empty scalar field name.")

@@ -25,6 +25,7 @@ from ...operators.periodic import (
     PeriodicSpectrumResult,
     PreparedPeriodicOrbitalPencil,
 )
+from ...typing import checked
 from ...units import (
     conversion_factor,
     derived_unit,
@@ -56,6 +57,7 @@ class PeriodicDensityOfStatesPlan(StrictModule, NonTrainableState):
     states_per_band: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spectrum: PeriodicSpectrumResult,
@@ -66,8 +68,6 @@ class PeriodicDensityOfStatesPlan(StrictModule, NonTrainableState):
         states_per_band: float = 1.0,
         maximum_kernel_entries: int = 8_000_000,
     ) -> None:
-        if not isinstance(spectrum, PeriodicSpectrumResult):
-            raise TypeError("spectrum must be PeriodicSpectrumResult.")
         if not bool(spectrum.successful):
             raise ValueError("DOS requires a successful periodic spectrum.")
         grid = np.asarray(energy_grid)

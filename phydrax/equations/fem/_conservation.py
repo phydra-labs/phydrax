@@ -49,6 +49,7 @@ from ...discretization.finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
 )
 from ...linalg import DiagonalLinearOperator, OperatorProperties
+from ...typing import checked
 from .._entropy_pair import ConvexEntropyPair
 from .._finite_element_variational import (
     CellResidualAction,
@@ -566,6 +567,7 @@ class DGSEMConservationMethodPlan(StrictModule):
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         volume_flux: AbstractSymmetricTwoPointFluxPlan,
@@ -580,14 +582,8 @@ class DGSEMConservationMethodPlan(StrictModule):
             BranchDifferentiationPolicy.BRANCHWISE
         ),
     ) -> None:
-        if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
-            raise TypeError("DGSEM volume_flux must be a symmetric two-point flux plan.")
         if not volume_flux.symmetric or not volume_flux.consistent:
             raise ValueError("DGSEM volume flux must declare symmetry and consistency.")
-        if not isinstance(interface_flux, AbstractArbitraryNormalNumericalFluxPlan):
-            raise TypeError(
-                "DGSEM interface_flux requires typed arbitrary-normal capability."
-            )
         if compatibility is not None and not isinstance(
             compatibility, DGSEMSampledFluxCompatibilityEvidence
         ):
@@ -1015,6 +1011,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
     report: DGSEMPreparationReport
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Any,
@@ -1027,10 +1024,6 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         entropy_pair: ConvexEntropyPair | None = None,
         runtime: FiniteElementRuntimeData | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("DGSEM requires FiniteElementDiscretization.")
-        if not isinstance(method, DGSEMConservationMethodPlan):
-            raise TypeError("method must be DGSEMConservationMethodPlan.")
         if source is not None and not callable(source):
             raise TypeError("DGSEM source must be callable or None.")
         if entropy_pair is not None and not isinstance(entropy_pair, ConvexEntropyPair):

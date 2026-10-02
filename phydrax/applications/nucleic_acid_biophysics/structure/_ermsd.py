@@ -28,6 +28,7 @@ from ....atomistic.sampling import (
 )
 from ....ein import contract
 from ....series import SampledSeries
+from ....typing import checked
 from ....units import ANGSTROM, conversion_factor, UnitDefinition
 from .._binding import PreparedNucleotideBinding
 from .._construct import NucleotideKey
@@ -66,6 +67,7 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
     descriptor_id: str = eqx.field(static=True)
     complete_pair_support: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binding: PreparedNucleotideBinding,
@@ -84,8 +86,6 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
         conformations, a condition the caller must separately establish.
         smooth_width>0 selects a distinct C2-tapered G, not published eRMSD.
         """
-        if not isinstance(binding, PreparedNucleotideBinding):
-            raise TypeError("binding must be PreparedNucleotideBinding.")
         if not np.isfinite(cutoff) or cutoff <= 0 or not 0 <= smooth_width < cutoff:
             raise ValueError("Cutoff must be positive and taper width in [0, cutoff).")
         if image_policy not in ("nonperiodic", "unwrapped") or (

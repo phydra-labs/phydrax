@@ -15,6 +15,7 @@ from jax import Array
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._snapshot import PreparedPrimitivePathSnapshot, PrimitivePathSnapshot
 
 
@@ -146,16 +147,13 @@ class PreparedForcePrimitivePath(StrictModule, NonTrainableState):
     endpoint_mask: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ForcePrimitivePathPlan,
         snapshot: PreparedPrimitivePathSnapshot,
         /,
     ) -> None:
-        if not isinstance(plan, ForcePrimitivePathPlan):
-            raise TypeError("plan must be ForcePrimitivePathPlan.")
-        if not isinstance(snapshot, PreparedPrimitivePathSnapshot):
-            raise TypeError("snapshot must be PreparedPrimitivePathSnapshot.")
         capacity = snapshot.dynamics.system.capacity
         particle_chain = np.full((capacity,), -1, dtype=np.int32)
         particle_contour = np.full((capacity,), -1, dtype=np.int32)
@@ -210,9 +208,8 @@ class PreparedForcePrimitivePath(StrictModule, NonTrainableState):
         wca = self.plan.excluded_volume_energy * (4.0 * (ratio6 * ratio6 - ratio6) + 1.0)
         return bond_energy + jnp.sum(jnp.where(pair_mask & (distance < cutoff), wca, 0.0))
 
+    @checked
     def evaluate(self, source: PrimitivePathSnapshot, /) -> ForcePrimitivePathResult:
-        if not isinstance(source, PrimitivePathSnapshot):
-            raise TypeError("source must be PrimitivePathSnapshot.")
         if source.prepared_id != self.snapshot.prepared_id:
             raise ValueError("Source snapshot belongs to another prepared analysis.")
         original = source.unwrapped_positions

@@ -20,6 +20,7 @@ from .._trainable import NonTrainableState
 from ..discretization import RealizedTemporalMesh
 from ..discretization.mpm import MPMRuntimeState, PreparedMPMDynamics
 from ..equations import MaterialPointArguments
+from ..typing import checked
 
 
 _AdaptiveMPMCarry: TypeAlias = tuple[
@@ -158,6 +159,7 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
     requested_time_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedMPMDynamics,
@@ -167,10 +169,6 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
         final_time: float,
         initial_step_size: float,
     ) -> None:
-        if not isinstance(dynamics, PreparedMPMDynamics):
-            raise TypeError("dynamics must be PreparedMPMDynamics.")
-        if not isinstance(policy, MPMAdaptivePolicy):
-            raise TypeError("policy must be MPMAdaptivePolicy.")
         target = float(final_time)
         initial = float(initial_step_size)
         if not isfinite(target) or not isfinite(initial) or initial <= 0.0:
@@ -192,16 +190,13 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def rollout(
         self,
         initial_state: MPMRuntimeState,
         arguments: MaterialPointArguments,
         /,
     ) -> AdaptiveMPMRolloutResult:
-        if not isinstance(initial_state, MPMRuntimeState):
-            raise TypeError("initial_state must be MPMRuntimeState.")
-        if not isinstance(arguments, MaterialPointArguments):
-            raise TypeError("arguments must be MaterialPointArguments.")
         dtype = initial_state.time.dtype
         target = jnp.asarray(self.final_time, dtype=dtype)
         policy = self.policy

@@ -14,7 +14,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from .._evolution import AbstractDifferentiableEvolution, EvolutionTrajectory
 from .._grid import IterationGrid, TimeGrid
 from .._linearization import EvolutionArgumentJacobianAction
@@ -41,6 +41,7 @@ class ShadowingSensitivityProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     time_dilation: ShadowingTimeDilation = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
@@ -54,8 +55,6 @@ class ShadowingSensitivityProblem(StrictModule):
         neutral_direction: Callable[[Array, Array, Any], Array] | None = None,
         time_dilation: ShadowingTimeDilation = "none",
     ) -> None:
-        if not isinstance(evolution, AbstractDifferentiableEvolution):
-            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         callbacks = (
             observable,
             observable_state_gradient,

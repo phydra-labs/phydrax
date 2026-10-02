@@ -18,6 +18,7 @@ from jax.typing import ArrayLike, DTypeLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._fractional import FractionalGaussianRealization
 from ._rough import AbstractRoughControl
 
@@ -590,6 +591,7 @@ class LogSignatureControl(AbstractRoughControl):
         )
 
     @classmethod
+    @checked
     def from_fractional_gaussian(
         cls,
         realization: FractionalGaussianRealization,
@@ -600,8 +602,6 @@ class LogSignatureControl(AbstractRoughControl):
         coarse_times: ArrayLike | None = None,
         joint_time: bool = False,
     ) -> LogSignatureControl:
-        if not isinstance(realization, FractionalGaussianRealization):
-            raise TypeError("realization must be a FractionalGaussianRealization.")
         return cls.from_values(
             realization.grid,
             realization.values,

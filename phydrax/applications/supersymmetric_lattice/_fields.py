@@ -19,6 +19,7 @@ from phydrax.linalg import inverse
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 class PFormLatticePlan(StrictModule):
@@ -93,6 +94,7 @@ class ComplexifiedPFormField(StrictModule):
     orientation: str = eqx.field(static=True)
     field_space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PFormLatticePlan,
@@ -101,8 +103,6 @@ class ComplexifiedPFormField(StrictModule):
         *,
         orientation: str = "forward",
     ) -> None:
-        if not isinstance(plan, PFormLatticePlan):
-            raise TypeError("plan must be PFormLatticePlan.")
         if orientation not in ("forward", "reverse"):
             raise ValueError("orientation must be 'forward' or 'reverse'.")
         array = jnp.asarray(values)

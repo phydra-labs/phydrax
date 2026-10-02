@@ -45,6 +45,7 @@ from ..._trainable import (
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
 from ...equations._chemical_rates import ChemicalRateRuntime
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 
 
 class LearnedChemicalFallbackReason(IntEnum):
@@ -400,6 +401,7 @@ class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, Explicit
     model: Callable
     uncertainty_model: Callable
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -418,10 +420,6 @@ class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, Explicit
         commercial_use: bool = False,
         export: bool = False,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
-        if not isinstance(feature_schema, LearnedChemicalFeatureSchema):
-            raise TypeError("feature_schema must be LearnedChemicalFeatureSchema.")
         expected_features = mechanism.schema.species_count + 3
         if len(feature_schema.feature_names) != expected_features:
             raise ValueError(
@@ -526,9 +524,8 @@ class TrainableLearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition)
     model: Callable = parameter_field()
     uncertainty_model: Callable = fixed_field()
 
+    @checked
     def __init__(self, model: Callable, source: LearnedChemicalTransitionPlan, /) -> None:
-        if not isinstance(source, LearnedChemicalTransitionPlan):
-            raise TypeError("source must be a LearnedChemicalTransitionPlan.")
         self.model = trainable_provider(model)
         self.uncertainty_model = source.uncertainty_model
         self.mechanism = source.mechanism

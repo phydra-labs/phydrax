@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._point_cloud import PreparedPointCloudDiscretization
 from .._point_cloud_pde import PointDiffusionOperator
 
@@ -71,14 +72,13 @@ class PreparedHyperviscosity(StrictModule, NonTrainableState):
     diffusion: PointDiffusionOperator
     evidence: HyperviscosityEvidence
 
+    @checked
     def __init__(
         self,
         plan: HyperviscosityPlan,
         discretization: PreparedPointCloudDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, HyperviscosityPlan):
-            raise TypeError("plan must be HyperviscosityPlan.")
         diffusion = PointDiffusionOperator(discretization, form="dissipative")
         mass = discretization.quadrature_weights
         # A deterministic, nonconstant start, normalized in the physical pairing.

@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class Irrep(StrictModule):
@@ -186,6 +187,7 @@ class FusionChannel(StrictModule):
     multiplicity_ordinal: int = eqx.field(static=True)
     channel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         category: RepresentationCategory,
@@ -196,8 +198,6 @@ class FusionChannel(StrictModule):
         *,
         multiplicity_ordinal: int = 0,
     ) -> None:
-        if not isinstance(category, RepresentationCategory):
-            raise TypeError("category must be RepresentationCategory.")
         left_, right_, output_ = str(left), str(right), str(output)
         ordinal = int(multiplicity_ordinal)
         multiplicity = category.multiplicity(left_, right_, output_)
@@ -229,6 +229,7 @@ class FusionTree(StrictModule):
     output: str = eqx.field(static=True)
     tree_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         category: RepresentationCategory,
@@ -236,8 +237,6 @@ class FusionTree(StrictModule):
         channels: Sequence[FusionChannel],
         /,
     ) -> None:
-        if not isinstance(category, RepresentationCategory):
-            raise TypeError("category must be RepresentationCategory.")
         leaves_ = tuple(str(label) for label in leaves)
         channels_ = tuple(channels)
         if len(leaves_) < 2 or len(channels_) != len(leaves_) - 1:
@@ -311,6 +310,7 @@ class ReducedLeg(StrictModule):
     basis_id: str = eqx.field(static=True)
     allocation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         category: RepresentationCategory,
@@ -321,8 +321,6 @@ class ReducedLeg(StrictModule):
         orientation: int,
         active_multiplicities: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(category, RepresentationCategory):
-            raise TypeError("category must be RepresentationCategory.")
         labels = tuple(str(label) for label in irreps)
         capacities_ = tuple(capacities)
         if (

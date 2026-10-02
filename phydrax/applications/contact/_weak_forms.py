@@ -14,6 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.fem import FiniteElementMortarPlan
+from ...typing import checked
 
 
 class ContactMortarEvidence(StrictModule):
@@ -95,14 +96,13 @@ class ContactMortarSpace(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_finite_element_mortar(
         cls,
         mortar: FiniteElementMortarPlan,
         /,
     ) -> ContactMortarSpace:
         """Bind the contact dual action to a qualified FE mortar plan."""
-        if not isinstance(mortar, FiniteElementMortarPlan):
-            raise TypeError("mortar must be FiniteElementMortarPlan.")
         return cls(
             mortar.left_interpolation,
             mortar.right_interpolation,

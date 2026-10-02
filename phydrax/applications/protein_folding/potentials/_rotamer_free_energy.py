@@ -57,6 +57,7 @@ from phydrax.pgm import (
 )
 from phydrax.qualification import ReferenceArtifactManifest
 
+from ....typing import checked
 from .._construct import ProteinConstruct
 
 
@@ -105,6 +106,7 @@ class RotamerGeometryPlan(StrictModule):
     minimum_frame_length: float = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         construct: ProteinConstruct,
@@ -120,10 +122,6 @@ class RotamerGeometryPlan(StrictModule):
         training_use: bool = False,
         export: bool = False,
     ) -> None:
-        if not isinstance(construct, ProteinConstruct):
-            raise TypeError("construct must be ProteinConstruct.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         ids = np.asarray(frame_atom_ids)
         if ids.shape != (construct.residue_count, 3) or not np.issubdtype(
             ids.dtype, np.integer
@@ -189,6 +187,7 @@ class RotamerParameterPlan(StrictModule):
     thermal_energy: float = eqx.field(static=True)
     parameter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         units: AtomisticUnitSystem,
@@ -205,8 +204,6 @@ class RotamerParameterPlan(StrictModule):
         training_use: bool = False,
         export: bool = False,
     ) -> None:
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         temperature_ = float(temperature)
         if not isfinite(temperature_) or temperature_ <= 0:
             raise ValueError("Effective temperature must be finite and positive.")

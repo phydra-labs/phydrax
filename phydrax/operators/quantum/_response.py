@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import MatrixFunctionPolicy, ShiftedSolvePolicy
+from ...typing import checked
 from .lattice import QuantumSectorOperator
 
 
@@ -29,9 +30,8 @@ class QuantumSectorProbe(StrictModule):
     target_basis_id: str = eqx.field(static=True)
     charge_delta: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, operator: QuantumSectorOperator, /, *, probe_id: str) -> None:
-        if not isinstance(operator, QuantumSectorOperator):
-            raise TypeError("operator must be QuantumSectorOperator.")
         identifier = str(probe_id)
         if not identifier:
             raise ValueError("probe_id must be non-empty.")
@@ -56,6 +56,7 @@ class ZeroTemperatureResponsePlan(StrictModule):
     fixed_result_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frequencies: ArrayLike,
@@ -93,8 +94,6 @@ class ZeroTemperatureResponsePlan(StrictModule):
             or source_tolerance_ < 0.0
         ):
             raise ValueError("Zero-temperature response controls are invalid.")
-        if not isinstance(shifted_solve, ShiftedSolvePolicy):
-            raise TypeError("shifted_solve must be ShiftedSolvePolicy.")
         if shifted_solve.method != "lanczos":
             raise ValueError("Zero-temperature response requires shifted Lanczos.")
         if shifted_solve.differentiation != "none":
@@ -181,6 +180,7 @@ class FiniteTemperatureResponsePlan(StrictModule):
     fixed_result_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         times: ArrayLike,
@@ -238,8 +238,6 @@ class FiniteTemperatureResponsePlan(StrictModule):
             or kms < 0.0
         ):
             raise ValueError("Finite-temperature response controls are invalid.")
-        if not isinstance(matrix_function, MatrixFunctionPolicy):
-            raise TypeError("matrix_function must be MatrixFunctionPolicy.")
         if matrix_function.method != "lanczos":
             raise ValueError("Finite-temperature response requires Lanczos propagation.")
         if matrix_function.differentiation.mode != "none":

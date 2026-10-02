@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import checked
 from ...integral.layer_potential import (
     evaluate_laplace_layer_3d,
     LaplaceLayerKernel3D,
@@ -31,9 +32,8 @@ class NativePanelGeometry3D(StrictModule):
     geometry_id: str = eqx.field(static=True)
 
     @classmethod
+    @checked
     def from_panelization(cls, panelization: SurfacePanelization3D, /) -> Self:
-        if not isinstance(panelization, SurfacePanelization3D):
-            raise TypeError("panelization must be SurfacePanelization3D.")
         count = panelization.panel_count
         area = (
             jnp.zeros((count,), dtype=panelization.weights.dtype)
@@ -85,9 +85,8 @@ class NativePanelFieldPlan3D(StrictModule):
     geometry: NativePanelGeometry3D
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, geometry: NativePanelGeometry3D, /) -> None:
-        if not isinstance(geometry, NativePanelGeometry3D):
-            raise TypeError("geometry must be NativePanelGeometry3D.")
         self.geometry = geometry
         self.field_id = canonical_fingerprint(
             {"kind": "native-panel-field-3d", "geometry": geometry.geometry_id}

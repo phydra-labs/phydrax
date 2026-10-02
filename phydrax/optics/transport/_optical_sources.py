@@ -48,6 +48,7 @@ from ...typing import (
     as_array,
     as_host_array,
     Bool,
+    checked,
     ConvertibleToArray,
     Dim,
     Float64,
@@ -592,6 +593,7 @@ class OpticalPhotonSourcePlan(StrictModule, NonTrainableState):
     photon_energy_length: float = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -602,8 +604,6 @@ class OpticalPhotonSourcePlan(StrictModule, NonTrainableState):
         length_per_wavelength_unit: float = 1.0,
         batch_size: int = 1024,
     ) -> None:
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         if not relativity.quantum_constants_explicit:
             raise ValueError("Photon energies need an explicit reduced Planck constant.")
         if cherenkov is not None and not isinstance(cherenkov, CherenkovEmission):

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._rigid_body import PreparedRigidBodySet
 from ._rigid_joints import PreparedRigidJointGraph, RigidJointRowLayout
 
@@ -420,6 +421,7 @@ class RigidTopologyPlan(StrictModule, NonTrainableState):
     initial_replay_digest: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         breakable_joints: BreakableRigidJointLawPlan,
@@ -439,8 +441,6 @@ class RigidTopologyPlan(StrictModule, NonTrainableState):
         initial_replay_digest: int = 0,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(breakable_joints, BreakableRigidJointLawPlan):
-            raise TypeError("breakable_joints must be a BreakableRigidJointLawPlan.")
         transactions = np.asarray(transaction_ids)
         if transactions.ndim != 1 or not np.issubdtype(transactions.dtype, np.integer):
             raise TypeError("transaction_ids must be a rank-1 integer array.")
@@ -613,6 +613,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
     activated_joint_indices: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RigidTopologyPlan,
@@ -620,12 +621,6 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
         joints: PreparedRigidJointGraph,
         /,
     ) -> None:
-        if not isinstance(plan, RigidTopologyPlan):
-            raise TypeError("plan must be a RigidTopologyPlan.")
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be a PreparedRigidBodySet.")
-        if not isinstance(joints, PreparedRigidJointGraph):
-            raise TypeError("joints must be a PreparedRigidJointGraph.")
         if joints.bodies.prepared_id != bodies.prepared_id:
             raise ValueError("Rigid joint graph and bodies belong to different supports.")
         joint_ids = np.asarray(joints.row_layout.joint_ids, dtype=np.int64)

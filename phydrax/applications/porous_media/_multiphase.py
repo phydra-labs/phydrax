@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import UnstructuredFiniteVolumeDiscretization
+from ...typing import checked
 
 
 class MultiphaseComponentState(StrictModule):
@@ -55,6 +56,7 @@ class MultiphaseConservationPlan(StrictModule, NonTrainableState):
     boundary_faces: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -62,10 +64,6 @@ class MultiphaseConservationPlan(StrictModule, NonTrainableState):
         component_names: tuple[str, ...],
         /,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError(
-                "Multiphase conservation requires unstructured finite volume geometry."
-            )
         phases = tuple(str(value).strip() for value in phase_names)
         components = tuple(str(value).strip() for value in component_names)
         if (

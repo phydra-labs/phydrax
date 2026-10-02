@@ -17,7 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._lattice import LatticeBoltzmannVelocitySet
 from ._precision import LatticeBoltzmannPrecisionPolicy
@@ -39,6 +39,7 @@ class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
     nonequilibrium_scale: float = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         velocity_set: LatticeBoltzmannVelocitySet,
@@ -47,8 +48,6 @@ class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
         refinement_ratio: int = 2,
         nonequilibrium_scale: float = 1.0,
     ) -> None:
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be LatticeBoltzmannVelocitySet.")
         ratio = int(refinement_ratio)
         scale = float(nonequilibrium_scale)
         if ratio < 2:
@@ -160,6 +159,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
     fine_scaling: LatticeBoltzmannScaling
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: LatticeBoltzmannAMRTransferPlan,
@@ -168,14 +168,10 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         fine_scaling: LatticeBoltzmannScaling,
         /,
     ) -> None:
-        if not isinstance(transfer, LatticeBoltzmannAMRTransferPlan):
-            raise TypeError("transfer must be LatticeBoltzmannAMRTransferPlan.")
         if transfer.nonequilibrium_scale <= 0.0:
             raise ValueError(
                 "Collision-aware AMR requires positive nonequilibrium scaling."
             )
-        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
-            raise TypeError("precision must be LatticeBoltzmannPrecisionPolicy.")
         if not isinstance(coarse_scaling, LatticeBoltzmannScaling) or not isinstance(
             fine_scaling, LatticeBoltzmannScaling
         ):
@@ -670,6 +666,7 @@ class PreparedLatticeBoltzmannAMR(StrictModule, NonTrainableState):
         )
         return defect, successful
 
+    @checked
     def advance(
         self,
         state: LatticeBoltzmannAMRState,
@@ -680,8 +677,6 @@ class PreparedLatticeBoltzmannAMR(StrictModule, NonTrainableState):
         args: Any = None,
         temporal_traces: Sequence[Array] | None = None,
     ) -> LatticeBoltzmannAMRAdvanceResult:
-        if not isinstance(state, LatticeBoltzmannAMRState):
-            raise TypeError("state must be LatticeBoltzmannAMRState.")
         steps = tuple(level_steps)
         level_count = len(state.level_populations)
         if len(steps) != level_count or len(self.transfers) != level_count - 1:
@@ -961,14 +956,13 @@ class LatticeBoltzmannAMRPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         precision: LatticeBoltzmannPrecisionPolicy,
         level_scalings: Sequence[LatticeBoltzmannScaling],
         /,
     ) -> PreparedLatticeBoltzmannAMR:
-        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
-            raise TypeError("precision must be LatticeBoltzmannPrecisionPolicy.")
         scalings = tuple(level_scalings)
         if len(scalings) != len(self.transfers) + 1 or any(
             not isinstance(value, LatticeBoltzmannScaling) for value in scalings

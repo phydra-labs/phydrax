@@ -28,6 +28,7 @@ from ..discretization.surfel import (
     SurfelOrientationScope,
     SurfelSetPlan,
 )
+from ..typing import checked
 from ._atlas import BoundaryAtlas
 from ._immersed_markers import (
     ImmersedMarkerMaterialization,
@@ -44,11 +45,10 @@ class BoundaryAtlasSurfelMaterialization(StrictModule):
     successful: Array
     materialization_id: str = eqx.field(static=True)
 
+    @checked
     def marker_kinematics(
         self, markers: LagrangianMarkerDiscretization, /
     ) -> LagrangianMarkerKinematics:
-        if not isinstance(markers, LagrangianMarkerDiscretization):
-            raise TypeError("markers must be LagrangianMarkerDiscretization.")
         if not np.array_equal(
             np.asarray(markers.marker_ids),
             np.asarray(self.geometry.discretization.surfel_ids),
@@ -62,6 +62,7 @@ class PreparedBoundaryAtlasSurfels(StrictModule, NonTrainableState):
     discretization: PreparedSurfelDiscretization
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def materialize(
         self,
         atlas: BoundaryAtlas,
@@ -71,8 +72,6 @@ class PreparedBoundaryAtlasSurfels(StrictModule, NonTrainableState):
         velocity: MarkerVelocityProvider | ArrayLike | None = None,
         epoch: int | Array = 0,
     ) -> BoundaryAtlasSurfelMaterialization:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("atlas must be a BoundaryAtlas.")
         quadrature = self.plan.quadrature
         marker = quadrature.materialize(atlas, time, velocity=velocity)
         frame = atlas.frame(
@@ -132,6 +131,7 @@ class BoundaryAtlasSurfelPlan(StrictModule, NonTrainableState):
     footprint_area_ratio: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: ImmersedMarkerQuadraturePlan,
@@ -139,8 +139,6 @@ class BoundaryAtlasSurfelPlan(StrictModule, NonTrainableState):
         *,
         footprint_area_ratio: float = 1.0,
     ) -> None:
-        if not isinstance(quadrature, ImmersedMarkerQuadraturePlan):
-            raise TypeError("quadrature must be ImmersedMarkerQuadraturePlan.")
         ratio = float(footprint_area_ratio)
         if not np.isfinite(ratio) or ratio <= 0.0:
             raise ValueError("footprint_area_ratio must be finite and positive.")

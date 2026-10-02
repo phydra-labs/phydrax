@@ -19,7 +19,7 @@ from ..._frozendict import frozendict
 from ..._score_field import StateTimeScoreField
 from ..._strict import StrictModule
 from ...domain import DomainFunction
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 
 
 GuidanceExactness: TypeAlias = Literal["exact", "approximate", "heuristic"]
@@ -91,6 +91,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
     exactness: GuidanceExactness = eqx.field(static=True)
     guidance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: DomainFunction,
@@ -103,8 +104,6 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         exactness: GuidanceExactness,
         guidance_id: str,
     ) -> None:
-        if not isinstance(field, DomainFunction):
-            raise TypeError("Guidance field must be a DomainFunction.")
         contexts = tuple(str(name) for name in context_labels)
         if (
             not state_label
@@ -307,6 +306,7 @@ class GuidedScoreField(StrictModule):
     guidance: tuple[AbstractScoreGuidance, ...]
     guided_score_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: StateTimeScoreField,
@@ -315,8 +315,6 @@ class GuidedScoreField(StrictModule):
         *,
         guided_score_id: str | None = None,
     ) -> None:
-        if not isinstance(base, StateTimeScoreField):
-            raise TypeError("base must be a StateTimeScoreField.")
         values = tuple(guidance)
         if any(not isinstance(item, AbstractScoreGuidance) for item in values):
             raise TypeError("guidance must contain AbstractScoreGuidance objects.")

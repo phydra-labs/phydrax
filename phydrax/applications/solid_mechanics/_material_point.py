@@ -24,6 +24,7 @@ from ...operators.mechanics import (
     neo_hookean_tangent,
     NeoHookeanParameters,
 )
+from ...typing import checked
 
 
 class NeoHookeanMPMConstitutivePlan(
@@ -81,6 +82,7 @@ class NeoHookeanMPMConstitutivePlan(
     ) -> Array:
         return jnp.empty(tuple(batch_shape) + (0,), dtype=dtype)
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -92,8 +94,6 @@ class NeoHookeanMPMConstitutivePlan(
         /,
     ) -> MPMConstitutiveResponse:
         del time, step_size
-        if not isinstance(parameters, NeoHookeanParameters):
-            raise TypeError("parameters must be NeoHookeanParameters.")
         deformation = jnp.asarray(deformation_gradient)
         if deformation.shape[-2:] != (self.dimension, self.dimension):
             raise ValueError(

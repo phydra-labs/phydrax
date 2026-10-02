@@ -31,6 +31,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 class _SparseMACRelations(StrictModule, NonTrainableState):
@@ -156,6 +157,7 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedSparseFLIPParticleTransfer,
@@ -166,8 +168,6 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(transfer, PreparedSparseFLIPParticleTransfer):
-            raise TypeError("transfer must be PreparedSparseFLIPParticleTransfer.")
         density_ = float(density)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
@@ -384,6 +384,7 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             complete=complete,
         )
 
+    @checked
     def project(
         self,
         state: SparseFLIPTransferState,
@@ -394,8 +395,6 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         pressure: ArrayLike | None = None,
     ) -> SparseMACFreeSurfaceProjectionResult:
-        if not isinstance(state, SparseFLIPTransferState):
-            raise TypeError("state must be SparseFLIPTransferState.")
         values = tuple(jnp.asarray(value) for value in velocity)
         expected = tuple(
             topology.plan.storage_capacity for topology in state.face_topologies

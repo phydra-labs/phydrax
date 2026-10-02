@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._structured_cochain import StructuredCochainBridge
 from ._dynamics import PreparedFiniteVolumeDynamics
 from ._mhd_boundary import ConstrainedMHDBoundarySet
@@ -111,6 +112,7 @@ class UpwindConstrainedTransportPlan(StrictModule):
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedFiniteVolumeDynamics,
@@ -122,10 +124,6 @@ class UpwindConstrainedTransportPlan(StrictModule):
         electromotive_plan: AbstractUCTElectromotivePlan | None = None,
         boundary_set: ConstrainedMHDBoundarySet | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
-            raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         if tuple(dynamics.system.component_names) != (
             "density",
             "momentum_x",

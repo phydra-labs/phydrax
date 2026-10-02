@@ -27,7 +27,7 @@ from ..discretization.mpm import (
     PreparedMPMDynamics,
 )
 from ..equations import MaterialPointArguments
-from ..typing import parse
+from ..typing import checked, parse
 
 
 MPMReplayMode: TypeAlias = Literal["full", "step", "block"]
@@ -164,6 +164,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
     replay: MPMReplayPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedMPMDynamics,
@@ -174,10 +175,6 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         checkpoint_stride: int = 1,
         replay: MPMReplayPolicy | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedMPMDynamics):
-            raise TypeError("dynamics must be PreparedMPMDynamics.")
-        if not isinstance(temporal_mesh, TemporalMesh):
-            raise TypeError("temporal_mesh must be TemporalMesh.")
         if temporal_mesh.role != "internal" or not bool(
             np.all(np.asarray(temporal_mesh.active_intervals))
         ):
@@ -213,6 +210,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_realized(
         cls,
         dynamics: PreparedMPMDynamics,
@@ -223,8 +221,6 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         checkpoint_stride: int = 1,
         replay: MPMReplayPolicy | None = None,
     ) -> "ScheduledMPMRolloutPlan":
-        if not isinstance(realized, RealizedTemporalMesh):
-            raise TypeError("realized must be RealizedTemporalMesh.")
         count = int(np.asarray(realized.count))
         if count <= 0:
             raise ValueError("Scheduled MPM replay requires at least one accepted step.")
@@ -246,16 +242,13 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
             replay=replay,
         )
 
+    @checked
     def rollout(
         self,
         initial_state: MPMRuntimeState,
         arguments: MaterialPointArguments,
         /,
     ) -> MPMRolloutResult:
-        if not isinstance(initial_state, MPMRuntimeState):
-            raise TypeError("initial_state must be MPMRuntimeState.")
-        if not isinstance(arguments, MaterialPointArguments):
-            raise TypeError("arguments must be MaterialPointArguments.")
         initial_time = jnp.asarray(initial_state.time)
         tolerance = (
             32.0

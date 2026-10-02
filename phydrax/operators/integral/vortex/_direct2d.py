@@ -28,6 +28,7 @@ from ....discretization.vortex._interfaces import (
 )
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
+from ....typing import checked
 from ._gaussian2d import (
     gaussian_vortex_velocity_2d,
     gaussian_vortex_velocity_gradient_2d,
@@ -249,6 +250,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
     backend_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: GaussianDirectVortexPlan2D,
@@ -256,12 +258,6 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
         compatibility: VortexVelocityCompatibility,
         /,
     ) -> None:
-        if not isinstance(plan, GaussianDirectVortexPlan2D):
-            raise TypeError("plan must be a GaussianDirectVortexPlan2D.")
-        if not isinstance(resources, DirectVortexResourceEvidence):
-            raise TypeError("resources must be DirectVortexResourceEvidence.")
-        if not isinstance(compatibility, VortexVelocityCompatibility):
-            raise TypeError("compatibility must be VortexVelocityCompatibility.")
         self.plan = plan
         self.resources = resources
         self.capabilities = plan.capabilities

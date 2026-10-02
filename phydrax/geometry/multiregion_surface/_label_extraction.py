@@ -44,7 +44,7 @@ from ..._validation import (
     positive_finite_float,
     unique_identifiers,
 )
-from ...typing import Dim, HostInt64, Identifier, parse, Scope
+from ...typing import checked, Dim, HostInt64, Identifier, parse, Scope
 from ._contracts import (
     MultiRegionSurfaceCapacityEvidence,
     MultiRegionSurfaceCapacityPlan,
@@ -206,6 +206,7 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
     lineage_id: Identifier = eqx.field(static=True)
     evidence_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -231,8 +232,6 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
         if not isinstance(status, LabelFieldSurfaceExtractionStatus):
             raise TypeError("status must be a LabelFieldSurfaceExtractionStatus.")
         route_ = parse(route, LabelFieldSurfaceExtractionRoute, "route")
-        if not isinstance(capacity, MultiRegionSurfaceCapacityEvidence):
-            raise TypeError("capacity must be MultiRegionSurfaceCapacityEvidence.")
         if validation is not None and not isinstance(
             validation, MultiRegionSurfaceEvidence
         ):
@@ -300,6 +299,7 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
     lineage: LabelFieldSurfaceLineage
     evidence: LabelFieldSurfaceExtractionEvidence
 
+    @checked
     def __init__(
         self,
         candidate_seed: MultiRegionSurfaceSeed | None,
@@ -314,10 +314,6 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
             candidate_seed, MultiRegionSurfaceSeed
         ):
             raise TypeError("candidate_seed must be MultiRegionSurfaceSeed or None.")
-        if not isinstance(lineage, LabelFieldSurfaceLineage):
-            raise TypeError("lineage must be LabelFieldSurfaceLineage.")
-        if not isinstance(evidence, LabelFieldSurfaceExtractionEvidence):
-            raise TypeError("evidence must be LabelFieldSurfaceExtractionEvidence.")
         authority = (topology, state, surface)
         if evidence.accepted:
             if not isinstance(topology, MultiRegionSurfaceTopology):
@@ -368,6 +364,7 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
     source: Identifier = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         label_ids: Sequence[str],
@@ -382,8 +379,6 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
         source: str = "threshold-label-field",
     ) -> None:
         ids = unique_identifiers(label_ids, "label_ids")
-        if not isinstance(capacity_plan, MultiRegionSurfaceCapacityPlan):
-            raise TypeError("capacity_plan must be a MultiRegionSurfaceCapacityPlan.")
         if len(spacing) != 3:
             raise ValueError("spacing must contain three Cartesian values.")
         spacing_: tuple[float, float, float] = (
@@ -469,6 +464,7 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
     site_count: int = eqx.field(static=True)
     prepared_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LabelFieldSurfaceExtractionPlan,
@@ -477,8 +473,6 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
         *,
         site_coordinates: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(plan, LabelFieldSurfaceExtractionPlan):
-            raise TypeError("plan must be a LabelFieldSurfaceExtractionPlan.")
         if len(grid_shape) != 3:
             raise ValueError("grid_shape must contain three dimensions.")
         shape: tuple[int, int, int] = (

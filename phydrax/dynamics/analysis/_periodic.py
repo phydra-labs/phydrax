@@ -48,7 +48,7 @@ from ...nonlinear import (
     root,
     RootLineSearch,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._evolution import AbstractDifferentiableEvolution
 from .._layout import StateLayout
 
@@ -100,6 +100,7 @@ class OrthogonalityPhaseCondition(AbstractPhaseCondition):
     state_layout: StateLayout
     phase_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference_state: ArrayLike,
@@ -109,8 +110,6 @@ class OrthogonalityPhaseCondition(AbstractPhaseCondition):
         state_layout: StateLayout,
         phase_id: str | None = None,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         state = jnp.asarray(reference_state)
         tangent = jnp.asarray(reference_tangent)
         if state.shape != state_layout.shape or tangent.shape != state_layout.shape:
@@ -173,6 +172,7 @@ class ComponentPhaseCondition(AbstractPhaseCondition):
     component: int = eqx.field(static=True)
     phase_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: int,
@@ -182,8 +182,6 @@ class ComponentPhaseCondition(AbstractPhaseCondition):
         state_layout: StateLayout,
         phase_id: str | None = None,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if isinstance(component, bool):
             raise TypeError("component must be an integer.")
         index_ = index(component)
@@ -230,6 +228,7 @@ class PeriodicOrbitProblem(StrictModule):
     start_coordinate: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
@@ -241,8 +240,6 @@ class PeriodicOrbitProblem(StrictModule):
         start_coordinate: float = 0.0,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(evolution, AbstractDifferentiableEvolution):
-            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         kind = parse(kind, PeriodicOrbitKind, "kind")
         if isinstance(num_segments, bool):
             raise TypeError("num_segments must be an integer.")
@@ -482,9 +479,8 @@ class PeriodicOrbitResidual(StrictModule):
     problem: PeriodicOrbitProblem
     residual_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, problem: PeriodicOrbitProblem, /) -> None:
-        if not isinstance(problem, PeriodicOrbitProblem):
-            raise TypeError("problem must be a PeriodicOrbitProblem.")
         self.problem = problem
         self.residual_id = f"{problem.problem_id}:multiple-shooting-residual"
 

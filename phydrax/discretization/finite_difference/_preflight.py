@@ -12,6 +12,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_support import PreparedTensorGrid
 from ..amr import BlockLevelPlan
 from ._execution import PreparedStencilExecutionOperator
@@ -103,6 +104,7 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
     memory_budget_bytes: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -119,8 +121,6 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         precision: FDExecutionPrecisionPolicy | None = None,
         memory_budget_bytes: int | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("FD execution preflight requires PreparedTensorGrid.")
         fields = int(field_count)
         temporaries = int(temporary_fields)
         copies = int(checkpoint_copies)

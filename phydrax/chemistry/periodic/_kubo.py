@@ -30,6 +30,7 @@ from ..._validation import positive_finite_float
 from ...discretization._reciprocal import ReciprocalMeshPlan
 from ...ein import contract
 from ...linalg import HermitianSpectrum
+from ...typing import checked
 from ...units import conversion_factor, derived_unit, JOULE, METER, SECOND
 from ._observables import PeriodicVelocityResult
 
@@ -102,6 +103,7 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
     degeneracy_tolerance_joule: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energies_joule: ArrayLike,
@@ -168,8 +170,6 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
         velocity_scale = max(float(np.max(np.abs(velocities), initial=0.0)), 1.0)
         if hermiticity > 1.0e-10 * velocity_scale:
             raise ValueError("Every Cartesian band-velocity matrix must be Hermitian.")
-        if not isinstance(diamagnetic_sum_rule, KuboDiamagneticSumRule):
-            raise TypeError("diamagnetic_sum_rule must be KuboDiamagneticSumRule.")
         dimension = velocities.shape[-1]
         if diamagnetic_sum_rule.spectral_weight.shape != (dimension, dimension):
             raise ValueError("Diamagnetic and velocity Cartesian dimensions must agree.")
@@ -208,6 +208,7 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
         return self.velocity_matrices_m_per_s.shape[-1]
 
     @classmethod
+    @checked
     def from_periodic_results(
         cls,
         spectrum: PeriodicSpectrumResult,
@@ -224,12 +225,6 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
     ) -> "PeriodicKuboPlan":
         """Bind canonical spectrum/velocity/mesh results to the SI transport plan."""
 
-        if not isinstance(spectrum, PeriodicSpectrumResult):
-            raise TypeError("spectrum must be PeriodicSpectrumResult.")
-        if not isinstance(velocity, PeriodicVelocityResult):
-            raise TypeError("velocity must be PeriodicVelocityResult.")
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
         if (
             spectrum.support_id != mesh.mesh_id
             or spectrum.cell_id != mesh.cell_id

@@ -31,7 +31,7 @@ from ..tensor_network._mpo import (
     compress_mps,
     scale_mpo,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._dmrg import (
     FiniteDMRGPolicy,
     FiniteDMRGProblem,
@@ -144,6 +144,7 @@ class FiniteResponseProblem(StrictModule):
     frequencies: Array
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ground_state: MatrixProductState,
@@ -155,8 +156,6 @@ class FiniteResponseProblem(StrictModule):
         problem_id: str = "finite-time-domain-response",
     ) -> None:
         values = jnp.asarray(frequencies)
-        if not isinstance(ground_state, MatrixProductState):
-            raise TypeError("ground_state must be MatrixProductState.")
         if not isinstance(hamiltonian, MatrixProductOperator) or not isinstance(
             excitation, MatrixProductOperator
         ):

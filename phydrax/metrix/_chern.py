@@ -21,6 +21,7 @@ from ..linalg import (
     RHSLayout,
     solve,
 )
+from ..typing import checked
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives
 from ._utils import _pointwise_array
 
@@ -33,6 +34,7 @@ class HolomorphicBundleFrame(StrictModule):
     fiber_dimension: int
     frame_id: str
 
+    @checked
     def __init__(
         self,
         convention: ComplexCoordinateConvention,
@@ -42,8 +44,6 @@ class HolomorphicBundleFrame(StrictModule):
         *,
         frame_id: str,
     ) -> None:
-        if not isinstance(convention, ComplexCoordinateConvention):
-            raise TypeError("convention must be a ComplexCoordinateConvention.")
         if not callable(hermitian_metric):
             raise TypeError("hermitian_metric must be callable.")
         dimension = int(fiber_dimension)
@@ -82,9 +82,8 @@ class ChernConnection(StrictModule):
 
     frame: HolomorphicBundleFrame
 
+    @checked
     def __init__(self, frame: HolomorphicBundleFrame, /) -> None:
-        if not isinstance(frame, HolomorphicBundleFrame):
-            raise TypeError("frame must be a HolomorphicBundleFrame.")
         self.frame = frame
 
     def _coefficients_point(self, coordinates: Array, /) -> Array:

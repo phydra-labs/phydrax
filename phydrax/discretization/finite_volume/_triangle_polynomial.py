@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 
 
@@ -137,6 +138,7 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
     report: TriangleQuadraticReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TriangleFiniteVolumeDiscretization,
@@ -144,8 +146,6 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
         *,
         weight_power: float = 2.0,
     ) -> None:
-        if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
-            raise TypeError("Quadratic reconstruction requires triangle FV geometry.")
         moments = np.asarray(
             evaluate_triangle_second_moments(
                 discretization.vertices, discretization.triangles
@@ -289,9 +289,8 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
     prepared: PreparedTriangleQuadratic
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, prepared: PreparedTriangleQuadratic, /) -> None:
-        if not isinstance(prepared, PreparedTriangleQuadratic):
-            raise TypeError("prepared must be PreparedTriangleQuadratic.")
         self.prepared = prepared
         self.plan_id = canonical_fingerprint(
             {"kind": "triangle-k-exact-degree-2", "prepared": prepared.prepared_id}

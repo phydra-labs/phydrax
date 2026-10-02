@@ -34,6 +34,7 @@ from ...._trainable import NonTrainableState
 from ....discretization.spectral import PeriodicFourierShellPlan
 from ....linalg import determinant_small_linear, SmallLinearSolvePlan
 from ....nonlinear import VectorLocalRootPlan
+from ....typing import checked
 from ._psatd import PreparedSpectralMaxwell, SpectralMaxwellState
 
 
@@ -69,6 +70,7 @@ class SpectralNCIMonitorPlan(StrictModule, NonTrainableState):
     high_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         solver: PreparedSpectralMaxwell,
@@ -77,8 +79,6 @@ class SpectralNCIMonitorPlan(StrictModule, NonTrainableState):
         shell_count: int = 8,
         high_fraction: float = 0.5,
     ) -> None:
-        if not isinstance(solver, PreparedSpectralMaxwell):
-            raise TypeError("solver must be a PreparedSpectralMaxwell.")
         count = int(shell_count)
         fraction = float(high_fraction)
         if count < 2:

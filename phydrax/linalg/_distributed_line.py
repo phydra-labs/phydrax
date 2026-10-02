@@ -20,7 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._transform_line import PreparedTransformLineSolve, TransformLineSolveResult
 
 
@@ -367,6 +367,7 @@ class DistributedLineSolvePlan(StrictModule, NonTrainableState):
     line_axis: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: StructuredSolveTopologyPlan,
@@ -379,8 +380,6 @@ class DistributedLineSolvePlan(StrictModule, NonTrainableState):
         nullspace: StructuredLineNullspacePolicy | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(topology, StructuredSolveTopologyPlan):
-            raise TypeError("topology must be StructuredSolveTopologyPlan.")
         if topology.distribution != "split-line":
             raise ValueError("DistributedLineSolvePlan requires split-line topology.")
         diagonal_ = jnp.asarray(diagonal)
@@ -480,9 +479,8 @@ class PreparedDistributedLineSolve(StrictModule, NonTrainableState):
     evidence: StructuredSolvePreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: DistributedLineSolvePlan, /) -> None:
-        if not isinstance(plan, DistributedLineSolvePlan):
-            raise TypeError("plan must be DistributedLineSolvePlan.")
         topology = plan.topology
         count = topology.partitions.partition_count
         maximum_size = topology.partitions.maximum_size
@@ -1084,6 +1082,7 @@ class PreparedTransverseBatchLineSolve(StrictModule, NonTrainableState):
     communication: StructuredSolveCommunicationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, topology: StructuredSolveTopologyPlan, local: PreparedTransformLineSolve, /
     ) -> None:
@@ -1094,8 +1093,6 @@ class PreparedTransverseBatchLineSolve(StrictModule, NonTrainableState):
             raise ValueError(
                 "Transverse adapter requires transverse-batch StructuredSolveTopologyPlan."
             )
-        if not isinstance(local, PreparedTransformLineSolve):
-            raise TypeError("local must be PreparedTransformLineSolve.")
         if (
             local.resources.line_size != topology.line_size
             or local.resources.line_count != topology.transverse_line_count
@@ -1191,6 +1188,7 @@ class MultiblockExtrudedReductionPlan(StrictModule, NonTrainableState):
     maximum_resource_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         local_lower: ArrayLike,
@@ -1206,8 +1204,6 @@ class MultiblockExtrudedReductionPlan(StrictModule, NonTrainableState):
         maximum_resource_bytes: int = 512 * 1024**2,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(certificate, ExtrudedAxisInvarianceCertificate):
-            raise TypeError("certificate must be ExtrudedAxisInvarianceCertificate.")
         if not bool(np.asarray(certificate.certified)):
             raise ValueError(
                 "Axis transform requires certified geometry/metric/coefficient/interface invariance."
@@ -1303,9 +1299,8 @@ class PreparedMultiblockExtrudedReduction(StrictModule, NonTrainableState):
     resources: StructuredSolveResourceEstimate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MultiblockExtrudedReductionPlan, /) -> None:
-        if not isinstance(plan, MultiblockExtrudedReductionPlan):
-            raise TypeError("plan must be MultiblockExtrudedReductionPlan.")
         blocks, size = plan.local_diagonal.shape
         itemsize = np.dtype(plan.local_diagonal.dtype).itemsize
         factor_scalars = int(blocks * (2 * size - 1))

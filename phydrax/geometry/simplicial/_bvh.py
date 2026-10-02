@@ -25,6 +25,7 @@ from ..._bvh import (
     refit_packed_bvh_bounds,
 )
 from ..._strict import StrictModule
+from ...typing import checked
 from ._mesh import _closest_points_on_triangles, MeshQueryResult, TriangleMesh
 
 
@@ -164,16 +165,13 @@ class TriangleBVH(StrictModule):
     boundary_offsets: Array
     boundary_edges: Array
 
+    @checked
     def __init__(
         self,
         mesh: TriangleMesh,
         *,
         policy: BVHBuildPolicy = BVHBuildPolicy(leaf_size=8),
     ) -> None:
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("TriangleBVH requires a TriangleMesh.")
-        if not isinstance(policy, BVHBuildPolicy):
-            raise TypeError("policy must be a BVHBuildPolicy.")
         faces = np.asarray(mesh.faces)
         triangles = np.asarray(mesh.vertices)[faces]
         packed = prepare_bvh(

@@ -22,6 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import BoundaryAtlas, BoundaryFrame
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...typing import checked
 
 
 def _positive_finite(name: str, value: float, /) -> float:
@@ -194,11 +195,10 @@ class AtlasManifold(StrictModule, NonTrainableState):
     rank_tolerance: float = eqx.field(static=True)
     atlas_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, atlas: BoundaryAtlas, /, *, rank_tolerance: float = 1.0e-10
     ) -> None:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("atlas must be a BoundaryAtlas.")
         if atlas.reference_dimension not in (1, 2, 3):
             raise ValueError(
                 "Atlas manifold parameter dimension must be one through three."
@@ -362,6 +362,7 @@ class ManifoldBasisProviderAdapter(StrictModule, NonTrainableState):
     provider_id: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         provider: ManifoldBasisPayloadProvider,
@@ -372,8 +373,6 @@ class ManifoldBasisProviderAdapter(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(provider, ManifoldBasisPayloadProvider):
             raise TypeError("provider must implement ManifoldBasisPayloadProvider.")
-        if not isinstance(manifold, AtlasManifold):
-            raise TypeError("manifold must be an AtlasManifold.")
         identifier = str(provider_id)
         if not identifier:
             raise ValueError("provider_id must be non-empty.")
@@ -477,9 +476,8 @@ class SurfaceEmbeddingCertificate(StrictModule, NonTrainableState):
     transition_ids: tuple[str, ...] = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def assert_matches(self, atlas: BoundaryAtlas, /) -> None:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("atlas must be a BoundaryAtlas.")
         if atlas.source_id != self.source_id or atlas.num_charts != self.chart_count:
             raise ValueError("Surface embedding certificate does not match this atlas.")
         if atlas.reference_dimension != 2 or atlas.ambient_dimension != 3:

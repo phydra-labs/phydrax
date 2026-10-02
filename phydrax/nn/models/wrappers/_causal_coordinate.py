@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState, ParameterOwner
+from ....typing import checked
 from ..._keys import EvalKey
 from ...layers import (
     AbstractRecurrentCell,
@@ -84,9 +85,8 @@ class CausalCoordinateResult(StrictModule):
 class CausalCoordinateNetwork(StrictModule, ParameterOwner):
     cell: AbstractRecurrentCell
 
+    @checked
     def __init__(self, cell: AbstractRecurrentCell, /) -> None:
-        if not isinstance(cell, AbstractRecurrentCell):
-            raise TypeError("cell must be AbstractRecurrentCell.")
         self.cell = cell
 
     def __call__(

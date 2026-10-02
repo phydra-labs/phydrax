@@ -39,7 +39,7 @@ from ..stochastic import (
     WienerRealization,
 )
 from ..stochastic._spatial_noise import SpatialNoiseBasis
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
@@ -265,6 +265,7 @@ class SemidiscreteSPDE(StrictModule):
     precision_evidence_id: str = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -277,8 +278,6 @@ class SemidiscreteSPDE(StrictModule):
         noise_shape: Sequence[int],
         basis_id: str | None,
     ) -> None:
-        if not isinstance(problem, DifferentialProblem):
-            raise TypeError("problem must be a DifferentialProblem.")
         if not isinstance(
             spatial_discretization,
             (AbstractStrongFormDiscretization, TensorSpectralDiscretization),

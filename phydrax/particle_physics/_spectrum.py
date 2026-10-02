@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class SpectrumStatus(IntEnum):
@@ -241,6 +242,7 @@ class SpectrumCalculationResult(StrictModule):
     result_id: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observables: SpectrumObservableTable,
@@ -254,12 +256,6 @@ class SpectrumCalculationResult(StrictModule):
         input_artifact_id: str,
         output_artifact_id: str,
     ) -> None:
-        if not isinstance(observables, SpectrumObservableTable):
-            raise TypeError("observables must be SpectrumObservableTable.")
-        if not isinstance(diagnostics, SpectrumDiagnostics):
-            raise TypeError("diagnostics must be SpectrumDiagnostics.")
-        if not isinstance(approximation, SpectrumApproximationProfile):
-            raise TypeError("approximation must be SpectrumApproximationProfile.")
         scales = jnp.asarray(running_scales)
         parameters = jnp.asarray(running_parameters)
         if scales.ndim != 1 or scales.size < 1 or parameters.shape[:1] != scales.shape:

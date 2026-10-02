@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 from ...units import conversion_factor, ELECTRONVOLT, UnitDefinition
 
 
@@ -47,6 +48,7 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
     manifest: ReferenceArtifactManifest = eqx.field(static=True)
     spectrum_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energies: ArrayLike,
@@ -60,11 +62,7 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
     ) -> None:
         energy = np.asarray(energies, dtype=np.float64)
         probability = np.asarray(probabilities, dtype=np.float64)
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         conversion_factor(energy_unit, ELECTRONVOLT)
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("Photon spectra require a reference manifest.")
         manifest.require_rights(commercial_use=commercial_use, export=export)
         if (
             energy.ndim != 1

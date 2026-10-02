@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 
 
 def _metric_inner(left: Array, metric: Array, right: Array, /) -> Array:
@@ -64,6 +65,7 @@ class ResistiveGRMHDOhmicClosure(StrictModule, NonTrainableState):
     ideal_tolerance: float = eqx.field(static=True)
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -74,10 +76,6 @@ class ResistiveGRMHDOhmicClosure(StrictModule, NonTrainableState):
         metric_tolerance: float = 1.0e-9,
         ideal_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
         if convention.metric_signature != "mostly_plus":
             raise ValueError("Ohmic closure requires the mostly-plus convention.")
         conductivity_ = float(conductivity)
@@ -115,6 +113,7 @@ class ResistiveGRMHDOhmicClosure(StrictModule, NonTrainableState):
     def speed_of_light(self) -> float:
         return float(self.scale.speed_of_light)
 
+    @checked
     def ideal_electric_field(
         self,
         magnetic_field: ArrayLike,
@@ -122,8 +121,6 @@ class ResistiveGRMHDOhmicClosure(StrictModule, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> Array:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -144,6 +141,7 @@ class ResistiveGRMHDOhmicClosure(StrictModule, NonTrainableState):
         )
         return -cross_covector / self.speed_of_light
 
+    @checked
     def evaluate(
         self,
         electric_covector: ArrayLike,
@@ -153,8 +151,6 @@ class ResistiveGRMHDOhmicClosure(StrictModule, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> RelativisticOhmEvaluation:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id

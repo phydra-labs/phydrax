@@ -26,6 +26,7 @@ from ..solver._differential import DifferentialProblem, WienerTerm
 from ..solver._diffrax_backend import solve_diffrax
 from ..solver._geometric import RKMK, SRKMK
 from ..stochastic import WienerRealization
+from ..typing import checked
 from ._spin import (
     ClassicalSpinState,
     evaluate_classical_spin_hamiltonian,
@@ -221,6 +222,7 @@ class LandauLifshitzGilbertPlan(StrictModule):
     thermal: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hamiltonian: PreparedClassicalSpinHamiltonian,
@@ -232,8 +234,6 @@ class LandauLifshitzGilbertPlan(StrictModule):
         maximum_steps: int,
         temperature: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(hamiltonian, PreparedClassicalSpinHamiltonian):
-            raise TypeError("hamiltonian must be PreparedClassicalSpinHamiltonian.")
         sites = hamiltonian.plan.site_count
         gamma = np.asarray(gyromagnetic_ratio)
         alpha = np.asarray(damping)

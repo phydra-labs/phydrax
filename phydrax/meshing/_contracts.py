@@ -13,6 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..geometry.brep import PlanarEmbedding
+from ..typing import checked
 from ._controls import (
     BoundaryLayerControl,
     HoleSeed,
@@ -240,6 +241,7 @@ class CellMeshingTarget(StrictModule, NonTrainableState):
     require_conforming: bool = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topological_dimension: int,
@@ -257,8 +259,6 @@ class CellMeshingTarget(StrictModule, NonTrainableState):
             raise ValueError(
                 "Meshing dimensions must satisfy 0 < topological <= ambient."
             )
-        if not isinstance(cell_families, CellFamilyPolicy):
-            raise TypeError("cell_families must be CellFamilyPolicy.")
         if order <= 0:
             raise ValueError("geometry_order must be positive.")
         self.topological_dimension = topological
@@ -520,9 +520,8 @@ class SurfaceRemeshingSpec(StrictModule, NonTrainableState):
     source_mesh_id: str = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, surface: SurfaceMeshingSpec, source_mesh_id: str, /) -> None:
-        if not isinstance(surface, SurfaceMeshingSpec):
-            raise TypeError("surface must be SurfaceMeshingSpec.")
         mesh_id = str(source_mesh_id).strip()
         if not mesh_id:
             raise ValueError("source_mesh_id must be non-empty.")
@@ -806,6 +805,7 @@ class ProviderSupportReport(StrictModule, NonTrainableState):
     weakened_guarantees: tuple[str, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         provider: MeshingProviderInfo,
@@ -816,10 +816,6 @@ class ProviderSupportReport(StrictModule, NonTrainableState):
         unsupported: tuple[str, ...] = (),
         weakened_guarantees: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(provider, MeshingProviderInfo):
-            raise TypeError("provider must be MeshingProviderInfo.")
-        if not isinstance(source, MeshingSourceDescriptor):
-            raise TypeError("source must be MeshingSourceDescriptor.")
         if not isinstance(
             specification,
             (SurfaceMeshingSpec, SurfaceRemeshingSpec, VolumeMeshingSpec),

@@ -20,6 +20,7 @@ from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._quadrature import CertifiedDiscreteVelocityQuadrature
 
 
@@ -163,6 +164,7 @@ class PositiveEnergyEquilibriumPlan(StrictModule, NonTrainableState):
     population_convention: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -173,8 +175,6 @@ class PositiveEnergyEquilibriumPlan(StrictModule, NonTrainableState):
         interior_tolerance: float = 1.0e-10,
         damping: float = 0.9,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2:
             raise ValueError("Positive energy equilibrium requires dimension two.")
         if not jnp.issubdtype(quadrature.velocities.dtype, jnp.floating):

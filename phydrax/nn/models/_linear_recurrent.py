@@ -12,7 +12,7 @@ from jax import Array
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import parse
+from ...typing import checked, parse
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._linear_recurrent_unit import (
@@ -31,6 +31,7 @@ class LinearRecurrentModel(StrictModule, ParameterOwner):
     execution: LinearRecurrenceExecution = eqx.field(static=True)
     return_mode: LinearRecurrentReturnMode = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         unit: LinearRecurrentUnit,
@@ -39,8 +40,6 @@ class LinearRecurrentModel(StrictModule, ParameterOwner):
         execution: LinearRecurrenceExecution = "associative",
         return_mode: LinearRecurrentReturnMode = "sequence",
     ) -> None:
-        if not isinstance(unit, LinearRecurrentUnit):
-            raise TypeError("unit must be a LinearRecurrentUnit.")
         execution = parse(execution, LinearRecurrenceExecution, "execution")
         return_mode = parse(return_mode, LinearRecurrentReturnMode, "return_mode")
         self.unit = unit

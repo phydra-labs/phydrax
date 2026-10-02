@@ -39,6 +39,7 @@ from ...dynamics._plant import (
     PlantStepContext,
     PlantStepResult,
 )
+from ...typing import checked
 from ..solid_mechanics._rod_floating import (
     FloatingReducedRodPlant,
     FloatingReducedRodPlantControl,
@@ -385,6 +386,7 @@ class RigidSoftAttachmentPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     attachment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rigid: RigidFrameAttachmentPlan,
@@ -397,10 +399,6 @@ class RigidSoftAttachmentPlan(StrictModule, NonTrainableState):
         balance_tolerance: float = 1.0e-7,
         power_tolerance: float = 1.0e-7,
     ) -> None:
-        if not isinstance(rigid, RigidFrameAttachmentPlan):
-            raise TypeError("rigid must be RigidFrameAttachmentPlan.")
-        if not isinstance(soft, SoftEndpointAttachmentPlan):
-            raise TypeError("soft must be SoftEndpointAttachmentPlan.")
         if rigid.dimension != soft.dimension:
             raise ValueError("Rigid and soft attachment dimensions must match.")
         tolerances = (
@@ -632,6 +630,7 @@ class PreparedReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
     frame_ids: tuple[str, str] = eqx.field(static=True)
     supports_external_wrenches: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plant: PreparedReducedRodPlant,
@@ -641,10 +640,6 @@ class PreparedReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         base_frame_id: str = "base",
         tip_frame_id: str = "tip",
     ) -> None:
-        if not isinstance(plant, PreparedReducedRodPlant):
-            raise TypeError("plant must be PreparedReducedRodPlant.")
-        if not isinstance(step_policy, SynchronizedStepPolicy):
-            raise TypeError("step_policy must be SynchronizedStepPolicy.")
         frame_ids = _endpoint_frame_ids(
             base_frame_id, tip_frame_id, "PreparedReducedRodPlantPort"
         )
@@ -666,11 +661,10 @@ class PreparedReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         self.frame_ids = frame_ids
         self.supports_external_wrenches = False
 
+    @checked
     def frame_state(
         self, payload: ReducedRodPlantState, frame_id: str, /
     ) -> AttachmentFrameState:
-        if not isinstance(payload, ReducedRodPlantState):
-            raise TypeError("payload must be ReducedRodPlantState.")
         self.plant.state_schema.validate(payload)
         return _reduced_rod_endpoint_frame(
             self.plant.dynamics.reduction,
@@ -717,6 +711,7 @@ class FloatingReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
     frame_ids: tuple[str, str] = eqx.field(static=True)
     supports_external_wrenches: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plant: FloatingReducedRodPlant,
@@ -726,10 +721,6 @@ class FloatingReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         base_frame_id: str = "base",
         tip_frame_id: str = "tip",
     ) -> None:
-        if not isinstance(plant, FloatingReducedRodPlant):
-            raise TypeError("plant must be FloatingReducedRodPlant.")
-        if not isinstance(step_policy, SynchronizedStepPolicy):
-            raise TypeError("step_policy must be SynchronizedStepPolicy.")
         frame_ids = _endpoint_frame_ids(
             base_frame_id, tip_frame_id, "FloatingReducedRodPlantPort"
         )
@@ -752,16 +743,16 @@ class FloatingReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         self.frame_ids = frame_ids
         self.supports_external_wrenches = True
 
+    @checked
     def frame_state(
         self, payload: FloatingReducedRodPlantState, frame_id: str, /
     ) -> AttachmentFrameState:
-        if not isinstance(payload, FloatingReducedRodPlantState):
-            raise TypeError("payload must be FloatingReducedRodPlantState.")
         self.plant.state_schema.validate(payload)
         return _floating_rod_endpoint_frame(
             self.plant, payload.rod_state, frame_id, self.frame_ids
         )
 
+    @checked
     def apply_frame_wrenches(
         self,
         payload: FloatingReducedRodPlantState,
@@ -769,8 +760,6 @@ class FloatingReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         wrenches: tuple[FrameWrench, ...],
         /,
     ) -> FloatingReducedRodPlantControl:
-        if not isinstance(payload, FloatingReducedRodPlantState):
-            raise TypeError("payload must be FloatingReducedRodPlantState.")
         if not isinstance(commands, FloatingReducedRodPlantControl):
             raise TypeError("commands must be FloatingReducedRodPlantControl.")
         self.plant.state_schema.validate(payload)
@@ -818,6 +807,7 @@ class TendonDrivenRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
     frame_ids: tuple[str, str] = eqx.field(static=True)
     supports_external_wrenches: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plant: TendonDrivenRodPlant,
@@ -827,10 +817,6 @@ class TendonDrivenRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         base_frame_id: str = "base",
         tip_frame_id: str = "tip",
     ) -> None:
-        if not isinstance(plant, TendonDrivenRodPlant):
-            raise TypeError("plant must be TendonDrivenRodPlant.")
-        if not isinstance(step_policy, SynchronizedStepPolicy):
-            raise TypeError("step_policy must be SynchronizedStepPolicy.")
         if plant.control_schema is None:
             raise ValueError(
                 "TendonDrivenRodPlant must expose an external-wrench command."
@@ -858,11 +844,10 @@ class TendonDrivenRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         self.frame_ids = frame_ids
         self.supports_external_wrenches = True
 
+    @checked
     def frame_state(
         self, payload: TendonDrivenRodPlantState, frame_id: str, /
     ) -> AttachmentFrameState:
-        if not isinstance(payload, TendonDrivenRodPlantState):
-            raise TypeError("payload must be TendonDrivenRodPlantState.")
         self.plant.state_schema.validate(payload)
         return _reduced_rod_endpoint_frame(
             self.plant.base_plant.dynamics.reduction,
@@ -871,6 +856,7 @@ class TendonDrivenRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
             self.frame_ids,
         )
 
+    @checked
     def apply_frame_wrenches(
         self,
         payload: TendonDrivenRodPlantState,
@@ -878,8 +864,6 @@ class TendonDrivenRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         wrenches: tuple[FrameWrench, ...],
         /,
     ) -> TendonDrivenRodPlantCommand:
-        if not isinstance(payload, TendonDrivenRodPlantState):
-            raise TypeError("payload must be TendonDrivenRodPlantState.")
         if not isinstance(commands, TendonDrivenRodPlantCommand):
             raise TypeError("commands must be TendonDrivenRodPlantCommand.")
         self.plant.state_schema.validate(payload)
@@ -1383,6 +1367,7 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rigid_plant: AbstractDiscretePlant,
@@ -1397,16 +1382,6 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
         step_policy: SynchronizedStepPolicy,
         /,
     ) -> None:
-        if not isinstance(rigid_plant, AbstractDiscretePlant):
-            raise TypeError("rigid_plant must be AbstractDiscretePlant.")
-        if not isinstance(soft_plant, AbstractDiscretePlant):
-            raise TypeError("soft_plant must be AbstractDiscretePlant.")
-        if not isinstance(rigid_port, AbstractHybridPlantPort):
-            raise TypeError("rigid_port must be AbstractHybridPlantPort.")
-        if not isinstance(soft_port, AbstractHybridPlantPort):
-            raise TypeError("soft_port must be AbstractHybridPlantPort.")
-        if not isinstance(step_policy, SynchronizedStepPolicy):
-            raise TypeError("step_policy must be SynchronizedStepPolicy.")
         attachments_ = tuple(attachments)
         if not attachments_ or any(
             not isinstance(plan, RigidSoftAttachmentPlan) for plan in attachments_
@@ -1644,11 +1619,10 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
             for plan in attachments
         )
 
+    @checked
     def _attachment_kinematics(
         self, payload: HybridRigidSoftState, /
     ) -> tuple[AttachmentKinematics, ...]:
-        if not isinstance(payload, HybridRigidSoftState):
-            raise TypeError("Hybrid payload must be HybridRigidSoftState.")
         if payload.topology_id != self.topology_id:
             raise ValueError(
                 "Hybrid payload topology identity does not match this plant."
@@ -1661,12 +1635,11 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
             payload.soft,
         )
 
+    @checked
     def attachment_kinematics(
         self, state: PlantRuntimeState, /
     ) -> tuple[AttachmentKinematics, ...]:
         """Evaluate attachments after exact prepared-state identity validation."""
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         if (
             state.semantic_provenance_id,
             state.numeric_revision_id,
@@ -1695,6 +1668,7 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
             raise ValueError("Attachment wrench tuple does not match the fixed topology.")
         return commands
 
+    @checked
     def propose_reset(
         self,
         keys: Array,
@@ -1704,8 +1678,6 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
         case_shape: tuple[int, ...],
         initial_time: Array,
     ) -> PlantProposal:
-        if not isinstance(parameters, HybridRigidSoftParameterValues):
-            raise TypeError("Hybrid parameters have the wrong PyTree type.")
         if parameters.topology_id != self.topology_id:
             raise ValueError("Hybrid parameter topology identity does not match.")
         rigid_key, soft_key = _branch_keys(keys, case_shape)

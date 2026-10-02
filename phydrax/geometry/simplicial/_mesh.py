@@ -17,6 +17,7 @@ from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule
 from ...discretization._cell_mesh import CellMesh
 from ...discretization._support import DiscreteSupport
+from ...typing import checked
 from .._atlas import BoundaryAtlas, BoundaryMap
 from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureMapEvaluation
 from ._topology import TriangleTopology
@@ -329,11 +330,10 @@ class TriangleMeshQueryIndex(StrictModule):
     mesh: TriangleMesh
     bvh: TriangleBVH
 
+    @checked
     def __init__(self, mesh: TriangleMesh) -> None:
         from ._bvh import TriangleBVH
 
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("TriangleMeshQueryIndex requires a TriangleMesh.")
         self.mesh = mesh
         self.bvh = TriangleBVH(mesh)
 

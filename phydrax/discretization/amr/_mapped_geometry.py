@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._canonical import canonicalize_patch_hierarchy, CanonicalPatchHierarchy
 from ._core import BlockHierarchyTopology
 from ._geometry import _validated_revision
@@ -243,6 +244,7 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         maps: PatchCoordinateMapSet,
@@ -250,8 +252,6 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> MappedMortarGeometry:
-        if not isinstance(maps, PatchCoordinateMapSet):
-            raise TypeError("Mapped mortar preparation requires PatchCoordinateMapSet.")
         time_ = jnp.asarray(time)
         if time_.shape != ():
             raise ValueError("Mapped mortar time must be scalar.")
@@ -399,6 +399,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
     geometry_layout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: BlockHierarchyTopology | VariablePatchHierarchyTopology,
@@ -411,8 +412,6 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         hierarchy = canonicalize_patch_hierarchy(topology)
         order = int(quadrature_order)
         tolerance_ = float(tolerance)
-        if not isinstance(maps, PatchCoordinateMapSet):
-            raise TypeError("Canonical mapped geometry requires PatchCoordinateMapSet.")
         if order <= 0 or not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Mapped geometry quadrature and tolerance must be positive.")
         lower_bounds = tuple(

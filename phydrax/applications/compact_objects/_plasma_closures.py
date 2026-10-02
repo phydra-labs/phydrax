@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class PlasmaKineticRegime(StrEnum):
@@ -64,6 +65,7 @@ class TwoTemperatureElectronIonClosure(StrictModule, NonTrainableState):
     regime: PlasmaKineticRegime = eqx.field(static=True)
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -76,8 +78,6 @@ class TwoTemperatureElectronIonClosure(StrictModule, NonTrainableState):
         maximum_temperature: float,
         regime: PlasmaKineticRegime = PlasmaKineticRegime.TWO_TEMPERATURE_CALORIC,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
         if not isinstance(regime, PlasmaKineticRegime):
             raise TypeError("regime must be PlasmaKineticRegime.")
         if regime is not PlasmaKineticRegime.TWO_TEMPERATURE_CALORIC:
@@ -121,6 +121,7 @@ class TwoTemperatureElectronIonClosure(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def advance(
         self,
         electron_number_density: ArrayLike,
@@ -129,8 +130,6 @@ class TwoTemperatureElectronIonClosure(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         /,
     ) -> TwoTemperatureExchangeResult:
-        if not isinstance(state, TwoTemperaturePlasmaState):
-            raise TypeError("state must be TwoTemperaturePlasmaState.")
         electron_density, ion_density, electron_temperature, ion_temperature, step = (
             jnp.broadcast_arrays(
                 jnp.asarray(electron_number_density),
@@ -249,6 +248,7 @@ class BoundedNonthermalParticleDistribution(StrictModule, NonTrainableState):
     regime: PlasmaKineticRegime = eqx.field(static=True)
     distribution_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -260,8 +260,6 @@ class BoundedNonthermalParticleDistribution(StrictModule, NonTrainableState):
         species: str,
         regime: PlasmaKineticRegime = PlasmaKineticRegime.ISOTROPIC_NONTHERMAL,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
         if not isinstance(regime, PlasmaKineticRegime):
             raise TypeError("regime must be PlasmaKineticRegime.")
         if regime is not PlasmaKineticRegime.ISOTROPIC_NONTHERMAL:

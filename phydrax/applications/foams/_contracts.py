@@ -24,7 +24,7 @@ from ...geometry.multiregion_surface import (
     MultiRegionSurfaceTopology,
 )
 from ...interfacial_transport import InterfaceTensionMatrix
-from ...typing import Bool, Dim, Float, Float64, Identifier, Int32, parse, Scalar
+from ...typing import Bool, checked, Dim, Float, Float64, Identifier, Int32, parse, Scalar
 
 
 FoamEquilibriumMethod: TypeAlias = Literal["sqp", "augmented_lagrangian"]
@@ -142,6 +142,7 @@ class FoamMaterialPlan(StrictModule):
     wires: FoamWireConstraints | None
     material_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tensions: InterfaceTensionMatrix,
@@ -149,8 +150,6 @@ class FoamMaterialPlan(StrictModule):
         *,
         wires: FoamWireConstraints | None = None,
     ) -> None:
-        if not isinstance(tensions, InterfaceTensionMatrix):
-            raise TypeError("tensions must be an InterfaceTensionMatrix.")
         if wires is not None and not isinstance(wires, FoamWireConstraints):
             raise TypeError("wires must be FoamWireConstraints or None.")
         host = np.asarray(tensions.values, dtype=np.float64)
@@ -183,6 +182,7 @@ class FoamMaterialPlan(StrictModule):
             wires=wires,
         )
 
+    @checked
     def face_tension_indices(
         self, topology: MultiRegionSurfaceTopology, /
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -192,8 +192,6 @@ class FoamMaterialPlan(StrictModule):
         (for example the children of a region split before the material is
         extended). Padding face slots map to the first label.
         """
-        if not isinstance(topology, MultiRegionSurfaceTopology):
-            raise TypeError("topology must be a MultiRegionSurfaceTopology.")
         missing = sorted(set(topology.region_ids) - set(self.tensions.label_ids))
         if missing:
             raise ValueError(f"The tension matrix lacks surface regions {missing}.")

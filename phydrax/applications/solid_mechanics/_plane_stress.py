@@ -27,6 +27,7 @@ from ...operators.mechanics import (
     FiniteStrainKinematics,
     HyperelasticLaw,
 )
+from ...typing import checked
 
 
 _PLANE_STRESS_LINEAR_SOLVE = SmallLinearSolvePlan(2)
@@ -174,6 +175,7 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -182,10 +184,6 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
         *,
         reference_thickness: ArrayLike = 1.0,
     ) -> BlockDiagonalPlaneStressReductionResponse:
-        if not isinstance(law, HyperelasticLaw):
-            raise TypeError(
-                "law must be a pure HyperelasticLaw; mixed pressure laws require CoupledPlaneStressIncompressiblePlan."
-            )
         deformation = jnp.asarray(deformation_gradient)
         if deformation.shape[-2:] != (2, 2):
             raise ValueError("Plane-stress deformation gradients must end in 2x2.")

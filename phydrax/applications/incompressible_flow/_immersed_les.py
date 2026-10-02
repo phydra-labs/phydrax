@@ -43,7 +43,7 @@ from ...solver._mac_immersed_step import (
     MACImmersedBoundarySBDF2State,
 )
 from ...solver._structured_incompressible import MACPressureProjectionPlan
-from ...typing import parse
+from ...typing import checked, parse
 from ._boundary_turbulence import (
     PreparedVectorEquilibriumWallStress,
     VectorEquilibriumWallStressResult,
@@ -70,6 +70,7 @@ class FixedImmersedMarkerMotion(StrictModule, NonTrainableState):
     motion_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kinematics: LagrangianMarkerKinematics,
@@ -77,8 +78,6 @@ class FixedImmersedMarkerMotion(StrictModule, NonTrainableState):
         *,
         geometry_id: str,
     ) -> None:
-        if not isinstance(kinematics, LagrangianMarkerKinematics):
-            raise TypeError("kinematics must be LagrangianMarkerKinematics.")
         geometry = _identifier(geometry_id, "geometry_id")
         self.kinematics = kinematics
         self.geometry_id = geometry
@@ -168,6 +167,7 @@ class FixedImmersedMACLESPlan(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebraic_les: MACAlgebraicLESPlan,
@@ -184,10 +184,6 @@ class FixedImmersedMACLESPlan(StrictModule, NonTrainableState):
         marker_sample_distance: ArrayLike | None = None,
         marker_roughness_height: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(algebraic_les, MACAlgebraicLESPlan):
-            raise TypeError("algebraic_les must be MACAlgebraicLESPlan.")
-        if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
-            raise TypeError("projection must be MACImmersedBoundaryProjectionPlan.")
         motion = parse(motion, ImmersedLESMotion, "motion")
         geometry = _identifier(geometry_id, "geometry_id")
         kinematics = projection.transfer.markers.validate_kinematics(marker_kinematics)
@@ -403,6 +399,7 @@ class PreparedFixedImmersedMACLES(StrictModule, NonTrainableState):
     solver_id: str = eqx.field(static=True)
     support_limits: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FixedImmersedMACLESPlan,
@@ -411,10 +408,6 @@ class PreparedFixedImmersedMACLES(StrictModule, NonTrainableState):
         *,
         molecular_viscosity: ArrayLike,
     ) -> None:
-        if not isinstance(plan, FixedImmersedMACLESPlan):
-            raise TypeError("plan must be FixedImmersedMACLESPlan.")
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         projection = plan.projection
         if projection.operators.prepared_id != momentum.operators.prepared_id:
             raise ValueError(
@@ -643,6 +636,7 @@ class PreparedFixedImmersedMACLES(StrictModule, NonTrainableState):
             boundary_stage_id=stage.stage_id,
         )
 
+    @checked
     def balance_ledger(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -657,8 +651,6 @@ class PreparedFixedImmersedMACLES(StrictModule, NonTrainableState):
         A non-startup SBDF2 result requires the input ``history`` because its
         extrapolated SGS and modeled-wall actions use both retained states.
         """
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if (
             dynamics.compilation_id == ""
             or not isinstance(dynamics.algebraic_les, PreparedFixedImmersedMACLES)

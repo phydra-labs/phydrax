@@ -20,7 +20,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._domain import Domain, JointFactor
 from .._function import DomainFunction
 from .._hyperrectangle import HyperRectangle
@@ -677,9 +677,8 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                 )
         return partitions
 
+    @checked
     def build(self, ambient: Domain, /) -> SubdomainCover:
-        if not isinstance(ambient, Domain):
-            raise TypeError("ambient must be a Domain.")
         if self.label not in ambient.labels:
             raise KeyError(f"Label {self.label!r} is absent from the ambient domain.")
         factor = ambient.factor(self.label)

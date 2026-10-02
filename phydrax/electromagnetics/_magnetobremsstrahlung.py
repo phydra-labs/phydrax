@@ -65,6 +65,7 @@ from .._trainable import NonTrainableState
 from ..special import jv, kve
 from ..typing import (
     as_host_array,
+    checked,
     ConvertibleToArray,
     Dim,
     Float64,
@@ -733,6 +734,7 @@ class MagnetobremsstrahlungPlan(StrictModule, NonTrainableState):
     minimum_continuous_harmonic: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plasma: ColdPlasmaDielectric,
@@ -751,10 +753,6 @@ class MagnetobremsstrahlungPlan(StrictModule, NonTrainableState):
         maximum_refractive_index: float = 100.0,
         minimum_continuous_harmonic: float = 10.0,
     ) -> None:
-        if not isinstance(plasma, ColdPlasmaDielectric):
-            raise TypeError("plasma must be a ColdPlasmaDielectric.")
-        if not isinstance(distribution, AbstractGyrotropicDistribution):
-            raise TypeError("distribution must be a AbstractGyrotropicDistribution.")
         route_ = parse(route, MagnetobremsstrahlungRoute, "route")
         density = float(np.asarray(emitter_density))
         if not isfinite(density) or density < 0.0:

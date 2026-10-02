@@ -28,6 +28,7 @@ from jax.typing import DTypeLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._membrane_scaling import CardiacMembraneScaling
 from ._reaction import (
     ArrayLike,
@@ -288,9 +289,8 @@ class AtrialStateLayout(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown atrial state field {name!r}.")
         return self.names.index(name)
 
+    @checked
     def pack(self, state: AtrialState, /) -> Array:
-        if not isinstance(state, AtrialState):
-            raise TypeError("state must be an AtrialState.")
         return jnp.stack(
             (
                 state.voltage_mV,
@@ -381,9 +381,8 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
     layout: AtrialStateLayout
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, parameters: CourtemancheAtrialParameters, /) -> None:
-        if not isinstance(parameters, CourtemancheAtrialParameters):
-            raise TypeError("parameters must be CourtemancheAtrialParameters.")
         layout = AtrialStateLayout()
         self.parameters = parameters
         self.layout = layout
@@ -422,10 +421,9 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
             *(_broadcast(value, shape, resolved_dtype) for value in values)
         )
 
+    @checked
     def currents(self, state: AtrialState, /) -> AtrialCurrents:
         """Evaluate named outward-positive currents without hidden stimulation."""
-        if not isinstance(state, AtrialState):
-            raise TypeError("state must be an AtrialState.")
         p = self.parameters
         v = state.voltage_mV
         ena = p.rtf_mV * jnp.log(p.sodium_o_mM / p.sodium_i_mM)
@@ -496,14 +494,11 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
             total,
         )
 
+    @checked
     def calcium_output(
         self, state: AtrialState, currents: AtrialCurrents, /
     ) -> AtrialCalciumOutput:
         """Resolve current-to-concentration and reduced one-pool SR fluxes."""
-        if not isinstance(state, AtrialState):
-            raise TypeError("state must be an AtrialState.")
-        if not isinstance(currents, AtrialCurrents):
-            raise TypeError("currents must be AtrialCurrents.")
         p = self.parameters
         membrane_current = (
             currents.l_type_calcium

@@ -40,7 +40,7 @@ from ..domain._trajectory_interpolation import (
     _broadcast_like,
     _RaggedTimeSeriesTable,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 RaggedTimeSeriesHardInterpolation: TypeAlias = Literal["linear", "cubic_hermite"]
@@ -56,6 +56,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
     capabilities: OperatorCapabilities = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -67,10 +68,6 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
         field_ = str(field)
         if not field_:
             raise ValueError("Trajectory observation field name must be non-empty.")
-        if not isinstance(domain, TrajectoryDatasetDomain):
-            raise TypeError(
-                "RaggedTimeSeriesObservationAction requires TrajectoryDatasetDomain."
-            )
         components_ = _validate_components(components)
         action_id = canonical_fingerprint(
             {
@@ -375,6 +372,7 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
     field_names: tuple[str, ...] = eqx.field(static=True)
     evidence: RaggedTimeSeriesCorrectionEvidence
 
+    @checked
     def __init__(
         self,
         observation: RaggedTimeSeriesObservationAction,
@@ -386,10 +384,6 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
         evidence: RaggedTimeSeriesCorrectionEvidence,
         /,
     ) -> None:
-        if not isinstance(observation, RaggedTimeSeriesObservationAction):
-            raise TypeError(
-                "RaggedTimeSeriesCorrectionAction requires a trajectory observation."
-            )
         interpolation = parse(
             interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
         )
@@ -477,6 +471,7 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
 
     action: RaggedTimeSeriesCorrectionAction
 
+    @checked
     def __init__(
         self,
         observation: RaggedTimeSeriesObservationAction,
@@ -487,10 +482,6 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
         components_output_width: int | None = None,
         snap_tol: float = 1e-10,
     ) -> None:
-        if not isinstance(observation, RaggedTimeSeriesObservationAction):
-            raise TypeError(
-                "RaggedTimeSeriesCorrectionProvider requires a trajectory observation."
-            )
         interpolation = parse(
             interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
         )

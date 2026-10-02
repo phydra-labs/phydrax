@@ -22,6 +22,7 @@ from ...._trainable import NonTrainableState
 from ....discretization import CellGeometrySpec, CellMesh
 from ....discretization._cell_geometry import CellGeometryElement
 from ....discretization.fem import FiniteElementSpec
+from ....typing import checked
 from ._roles import CardiacBoundaryProfile
 
 
@@ -85,6 +86,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
     minimum_cell_measure_mm3: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -98,14 +100,6 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
         minimum_cell_measure_mm3: float = 1.0e-10,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
-        if not isinstance(coordinate_spec, CellGeometrySpec):
-            raise TypeError("coordinate_spec must be a CellGeometrySpec.")
-        if not isinstance(boundary_profile, CardiacBoundaryProfile):
-            raise TypeError("boundary_profile must be a CardiacBoundaryProfile.")
-        if not isinstance(prepared_epoch, HighOrderGeometryEpoch):
-            raise TypeError("prepared_epoch must be a HighOrderGeometryEpoch.")
         role_id = str(boundary_role_id)
         if not role_id:
             raise ValueError("boundary_role_id must be non-empty.")
@@ -236,6 +230,7 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
     quadrature_orders: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -249,8 +244,6 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
         quadrature_orders: tuple[int, ...],
         prepared_id: str,
     ) -> None:
-        if not isinstance(plan, HighOrderCardiacGeometryPlan):
-            raise TypeError("plan must be a HighOrderCardiacGeometryPlan.")
         block_count = len(plan.mesh.blocks)
         collections = (
             coordinate_elements,
@@ -381,6 +374,7 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
         self.quadrature_orders = tuple(normalized_orders)
         self.prepared_id = identifier
 
+    @checked
     def evaluate(
         self,
         coordinates_mm: ArrayLike,
@@ -390,8 +384,6 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
         boundary_role_id: str,
         boundary_profile_id: str,
     ) -> HighOrderCardiacGeometryCandidate:
-        if not isinstance(current_epoch, HighOrderGeometryEpoch):
-            raise TypeError("current_epoch must be a HighOrderGeometryEpoch.")
         coordinates = jnp.asarray(coordinates_mm)
         expected_shape = self.plan.coordinate_spec.coordinates.shape
         if coordinates.shape != expected_shape:
@@ -497,6 +489,7 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
             evidence=evidence,
         )
 
+    @checked
     def commit_epoch(
         self,
         candidate: HighOrderCardiacGeometryCandidate,
@@ -504,10 +497,6 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
         /,
     ) -> PreparedHighOrderCardiacGeometry:
         """Commit accepted coordinates into a rebuilt fixed-topology geometry epoch."""
-        if not isinstance(candidate, HighOrderCardiacGeometryCandidate):
-            raise TypeError("candidate must be a HighOrderCardiacGeometryCandidate.")
-        if not isinstance(target_epoch, HighOrderGeometryEpoch):
-            raise TypeError("target_epoch must be a HighOrderGeometryEpoch.")
         if candidate.evidence.prepared_id != self.prepared_id:
             raise ValueError(
                 "High-order geometry candidate belongs to a different preparation."

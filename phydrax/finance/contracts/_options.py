@@ -20,6 +20,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ..core._currency import CurrencyAmount
 from ..core._identifiers import FinancialIdentifier
 from ..core._time import FinanceDate
@@ -751,6 +752,7 @@ class BasketOption(AbstractContract):
     quantity: Array
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         underlyings: Sequence[FinancialIdentifier],
@@ -773,8 +775,6 @@ class BasketOption(AbstractContract):
         )
         if payoff.asset_count != len(underlyings_):
             raise ValueError("weights must contain one entry per underlying.")
-        if not isinstance(expiry, FinanceDate):
-            raise TypeError("expiry must be a FinanceDate.")
         self.underlyings, self.weights, self.strike, self.expiry = (
             underlyings_,
             payoff.weights,
@@ -897,6 +897,7 @@ class BermudanOption(AbstractContract):
     quantity: Array
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         underlying: FinancialIdentifier,
@@ -908,8 +909,6 @@ class BermudanOption(AbstractContract):
         *,
         quantity: ArrayLike = 1.0,
     ) -> None:
-        if not isinstance(underlying, FinancialIdentifier):
-            raise TypeError("underlying must be a FinancialIdentifier.")
         dates = _dates(exercise_dates, "exercise_dates")
         if len(dates) < 2:
             raise ValueError("Bermudan options require at least two exercise dates.")

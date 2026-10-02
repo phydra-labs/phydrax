@@ -29,7 +29,7 @@ from ...optim import (
     SecondOrderCone,
     ZeroCone,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._objectives import (
     BlackLittermanObjective,
     CVaRObjective,
@@ -142,6 +142,7 @@ class PortfolioCompiled(StrictModule):
     problem_id: str = eqx.field(static=True)
     forecast_law_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         program: CanonicalPortfolioProgram,
@@ -158,8 +159,6 @@ class PortfolioCompiled(StrictModule):
             program, (LinearProgram, QuadraticProgram, ConicProgram, MixedIntegerProgram)
         ):
             raise TypeError("program must be a native canonical optimization program.")
-        if not isinstance(plan, PortfolioPlan):
-            raise TypeError("plan must be a PortfolioPlan.")
         route = (
             "mip"
             if isinstance(program, MixedIntegerProgram)

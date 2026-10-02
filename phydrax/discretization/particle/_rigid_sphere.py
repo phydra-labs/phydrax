@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
 from ._core import ParticleDiscretization
 from ._pairwise import ParticlePairGeometry, ParticlePairRelation
@@ -115,13 +116,10 @@ class PreparedRigidSphereSet(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: RigidSphereSetPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, RigidSphereSetPlan):
-            raise TypeError("plan must be a RigidSphereSetPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if particles.ambient_dimension not in (2, 3):
             raise ValueError("Rigid spheres currently require ambient dimension 2 or 3.")
         if plan.radii.shape != (particles.capacity,):

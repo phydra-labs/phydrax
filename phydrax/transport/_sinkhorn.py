@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
 from ._blocks import column_logsumexp, coupling_statistics, row_logsumexp
 from ._problem import DiscreteTransportProblem
 from ._results import (
@@ -83,6 +84,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         self.early_stop = bool(early_stop)
         self.store_history = bool(store_history)
 
+    @checked
     def __call__(
         self,
         problem: DiscreteTransportProblem,
@@ -90,8 +92,6 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         *,
         initial_potentials: tuple[ArrayLike, ArrayLike] | None = None,
     ) -> SinkhornResult:
-        if not isinstance(problem, DiscreteTransportProblem):
-            raise TypeError("problem must be a DiscreteTransportProblem.")
         source_count, target_count = problem.shape
         dtype = jnp.result_type(
             problem.source.points,

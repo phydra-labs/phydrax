@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver._mac_ale import MACALEStageGeometry
+from ...typing import checked
 from ._boundary import FreeSurfaceBoundaryStage
 from ._free_surface_ale import MappedHodgeSolveResult, PreparedGraphSurfaceALE
 
@@ -57,6 +58,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedGraphSurfaceALE,
@@ -65,9 +67,6 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
     ) -> None:
-
-        if not isinstance(surface, PreparedGraphSurfaceALE):
-            raise TypeError("surface must be PreparedGraphSurfaceALE.")
 
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
@@ -122,6 +121,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         gradient = jax.linear_transpose(divergence, zero)(cotangent)[0]
         return tuple(value * active for value, active in zip(gradient, mask, strict=True))
 
+    @checked
     def project(
         self,
         geometry: MACALEStageGeometry,
@@ -131,8 +131,6 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         pressure_guess: ArrayLike | None = None,
         /,
     ) -> FreeSurfaceProjectionResult:
-        if not isinstance(geometry, MACALEStageGeometry):
-            raise TypeError("geometry must be MACALEStageGeometry.")
         if boundary_stage.layout_id == "":
             raise ValueError("Free-surface boundary stage has no layout identity.")
         dt = jnp.asarray(step_size, dtype=geometry.cell_volumes.dtype).reshape(())

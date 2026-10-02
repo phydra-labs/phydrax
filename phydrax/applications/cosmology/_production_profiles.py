@@ -33,6 +33,7 @@ from ...solver._production_runtime import (
     ProductionTriggerBinding,
 )
 from ...solver._runtime_lifecycle import ExactTimeSchedule, StreamingMomentPlan
+from ...typing import checked
 from ._background import FLRWBackground
 from ._particles import CosmologicalParticleState
 from ._sidm import CosmologicalSIDMPlan
@@ -223,9 +224,8 @@ class PeriodicWaveProductionMethod(
 
     prepared: PreparedPeriodicWaveDarkMatter
 
+    @checked
     def __init__(self, prepared: PreparedPeriodicWaveDarkMatter, /) -> None:
-        if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         schedule, step, count, tolerance = _fixed_schedule(
             prepared.scale_factors, "Periodic-wave"
         )
@@ -247,6 +247,7 @@ class PeriodicWaveProductionMethod(
             }
         )
 
+    @checked
     def step(
         self,
         step_index: Array,
@@ -256,8 +257,6 @@ class PeriodicWaveProductionMethod(
         args: Any,
         /,
     ) -> FixedStepResult:
-        if not isinstance(state, WaveDarkMatterState):
-            raise TypeError("Periodic-wave production requires WaveDarkMatterState.")
         if args is not None:
             raise ValueError("Periodic-wave production does not accept runtime args.")
         start, end, aligned, mismatch = _schedule_alignment(
@@ -307,6 +306,7 @@ class RareSIDMProductionState(StrictModule):
     prng_root: Array
     event_epoch: Array
 
+    @checked
     def __init__(
         self,
         particles: CosmologicalParticleState,
@@ -314,8 +314,6 @@ class RareSIDMProductionState(StrictModule):
         event_epoch: ArrayLike = 0,
         /,
     ) -> None:
-        if not isinstance(particles, CosmologicalParticleState):
-            raise TypeError("particles must be CosmologicalParticleState.")
         key_data = jnp.asarray(jr.key_data(prng_root), dtype=jnp.uint32)
         epoch = jnp.asarray(event_epoch, dtype=jnp.int64)
         if key_data.shape != (2,) or epoch.shape != ():
@@ -345,16 +343,13 @@ class RareSIDMProductionMethod(AbstractScheduledCosmologyProductionMethod):
     background: FLRWBackground = fixed_field()
     collision_half_steps_per_interval: int = eqx.field(static=True, default=2)
 
+    @checked
     def __init__(
         self,
         plan: CosmologicalSIDMPlan,
         background: FLRWBackground,
         /,
     ) -> None:
-        if not isinstance(plan, CosmologicalSIDMPlan):
-            raise TypeError("plan must be CosmologicalSIDMPlan.")
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         if background.scale.scale_id != plan.particle_mesh.kinematics.scale.scale_id:
             raise ValueError("SIDM production background and particle scale disagree.")
         schedule, step, count, tolerance = _fixed_schedule(
@@ -400,6 +395,7 @@ class RareSIDMProductionMethod(AbstractScheduledCosmologyProductionMethod):
     def active_mask(self) -> Array:
         return self.plan.particle_mesh.kinematics.particles.active_mask
 
+    @checked
     def step(
         self,
         step_index: Array,
@@ -409,8 +405,6 @@ class RareSIDMProductionMethod(AbstractScheduledCosmologyProductionMethod):
         args: Any,
         /,
     ) -> FixedStepResult:
-        if not isinstance(state, RareSIDMProductionState):
-            raise TypeError("Rare-SIDM production requires RareSIDMProductionState.")
         particles = state.particles
         start, end, aligned, mismatch = _schedule_alignment(
             self.scale_factors,

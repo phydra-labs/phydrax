@@ -19,7 +19,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._wiener import WienerRealization
 
 
@@ -575,9 +575,8 @@ class LevyProcessRealization(StrictModule):
         values = jax.vmap(lambda key: jr.uniform(key, (size,), dtype=jnp.float64))(flat)
         return values.reshape(self.sample_shape + (self.max_terms, size))
 
+    @checked
     def series(self, process: AbstractLevyProcess, /) -> LevyJumpSeries:
-        if not isinstance(process, AbstractLevyProcess):
-            raise TypeError("process must implement AbstractLevyProcess.")
         if process.process_id != self.process_id:
             raise ValueError("process and realization process_id values must match.")
         if process.dimension != self.dimension:

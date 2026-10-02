@@ -57,7 +57,7 @@ from ...interfacial_transport import (
     SurfacePlugFlowStepResult,
 )
 from ...linalg import PreparedSparseFactorization
-from ...typing import parse
+from ...typing import checked, parse
 from ._geometry import SoapFilmTunnelGeometry, SoapFilmTunnelMesh
 
 
@@ -129,6 +129,7 @@ class SoapFilmTunnelPlan(StrictModule, ParameterOwner):
     transport_scheme: FilmTransportScheme = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: SoapFilmTunnelGeometry,
@@ -149,12 +150,6 @@ class SoapFilmTunnelPlan(StrictModule, ParameterOwner):
         maximum_iterations: int = 30,
         transport_scheme: FilmTransportScheme = "limited-muscl",
     ) -> None:
-        if not isinstance(geometry, SoapFilmTunnelGeometry):
-            raise TypeError("geometry must be a SoapFilmTunnelGeometry.")
-        if not isinstance(law, LangmuirSurfactantLaw):
-            raise TypeError("law must be a LangmuirSurfactantLaw.")
-        if not isinstance(inflow, SoapFilmInflow):
-            raise TypeError("inflow must be a SoapFilmInflow.")
         if kinetics is not None and not isinstance(kinetics, AdsorptionKinetics):
             raise TypeError("kinetics must be AdsorptionKinetics or None.")
         if (kinetics is None) != (inflow.dissolved_concentration_mol_m3 is None):
@@ -292,9 +287,8 @@ class SoapFilmTunnelState(StrictModule):
     film: SurfacePlugFlowState
     time_s: Array
 
+    @checked
     def __init__(self, film: SurfacePlugFlowState, time_s: ArrayLike = 0.0, /) -> None:
-        if not isinstance(film, SurfacePlugFlowState):
-            raise TypeError("film must be a SurfacePlugFlowState.")
         self.film = film
         self.time_s = jnp.asarray(time_s, dtype=jnp.float64)
 
@@ -549,9 +543,8 @@ class PreparedSoapFilmTunnel(StrictModule):
     scales: SoapFilmTunnelScales
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SoapFilmTunnelPlan, /) -> None:
-        if not isinstance(plan, SoapFilmTunnelPlan):
-            raise TypeError("plan must be a SoapFilmTunnelPlan.")
         channel = plan.geometry.triangulate()
         surface = prepare_film_surface(channel.mesh)
         if not bool(surface.evidence.admissible):
@@ -632,12 +625,11 @@ class PreparedSoapFilmTunnel(StrictModule):
     def thickness(self, state: SoapFilmTunnelState, /) -> Array:
         return state.film.liquid_volume_m3 / self.flow.plan.surface.vertex_area
 
+    @checked
     def step(
         self, state: SoapFilmTunnelState, step_size_s: ArrayLike, /
     ) -> SoapFilmTunnelStepResult:
         """Advance one plug-flow step and report tunnel evidence."""
-        if not isinstance(state, SoapFilmTunnelState):
-            raise TypeError("state must be a SoapFilmTunnelState.")
         step_size = jnp.asarray(step_size_s, dtype=jnp.float64)
         return self._step(state, step_size, None, None)
 
@@ -661,16 +653,16 @@ class PreparedSoapFilmTunnel(StrictModule):
             next_state, film, self._evidence(film, time, step_size)
         )
 
+    @checked
     def run(
         self, state: SoapFilmTunnelState, step_size_s: ArrayLike, steps: int, /
     ) -> SoapFilmTunnelResult:
         """Advance ``steps`` in one stable compiled scan and stack their evidence."""
-        if not isinstance(state, SoapFilmTunnelState):
-            raise TypeError("state must be a SoapFilmTunnelState.")
         count = positive_integer(steps, "steps")
         step_size = jnp.asarray(step_size_s, dtype=jnp.float64)
         return _run_soap_film_tunnel(self, state, step_size, count)
 
+    @checked
     def strouhal(
         self,
         result: SoapFilmTunnelResult,
@@ -680,8 +672,6 @@ class PreparedSoapFilmTunnel(StrictModule):
         minimum_lift_coefficient: float = 1e-3,
     ) -> StrouhalEstimate:
         """Estimate the shedding Strouhal number from the recorded obstacle lift."""
-        if not isinstance(result, SoapFilmTunnelResult):
-            raise TypeError("result must be a SoapFilmTunnelResult.")
         geometry = self.plan.geometry
         if geometry.obstacle_diameter_m is None:
             raise ValueError("An empty channel has no obstacle lift.")

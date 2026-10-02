@@ -26,6 +26,7 @@ from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
 from ...discretization._conservation_boundary import PrescribedNormalFluxBoundary
 from ...discretization.fem._boundary import tensor_local_face
+from ...typing import checked
 from .._hyperbolic_systems import EulerSystem
 from ._conservation import PreparedDGSEMConservationDynamics
 
@@ -156,16 +157,13 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
     pressure_floor: float = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: EntropyFilterPlan,
         dynamics: PreparedDGSEMConservationDynamics,
         /,
     ) -> None:
-        if not isinstance(plan, EntropyFilterPlan):
-            raise TypeError("plan must be EntropyFilterPlan.")
-        if not isinstance(dynamics, PreparedDGSEMConservationDynamics):
-            raise TypeError("dynamics must be PreparedDGSEMConservationDynamics.")
         if not isinstance(dynamics.system, EulerSystem):
             raise TypeError("The entropy filter currently requires EulerSystem.")
         if dynamics.entropy_pair is None:

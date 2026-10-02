@@ -24,6 +24,7 @@ from ..operators.integral.layer_potential import (
     LaplaceLayerPotential2D,
     LayerDiscretizationReport,
 )
+from ..typing import checked
 
 
 class InteriorLaplaceDirichletResult(StrictModule):
@@ -36,6 +37,7 @@ class InteriorLaplaceDirichletResult(StrictModule):
     boundary_residual_norm: Array = fixed_field()
     valid: Array = fixed_field()
 
+    @checked
     def __init__(
         self,
         *,
@@ -45,12 +47,6 @@ class InteriorLaplaceDirichletResult(StrictModule):
         discretization: LayerDiscretizationReport,
         boundary_residual_norm: Array,
     ) -> None:
-        if not isinstance(potential, LaplaceLayerPotential2D):
-            raise TypeError("potential must be LaplaceLayerPotential2D.")
-        if not isinstance(linear_result, LinearSolveResult):
-            raise TypeError("linear_result must be LinearSolveResult.")
-        if not isinstance(discretization, LayerDiscretizationReport):
-            raise TypeError("discretization must be LayerDiscretizationReport.")
         residual = jnp.asarray(boundary_residual_norm)
         self.density = jnp.asarray(density)
         self.potential = potential

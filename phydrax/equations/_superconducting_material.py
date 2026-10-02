@@ -15,6 +15,7 @@ from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 
 
 class SuperconductingMaterialEvaluation(StrictModule):
@@ -43,6 +44,7 @@ class SuperconductingMaterialLawPlan(StrictModule, NonTrainableState):
     manifest: ReferenceArtifactManifest = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         temperature_axis: ArrayLike,
@@ -72,8 +74,6 @@ class SuperconductingMaterialLawPlan(StrictModule, NonTrainableState):
                 power_law_exponent,
             )
         )
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("Superconducting material law requires a manifest.")
         manifest.require_rights(commercial_use=commercial_use, export=export)
         if (
             any(axis.ndim != 1 or axis.size < 2 for axis in (temperature, field, angle))

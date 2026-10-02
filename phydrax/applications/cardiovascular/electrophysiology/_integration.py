@@ -46,6 +46,7 @@ from ....linalg import (
     solve as solve_linear_system,
 )
 from ....linalg._spaces import _coordinate_dtype
+from ....typing import checked
 from ._reaction import PreparedReaction
 from ._regional_assignment import PreparedRegionalAssignment
 
@@ -111,14 +112,13 @@ class ImplicitThetaDiffusion(StrictModule, NonTrainableState):
     linear_policy: LinearSolvePolicy
     diffusion_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, theta: float, linear_policy: LinearSolvePolicy, /) -> None:
         if isinstance(theta, bool):
             raise TypeError("theta must be a real scalar, not bool.")
         theta_ = float(theta)
         if not isfinite(theta_) or not 0.5 <= theta_ <= 1.0:
             raise ValueError("theta must be finite and lie in [0.5, 1].")
-        if not isinstance(linear_policy, LinearSolvePolicy):
-            raise TypeError("linear_policy must be a LinearSolvePolicy.")
         if isinstance(linear_policy.method, AutoLinearMethod):
             raise ValueError(
                 "Implicit monodomain diffusion requires an explicit linear method."
@@ -246,6 +246,7 @@ class TensorDiffusionOperatorInput(StrictModule, NonTrainableState):
     regional_assignment_id: str = eqx.field(static=True)
     input_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tensor_diffusion_action: TensorDiffusionAction,
@@ -256,8 +257,6 @@ class TensorDiffusionOperatorInput(StrictModule, NonTrainableState):
         tensor_action_id: str | None = None,
         input_id: str,
     ) -> None:
-        if not isinstance(tensor_diffusion_action, TensorDiffusionAction):
-            raise TypeError("tensor_diffusion_action must be a TensorDiffusionAction.")
         _validate_diffusion_operator(operator)
         self.tensor_diffusion_action = tensor_diffusion_action
         self.operator = operator
@@ -378,6 +377,7 @@ class PhysicalMonodomainPlan(StrictModule, NonTrainableState):
     checkpoint_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         node_count: int,
@@ -393,8 +393,6 @@ class PhysicalMonodomainPlan(StrictModule, NonTrainableState):
             raise TypeError("node_count must be an integer.")
         if node_count <= 0:
             raise ValueError("node_count must be positive.")
-        if not isinstance(schedule, EventAlignedMultirateSchedule):
-            raise TypeError("schedule must be an EventAlignedMultirateSchedule.")
         if not isinstance(splitting, (LieSplit, StrangSplit)):
             raise TypeError("splitting must be LieSplit or StrangSplit.")
         if not isinstance(

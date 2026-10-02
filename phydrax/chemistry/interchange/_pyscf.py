@@ -17,6 +17,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ...units import BOHR, conversion_factor, derived_unit, ELEMENTARY_CHARGE, HARTREE
 from .._calculation import ElectronicCalculationPlan, make_electronic_evaluation
 from .._model import (
@@ -62,6 +63,7 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
     provider_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calculation: ElectronicCalculationPlan,
@@ -72,8 +74,6 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
         provider_id: str,
         /,
     ) -> None:
-        if not isinstance(capabilities, ElectronicProviderCapabilities):
-            raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
         self.capabilities = capabilities
         self.convergence_tolerance = convergence_tolerance

@@ -26,7 +26,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._linearization import prepare_jacobian
 from ._newton import _remaining_linear_steps, NewtonKrylov
 from ._prepared import (
@@ -150,6 +150,7 @@ class VariationalInequalityProblem(StrictModule):
     bounds: Bounds
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: Callable[[PyTree[Any], Any], PyTree[Array]],
@@ -160,8 +161,6 @@ class VariationalInequalityProblem(StrictModule):
     ) -> None:
         if not callable(operator):
             raise TypeError("operator must be callable.")
-        if not isinstance(bounds, Bounds):
-            raise TypeError("bounds must be Bounds.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
@@ -306,6 +305,7 @@ class ConeVariationalInequalityProblem(StrictModule):
     cone: AbstractConvexCone
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: Callable[[Array, Any], Array],
@@ -316,8 +316,6 @@ class ConeVariationalInequalityProblem(StrictModule):
     ) -> None:
         if not callable(operator):
             raise TypeError("operator must be callable.")
-        if not isinstance(cone, AbstractConvexCone):
-            raise TypeError("cone must be an AbstractConvexCone.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
@@ -448,6 +446,7 @@ class ConeSemismoothNewton(StrictModule):
         self.derivative_policy = policy
         self.certification_tolerance = tolerance
 
+    @checked
     def solve(
         self,
         problem: ConeVariationalInequalityProblem,
@@ -457,8 +456,6 @@ class ConeSemismoothNewton(StrictModule):
         termination: NonlinearTermination | None = None,
         args: Any = None,
     ) -> ConeVariationalInequalityResult:
-        if not isinstance(problem, ConeVariationalInequalityProblem):
-            raise TypeError("problem must be a ConeVariationalInequalityProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
@@ -712,6 +709,7 @@ class PreparedVariationalInequalitySolve(StrictModule):
     numeric_version: Array
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: VariationalInequalityProblem,
@@ -724,14 +722,6 @@ class PreparedVariationalInequalitySolve(StrictModule):
         topology_id: str,
         numeric_version: Any,
     ) -> None:
-        if not isinstance(problem, VariationalInequalityProblem):
-            raise TypeError("problem must be VariationalInequalityProblem.")
-        if not isinstance(method, SemismoothNewton):
-            raise TypeError("method must be SemismoothNewton.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
-        if not isinstance(nonlinear, PreparedNonlinearSolve):
-            raise TypeError("nonlinear must be PreparedNonlinearSolve.")
         topology_id_ = str(topology_id)
         if not topology_id_:
             raise ValueError("topology_id must be non-empty.")

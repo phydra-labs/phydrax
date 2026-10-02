@@ -17,6 +17,8 @@ from jax.typing import ArrayLike
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 
+from ...typing import checked
+
 
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
@@ -107,9 +109,8 @@ class CurrencyAmount(StrictModule):
     currency: Currency = eqx.field(static=True)
     atoms: Array
 
+    @checked
     def __init__(self, currency: Currency, atoms: Any, /) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         self.currency = currency
         self.atoms = _int64_scalar(atoms, "currency atoms")
 

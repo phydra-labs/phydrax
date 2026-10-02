@@ -21,7 +21,7 @@ from ..._interpolation import apply_gather_stencil, GatherStencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial import AffineSimplexMap
-from ...typing import parse
+from ...typing import checked, parse
 from .._cell_mesh import CellMesh
 from .._measure import DiscreteMeasure
 from ..particle._population import ParticlePopulationState
@@ -42,6 +42,7 @@ class MeshSplatTarget(StrictModule, NonTrainableState):
     entity_count: int = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -49,10 +50,6 @@ class MeshSplatTarget(StrictModule, NonTrainableState):
         entity_dimension: int,
         measure: DiscreteMeasure,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
-        if not isinstance(measure, DiscreteMeasure):
-            raise TypeError("measure must be a DiscreteMeasure.")
         dimension = int(entity_dimension)
         if dimension not in (0, mesh.topological_dimension):
             raise ValueError("Mesh splats support vertices or top-dimensional cells.")
@@ -678,6 +675,7 @@ class ParticleGridSplatEpoch(StrictModule):
     epoch_number: Array
     epoch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedMeshParticleGridSplat,
@@ -688,10 +686,6 @@ class ParticleGridSplatEpoch(StrictModule):
         *,
         epoch_number: ArrayLike = 0,
     ) -> None:
-        if not isinstance(prepared, PreparedMeshParticleGridSplat):
-            raise TypeError("prepared must be PreparedMeshParticleGridSplat.")
-        if not isinstance(population, ParticlePopulationState):
-            raise TypeError("population must be ParticlePopulationState.")
         positions_ = jnp.asarray(positions)
         content = jnp.asarray(target_content)
         if positions_.shape != (

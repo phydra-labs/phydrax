@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
+from ...typing import checked
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
 from .._system import ContinuousSystem, DiscreteSystem
@@ -180,6 +181,7 @@ class LyapunovSpectrumResult(StrictModule):
     burn_in: int = eqx.field(static=True)
     accumulation_interval: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -193,8 +195,6 @@ class LyapunovSpectrumResult(StrictModule):
         status: ArrayLike,
         checkpoint: LyapunovSpectrumCheckpoint,
     ) -> None:
-        if not isinstance(checkpoint, LyapunovSpectrumCheckpoint):
-            raise TypeError("checkpoint must be a LyapunovSpectrumCheckpoint.")
         spectrum = jnp.asarray(exponents)
         history = jnp.asarray(finite_time_exponents)
         times = jnp.asarray(accumulation_times, dtype=jnp.float64)

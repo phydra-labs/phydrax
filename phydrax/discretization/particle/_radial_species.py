@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._particle_internal_mesh import PreparedRadialShellMesh
 
 
@@ -64,16 +65,13 @@ class PreparedRadialSpeciesTransport(StrictModule, NonTrainableState):
     mesh: PreparedRadialShellMesh
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RadialSpeciesTransportPlan,
         mesh: PreparedRadialShellMesh,
         /,
     ) -> None:
-        if not isinstance(plan, RadialSpeciesTransportPlan):
-            raise TypeError("plan must be a RadialSpeciesTransportPlan.")
-        if not isinstance(mesh, PreparedRadialShellMesh):
-            raise TypeError("mesh must be a PreparedRadialShellMesh.")
         self.plan = plan
         self.mesh = mesh
         self.prepared_id = canonical_fingerprint(

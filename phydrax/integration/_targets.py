@@ -24,6 +24,7 @@ from phydrax.domain._function import _domain_has_tracer
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import checked
 from ._rules import ReferenceRule
 
 
@@ -117,6 +118,7 @@ class ProbabilityTarget(StrictModule):
     target_id: str = eqx.field(static=True)
     normalized: bool = eqx.field(static=True, default=True)
 
+    @checked
     def __init__(
         self,
         probability: ProbabilityDomain,
@@ -124,8 +126,6 @@ class ProbabilityTarget(StrictModule):
         *,
         target_id: str | None = None,
     ) -> None:
-        if not isinstance(probability, ProbabilityDomain):
-            raise TypeError("probability must be a ProbabilityDomain.")
         identifier = probability.label if target_id is None else str(target_id)
         if not identifier:
             raise ValueError("target_id must be non-empty.")

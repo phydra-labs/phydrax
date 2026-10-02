@@ -8,7 +8,7 @@ import equinox as eqx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._api import _requires_random_key, IntegrationRealization, materialize
 
 
@@ -28,9 +28,8 @@ class FixedIntegration(StrictModule):
 
     realization: IntegrationRealization
 
+    @checked
     def __init__(self, realization: IntegrationRealization, /) -> None:
-        if not isinstance(realization, IntegrationRealization):
-            raise TypeError("FixedIntegration requires an IntegrationRealization.")
         self.realization = realization
 
 

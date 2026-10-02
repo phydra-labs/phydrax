@@ -26,7 +26,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier, nonnegative_integer, positive_integer
-from ...typing import parse
+from ...typing import checked, parse
 
 
 MultiRegionKind: TypeAlias = Literal["finite", "boundary"]
@@ -274,12 +274,11 @@ class MultiRegionSurfaceCapacityPlan(StrictModule, NonTrainableState):
             vertex_region_pairs=self.maximum_vertex_region_pairs,
         )
 
+    @checked
     def capacity_evidence(
         self, required: MultiRegionSurfaceCounts, /
     ) -> MultiRegionSurfaceCapacityEvidence:
         """Host admission of exact required counts against this plan."""
-        if not isinstance(required, MultiRegionSurfaceCounts):
-            raise TypeError("required must be MultiRegionSurfaceCounts.")
         capacity = self.capacity
         exceeded = tuple(
             name

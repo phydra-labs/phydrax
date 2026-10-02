@@ -59,6 +59,7 @@ from ..._validation import (
     positive_finite_float,
     positive_integer,
 )
+from ...typing import checked
 from ._edits import (
     _CCDLeg,
     _Edit,
@@ -345,6 +346,7 @@ class MergeProposal(StrictModule, NonTrainableState):
     policy: SurfaceMergePolicy
     priority: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         face_ids: Sequence[int],
@@ -356,8 +358,6 @@ class MergeProposal(StrictModule, NonTrainableState):
         ids = _ids(face_ids, "face_ids", 2)
         if len(ids) != 2:
             raise ValueError("A merge joins exactly two faces.")
-        if not isinstance(policy, SurfaceMergePolicy):
-            raise TypeError("policy must be a SurfaceMergePolicy.")
         self.face_ids = (ids[0], ids[1])
         self.policy = policy
         self.priority = float(priority)

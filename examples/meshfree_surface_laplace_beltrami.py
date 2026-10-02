@@ -20,14 +20,14 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from phydrax.discretization.meshfree._stencils import LocalStencilPolicy
-from phydrax.discretization.meshfree._surface import SurfacePointCloudPlan
-from phydrax.discretization.meshfree._surface_geometry import (
+from phydrax.discretization.meshfree import (
     ImplicitSurfaceGeometry,
+    LocalStencilPolicy,
     SampledSurfaceGeometry,
+    SurfacePointCloudPlan,
+    SurfaceQuadraturePolicy,
 )
-from phydrax.discretization.meshfree._surface_quadrature import SurfaceQuadraturePolicy
-from phydrax.metrix._ambient import RegularLevelSetManifold
+from phydrax.metrix import RegularLevelSetManifold
 
 
 WorkflowMetric = float | int | bool | str

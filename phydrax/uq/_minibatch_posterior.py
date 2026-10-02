@@ -23,6 +23,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import checked
 from ._posterior import ParameterSpace
 
 
@@ -525,14 +526,13 @@ class MinibatchPosteriorProblem(StrictModule):
     def initial_position(self) -> PyTree[Any]:
         return self.parameter_space.initial
 
+    @checked
     def log_likelihood_factors(
         self,
         physical: PyTree[Any],
         batch: LikelihoodBatch,
         /,
     ) -> Array:
-        if not isinstance(batch, LikelihoodBatch):
-            raise TypeError("batch must be a LikelihoodBatch.")
         factors = jnp.asarray(self.log_likelihood_factors_fn(physical, batch))
         if not jnp.issubdtype(factors.dtype, jnp.floating):
             raise TypeError("Observation log factors must have real floating dtype.")

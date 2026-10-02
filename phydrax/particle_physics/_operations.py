@@ -22,6 +22,7 @@ from ..measurement._operations import (
     OperationalCoordinate,
     ResolvedConditionSnapshot,
 )
+from ..typing import checked
 from ..units import ENERGY, LENGTH, UnitDefinition
 
 
@@ -138,6 +139,7 @@ class HEPRunContext(StrictModule, NonTrainableState):
     stream_id: str = eqx.field(static=True)
     context_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinate: OperationalCoordinate,
@@ -150,10 +152,6 @@ class HEPRunContext(StrictModule, NonTrainableState):
         campaign_id: str,
         stream_id: str,
     ) -> None:
-        if not isinstance(coordinate, OperationalCoordinate):
-            raise TypeError("coordinate must be OperationalCoordinate.")
-        if not isinstance(beam, BeamConditionSnapshot):
-            raise TypeError("beam must be BeamConditionSnapshot.")
         if (
             not isinstance(conditions, ResolvedConditionSnapshot)
             or conditions.coordinate.coordinate_id != coordinate.coordinate_id

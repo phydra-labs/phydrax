@@ -18,6 +18,7 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._moduli import TrainableHomogeneousHypersurface
 
 
@@ -30,6 +31,7 @@ class ComplexStructureFamilyPlan(StrictModule):
     rank_tolerance: float = eqx.field(static=True)
     family_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: TrainableHomogeneousHypersurface,
@@ -39,8 +41,6 @@ class ComplexStructureFamilyPlan(StrictModule):
         *,
         rank_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(base, TrainableHomogeneousHypersurface):
-            raise TypeError("base must be TrainableHomogeneousHypersurface.")
         labels = tuple(str(value) for value in modulus_labels)
         directions = np.asarray(deformation_directions, dtype=np.complex128)
         tolerance = float(rank_tolerance)

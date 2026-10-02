@@ -15,7 +15,7 @@ from ...integration import (
     IntegrationPrecisionPolicy,
     materialize_diffrax_collocation,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class DiffraxCollocationIntegralOperator(StrictModule):
@@ -25,14 +25,13 @@ class DiffraxCollocationIntegralOperator(StrictModule):
     plan: DiffraxCollocationQuadraturePlan
     batch: Any
 
+    @checked
     def __init__(
         self,
         target: ComponentTarget | DensityTarget,
         plan: DiffraxCollocationQuadraturePlan,
         /,
     ) -> None:
-        if not isinstance(plan, DiffraxCollocationQuadraturePlan):
-            raise TypeError("plan must be CID DiffraxCollocationQuadraturePlan.")
         self.target = target
         self.plan = plan
         self.batch = materialize_diffrax_collocation(target, plan)

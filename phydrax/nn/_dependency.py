@@ -13,7 +13,7 @@ from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import numpy as np
 
-from ..typing import parse
+from ..typing import checked, parse
 
 
 OperatorDependencyKind: TypeAlias = Literal["pointwise", "finite", "global", "unknown"]
@@ -48,19 +48,17 @@ class AxisDependencyReach:
         object.__setattr__(self, "lower", lower)
         object.__setattr__(self, "upper", upper)
 
+    @checked
     def sequential(self, other: AxisDependencyReach, /) -> AxisDependencyReach:
         """Compose two sequential local maps by adding directional reach."""
-        if not isinstance(other, AxisDependencyReach):
-            raise TypeError("Sequential dependency reach requires AxisDependencyReach.")
         return AxisDependencyReach(
             self.lower + other.lower,
             self.upper + other.upper,
         )
 
+    @checked
     def parallel(self, other: AxisDependencyReach, /) -> AxisDependencyReach:
         """Merge parallel local maps by taking their directional envelope."""
-        if not isinstance(other, AxisDependencyReach):
-            raise TypeError("Parallel dependency reach requires AxisDependencyReach.")
         return AxisDependencyReach(
             max(self.lower, other.lower),
             max(self.upper, other.upper),
@@ -190,11 +188,10 @@ class OperatorDependencySupport:
     ) -> OperatorDependencySupport:
         return cls("unknown", dimension, scale=tuple(scale), evidence="conservative")
 
+    @checked
     def _common_frame(
         self, other: OperatorDependencySupport, /
     ) -> tuple[int | None, tuple[float, ...], OperatorDependencyEvidence]:
-        if not isinstance(other, OperatorDependencySupport):
-            raise TypeError("Dependency composition requires OperatorDependencySupport.")
         if self.dimension is None:
             dimension = other.dimension
             scale = other.scale

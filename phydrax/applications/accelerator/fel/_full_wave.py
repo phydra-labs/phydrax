@@ -127,6 +127,7 @@ from ....solver.maxwell.spectral import (
 )
 from ....typing import (
     as_host_array,
+    checked,
     ConvertibleToArray,
     Dim,
     Float64,
@@ -356,11 +357,10 @@ class FELFullWaveTracks(StrictModule, NonTrainableState):
     lanes: tuple[int, ...] = eqx.field(static=True)
     tracks_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, radiation: TrajectoryRadiationPlan, lanes: Sequence[int], /
     ) -> None:
-        if not isinstance(radiation, TrajectoryRadiationPlan):
-            raise TypeError("radiation must be a TrajectoryRadiationPlan.")
         indices = tuple(int(value) for value in lanes)
         if not indices or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError("lanes must be distinct nonnegative macroparticle indices.")
@@ -622,6 +622,7 @@ class FELFullWavePlan(StrictModule, NonTrainableState):
     undulator_span: tuple[float, float] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lattice: FELUndulatorLattice,
@@ -645,8 +646,6 @@ class FELFullWavePlan(StrictModule, NonTrainableState):
         absorber_cells: int = 16,
         absorber_reflection: float = 1.0e-6,
     ) -> None:
-        if not isinstance(lattice, FELUndulatorLattice):
-            raise TypeError("lattice must be an FELUndulatorLattice.")
         if seed is not None and not isinstance(seed, FELFullWaveSeed):
             raise TypeError("seed must be FELFullWaveSeed or None.")
         if tracks is not None and not isinstance(tracks, FELFullWaveTracks):
@@ -992,11 +991,8 @@ class PreparedFELFullWave(StrictModule, NonTrainableState):
     layout: tuple[float, float, int, float] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FELFullWavePlan, beam: FELFullWaveBeam, /) -> None:
-        if not isinstance(plan, FELFullWavePlan):
-            raise TypeError("plan must be an FELFullWavePlan.")
-        if not isinstance(beam, FELFullWaveBeam):
-            raise TypeError("beam must be an FELFullWaveBeam.")
         frame = plan.frame
         c = plan.speed_of_light
         gamma_b, beta_b = frame.lorentz_factor, frame.beta

@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization, ParticleSetPlan
+from ..typing import checked
 from ..units import derived_unit, ENERGY, LENGTH, UnitDefinition
 
 
@@ -175,6 +176,7 @@ class AtomicStructure(StrictModule, NonTrainableState):
     has_periodic_metadata: bool = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atomic_numbers: ArrayLike,
@@ -191,8 +193,6 @@ class AtomicStructure(StrictModule, NonTrainableState):
         coordinate_dtype: Any | None = None,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(scale, AtomisticScaleContract):
-            raise TypeError("scale must be an AtomisticScaleContract.")
         numbers = np.asarray(atomic_numbers)
         if numbers.ndim != 1 or numbers.size == 0:
             raise ValueError("atomic_numbers must be a non-empty rank-1 array.")
@@ -370,6 +370,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
     atom_topology_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atomic_numbers: ArrayLike,
@@ -388,8 +389,6 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         coordinate_dtype: Any | None = None,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(scale, AtomisticScaleContract):
-            raise TypeError("scale must be an AtomisticScaleContract.")
         numbers = np.asarray(atomic_numbers)
         position_host = np.asarray(positions)
         if numbers.ndim != 2 or numbers.shape[0] == 0 or numbers.shape[1] == 0:

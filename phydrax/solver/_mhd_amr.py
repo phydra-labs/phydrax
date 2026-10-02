@@ -17,7 +17,7 @@ from .._trainable import NonTrainableState
 from ..discretization import CochainDiscretization, StructuredCochainBridge
 from ..discretization.amr import VariablePatchEntityComplex
 from ..exterior._complex import ComplexBoundary
-from ..typing import parse
+from ..typing import checked, parse
 
 
 class MagneticAMRTransferDiagnostics(StrictModule):
@@ -266,6 +266,7 @@ class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
     boundary: ComplexBoundary = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: CochainDiscretization,
@@ -273,10 +274,6 @@ class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
         *,
         boundary: ComplexBoundary = "absolute",
     ) -> None:
-        if not isinstance(state, CochainDiscretization):
-            raise TypeError(
-                "Cut-cell cochain synchronization requires CochainDiscretization."
-            )
         boundary_ = parse(boundary, ComplexBoundary, "boundary")
         if state.topology.dimension != 3:
             raise ValueError("Cut-cell constrained transport requires a 3-D complex.")

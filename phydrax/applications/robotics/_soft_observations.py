@@ -19,7 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import PlantRuntimeState, PlantStepResult
-from ...typing import parse
+from ...typing import checked, parse
 from ..solid_mechanics._rod_plant import (
     PreparedReducedRodPlant,
     ReducedRodPlantEvidence,
@@ -253,6 +253,7 @@ class SoftRobotObservation(StrictModule):
     sensor_plan_id: str = eqx.field(static=True)
     observation_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -283,8 +284,6 @@ class SoftRobotObservation(StrictModule):
         observation_plan_id: str,
         /,
     ) -> None:
-        if not isinstance(layout, SoftObservationLayout):
-            raise TypeError("layout must be SoftObservationLayout.")
         arrays = tuple(
             jnp.asarray(value) for value in (values, ideal_values, bias, noise)
         )
@@ -414,6 +413,7 @@ class SoftFrameQueryPlan(StrictModule, NonTrainableState):
     angular_velocity_unit: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: RodReconstructionPlan,
@@ -425,8 +425,6 @@ class SoftFrameQueryPlan(StrictModule, NonTrainableState):
         linear_velocity_unit: str = "m/s",
         angular_velocity_unit: str = "rad/s",
     ) -> None:
-        if not isinstance(reconstruction, RodReconstructionPlan):
-            raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_pose, bool):
             raise TypeError("include_pose must be bool.")
         if not isinstance(twists, tuple):
@@ -468,6 +466,7 @@ class SoftStrainQueryPlan(StrictModule, NonTrainableState):
     bend_twist_unit: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: RodReconstructionPlan,
@@ -478,8 +477,6 @@ class SoftStrainQueryPlan(StrictModule, NonTrainableState):
         stretch_shear_unit: str = "1",
         bend_twist_unit: str = "rad/m",
     ) -> None:
-        if not isinstance(reconstruction, RodReconstructionPlan):
-            raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_total, bool) or not isinstance(include_reduced, bool):
             raise TypeError("Strain selection flags must be bool values.")
         if not include_total and not include_reduced:
@@ -842,9 +839,8 @@ class _PreparedFrameQuery(StrictModule, NonTrainableState):
     reconstruction: PreparedRodReconstruction
     query_id: str = eqx.field(static=True)
 
+    @checked
     def _validate(self, evaluation: RodReconstructionEvaluation, /) -> None:
-        if not isinstance(evaluation, RodReconstructionEvaluation):
-            raise TypeError("frame_evaluation must be RodReconstructionEvaluation.")
         expected = (
             self.reconstruction.plan.queries.plan_id,
             self.reconstruction.route_id,
@@ -925,9 +921,8 @@ class _PreparedStrainQuery(StrictModule, NonTrainableState):
     reconstruction: PreparedRodReconstruction
     query_id: str = eqx.field(static=True)
 
+    @checked
     def _validate(self, evaluation: RodReconstructionEvaluation, /) -> None:
-        if not isinstance(evaluation, RodReconstructionEvaluation):
-            raise TypeError("strain_evaluation must be RodReconstructionEvaluation.")
         expected = (
             self.reconstruction.plan.queries.plan_id,
             self.reconstruction.route_id,
@@ -994,14 +989,13 @@ class _PreparedTendonQuery(StrictModule, NonTrainableState):
     reduction_id: str = eqx.field(static=True)
     query_id: str = eqx.field(static=True)
 
+    @checked
     def bind_state(
         self,
         runtime: PlantRuntimeState,
         actuator_states: tuple[TendonActuatorState, ...],
         /,
     ) -> SoftTendonObservationState:
-        if not isinstance(runtime, PlantRuntimeState):
-            raise TypeError("runtime must be PlantRuntimeState.")
         if not isinstance(actuator_states, tuple) or len(actuator_states) != len(
             self.plan.tendons
         ):
@@ -1341,9 +1335,8 @@ class _PreparedSensorPlan(StrictModule, NonTrainableState):
             self.sensor_plan_id,
         )
 
+    @checked
     def _validate_state(self, state: SoftSensorState, /) -> None:
-        if not isinstance(state, SoftSensorState):
-            raise TypeError("sensor_state must be SoftSensorState.")
         static_observed = (
             state.semantic_provenance_id,
             state.numeric_revision_id,
@@ -1496,13 +1489,10 @@ class PreparedSoftObservationPlan(StrictModule, NonTrainableState):
     query_plan_id: str = eqx.field(static=True)
     observation_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plant: PreparedReducedRodPlant, plan: SoftObservationPlan, /
     ) -> None:
-        if not isinstance(plant, PreparedReducedRodPlant):
-            raise TypeError("plant must be PreparedReducedRodPlant.")
-        if not isinstance(plan, SoftObservationPlan):
-            raise TypeError("plan must be SoftObservationPlan.")
         reduction = plant.dynamics.reduction
         prepared_reduced = None
         prepared_frame = None
@@ -1722,9 +1712,8 @@ class PreparedSoftObservationPlan(StrictModule, NonTrainableState):
             raise TypeError("This observation plan has no tendon query.")
         return self.tendon.bind_state(runtime, actuator_states)
 
+    @checked
     def _payload(self, state: PlantRuntimeState, /) -> ReducedRodPlantState:
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         expected = (
             self.plant.semantic_provenance.semantic_id,
             self.plant.numeric_revision.revision_id,

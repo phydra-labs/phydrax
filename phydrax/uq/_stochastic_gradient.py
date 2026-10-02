@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._minibatch_posterior import LikelihoodBatch, MinibatchPosteriorProblem
 from ._parameterized_state_space import ParameterizedStateSpaceProblem
 from ._particle import (
@@ -135,6 +135,7 @@ class ParticleGenealogicalGradientEstimator(AbstractStochasticGradientEstimator)
     resampling_policy: ResamplingPolicy = eqx.field(static=True)
     resampling_threshold: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterized: ParameterizedStateSpaceProblem,
@@ -145,8 +146,6 @@ class ParticleGenealogicalGradientEstimator(AbstractStochasticGradientEstimator)
         resampling_policy: ResamplingPolicy = "ess",
         resampling_threshold: float = 0.5,
     ) -> None:
-        if not isinstance(parameterized, ParameterizedStateSpaceProblem):
-            raise TypeError("parameterized must be ParameterizedStateSpaceProblem.")
         count = int(num_particles)
         if count < 1:
             raise ValueError("num_particles must be positive.")

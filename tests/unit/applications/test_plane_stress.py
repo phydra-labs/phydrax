@@ -323,6 +323,6 @@ def test_coupled_plane_contracts() -> None:
     ).evaluate(deformation[0], law)
     assert not bool(bounded_out.successful)
     assert bounded_out.failure == int(PlaneStressFailure.MAX_STEPS)
-    with pytest.raises(TypeError, match="mixed pressure laws"):
+    with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         BlockDiagonalPlaneStressReductionPlan().evaluate(jnp.eye(2), law)

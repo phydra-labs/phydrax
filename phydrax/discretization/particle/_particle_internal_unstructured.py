@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...sparse import EdgeRelation
+from ...typing import checked
 from ..finite_volume import (
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumePlan,
@@ -105,9 +106,8 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
     transport_relation: EdgeRelation
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: UnstructuredParticleInternalMeshPlan, /) -> None:
-        if not isinstance(plan, UnstructuredParticleInternalMeshPlan):
-            raise TypeError("plan must be UnstructuredParticleInternalMeshPlan.")
         discretization = plan.finite_volume.prepare()
         self.plan = plan
         self.discretization = discretization

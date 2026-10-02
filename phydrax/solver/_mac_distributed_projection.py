@@ -23,6 +23,7 @@ from ..discretization.finite_volume._mac_distributed import (
     MACDistributedState,
     PreparedMACDistributedTopology,
 )
+from ..typing import checked
 
 
 # (iteration, solution, residual, direction, residual_squared, valid)
@@ -71,9 +72,8 @@ class MACCollectiveAdapter(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, topology: PreparedMACDistributedTopology, /) -> None:
-        if not isinstance(topology, PreparedMACDistributedTopology):
-            raise TypeError("topology must be PreparedMACDistributedTopology.")
         names = tuple(str(name) for name in topology.plan.mesh.axis_names)
         self.mesh_axis_names = names
         self.collective_size = topology.status.device_count
@@ -172,6 +172,7 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: PreparedMACDistributedTopology,
@@ -182,8 +183,6 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1e-9,
         maximum_iterations: int = 500,
     ) -> None:
-        if not isinstance(topology, PreparedMACDistributedTopology):
-            raise TypeError("topology must be PreparedMACDistributedTopology.")
         density_ = float(density)
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)

@@ -40,7 +40,7 @@ from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_integer
 from ..exterior._form_type import FormValueSpec
 from ..linalg import ArraySpace, inverse_small_linear, SmallLinearSolvePlan
-from ..typing import parse
+from ..typing import checked, parse
 from ._cell_complex import PolygonalConnectivity
 from ._cell_mesh import CellMesh
 from ._integration_domain import IntegrationDomain
@@ -419,6 +419,7 @@ class PolygonFieldReconstructionKernel(
     global_dof_count: int = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         locator: PreparedPolygonMeshLocator,
@@ -430,10 +431,6 @@ class PolygonFieldReconstructionKernel(
         global_dof_count: int,
         field_space_id: str,
     ) -> None:
-        if not isinstance(locator, PreparedPolygonMeshLocator):
-            raise TypeError("locator must be a PreparedPolygonMeshLocator.")
-        if not isinstance(basis, AbstractPolygonLocalBasis):
-            raise TypeError("basis must be an AbstractPolygonLocalBasis.")
         routes = np.asarray(cell_dofs, dtype=np.int32)
         count = positive_integer(global_dof_count, "global_dof_count")
         if routes.shape != (locator.cell_count, basis.local_width):

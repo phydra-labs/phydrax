@@ -64,7 +64,7 @@ from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float, positive_integer
 from ...ein import contract
 from ...special import synchrotron_f, synchrotron_g
-from ...typing import Dim, Float64, parse, PRNGKey, Size
+from ...typing import checked, Dim, Float64, parse, PRNGKey, Size
 from ._charge_state import PICSpeciesPlan, PICSpeciesState
 from ._process import (
     AbstractPICProcess,
@@ -338,6 +338,7 @@ class RadiationReactionPlan(StrictModule, NonTrainableState):
     classical_power_scale: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: RadiationReactionModel,
@@ -353,8 +354,6 @@ class RadiationReactionPlan(StrictModule, NonTrainableState):
         minimum_scale_separation: float = 10.0,
     ) -> None:
         model_ = parse(model, RadiationReactionModel, "model")
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         charge = float(physical_charge)
         if not math.isfinite(charge) or charge == 0.0:
             raise ValueError("physical_charge must be finite and nonzero.")
@@ -429,10 +428,9 @@ class RadiationReactionPlan(StrictModule, NonTrainableState):
     def stochastic(self) -> bool:
         return self.model == "stochastic-fokker-planck"
 
+    @checked
     def validate_relativity(self, relativity: RelativityScaleContract, /) -> None:
         """Refuse a pusher whose units or speed of light differ from ``scale``."""
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         own = self.scale.relativity
         if relativity.dimensional_scale.scale_id != own.dimensional_scale.scale_id:
             raise ValueError(
@@ -714,9 +712,8 @@ class RadiationReactionProcess(AbstractPICProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: RadiationReactionPlan, species: int, /) -> None:
-        if not isinstance(plan, RadiationReactionPlan):
-            raise TypeError("plan must be RadiationReactionPlan.")
         if isinstance(species, bool) or not isinstance(species, int) or species < 0:
             raise ValueError("species must be a nonnegative species index.")
         self.plan = plan

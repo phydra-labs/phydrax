@@ -74,7 +74,7 @@ from ...sampling._rhmc import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 def _matrix_product(left: Array, right: Array, /) -> Array:
@@ -150,6 +150,7 @@ class DistributedGaugeTheoryPlan(StrictModule, NonTrainableState):
     maximum_gauge_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decomposition: LatticeDecompositionPlan,
@@ -159,8 +160,6 @@ class DistributedGaugeTheoryPlan(StrictModule, NonTrainableState):
         forward_edges: ArrayLike | None = None,
         maximum_gauge_bytes: int = 4_294_967_296,
     ) -> None:
-        if not isinstance(decomposition, LatticeDecompositionPlan):
-            raise TypeError("decomposition must be LatticeDecompositionPlan.")
         beta_ = np.asarray(beta)
         if beta_.shape != () or not np.isfinite(beta_) or beta_ < 0.0:
             raise ValueError("beta must be a finite non-negative scalar.")
@@ -283,14 +282,13 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
     capabilities: LatticeKernelCapabilities
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DistributedGaugeTheoryPlan,
         provider: LatticeKernelProvider,
         /,
     ) -> None:
-        if not isinstance(plan, DistributedGaugeTheoryPlan):
-            raise TypeError("plan must be DistributedGaugeTheoryPlan.")
         if not isinstance(provider.capabilities, LatticeKernelCapabilities):
             raise TypeError("provider must expose LatticeKernelCapabilities.")
         self.plan = plan
@@ -425,6 +423,7 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
             self.provider.provider_id,
         )
 
+    @checked
     def gauge_force_from_graph(
         self,
         transport: GaugeCovariantShiftPlan,
@@ -434,10 +433,6 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
     ) -> DistributedGaugeForceResult:
         """Evaluate graph-owned staples and reduce each graph edge exactly once."""
 
-        if not isinstance(transport, GaugeCovariantShiftPlan):
-            raise TypeError("transport must be GaugeCovariantShiftPlan.")
-        if not isinstance(staple_plan, GaugeStaplePlan):
-            raise TypeError("staple_plan must be GaugeStaplePlan.")
         if (
             transport.link_space_id != staple_plan.link_space.link_space_id
             or transport.site_count != self.plan.decomposition.site_count
@@ -501,6 +496,7 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
             self.provider.provider_id,
         )
 
+    @checked
     def dslash(
         self,
         operator: AbstractLatticeDiracOperator,
@@ -509,8 +505,6 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
         *,
         adjoint: bool = False,
     ) -> DistributedDslashResult:
-        if not isinstance(operator, AbstractLatticeDiracOperator):
-            raise TypeError("operator must implement AbstractLatticeDiracOperator.")
         if operator.lattice_shape != self.plan.decomposition.global_shape:
             raise ValueError("Dirac operator and decomposition lattice shapes disagree.")
         values = jnp.asarray(spinor)
@@ -723,6 +717,7 @@ class SAPPlan(StrictModule, NonTrainableState):
     maximum_factor_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decomposition: LatticeDecompositionPlan,
@@ -731,8 +726,6 @@ class SAPPlan(StrictModule, NonTrainableState):
         sweep_count: int = 2,
         maximum_factor_bytes: int = 2_147_483_648,
     ) -> None:
-        if not isinstance(decomposition, LatticeDecompositionPlan):
-            raise TypeError("decomposition must be LatticeDecompositionPlan.")
         sweeps = int(sweep_count)
         maximum = int(maximum_factor_bytes)
         if sweeps <= 0 or maximum <= 0:
@@ -860,6 +853,7 @@ class AdaptiveCoarseSpacePlan(StrictModule, NonTrainableState):
     relaxation: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         deflation: DeflationPlan,
@@ -868,8 +862,6 @@ class AdaptiveCoarseSpacePlan(StrictModule, NonTrainableState):
         smoothing_steps: int = 4,
         relaxation: float = 0.1,
     ) -> None:
-        if not isinstance(deflation, DeflationPlan):
-            raise TypeError("deflation must be DeflationPlan.")
         steps = int(smoothing_steps)
         relaxation_ = float(relaxation)
         if steps <= 0 or not np.isfinite(relaxation_) or relaxation_ <= 0.0:
@@ -1152,6 +1144,7 @@ class DistributedRHMCPlan(StrictModule, NonTrainableState):
     maximum_links: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         gauge: DistributedGaugeTheoryPlan,
@@ -1160,10 +1153,6 @@ class DistributedRHMCPlan(StrictModule, NonTrainableState):
         *,
         maximum_links: int = 67_108_864,
     ) -> None:
-        if not isinstance(gauge, DistributedGaugeTheoryPlan):
-            raise TypeError("gauge must be DistributedGaugeTheoryPlan.")
-        if not isinstance(rhmc, RHMCPlan):
-            raise TypeError("rhmc must be the native sampling RHMCPlan.")
         maximum = int(maximum_links)
         if maximum <= 0:
             raise ValueError("maximum_links must be positive.")
@@ -1198,15 +1187,15 @@ class PreparedDistributedRHMC(StrictModule, NonTrainableState):
         values = self.gauge._configuration(links)
         return initialize_rhmc_state(self.kernel, values, key=key)
 
+    @checked
     def transition(
         self,
         state: RHMCChainState,
         /,
     ) -> RHMCTransitionResult:
-        if not isinstance(state, RHMCChainState):
-            raise TypeError("state must be RHMCChainState.")
         return rhmc_transition(self.kernel, state)
 
+    @checked
     def sample(
         self,
         state: RHMCChainState,
@@ -1214,8 +1203,6 @@ class PreparedDistributedRHMC(StrictModule, NonTrainableState):
         *,
         num_draws: int,
     ) -> RHMCSampleResult:
-        if not isinstance(state, RHMCChainState):
-            raise TypeError("state must be RHMCChainState.")
         return sample_rhmc(self.kernel, state, num_draws=num_draws)
 
 

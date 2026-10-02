@@ -12,6 +12,7 @@ import equinox as eqx
 from jax import Array
 
 from ...._strict import StrictModule
+from ....typing import checked
 from ..cellular import ShortenFastTwitchModel
 
 
@@ -71,9 +72,8 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
     model: ShortenFastTwitchModel
     kinematic_policy: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, model: ShortenFastTwitchModel, /) -> None:
-        if not isinstance(model, ShortenFastTwitchModel):
-            raise TypeError("model must be ShortenFastTwitchModel.")
         self.model = model
         self.source_id = model.model_id
         self.state_count = 56

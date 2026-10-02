@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
 from ._base import AbstractPositiveDefiniteKernel
 
 
@@ -134,14 +135,13 @@ class ScaleKernel(AbstractPositiveDefiniteKernel):
     kernel: AbstractPositiveDefiniteKernel
     scale: Array
 
+    @checked
     def __init__(
         self,
         kernel: AbstractPositiveDefiniteKernel,
         scale: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a positive-definite kernel.")
         value = jnp.asarray(scale, dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("Kernel scale must be scalar.")
@@ -184,14 +184,13 @@ class AmplitudeKernel(AbstractPositiveDefiniteKernel):
     kernel: AbstractPositiveDefiniteKernel
     amplitude: Array
 
+    @checked
     def __init__(
         self,
         kernel: AbstractPositiveDefiniteKernel,
         amplitude: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a positive-definite kernel.")
         value = jnp.asarray(amplitude, dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("Kernel amplitude must be scalar.")
@@ -237,9 +236,8 @@ class NormalizedKernel(AbstractPositiveDefiniteKernel):
 
     kernel: AbstractPositiveDefiniteKernel
 
+    @checked
     def __init__(self, kernel: AbstractPositiveDefiniteKernel, /) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a positive-definite kernel.")
         self.kernel = kernel
 
     @staticmethod

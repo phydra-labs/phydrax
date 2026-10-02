@@ -27,7 +27,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 VertexTissueDimension: TypeAlias = Literal[2, 3]
@@ -964,9 +964,8 @@ class PreparedVertexTissue(StrictModule, NonTrainableState):
     reference_quality_valid: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: VertexTissuePlan, reference_positions: ArrayLike, /) -> None:
-        if not isinstance(plan, VertexTissuePlan):
-            raise TypeError("plan must be a VertexTissuePlan.")
         positions = _real_array("reference_positions", reference_positions, 2)
         expected = (plan.vertex_capacity, plan.dimension)
         if positions.shape != expected:
@@ -1484,13 +1483,10 @@ class PreparedVertexTissueDynamics(StrictModule, NonTrainableState):
     tissue: PreparedVertexTissue
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: VertexTissueDynamicsPlan, tissue: PreparedVertexTissue, /
     ) -> None:
-        if not isinstance(plan, VertexTissueDynamicsPlan):
-            raise TypeError("plan must be a VertexTissueDynamicsPlan.")
-        if not isinstance(tissue, PreparedVertexTissue):
-            raise TypeError("tissue must be a PreparedVertexTissue.")
         self.plan = plan
         self.tissue = tissue
         self.prepared_id = canonical_fingerprint(
@@ -1659,6 +1655,7 @@ class VertexTissueTopologyEvent(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     event_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kind: VertexTissueEventKind | int,
@@ -1679,8 +1676,6 @@ class VertexTissueTopologyEvent(StrictModule, NonTrainableState):
             raise ValueError(
                 "source_prepared_id must be a nonempty canonical identifier."
             )
-        if not isinstance(target_plan, VertexTissuePlan):
-            raise TypeError("target_plan must be a VertexTissuePlan.")
         positions = _real_array("target_positions", target_positions, 2)
         if positions.shape != (target_plan.vertex_capacity, target_plan.dimension):
             raise ValueError("target_positions do not match target_plan capacity.")
@@ -1718,6 +1713,7 @@ class VertexTissueTopologyCandidate(StrictModule, NonTrainableState):
     source_state_id: str = eqx.field(static=True)
     candidate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         event: VertexTissueTopologyEvent,
@@ -1726,12 +1722,6 @@ class VertexTissueTopologyCandidate(StrictModule, NonTrainableState):
         source_state_id: str,
         /,
     ) -> None:
-        if not isinstance(event, VertexTissueTopologyEvent):
-            raise TypeError("event must be a VertexTissueTopologyEvent.")
-        if not isinstance(prepared, PreparedVertexTissue):
-            raise TypeError("prepared must be a PreparedVertexTissue.")
-        if not isinstance(state, VertexTissueState):
-            raise TypeError("state must be a VertexTissueState.")
         if prepared.plan.plan_id != event.target_plan.plan_id:
             raise ValueError("Candidate prepared plan does not match its event.")
         _validate_state(prepared, state)
@@ -2192,6 +2182,7 @@ class VertexTissueTopologyResult(StrictModule, NonTrainableState):
     status: Array
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedVertexTissue,
@@ -2202,12 +2193,6 @@ class VertexTissueTopologyResult(StrictModule, NonTrainableState):
         result_id: str,
         /,
     ) -> None:
-        if not isinstance(prepared, PreparedVertexTissue):
-            raise TypeError("prepared must be a PreparedVertexTissue.")
-        if not isinstance(state, VertexTissueState):
-            raise TypeError("state must be a VertexTissueState.")
-        if not isinstance(evaluation, VertexTissueTopologyEvaluation):
-            raise TypeError("evaluation must be a VertexTissueTopologyEvaluation.")
         _validate_state(prepared, state)
         committed_ = jnp.asarray(committed)
         status_ = jnp.asarray(status, dtype=jnp.int32)

@@ -24,6 +24,7 @@ from ...discretization._conservation_ledger import (
     ConservationStageLedger,
 )
 from ...discretization.fem._reference import FiniteElementSpec
+from ...typing import checked
 
 
 class ConservativeSubcellEvidence(StrictModule, NonTrainableState):
@@ -41,11 +42,10 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
     evidence: ConservativeSubcellEvidence
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, element: FiniteElementSpec, volume_rule: Any, /) -> None:
         from ...integration._rules import reference_rule_data
 
-        if not isinstance(element, FiniteElementSpec):
-            raise TypeError("element must be FiniteElementSpec.")
         data = reference_rule_data(volume_rule)
         if data.cell != element.cell_kind:
             raise ValueError("Subcell quadrature and element cell kinds differ.")

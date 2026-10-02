@@ -18,7 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class _LatentEncoder(Protocol):
@@ -149,6 +149,7 @@ class LatentDiffusion(StrictModule):
     latent_sampler_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         representation: AbstractLatentRepresentation,
@@ -158,8 +159,6 @@ class LatentDiffusion(StrictModule):
         latent_sampler_id: str,
         model_id: str | None = None,
     ) -> None:
-        if not isinstance(representation, AbstractLatentRepresentation):
-            raise TypeError("representation must implement AbstractLatentRepresentation.")
         if not callable(latent_sampler) or not latent_sampler_id:
             raise TypeError("latent_sampler must be callable with a non-empty ID.")
         identifier = model_id or canonical_fingerprint(

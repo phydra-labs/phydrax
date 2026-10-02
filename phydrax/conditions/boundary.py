@@ -17,6 +17,7 @@ from phydrax.domain import (
 )
 
 from ..operators.differential._domain_ops import directional_derivative, dt
+from ..typing import checked
 from ._base import (
     _condition_functions,
     _fields,
@@ -100,6 +101,7 @@ class Neumann(AbstractResidualCondition):
     mode: Literal["reverse", "forward"] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -111,8 +113,6 @@ class Neumann(AbstractResidualCondition):
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
     ) -> None:
-        if not isinstance(on, DomainComponent):
-            raise TypeError("Neumann conditions require one DomainComponent.")
         if mode not in ("reverse", "forward"):
             raise ValueError("mode must be 'reverse' or 'forward'.")
         self.fields = _fields(field)
@@ -151,6 +151,7 @@ class Robin(AbstractResidualCondition):
     mode: Literal["reverse", "forward"] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -164,8 +165,6 @@ class Robin(AbstractResidualCondition):
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
     ) -> None:
-        if not isinstance(on, DomainComponent):
-            raise TypeError("Robin conditions require one DomainComponent.")
         if mode not in ("reverse", "forward"):
             raise ValueError("mode must be 'reverse' or 'forward'.")
         self.fields = _fields(field)
@@ -210,6 +209,7 @@ class Absorbing(AbstractResidualCondition):
     mode: Literal["reverse", "forward"] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -223,8 +223,6 @@ class Absorbing(AbstractResidualCondition):
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
     ) -> None:
-        if not isinstance(on, DomainComponent):
-            raise TypeError("Absorbing conditions require one DomainComponent.")
         if time_var not in on.domain.labels:
             raise KeyError(f"Label {time_var!r} is not in domain {on.domain.labels}.")
         if mode not in ("reverse", "forward"):

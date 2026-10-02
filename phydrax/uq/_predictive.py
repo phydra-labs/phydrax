@@ -20,6 +20,7 @@ from .._uncertainty import (
     UncertaintySource,
     validate_uncertainty_source,
 )
+from ..typing import checked
 from ._precision import PredictivePrecisionPolicy
 
 
@@ -89,6 +90,7 @@ class PredictiveField(StrictModule):
     precision: PredictivePrecisionPolicy
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         samples: cx.AxisArray,
@@ -98,8 +100,6 @@ class PredictiveField(StrictModule):
         valid: cx.AxisArray | None = None,
         precision: PredictivePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(samples, cx.AxisArray):
-            raise TypeError("PredictiveField.samples must be a phydrax.axes.AxisArray.")
         axes = tuple(sample_axes)
         if not axes:
             raise ValueError("PredictiveField requires at least one sample axis.")

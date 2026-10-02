@@ -26,6 +26,7 @@ from .._tree_math import (
     tree_norm as _tree_norm,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
+from ..typing import checked
 from ._iterative._types import (
     IterativeStepMetrics,
     MinimizationProblem,
@@ -447,6 +448,7 @@ class ProximalResult(StrictModule):
     diagnostics: OptimizationDiagnostics
     provenance: OptimizationProvenance
 
+    @checked
     def __init__(
         self,
         *,
@@ -460,10 +462,6 @@ class ProximalResult(StrictModule):
         diagnostics: OptimizationDiagnostics,
         provenance: OptimizationProvenance,
     ) -> None:
-        if not isinstance(diagnostics, OptimizationDiagnostics):
-            raise TypeError("diagnostics must be OptimizationDiagnostics.")
-        if not isinstance(provenance, OptimizationProvenance):
-            raise TypeError("provenance must be OptimizationProvenance.")
         self.parameters = parameters
         self.objective = jnp.asarray(objective)
         self.smooth_objective = jnp.asarray(smooth_objective)
@@ -592,6 +590,7 @@ class AbstractProximalMethod(StrictModule):
         self.minimum_step_size = minimum
         self.maximum_backtracking_steps = steps
 
+    @checked
     def prepare_state(
         self,
         problem: ProximalProblem,
@@ -600,8 +599,6 @@ class AbstractProximalMethod(StrictModule):
         *,
         args: Any,
     ) -> ProximalState:
-        if not isinstance(problem, ProximalProblem):
-            raise TypeError("problem must be a ProximalProblem.")
         parameters = _validate_real_inexact_tree(
             initial_parameters, name="initial_parameters"
         )

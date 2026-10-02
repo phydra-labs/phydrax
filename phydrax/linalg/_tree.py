@@ -22,6 +22,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._operators import (
     _AbstractCostedLinearOperator,
     _generic_adjoint,
@@ -99,6 +100,7 @@ class TreeLinearOperator(_AbstractCostedLinearOperator):
     upper: Array
     topology: TreeTopology
 
+    @checked
     def __init__(
         self,
         diagonal: ArrayLike,
@@ -110,8 +112,6 @@ class TreeLinearOperator(_AbstractCostedLinearOperator):
         space: AbstractVectorSpace | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(topology, TreeTopology):
-            raise TypeError("topology must be a prepared TreeTopology.")
         arrays = tuple(map(jnp.asarray, (diagonal, lower, upper)))
         if any(value.shape != (topology.size,) for value in arrays):
             raise ValueError(

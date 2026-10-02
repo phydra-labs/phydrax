@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -183,13 +184,10 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
     replicated_sharding: NamedSharding = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: DistributedParticleRuntimePlan, mesh: Mesh, axis_name: str, /
     ) -> None:
-        if not isinstance(plan, DistributedParticleRuntimePlan):
-            raise TypeError("plan must be DistributedParticleRuntimePlan.")
-        if not isinstance(mesh, Mesh):
-            raise TypeError("mesh must be a JAX Mesh.")
         axis = str(axis_name)
         if axis not in mesh.axis_names or len(mesh.axis_names) != 1:
             raise ValueError("Particle runtime requires one named mesh axis.")
@@ -331,9 +329,8 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
             self.runtime_id,
         )
 
+    @checked
     def _require_state(self, state: DistributedParticleState, /) -> None:
-        if not isinstance(state, DistributedParticleState):
-            raise TypeError("state must be DistributedParticleState.")
         if state.runtime_id != self.runtime_id:
             raise ValueError("Distributed particle state belongs to a different runtime.")
 

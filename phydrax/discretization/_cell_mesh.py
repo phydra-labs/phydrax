@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import Dim, Int32
+from ..typing import checked, Dim, Int32
 from ._cell_complex import (
     _canonical_entity_ids,
     _interval_complex,
@@ -289,6 +289,7 @@ class SimplicialConnectivity(StrictModule, NonTrainableState):
     boundary_masks: tuple[Array, ...]
     connectivity_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -300,8 +301,6 @@ class SimplicialConnectivity(StrictModule, NonTrainableState):
         cell_entity_signs: Sequence[ArrayLike],
         boundary_masks: Sequence[ArrayLike],
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("Simplicial connectivity requires CellComplexTopology.")
         dimension = topology.dimension
         cell_rows = np.asarray(cells, dtype=np.int32)
         vertex_rows = tuple(np.asarray(value, dtype=np.int32) for value in entities)

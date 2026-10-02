@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._compressible_contracts import (
     CompressibleKineticPopulationState,
     CompressibleKineticStepResult,
@@ -61,6 +62,7 @@ class CompressibleKineticRuntimePlan(StrictModule, NonTrainableState):
     precision_policy_id: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: PositiveCompressibleKineticPlan,
@@ -71,10 +73,6 @@ class CompressibleKineticRuntimePlan(StrictModule, NonTrainableState):
         quasi_equilibrium: FullRangeQuasiEquilibriumPlan | None = None,
         precision_policy_id: str = "homogeneous-float64",
     ) -> None:
-        if not isinstance(model, PositiveCompressibleKineticPlan):
-            raise TypeError("model must be a PositiveCompressibleKineticPlan.")
-        if not isinstance(transport, IntegerLatticeTransportPlan):
-            raise TypeError("transport must be an IntegerLatticeTransportPlan.")
         if model.rule.rule_id != transport.rule.rule_id:
             raise ValueError("Runtime model and transport velocity rules differ.")
         if quasi_equilibrium is not None and (

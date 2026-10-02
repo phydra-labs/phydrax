@@ -55,6 +55,7 @@ from ..lifecycle._restart_topology import (
     TopologyRestartPolicy,
     TopologyRestartRelation,
 )
+from ..typing import checked
 from ._distributed_pic import DistributedElectromagneticPICPlan
 from ._electromagnetic_pic import (
     ElectromagneticPICPlan,
@@ -253,6 +254,7 @@ class PICRestartPlan(StrictModule, NonTrainableState):
     analysis_plan_id: str = eqx.field(static=True)
     numeric_revision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         run: PICRestartRun,
@@ -296,8 +298,6 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         )
         if not isinstance(policy_, TopologyRestartPolicy):
             raise TypeError("policy must be TopologyRestartPolicy or None.")
-        if not isinstance(limits, ArrayArchiveLimits):
-            raise TypeError("limits must be ArrayArchiveLimits.")
         self.run = run
         self.window = window
         self.auxiliaries = auxiliary
@@ -445,6 +445,7 @@ class PICRestartPlan(StrictModule, NonTrainableState):
             return NamedSharding(run.solver.mesh, PartitionSpec())
         return SingleDeviceSharding(jax.devices()[0])
 
+    @checked
     def restore(
         self,
         repository: ArtifactRepository,
@@ -454,8 +455,6 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         parent_manifest: CheckpointManifest | None = None,
     ) -> PICRestartResult:
         """Restore, admit, and (on a new topology) repartition a published run."""
-        if not isinstance(checkpoint, CheckpointManifest):
-            raise TypeError("checkpoint must be a CheckpointManifest.")
         if (
             checkpoint.analysis_plan_id != self.analysis_plan_id
             or checkpoint.numeric_revision_id != self.numeric_revision_id

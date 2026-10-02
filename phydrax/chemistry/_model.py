@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import normalized_identifier
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 
 
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
@@ -137,6 +138,7 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
     model_artifact: ReferenceArtifactManifest | None = eqx.field(static=True)
     model_chemistry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: AbstractElectronicMethodPlan,
@@ -148,8 +150,6 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
         relativistic_id: str | None = None,
         model_artifact: ReferenceArtifactManifest | None = None,
     ) -> None:
-        if not isinstance(method, AbstractElectronicMethodPlan):
-            raise TypeError("method must implement AbstractElectronicMethodPlan.")
         if basis is not None and not isinstance(basis, BasisSetReference):
             raise TypeError("basis must be BasisSetReference or None.")
         environment_ = ElectronicEnvironmentPlan() if environment is None else environment

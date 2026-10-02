@@ -40,6 +40,7 @@ from ....linalg import (
     LinearSystem,
     solve,
 )
+from ....typing import checked
 
 
 def _surface_support_id(atlas: BoundaryAtlas, /) -> str:
@@ -125,6 +126,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
     source_support_id: str = eqx.field(static=True)
     panelization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: BoundaryAtlas,
@@ -133,8 +135,6 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
         quadrature_order: int = 8,
         geometry: CompiledGeometry | None = None,
     ) -> None:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("SurfacePanelization3D requires a BoundaryAtlas.")
         if atlas.ambient_dimension != 3 or atlas.reference_dimension != 2:
             raise ValueError("SurfacePanelization3D requires 2D charts in 3D.")
         order = int(quadrature_order)

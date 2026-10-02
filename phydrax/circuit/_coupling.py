@@ -15,6 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics._differential_algebraic import DAEStructure, DifferentialAlgebraicSystem
 from ..dynamics._linear_descriptor import LinearDescriptorSystem
+from ..typing import checked
 from ._dae import PreparedCircuitDAE
 from ._models import AbstractScatteringComponent, ScatteringResponse
 from ._ports import WavePort
@@ -28,6 +29,7 @@ class FieldPortModel(AbstractScatteringComponent):
     _ports: tuple[WavePort, ...]
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: AbstractScatteringComponent,
@@ -36,8 +38,6 @@ class FieldPortModel(AbstractScatteringComponent):
         descriptor: LinearDescriptorSystem | None = None,
         model_id: str,
     ) -> None:
-        if not isinstance(component, AbstractScatteringComponent):
-            raise TypeError("component must be AbstractScatteringComponent.")
         if descriptor is not None and not isinstance(descriptor, LinearDescriptorSystem):
             raise TypeError("descriptor must be LinearDescriptorSystem or None.")
         identifier = str(model_id)

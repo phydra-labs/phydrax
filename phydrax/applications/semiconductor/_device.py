@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...meshing import MeshAttribute, MeshPatch, MeshZone, MeshZoneRole
+from ...typing import checked
 from ...units import KELVIN, UnitDefinition, VOLT
 from ._coupled import (
     MaterialInterface,
@@ -235,6 +236,7 @@ class DevicePlan(StrictModule):
     electrothermal: bool = eqx.field(static=True)
     carrier_energy: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: TransportSupport,
@@ -258,8 +260,6 @@ class DevicePlan(StrictModule):
         density_unit: UnitDefinition = PER_CUBIC_METER,
         temperature_unit: UnitDefinition = KELVIN,
     ) -> None:
-        if not isinstance(support, TransportSupport):
-            raise TypeError("DevicePlan requires a prepared TransportSupport.")
         if not isinstance(electrothermal, bool) or not isinstance(carrier_energy, bool):
             raise TypeError(
                 "electrothermal and carrier_energy must be Boolean model choices."

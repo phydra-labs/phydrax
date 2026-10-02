@@ -23,7 +23,7 @@ from ...operators.quantum.lattice import (
     SU2SectorResourcePolicy,
 )
 from ...tensor_network import su2_fusion
-from ...typing import parse
+from ...typing import checked, parse
 
 
 FuzzyParticleStatistics: TypeAlias = Literal["boson", "fermion"]
@@ -40,6 +40,7 @@ class FuzzySphereTwoParticlePlan(StrictModule):
     resources: SU2SectorResourcePolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         twice_monopole_flux: int,
@@ -55,8 +56,6 @@ class FuzzySphereTwoParticlePlan(StrictModule):
         if flux < 1:
             raise ValueError("Fuzzy-sphere flux/statistics are invalid.")
         statistics_value = parse(statistics, FuzzyParticleStatistics, "statistics")
-        if not isinstance(resources, SU2SectorResourcePolicy):
-            raise TypeError("resources must be SU2SectorResourcePolicy.")
         all_spins = su2_fusion(flux, flux)
         allowed = tuple(
             total

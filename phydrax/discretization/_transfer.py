@@ -11,6 +11,7 @@ import equinox as eqx
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractLinearOperator
+from ..typing import checked
 from ._core import PreparationReport, resolved_identifier
 from ._spaces import DiscreteFieldSpace
 
@@ -61,6 +62,7 @@ class FieldTransfer(StrictModule, NonTrainableState):
     preparation: PreparationReport
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: DiscreteFieldSpace,
@@ -78,8 +80,6 @@ class FieldTransfer(StrictModule, NonTrainableState):
             target, DiscreteFieldSpace
         ):
             raise TypeError("source and target must be DiscreteFieldSpace values.")
-        if not isinstance(primal_operator, AbstractLinearOperator):
-            raise TypeError("primal_operator must be an AbstractLinearOperator.")
         if not primal_operator.source.compatible(
             source.vector_space
         ) or not primal_operator.target.compatible(target.vector_space):

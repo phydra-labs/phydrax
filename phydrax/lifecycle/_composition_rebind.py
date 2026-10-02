@@ -39,7 +39,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, unique_identifiers
-from ..typing import parse
+from ..typing import checked, parse
 from ._transaction import commit_candidate, TransactionalCandidate
 
 
@@ -602,6 +602,7 @@ class CompositionRebind(StrictModule):
     invalidated: tuple[str, ...] = eqx.field(static=True)
     rebind_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: Composition,
@@ -613,8 +614,6 @@ class CompositionRebind(StrictModule):
         transports: Sequence[CompositionTransport] = (),
         invalidate: Sequence[str] = (),
     ) -> None:
-        if not isinstance(source, Composition):
-            raise TypeError("source must be a Composition.")
         retained = unique_identifiers(retain, "retain", allow_empty=True, sort=True)
         invalidated = unique_identifiers(
             invalidate, "invalidate", allow_empty=True, sort=True

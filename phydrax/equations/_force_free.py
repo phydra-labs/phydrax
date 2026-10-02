@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 from ._hyperbolic_systems import AbstractAdmissibleSystem
 
 
@@ -94,6 +95,7 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
     degeneracy_tolerance: float = eqx.field(static=True)
     dominance_margin: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -105,10 +107,6 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         degeneracy_tolerance: float = 1.0e-10,
         dominance_margin: float = 1.0e-8,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
         if convention.metric_signature != "mostly_plus":
             raise ValueError("GR force-free evolution requires mostly-plus signature.")
         light_speed = float(scale.speed_of_light)
@@ -216,6 +214,7 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         del args
         return self.local_physical_flux(state, axis)
 
+    @checked
     def coordinate_flux(
         self,
         state: ArrayLike,
@@ -223,8 +222,6 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> Array:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -300,14 +297,13 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
             axis=-1,
         )
 
+    @checked
     def coordinate_characteristic_bounds(
         self,
         unit_covector: ArrayLike,
         geometry: ADMGridGeometry,
         /,
     ) -> tuple[Array, Array]:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -362,6 +358,7 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         speed = jnp.full(left.shape[:-1], self.speed_of_light, dtype=left.dtype)
         return -speed, speed
 
+    @checked
     def constraint_evaluation(
         self,
         electric_field: ArrayLike,
@@ -369,8 +366,6 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> ForceFreeConstraintEvaluation:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -425,6 +420,7 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
             self.system_id,
         )
 
+    @checked
     def constraint_current(
         self,
         electric_field: ArrayLike,
@@ -434,8 +430,6 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> ForceFreeCurrentEvaluation:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -534,6 +528,7 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
             self.system_id,
         )
 
+    @checked
     def coordinate_source(
         self,
         state: ArrayLike,
@@ -541,10 +536,6 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> Array:
-        if not isinstance(current, ForceFreeCurrentEvaluation):
-            raise TypeError("current must be ForceFreeCurrentEvaluation.")
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             current.system_id != self.system_id
             or geometry.scale_id != self.scale.scale_id
@@ -566,6 +557,7 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         )
         return source.at[..., 7].set(-lapse * self.magnetic_cleaning_rate * value[..., 7])
 
+    @checked
     def project_constraints(
         self,
         electric_field: ArrayLike,
@@ -573,8 +565,6 @@ class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> ForceFreeProjectionResult:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         electric = jnp.asarray(electric_field)
         magnetic = jnp.asarray(magnetic_field, dtype=electric.dtype)
         metric = geometry.spatial_metric.astype(electric.dtype)

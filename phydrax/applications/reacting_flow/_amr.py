@@ -22,6 +22,7 @@ from ...discretization.amr._core import (
     BlockLevelState,
 )
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
+from ...typing import checked
 
 
 class ReactingAMRSynchronizationEvidence(StrictModule):
@@ -52,6 +53,7 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
     maximum_temperature_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -62,8 +64,6 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         maximum_temperature_iterations: int = 64,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         pressure = float(thermodynamic_pressure)
         sweeps = int(correction_sweeps)
         tolerance_ = float(tolerance)
@@ -128,6 +128,7 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         residual = enthalpy(temperature) - enthalpy_density
         return temperature, residual
 
+    @checked
     def synchronize(
         self,
         level: int,
@@ -139,8 +140,6 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
     ) -> tuple[BlockHierarchyState, Array, ReactingAMRSynchronizationEvidence]:
         del time, args
         level_ = int(level)
-        if not isinstance(hierarchy, BlockHierarchyState):
-            raise TypeError("hierarchy must be BlockHierarchyState.")
         if not 0 <= level_ < len(hierarchy.levels):
             raise ValueError("Reacting AMR level is out of range.")
         step = jnp.asarray(step_size, dtype=hierarchy.levels[level_].values.dtype)

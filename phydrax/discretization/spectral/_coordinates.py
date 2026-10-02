@@ -22,6 +22,7 @@ from ...linalg import (
     ArraySpace,
     RealCoordinateEvidence,
 )
+from ...typing import checked
 from ._space import TensorSpectralDiscretization
 
 
@@ -45,6 +46,7 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
     conjugate_pair_count: int = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -54,8 +56,6 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if any(isinstance(size, bool) for size in component_shape):
             raise TypeError("component_shape dimensions must be integers.")
         components = tuple(index(size) for size in component_shape)

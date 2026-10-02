@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 
 from ..._strict import Strict
+from ...typing import checked
 
 
 deg2rad = pi / 180.0
@@ -1329,9 +1330,8 @@ class SGP4Coefficients(Strict):
 
     _values: Mapping[str, object]
 
+    @checked
     def __init__(self, builder: _SGP4CoefficientBuilder, /) -> None:
-        if not isinstance(builder, _SGP4CoefficientBuilder):
-            raise TypeError("builder must be an SGP4 coefficient builder.")
         self._values = MappingProxyType(vars(builder).copy())
 
     def __getattr__(self, name: str) -> Any:

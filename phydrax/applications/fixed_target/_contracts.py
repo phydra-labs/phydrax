@@ -14,6 +14,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...measurement import ExposureKind, ExposureRecord
 from ...particle_physics import HEPProviderBinding
+from ...typing import checked
 
 
 class FixedTargetPlan(StrictModule, NonTrainableState):
@@ -158,11 +159,10 @@ class FixedTargetChainRecord(StrictModule, NonTrainableState):
     closed: bool = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: FixedTargetPlan, stages: Sequence[FixedTargetStageRecord], /
     ) -> None:
-        if not isinstance(plan, FixedTargetPlan):
-            raise TypeError("plan must be FixedTargetPlan.")
         stages_ = tuple(stages)
         if not stages_ or any(
             not isinstance(value, FixedTargetStageRecord) for value in stages_

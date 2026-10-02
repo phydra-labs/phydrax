@@ -21,6 +21,7 @@ from ..._external_runtime import (
     NativeWorkerPolicy,
 )
 from ...logging import emit
+from ...typing import checked
 from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
 
 
@@ -148,6 +149,7 @@ class ProviderWorker:
     def identity(self) -> NativeWorkerIdentity:
         return self.session().identity
 
+    @checked
     def call(
         self,
         operation: str,
@@ -157,8 +159,6 @@ class ProviderWorker:
         *,
         limits: MeshingLimits,
     ) -> NativeWorkerCall:
-        if not isinstance(limits, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits.")
         # Holding the provider lock across the call keeps a concurrent caller from
         # replacing or closing this session between its selection and its use.
         with self._lock:

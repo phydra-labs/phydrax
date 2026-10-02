@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._information_operator import InformationMetricOperator
 from ._metric import RiemannianMetric
@@ -36,6 +37,7 @@ class HessianGeometry(StrictModule):
     potential_function: Callable[[Array], Array]
     chart: CoordinateChart
 
+    @checked
     def __init__(
         self,
         potential: Callable[[Array], Array],
@@ -45,8 +47,6 @@ class HessianGeometry(StrictModule):
     ) -> None:
         if not callable(potential):
             raise TypeError("Hessian potential must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Hessian geometry requires a CoordinateChart.")
         self.potential_function = potential
         self.chart = chart
 

@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticUnitSystem
+from ...typing import checked
 
 
 class HarmonicThermodynamicsResult(StrictModule, NonTrainableState):
@@ -99,6 +100,7 @@ class HarmonicThermodynamicsPlan(StrictModule, NonTrainableState):
     maximum_scalar_evaluations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         qpoint_weights: ArrayLike,
@@ -131,8 +133,6 @@ class HarmonicThermodynamicsPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Temperatures must be finite, positive, and strictly increasing."
             )
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         if int(maximum_scalar_evaluations) <= 0:
             raise ValueError("maximum_scalar_evaluations must be positive.")
         self.qpoint_weights = jnp.asarray(weights)
@@ -276,6 +276,7 @@ class QuasiHarmonicPlan(StrictModule, NonTrainableState):
     minimum_boundary_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         volumes: ArrayLike,
@@ -289,8 +290,6 @@ class QuasiHarmonicPlan(StrictModule, NonTrainableState):
         volume = np.asarray(volumes, dtype=np.float64)
         static = np.asarray(static_energies, dtype=np.float64)
         frequency = np.asarray(frequencies_by_volume, dtype=np.float64)
-        if not isinstance(thermodynamics, HarmonicThermodynamicsPlan):
-            raise TypeError("thermodynamics must be HarmonicThermodynamicsPlan.")
         if (
             volume.ndim != 1
             or volume.size < 5

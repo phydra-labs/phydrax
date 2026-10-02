@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReleaseGateEvidence
+from ..typing import checked
 from ._platform_support import (
     _identifier,
     _nonnegative_integer,
@@ -133,9 +134,8 @@ class TensorNetworkQualificationProfile(StrictModule, NonTrainableState):
                 return tolerance
         raise KeyError(f"Claim {claim_.value!r} is not required by this profile.")
 
+    @checked
     def supports(self, support: TensorNetworkSupportTuple, /) -> bool:
-        if not isinstance(support, TensorNetworkSupportTuple):
-            raise TypeError("support must be TensorNetworkSupportTuple.")
         return support.support_tuple_id in {
             value.support_tuple_id for value in self.supported_tuples
         }

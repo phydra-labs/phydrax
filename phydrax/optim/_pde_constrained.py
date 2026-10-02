@@ -31,6 +31,7 @@ from ..linalg import (
     LinearSolveStatus,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._bounds import _projected_displacement
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import ArmijoLineSearch
@@ -446,6 +447,7 @@ class StateEquationResult(StrictModule):
     diagnostics: OptimizationDiagnostics
     acceptance: StateAcceptanceEvidence
 
+    @checked
     def __init__(
         self,
         state: PyTree[Any],
@@ -462,10 +464,6 @@ class StateEquationResult(StrictModule):
         if status_.shape != ():
             raise ValueError("State equation status must be scalar.")
         self.status = status_
-        if not isinstance(diagnostics, OptimizationDiagnostics):
-            raise TypeError("diagnostics must be OptimizationDiagnostics.")
-        if not isinstance(acceptance, StateAcceptanceEvidence):
-            raise TypeError("acceptance must be StateAcceptanceEvidence.")
         self.diagnostics = diagnostics
         self.acceptance = acceptance
 
@@ -865,6 +863,7 @@ class StateDesignResult(StrictModule):
     state_acceptance: StateAcceptanceEvidence
     adjoint_acceptance: AdjointAcceptanceEvidence | None
 
+    @checked
     def __init__(
         self,
         state: PyTree[Any],
@@ -890,18 +889,12 @@ class StateDesignResult(StrictModule):
         status_ = jnp.asarray(status, dtype=jnp.int32)
         if status_.shape != ():
             raise ValueError("State-design status must be scalar.")
-        if not isinstance(diagnostics, OptimizationDiagnostics):
-            raise TypeError("diagnostics must be OptimizationDiagnostics.")
-        if not isinstance(provenance, OptimizationProvenance):
-            raise TypeError("provenance must be OptimizationProvenance.")
         if certificate is not None and not isinstance(
             certificate, ConstrainedOptimalityCertificate
         ):
             raise TypeError(
                 "certificate must be a ConstrainedOptimalityCertificate or None."
             )
-        if not isinstance(state_acceptance, StateAcceptanceEvidence):
-            raise TypeError("state_acceptance must be StateAcceptanceEvidence.")
         if adjoint_acceptance is not None and not isinstance(
             adjoint_acceptance, AdjointAcceptanceEvidence
         ):

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._geometry import CrackFrontGeometry
 
 
@@ -76,9 +77,8 @@ class IsotropicWilliamsCrackTipBasis(StrictModule, NonTrainableState):
     material: CrackTipMaterial
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, material: CrackTipMaterial, /) -> None:
-        if not isinstance(material, CrackTipMaterial):
-            raise TypeError("material must be CrackTipMaterial.")
         self.material = material
         self.basis_id = canonical_fingerprint(
             {
@@ -171,6 +171,7 @@ class ShiftedCrackEnrichment(StrictModule, NonTrainableState):
     tip_id: int = eqx.field(static=True)
     enrichment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CrackFrontGeometry,
@@ -181,10 +182,6 @@ class ShiftedCrackEnrichment(StrictModule, NonTrainableState):
         *,
         tip_id: int,
     ) -> None:
-        if not isinstance(geometry, CrackFrontGeometry):
-            raise TypeError("geometry must be CrackFrontGeometry.")
-        if not isinstance(basis, IsotropicWilliamsCrackTipBasis):
-            raise TypeError("basis must be IsotropicWilliamsCrackTipBasis.")
         heaviside_nodes = np.asarray(heaviside_node_points)
         branch_nodes = np.asarray(branch_node_points)
         identifier = int(tip_id)

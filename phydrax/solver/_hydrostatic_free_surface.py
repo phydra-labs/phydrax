@@ -28,6 +28,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 class HydrostaticFreeSurfaceResult(StrictModule):
@@ -54,6 +55,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: PreparedHydrostaticGrid,
@@ -63,8 +65,6 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
     ) -> None:
-        if not isinstance(geometry, PreparedHydrostaticGrid):
-            raise TypeError("geometry must be PreparedHydrostaticGrid.")
         gravity_ = float(gravity)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)

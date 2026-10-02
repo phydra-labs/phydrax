@@ -29,7 +29,7 @@ from ...linalg.eigen import (
     GeneralizedEigenproblem,
 )
 from ...operators.quantum.gaussian import FactorizedERITensor
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import ENERGY, LENGTH, UnitDefinition
 from .._result import ElectronicEnergyLedger
 from ._electrostatics import GTHPseudopotentialPlan
@@ -171,6 +171,7 @@ class GammaSCFResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         total_energy: ArrayLike,
@@ -216,10 +217,6 @@ class GammaSCFResult(StrictModule, NonTrainableState):
             raise ValueError(
                 "Gamma SCF orbitals, density, classification, or sources are invalid."
             )
-        if not isinstance(energy_ledger, ElectronicEnergyLedger):
-            raise TypeError("energy_ledger must be ElectronicEnergyLedger.")
-        if not isinstance(evidence, GammaSCFEvidence):
-            raise TypeError("evidence must be GammaSCFEvidence.")
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise TypeError("Gamma energy_unit must have energy dimension.")
         if energy_ledger.energy_unit != energy_unit:
@@ -727,6 +724,7 @@ class GammaGDFPlan(StrictModule, NonTrainableState):
     classification: GammaSCFClassification = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         one_body: ArrayLike,
@@ -792,10 +790,6 @@ class GammaGDFPlan(StrictModule, NonTrainableState):
             raise ValueError("Gamma GDF integrals, electrons, or SCF policy are invalid.")
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise TypeError("Gamma GDF energy_unit must have energy dimension.")
-        if not isinstance(source_manifest, PeriodicProvenanceManifest):
-            raise TypeError(
-                "Gamma GDF source_manifest must be PeriodicProvenanceManifest."
-            )
         if source_manifest.source_id != factors.source_id:
             raise ValueError(
                 "Gamma GDF factor source must match the governed source manifest."

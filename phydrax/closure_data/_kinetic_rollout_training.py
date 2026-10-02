@@ -49,7 +49,7 @@ from ..discretization.discrete_velocity._smooth_compressible import (
 from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._kinetic_equilibrium import LearnedEnergyEquilibriumBindingPlan
 from ._kinetic_rollout import (
     PreparedSmoothCompressibleRolloutDataset,
@@ -118,6 +118,7 @@ class KineticRolloutTrainingPlan(StrictModule):
     rejection_budget: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics,
@@ -138,12 +139,6 @@ class KineticRolloutTrainingPlan(StrictModule):
         replay_schedules: tuple[PreparedReplaySchedule, ...] = (),
         rejection_budget: int = 64,
     ) -> None:
-        if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
-            raise TypeError(
-                "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."
-            )
-        if not isinstance(binding_plan, LearnedEnergyEquilibriumBindingPlan):
-            raise TypeError("binding_plan must be LearnedEnergyEquilibriumBindingPlan.")
         horizons = tuple(
             _positive_integer(value, "curriculum horizon")
             for value in curriculum_horizons
@@ -841,6 +836,7 @@ class KineticRolloutTrainingState(StrictModule):
     model_structure_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -862,8 +858,6 @@ class KineticRolloutTrainingState(StrictModule):
             best_model, AbstractArrayModel
         ):
             raise TypeError("Training state model snapshots must be array models.")
-        if not isinstance(training, TrainingKernelState):
-            raise TypeError("training must be a TrainingKernelState.")
         structure = _model_structure_id(model)
         if (
             structure != _model_structure_id(best_model)
@@ -981,6 +975,7 @@ class KineticRolloutTrainingResult(StrictModule):
     termination: KineticRolloutTermination = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: KineticRolloutTrainingState,
@@ -988,8 +983,6 @@ class KineticRolloutTrainingResult(StrictModule):
         termination: KineticRolloutTermination,
         /,
     ) -> None:
-        if not isinstance(state, KineticRolloutTrainingState):
-            raise TypeError("state must be KineticRolloutTrainingState.")
         attempts_ = tuple(attempts)
         if any(not isinstance(value, KineticRolloutUpdateResult) for value in attempts_):
             raise TypeError("attempts must contain KineticRolloutUpdateResult values.")

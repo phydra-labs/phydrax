@@ -16,6 +16,7 @@ from phydrax import ein
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import MTImpedanceData
+from ....typing import checked
 from ._layered import LayeredEarthModel, VACUUM_PERMEABILITY_H_M
 
 
@@ -82,11 +83,10 @@ class MagnetotelluricResponsePlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_layered(
         cls, model: LayeredEarthModel, frequencies_Hz: ArrayLike, /
     ) -> tuple[MagnetotelluricResponsePlan, Array]:
-        if not isinstance(model, LayeredEarthModel):
-            raise TypeError("Layered MT response requires LayeredEarthModel.")
         plan = cls(frequencies_Hz)
         scalar = model.magnetotelluric_impedance(plan.frequencies_Hz)
         tensor = jnp.zeros((scalar.size, 2, 2), dtype=scalar.dtype)
@@ -139,14 +139,13 @@ class MagnetotelluricResponsePlan(StrictModule, NonTrainableState):
             impedance, tipper, phase_tensor, apparent, phase, finite
         )
 
+    @checked
     def log_likelihood(
         self,
         prediction_ohm: ArrayLike,
         data: MTImpedanceData,
         /,
     ) -> Array:
-        if not isinstance(data, MTImpedanceData):
-            raise TypeError("MT likelihood requires qualified MTImpedanceData.")
         prediction = jnp.asarray(prediction_ohm)
         if (
             prediction.shape != data.impedance_ohm.shape

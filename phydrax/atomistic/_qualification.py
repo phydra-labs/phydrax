@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleMethodMaturity
+from ..typing import checked
 
 
 class AtomisticDynamicsQualificationClaim(StrEnum):
@@ -144,6 +145,7 @@ class AtomisticDynamicsQualificationResult(StrictModule, NonTrainableState):
     profile_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maturity: ParticleMethodMaturity,
@@ -154,8 +156,6 @@ class AtomisticDynamicsQualificationResult(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(maturity, ParticleMethodMaturity):
             raise TypeError("maturity must be ParticleMethodMaturity.")
-        if not isinstance(profile, AtomisticDynamicsQualificationProfile):
-            raise TypeError("profile must be AtomisticDynamicsQualificationProfile.")
         if any(
             not isinstance(value, AtomisticDynamicsClaimEvidence) for value in evidence
         ):

@@ -24,6 +24,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import checked
 from ._rod_loads import RodLoadLedger
 from ._rod_reduced_dynamics import (
     PreparedReducedRodDynamics,
@@ -65,6 +66,7 @@ class ReducedRodIntegrationState(StrictModule):
     time: Array
     step_index: Array
 
+    @checked
     def __init__(
         self,
         reduced_state: ReducedRodState,
@@ -73,10 +75,6 @@ class ReducedRodIntegrationState(StrictModule):
         step_index: ArrayLike = 0,
         /,
     ) -> None:
-        if not isinstance(reduced_state, ReducedRodState):
-            raise TypeError("reduced_state must be a ReducedRodState.")
-        if not isinstance(material_state, ReducedRodMaterialState):
-            raise TypeError("material_state must be a ReducedRodMaterialState.")
         time_ = jnp.asarray(time, dtype=reduced_state.values.dtype)
         step_ = jnp.asarray(step_index, dtype=jnp.int32)
         if time_.shape != () or step_.shape != ():

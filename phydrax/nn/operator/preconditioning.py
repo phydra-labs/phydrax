@@ -31,6 +31,7 @@ from ...linalg import (
     PreconditionerSource,
     SubspaceCorrectionTerm,
 )
+from ...typing import checked
 from .data import FunctionSamples, OperatorBatch
 from .eigen import operator_trial_subspace, OperatorTrialSubspace
 from .training._execution import PreparedOperatorInput
@@ -76,6 +77,7 @@ class OperatorSubspaceCorrection(StrictModule, NonTrainableState):
     transfer_id: str = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trial: OperatorTrialSubspace,
@@ -88,12 +90,6 @@ class OperatorSubspaceCorrection(StrictModule, NonTrainableState):
         transfer_id: str,
         preparation_id: str,
     ) -> None:
-        if not isinstance(trial, OperatorTrialSubspace):
-            raise TypeError("trial must be an OperatorTrialSubspace.")
-        if not isinstance(transferred_subspace, LinearSubspace):
-            raise TypeError("transferred_subspace must be a LinearSubspace.")
-        if not isinstance(term, SubspaceCorrectionTerm):
-            raise TypeError("term must be a SubspaceCorrectionTerm.")
         identifiers = tuple(
             str(value)
             for value in (
@@ -251,6 +247,7 @@ class OperatorCorrectionBinding(StrictModule, ExplicitFreeze):
     condition_ids: tuple[str, ...] = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trained_operator: TrainedOperator,
@@ -266,16 +263,12 @@ class OperatorCorrectionBinding(StrictModule, ExplicitFreeze):
         correction_field_name: str,
         condition_ids: Sequence[str],
     ) -> None:
-        if not isinstance(trained_operator, TrainedOperator):
-            raise TypeError("trained_operator must be a TrainedOperator.")
         if not trained_operator.artifact_id:
             raise ValueError("Operator correction requires a trained artifact identity.")
         if trained_operator.sharding_policy is not None:
             raise ValueError(
                 "Operator correction does not yet support sharded inference."
             )
-        if not isinstance(template, OperatorBatch):
-            raise TypeError("template must be an OperatorBatch.")
         if template.case_shape:
             raise ValueError("Operator correction templates must have no case axes.")
         spaces = (solver_space, model_residual_space, model_correction_space)
@@ -408,16 +401,13 @@ class PreparedOperatorCorrection(StrictModule, ExplicitFreeze):
     prepared_input: PreparedOperatorInput
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binding: OperatorCorrectionBinding,
         prepared_input: PreparedOperatorInput,
         /,
     ) -> None:
-        if not isinstance(binding, OperatorCorrectionBinding):
-            raise TypeError("binding must be an OperatorCorrectionBinding.")
-        if not isinstance(prepared_input, PreparedOperatorInput):
-            raise TypeError("prepared_input must be a PreparedOperatorInput.")
         if (
             prepared_input.plan_fingerprint
             != binding.trained_operator.execution_plan.fingerprint
@@ -472,14 +462,13 @@ class TrainedOperatorPreconditioner(AbstractPreconditioner):
 
     prepared: PreparedOperatorCorrection
 
+    @checked
     def __init__(
         self,
         prepared: PreparedOperatorCorrection,
         setup_operator: AbstractLinearOperator,
         /,
     ) -> None:
-        if not isinstance(prepared, PreparedOperatorCorrection):
-            raise TypeError("prepared must be a PreparedOperatorCorrection.")
         _validate_setup_operator(setup_operator, prepared.binding.solver_space)
         self.prepared = prepared
         self.space = prepared.binding.solver_space.vector_space
@@ -513,16 +502,13 @@ class TrainedOperatorPreconditionerBuilder(AbstractPreconditionerBuilder):
     cost: OperatorCorrectionCost
     _builder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binding: OperatorCorrectionBinding,
         cost: OperatorCorrectionCost,
         /,
     ) -> None:
-        if not isinstance(binding, OperatorCorrectionBinding):
-            raise TypeError("binding must be an OperatorCorrectionBinding.")
-        if not isinstance(cost, OperatorCorrectionCost):
-            raise TypeError("cost must be an OperatorCorrectionCost.")
         self.binding = binding
         self.cost = cost
         self._builder_id = canonical_fingerprint(

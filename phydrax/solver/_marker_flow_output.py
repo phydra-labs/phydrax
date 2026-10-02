@@ -23,6 +23,7 @@ from .._publication import publish_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import FiniteVolumeDiscretization
+from ..typing import checked
 
 
 def _h5py() -> ModuleType:
@@ -53,6 +54,7 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
     marker_ids: np.ndarray
     output_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: str | Path,
@@ -60,8 +62,6 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
         marker_ids: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
         ids = np.asarray(marker_ids)
         if ids.ndim != 1 or np.unique(ids).size != ids.size:
             raise ValueError("marker_ids must be a unique rank-one array.")

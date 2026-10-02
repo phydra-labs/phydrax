@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import checked
 from ._beam import _late_sign, AcceleratorBunch, AcceleratorConvention
 
 
@@ -100,6 +101,7 @@ class RingTrackingPlan(StrictModule, NonTrainableState):
     vertical_aperture: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         one_turn: SymplecticMapPlan,
@@ -109,8 +111,6 @@ class RingTrackingPlan(StrictModule, NonTrainableState):
         horizontal_aperture: float,
         vertical_aperture: float,
     ) -> None:
-        if not isinstance(one_turn, SymplecticMapPlan):
-            raise TypeError("one_turn must be SymplecticMapPlan.")
         turns = int(turn_count)
         horizontal = float(horizontal_aperture)
         vertical = float(vertical_aperture)

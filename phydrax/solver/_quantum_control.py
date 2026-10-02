@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..control._parameterization import AbstractControlParameterization
+from ..typing import checked
 from ._local_hamiltonian import (
     FixedGridLocalHamiltonian,
     LocalHamiltonian,
@@ -68,6 +69,7 @@ class QuantumControlLine(StrictModule):
     valid: Array = fixed_field()
     line_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterization: AbstractControlParameterization,
@@ -80,10 +82,6 @@ class QuantumControlLine(StrictModule):
         support_stop: ArrayLike,
         line_id: str | None = None,
     ) -> None:
-        if not isinstance(parameterization, AbstractControlParameterization):
-            raise TypeError(
-                "parameterization must be an AbstractControlParameterization."
-            )
         if parameterization.control_shape != ():
             raise ValueError("Quantum control lines require scalar control_shape=().")
         in_phase = jnp.asarray(in_phase_coefficients)
@@ -195,6 +193,7 @@ class QuantumControlSchedule(StrictModule):
     valid: Array = fixed_field()
     schedule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lines: Sequence[QuantumControlLine],
@@ -208,8 +207,6 @@ class QuantumControlSchedule(StrictModule):
             isinstance(line, QuantumControlLine) for line in selected
         ):
             raise ValueError("lines must contain at least one QuantumControlLine.")
-        if not isinstance(transfer, LinearQuantumControlTransfer):
-            raise TypeError("transfer must be a LinearQuantumControlTransfer.")
         if len(selected) != transfer.line_count:
             raise ValueError("Control line count must match the transfer matrix.")
         finite = (

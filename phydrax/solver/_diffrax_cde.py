@@ -18,6 +18,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..linalg import AbstractRealCoordinateMap
 from ..stochastic import AbstractRoughControl
+from ..typing import checked
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._diffrax_state_packing import (
@@ -54,6 +55,7 @@ class ControlledDifferentialSolution(StrictModule):
     control_dimension: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         differential_solution: DifferentialSolution,
@@ -63,10 +65,6 @@ class ControlledDifferentialSolution(StrictModule):
         problem_id: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(differential_solution, DifferentialSolution):
-            raise TypeError("differential_solution must be a DifferentialSolution.")
-        if not isinstance(path, AbstractDifferentiableDrivingPath):
-            raise TypeError("path must be an AbstractDifferentiableDrivingPath.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")

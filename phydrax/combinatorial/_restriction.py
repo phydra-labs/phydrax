@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._problem import AbstractCombinatorialSpace
 from ._types import CombinatorialResult
 
@@ -43,6 +44,7 @@ class CombinatorialFeatureRestriction(StrictModule, NonTrainableState):
     space_id: str = eqx.field(static=True)
     restriction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: AbstractBoundableCombinatorialSpace,
@@ -51,8 +53,6 @@ class CombinatorialFeatureRestriction(StrictModule, NonTrainableState):
         lower: Any | None = None,
         upper: Any | None = None,
     ) -> None:
-        if not isinstance(space, AbstractBoundableCombinatorialSpace):
-            raise TypeError("space must be an AbstractBoundableCombinatorialSpace.")
         specification = space.feature_spec()
         spec_leaves, treedef = jax.tree_util.tree_flatten(specification)
         global_lower, global_upper = space.feature_bounds()

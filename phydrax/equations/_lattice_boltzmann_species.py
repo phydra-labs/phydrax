@@ -38,6 +38,7 @@ from ..discretization.lattice_boltzmann._species import (
     SpeciesLatticeBoltzmannState,
     SpeciesLedger,
 )
+from ..typing import checked
 from ._chemical_species import ChemicalSpeciesSchema
 
 
@@ -52,6 +53,7 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
     volumetric_source: Array
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -67,10 +69,6 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         boundary_values = tuple(boundaries)
         if not name_:
             raise ValueError("Species LBM problem name must be nonempty.")
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be a ChemicalSpeciesSchema.")
-        if not isinstance(transport, SpeciesLatticeBoltzmannPlan):
-            raise TypeError("transport must be a SpeciesLatticeBoltzmannPlan.")
         if transport.species_count != schema.species_count:
             raise ValueError("Species schema and transport species counts must match.")
         if any(
@@ -127,6 +125,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
     program_manifest: KineticProgramManifest
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: SpeciesLatticeBoltzmannProblemIR,
@@ -142,12 +141,6 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         dx = float(spacing)
         dt = float(step_size)
         measure = np.asarray(cell_measure, dtype=np.float64)
-        if not isinstance(problem, SpeciesLatticeBoltzmannProblemIR):
-            raise TypeError("problem must be a SpeciesLatticeBoltzmannProblemIR.")
-        if not isinstance(lattice, LatticeBoltzmannVelocitySet):
-            raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
-        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
-            raise TypeError("precision must be a LatticeBoltzmannPrecisionPolicy.")
         if len(shape) != lattice.dimension or any(value <= 0 for value in shape):
             raise ValueError(
                 "spatial_shape must contain one positive size per dimension."

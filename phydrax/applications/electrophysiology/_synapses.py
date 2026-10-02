@@ -18,6 +18,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
@@ -1183,6 +1184,7 @@ class EligibilitySTDPPlan(StrictModule, NonTrainableState):
     eligibility_bound: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pair_stdp: PairSTDPPlan,
@@ -1192,8 +1194,6 @@ class EligibilitySTDPPlan(StrictModule, NonTrainableState):
         learning_rate: float = 1.0,
         eligibility_bound: float = 1.0e6,
     ) -> None:
-        if not isinstance(pair_stdp, PairSTDPPlan):
-            raise TypeError("pair_stdp must be a PairSTDPPlan.")
         self.pair_stdp = pair_stdp
         self.eligibility_time_constant_ms = _positive(
             eligibility_time_constant_ms, "eligibility_time_constant_ms"

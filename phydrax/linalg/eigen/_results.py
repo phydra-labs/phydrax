@@ -13,7 +13,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ._policies import EigenDifferentiationMode, EigenTarget
 
 
@@ -166,6 +166,7 @@ class EigenSolveResult(StrictModule):
     diagnostics: EigenSolveDiagnostics
     provenance: EigenSolveProvenance
 
+    @checked
     def __init__(
         self,
         eigenvalues: Any,
@@ -194,10 +195,6 @@ class EigenSolveResult(StrictModule):
             )
         if converged_.shape != values.shape:
             raise ValueError("converged must provide one flag per requested mode.")
-        if not isinstance(diagnostics, EigenSolveDiagnostics):
-            raise TypeError("diagnostics must be EigenSolveDiagnostics.")
-        if not isinstance(provenance, EigenSolveProvenance):
-            raise TypeError("provenance must be EigenSolveProvenance.")
         if diagnostics.mode_mask.shape != values.shape:
             raise ValueError("Result and diagnostic mode capacities must match.")
         self.eigenvalues = values

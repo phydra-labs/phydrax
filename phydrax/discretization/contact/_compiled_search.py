@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..spatial import morton_encode_integer
 from ._stencils import ContactStencilKind
 from ._surface import PreparedCollisionScene
@@ -165,6 +166,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
     maximum_traversal_visits: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scene: PreparedCollisionScene,
@@ -178,8 +180,6 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         maximum_tree_depth: int = 64,
         maximum_traversal_visits: int,
     ) -> None:
-        if not isinstance(scene, PreparedCollisionScene):
-            raise TypeError("scene must be PreparedCollisionScene.")
         capacities = (
             int(edge_vertex_capacity),
             int(edge_edge_capacity),
@@ -837,6 +837,7 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
     activation_distance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scene: PreparedCollisionScene,
@@ -847,8 +848,6 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         face_vertex_capacity: int,
         activation_distance: float,
     ) -> None:
-        if not isinstance(scene, PreparedCollisionScene):
-            raise TypeError("scene must be PreparedCollisionScene.")
         capacities = (
             int(edge_vertex_capacity),
             int(edge_edge_capacity),

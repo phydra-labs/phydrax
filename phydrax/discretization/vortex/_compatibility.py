@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._capabilities import VortexDiffusionCapabilities, VortexVelocityCapabilities
 from ._source import VortexSourceState, VortexTargetState
 
@@ -45,6 +46,7 @@ class VortexVelocityCompatibility(StrictModule, NonTrainableState):
     capabilities_id: str = eqx.field(static=True)
     compatibility_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capabilities: VortexVelocityCapabilities,
@@ -56,8 +58,6 @@ class VortexVelocityCompatibility(StrictModule, NonTrainableState):
         target_topology: str,
         requested_fields: tuple[str, ...] = ("velocity",),
     ) -> None:
-        if not isinstance(capabilities, VortexVelocityCapabilities):
-            raise TypeError("capabilities must be VortexVelocityCapabilities.")
         sources, targets = int(source_capacity), int(target_capacity)
         if sources <= 0 or targets <= 0:
             raise ValueError("Prepared vortex capacities must be positive.")

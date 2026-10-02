@@ -23,7 +23,7 @@ from .._term import AbstractSamplingTerm
 from ..integration import IntegrationPrecisionPolicy
 from ..operators.differential._dimension_estimators import DimensionOperatorSamples
 from ..operators.differential._stochastic_estimators import StochasticOperatorSamples
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._randomized_quadratic import event_inner as _event_inner, randomized_squared_mean
 
 
@@ -325,14 +325,13 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
             batch_id=self.label or "randomized-residual",
         )
 
+    @checked
     def _evaluate(
         self,
         functions: Mapping[str, DomainFunction],
         batch: RandomizedResidualBatch,
         /,
     ) -> tuple[RandomizedResidualSamples, RandomizedResidualSamples | None]:
-        if not isinstance(batch, RandomizedResidualBatch):
-            raise TypeError("batch must be a RandomizedResidualBatch.")
         left = _operator_samples(
             self.residual_evaluator(functions, batch.collocation, batch.left_key)
         )

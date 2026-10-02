@@ -88,6 +88,17 @@ def constructors() -> None:
     phx.typing.validate(catalog)
 
 
+@pt.checked
+def scaled_masses(catalog: ChemicalComponentCatalog, scale: float, /) -> jax.Array:
+    return scale * catalog.molar_masses
+
+
+def checked_signatures(catalog: ChemicalComponentCatalog) -> None:
+    assert_type(scaled_masses(catalog, 2.0), jax.Array)
+    scaled_masses(catalog)  # ty: ignore[missing-argument]
+    scaled_masses("catalog", 2.0)  # ty: ignore[invalid-argument-type]
+
+
 def singular_subspaces(problem: SVDProblem, key: pt.PRNGKey, probe: jax.Array) -> None:
     policy = SVDSolvePolicy(RandomizedSVD(), count=2, differentiation="projector")
     prepared = prepare_svd(problem, policy, key=key)

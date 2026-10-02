@@ -24,6 +24,7 @@ from ...linalg import (
 )
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ...metrix._spacetime_conventions import RelativityConvention
+from ...typing import checked
 from ._derivatives import FourthOrderDerivatives
 from ._gauge import AbstractZ4cGauge
 from ._grid import FixedGridGeometry
@@ -226,6 +227,7 @@ class Z4cSystem(StrictModule, NonTrainableState):
     constraint_tolerance: float = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -238,14 +240,10 @@ class Z4cSystem(StrictModule, NonTrainableState):
         einstein_coupling: float = 8.0 * pi,
         constraint_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if scale.gravitational_constant != 1 or scale.speed_of_light != 1:
             raise ValueError(
                 "Z4cSystem requires explicitly declared geometric G=c=1 units."
             )
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be a RelativityConvention.")
         if (
             convention.metric_signature != "mostly_plus"
             or convention.riemann_sign != 1
@@ -285,9 +283,8 @@ class Z4cSystem(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def geometry_lineage_id(self, grid: FixedGridGeometry, /) -> str:
-        if not isinstance(grid, FixedGridGeometry):
-            raise TypeError("grid must be a FixedGridGeometry.")
         return canonical_fingerprint(
             {
                 "kind": "z4c-adm-grid-geometry-lineage",

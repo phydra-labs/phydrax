@@ -14,7 +14,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._spatial_noise import SpatialNoiseBasis
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
@@ -28,6 +28,7 @@ class FieldNoiseGeometry(StrictModule):
     field_space_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: SpatialNoiseBasis,
@@ -35,8 +36,6 @@ class FieldNoiseGeometry(StrictModule):
         *,
         field_space_id: str | None = None,
     ) -> None:
-        if not isinstance(basis, SpatialNoiseBasis):
-            raise TypeError("basis must be a SpatialNoiseBasis.")
         if jnp.iscomplexobj(basis.modes):
             raise TypeError(
                 "FieldNoiseGeometry requires a real basis; use explicit complex coordinates."
@@ -117,6 +116,7 @@ class FieldGaussianDiffusion(StrictModule):
     subspace_process: SubspaceGaussianDiffusion
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: FieldNoiseGeometry,
@@ -125,12 +125,6 @@ class FieldGaussianDiffusion(StrictModule):
         *,
         process_id: str | None = None,
     ) -> None:
-        if not isinstance(geometry, FieldNoiseGeometry):
-            raise TypeError("geometry must be a FieldNoiseGeometry.")
-        if not isinstance(coefficient_process, AbstractGaussianDiffusion):
-            raise TypeError(
-                "coefficient_process must implement AbstractGaussianDiffusion."
-            )
         if coefficient_process.state_shape != (geometry.rank,):
             raise ValueError(
                 "Coefficient diffusion dimension must match field noise rank."

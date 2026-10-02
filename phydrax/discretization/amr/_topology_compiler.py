@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._topology_epoch import TopologyEpoch
 from ._core import (
     BlockHierarchyPlan,
@@ -179,6 +180,7 @@ class BlockTopologyCompileResult(StrictModule, NonTrainableState):
     evidence: BlockTopologyCompileEvidence
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: BlockHierarchyTopology,
@@ -187,8 +189,6 @@ class BlockTopologyCompileResult(StrictModule, NonTrainableState):
         evidence: BlockTopologyCompileEvidence,
         /,
     ) -> None:
-        if not isinstance(topology, BlockHierarchyTopology):
-            raise TypeError("Compiled topology result requires BlockHierarchyTopology.")
         self.topology = topology
         self.routes = routes
         self.status = status
@@ -431,6 +431,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
     balance: AMRBalanceStencil | None = eqx.field(static=True)
     compiler_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: BlockHierarchyPlan,
@@ -440,8 +441,6 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
         proper_nesting: int = 0,
         balance: AMRBalanceStencil | None = None,
     ) -> None:
-        if not isinstance(plan, BlockHierarchyPlan):
-            raise TypeError("Block topology compiler requires BlockHierarchyPlan.")
         buffer_ = int(tag_buffer)
         nesting = int(proper_nesting)
         if buffer_ < 0 or nesting < 0:

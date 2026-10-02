@@ -26,6 +26,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import checked
 
 
 _TransportArgs: TypeAlias = tuple[Array, Array, Array, Array, Array]
@@ -71,6 +72,7 @@ class TransportBoundary(StrictModule):
     dispersion_flux: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -81,8 +83,6 @@ class TransportBoundary(StrictModule):
         dispersion_concentration: ArrayLike = 0.0,
         dispersion_flux: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("TransportBoundary requires native prepared FV geometry.")
         if not isinstance(component_count, int) or component_count < 1:
             raise ValueError("component_count must be positive.")
         nf = discretization.owner_cells.size
@@ -166,6 +166,7 @@ class ComponentTransport(StrictModule):
     dispersion: HybridMimeticDiffusion | None
     dispersion_tensor: Array | None
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -175,8 +176,6 @@ class ComponentTransport(StrictModule):
         dispersion: HybridMimeticDiffusion | None = None,
         dispersion_tensor: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("ComponentTransport requires native prepared FV geometry.")
         names = tuple(component_names)
         if (
             not names

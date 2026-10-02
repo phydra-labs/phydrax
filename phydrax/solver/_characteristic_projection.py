@@ -37,7 +37,7 @@ from ..stochastic import (
     StochasticPathEnsembleResult,
 )
 from ..terms import ResidualPenalty
-from ..typing import parse
+from ..typing import checked, parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._functional_solver import FunctionalSolver
@@ -68,6 +68,7 @@ class CharacteristicBoundaryPolicy(StrictModule):
     reset_map: Callable[[Array], ArrayLike] | None = eqx.field(static=True)
     priority: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schedule: PreparedHybridSchedule,
@@ -78,8 +79,6 @@ class CharacteristicBoundaryPolicy(StrictModule):
         reset_map: Callable[[Array], ArrayLike] | None = None,
         priority: int = 0,
     ) -> None:
-        if not isinstance(schedule, PreparedHybridSchedule):
-            raise TypeError("schedule must be PreparedHybridSchedule.")
         action = parse(action, CharacteristicBoundaryAction, "action")
         if action in ("reflect", "reset", "periodic") and reset_map is None:
             raise ValueError(f"{action} boundary action requires reset_map.")
@@ -120,6 +119,7 @@ class DiffusiveCharacteristicPlan(StrictModule):
     interpretation: Literal["ito", "stratonovich"] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ensemble: PreparedStochasticPathEnsemble,
@@ -129,10 +129,6 @@ class DiffusiveCharacteristicPlan(StrictModule):
         *,
         interpretation: Literal["ito", "stratonovich"] = "ito",
     ) -> None:
-        if not isinstance(ensemble, PreparedStochasticPathEnsemble):
-            raise TypeError("ensemble must be PreparedStochasticPathEnsemble.")
-        if not isinstance(integration, IntegrationRealization):
-            raise TypeError("integration must be IntegrationRealization.")
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("Unknown stochastic interpretation.")
         values = jnp.asarray(weights, dtype=jnp.float64)
@@ -402,6 +398,7 @@ class CharacteristicProjectionProblem(StrictModule):
     coordinate_label: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -420,8 +417,6 @@ class CharacteristicProjectionProblem(StrictModule):
         coordinate = str(coordinate_label)
         if not name or not coordinate:
             raise ValueError("field and coordinate_label must be non-empty.")
-        if not isinstance(component, DomainComponent):
-            raise TypeError("component must be a DomainComponent.")
         if coordinate not in component.domain.labels:
             raise ValueError("coordinate_label must belong to the component domain.")
         if not isinstance(sampling, PointSampling) or not isinstance(sampling.count, int):

@@ -25,6 +25,7 @@ from ..linalg._dense_pseudoinverse import (
     materialize_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
+from ..typing import checked
 from ._free_energy import FreeEnergyResult, FreeEnergyStatus
 
 
@@ -116,6 +117,7 @@ class FreeEnergyEdgeObservation(StrictModule, NonTrainableState):
         self.influence_basis_id = basis
 
     @classmethod
+    @checked
     def from_result(
         cls,
         result: FreeEnergyResult,
@@ -127,8 +129,6 @@ class FreeEnergyEdgeObservation(StrictModule, NonTrainableState):
     ) -> "FreeEnergyEdgeObservation":
         """Project one successful joint result onto a directed network edge."""
 
-        if not isinstance(result, FreeEnergyResult):
-            raise TypeError("result must be FreeEnergyResult.")
         if not bool(result.successful):
             raise ValueError(
                 "Only statistically and numerically successful results form edges."
@@ -248,6 +248,7 @@ class FreeEnergyNetworkResult(StrictModule, NonTrainableState):
     observation_ids: tuple[str, ...] = eqx.field(static=True)
     analysis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         free_energies: ArrayLike,
@@ -268,8 +269,6 @@ class FreeEnergyNetworkResult(StrictModule, NonTrainableState):
         *,
         observation_ids: Sequence[str],
     ) -> None:
-        if not isinstance(plan, FreeEnergyNetworkPlan):
-            raise TypeError("plan must be FreeEnergyNetworkPlan.")
         free = _real_array(free_energies, "free_energies").reshape((-1,))
         covariance_ = _real_array(covariance, "covariance")
         values = _real_array(edge_values, "edge_values").reshape((-1,))

@@ -36,7 +36,7 @@ from ..operators.quantum import (
     HilbertRegisterLayout,
     unitarity_residual,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 ProductFormulaOrder: TypeAlias = Literal[1, 2]
@@ -194,6 +194,7 @@ class LocalHamiltonian(StrictModule):
     dtype: str = eqx.field(static=True)
     hamiltonian_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: HilbertRegisterLayout,
@@ -202,8 +203,6 @@ class LocalHamiltonian(StrictModule):
         *,
         hamiltonian_id: str | None = None,
     ) -> None:
-        if not isinstance(layout, HilbertRegisterLayout):
-            raise TypeError("layout must be a HilbertRegisterLayout.")
         selected = tuple(terms)
         if not selected or not all(
             isinstance(term, LocalHamiltonianTerm) for term in selected
@@ -254,6 +253,7 @@ class FixedGridLocalHamiltonian(StrictModule):
     interval_count: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hamiltonian: LocalHamiltonian,
@@ -265,8 +265,6 @@ class FixedGridLocalHamiltonian(StrictModule):
         source_valid: ArrayLike = True,
         schedule_id: str | None = None,
     ) -> None:
-        if not isinstance(hamiltonian, LocalHamiltonian):
-            raise TypeError("hamiltonian must be a LocalHamiltonian.")
         times = jnp.asarray(time_grid)
         values = jnp.asarray(coefficients)
         if times.ndim != 1 or times.shape[0] < 2:

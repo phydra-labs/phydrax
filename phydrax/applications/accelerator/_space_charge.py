@@ -20,6 +20,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import ParticleSetPlan, PreparedTensorGrid
 from ...discretization.splatting import ParticleGridSplatPlan, PreparedParticleGridSplat
 from ...operators.integral._free_space_convolution import FreeSpaceConvolutionPlan
+from ...typing import checked
 from ._beam import AcceleratorBunch
 
 
@@ -135,6 +136,7 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
     vacuum_permittivity: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -145,10 +147,6 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         maximum_rest_frame_speed: float = 0.3,
         minimum_cells_per_sigma: float = 3.0,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         if len(grid.shape) != 3:
             raise ValueError("Space-charge deposition requires a three-dimensional grid.")
         capacity_ = int(capacity)
@@ -232,6 +230,7 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def evaluate(
         self,
         bunch: AcceleratorBunch,
@@ -248,8 +247,6 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         undulator; the particle coordinates must then describe that mean
         motion. A nonfinite frame or one at ``γ ≤ 1`` is refused.
         """
-        if not isinstance(bunch, AcceleratorBunch):
-            raise TypeError("bunch must be an AcceleratorBunch.")
         if bunch.capacity != self.capacity:
             raise ValueError("bunch capacity must match the space-charge plan capacity.")
         longitudinal_sign = _longitudinal_sign(bunch)

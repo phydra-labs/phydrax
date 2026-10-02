@@ -17,6 +17,7 @@ import equinox as eqx
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint, canonical_mapping
+from ...typing import checked
 from .._calculation import ElectronicCalculationPlan
 from .._provider import (
     AbstractElectronicProvider,
@@ -55,6 +56,7 @@ class PreparedQCEngineCalculation(AbstractPreparedElectronicCalculation):
     provider_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calculation: ElectronicCalculationPlan,
@@ -65,8 +67,6 @@ class PreparedQCEngineCalculation(AbstractPreparedElectronicCalculation):
         provider_id: str,
         /,
     ) -> None:
-        if not isinstance(capabilities, ElectronicProviderCapabilities):
-            raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
         self.capabilities = capabilities
         self.program = program
@@ -124,6 +124,7 @@ class QCEngineProvider(AbstractElectronicProvider):
     model_chemistry_id: str = eqx.field(static=True)
     capabilities: ElectronicProviderCapabilities
 
+    @checked
     def __init__(
         self,
         program: str,
@@ -137,8 +138,6 @@ class QCEngineProvider(AbstractElectronicProvider):
         program_ = str(program).strip()
         if not program_:
             raise ValueError("QCEngine program must be non-empty.")
-        if not isinstance(capabilities, ElectronicProviderCapabilities):
-            raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         if ElectronicProperty.HESSIAN in capabilities.observables.properties:
             raise ValueError(
                 "QCEngine Hessians must use the native force-difference workflow."

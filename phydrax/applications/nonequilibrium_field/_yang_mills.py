@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._keldysh import NonequilibriumStatus
 
 
@@ -216,14 +217,13 @@ class PreparedClassicalYangMillsEvolution(StrictModule, NonTrainableState):
     initial_gauss: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ClassicalYangMillsPlan,
         state: ClassicalYangMillsState,
         /,
     ) -> None:
-        if not isinstance(plan, ClassicalYangMillsPlan):
-            raise TypeError("plan must be ClassicalYangMillsPlan.")
         if (
             not isinstance(state, ClassicalYangMillsState)
             or state.plan_id != plan.plan_id

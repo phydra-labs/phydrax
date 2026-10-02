@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class InterfaceSide(str, Enum):
@@ -72,6 +73,7 @@ class SurfaceMetadata(StrictModule, NonTrainableState):
     cell_tags: tuple[str, ...] = eqx.field(static=True)
     metadata_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -83,10 +85,6 @@ class SurfaceMetadata(StrictModule, NonTrainableState):
     ) -> None:
         source = str(source_id)
         revision = str(source_revision)
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError(
-                "Surface coordinate_contract must be a SpatialCoordinateContract."
-            )
         history = tuple(str(entry) for entry in provenance)
         tags = tuple(str(tag) for tag in cell_tags)
         if not source or not revision:
@@ -170,6 +168,7 @@ class SurfaceInterface(StrictModule, NonTrainableState):
     plus_region: str = eqx.field(static=True)
     interface_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -182,8 +181,6 @@ class SurfaceInterface(StrictModule, NonTrainableState):
         name_ = str(name)
         minus = str(minus_region)
         plus = str(plus_region)
-        if not isinstance(support, SurfaceSelection):
-            raise TypeError("Surface interface support must be a SurfaceSelection.")
         if not name_ or not minus or not plus:
             raise ValueError("Surface interface name and regions must be non-empty.")
         if minus == plus:
@@ -565,9 +562,8 @@ class SurfaceValidityCertificate(StrictModule, NonTrainableState):
     certificate_id: str = eqx.field(static=True)
     valid: Array
 
+    @checked
     def __init__(self, report: SurfaceAuditReport, /) -> None:
-        if not isinstance(report, SurfaceAuditReport):
-            raise TypeError("Surface validity certificates require an audit report.")
         if not bool(np.asarray(report.valid)):
             raise ValueError("Invalid surface audits cannot produce a certificate.")
         self.model_id = report.model_id

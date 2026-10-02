@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import MACMarkerTransferDiagnostics
 from ..nonlinear import NonlinearResult, NonlinearSystemProblem
+from ..typing import checked
 from ._mac_immersed_deformable import (
     jax_tree_where,
     MACDeformableImmersedBackwardEulerMethod,
@@ -69,6 +70,7 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
     gamma: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: MACDeformableImmersedBackwardEulerMethod,
@@ -77,8 +79,6 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
         beta: float = 0.25,
         gamma: float = 0.5,
     ) -> None:
-        if not isinstance(base, MACDeformableImmersedBackwardEulerMethod):
-            raise TypeError("base must be MACDeformableImmersedBackwardEulerMethod.")
         beta_ = float(beta)
         gamma_ = float(gamma)
         if beta_ <= 0.0 or gamma_ <= 0.0 or 2.0 * beta_ < gamma_:
@@ -131,6 +131,7 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
             initialized.status,
         )
 
+    @checked
     def step(
         self,
         time: ArrayLike,
@@ -139,8 +140,6 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
         *,
         args: Any = None,
     ) -> MACDeformableImmersedNewmarkResult:
-        if not isinstance(state, MACDeformableImmersedNewmarkState):
-            raise TypeError("state must be MACDeformableImmersedNewmarkState.")
         base = self.base
         step = jnp.asarray(base.step_size, dtype=state.fluid_state.dtype)
         time_ = jnp.asarray(time, dtype=step.dtype).reshape(())

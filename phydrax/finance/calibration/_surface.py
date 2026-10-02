@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from phydrax._interpolation import linear_interpolate
 
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 def _scalar(value: ArrayLike, name: str, /) -> Array:
@@ -107,9 +108,8 @@ class SVISlice(StrictModule):
     expiry: Array
     parameters: SVIParameters
 
+    @checked
     def __init__(self, expiry: ArrayLike, parameters: SVIParameters, /) -> None:
-        if not isinstance(parameters, SVIParameters):
-            raise TypeError("parameters must be SVIParameters.")
         expiry_ = _scalar(expiry, "expiry")
         self.expiry = eqx.error_if(
             expiry_, expiry_ <= 0.0, "SVI expiry must be positive."

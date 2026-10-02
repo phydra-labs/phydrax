@@ -40,6 +40,7 @@ from .._trainable import NonTrainableState
 from ..equations._charged_radiation_interactions import ChargedRadiationParticleKind
 from ..typing import (
     Bool,
+    checked,
     Dim,
     Float64,
     Identifier,
@@ -438,6 +439,7 @@ class EMShowerPlan(StrictModule, NonTrainableState):
     identity_stride: int = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         photon_transport: PhotonTransportPlan,
@@ -448,10 +450,6 @@ class EMShowerPlan(StrictModule, NonTrainableState):
         charged_capacity: int,
         maximum_generations: int,
     ) -> None:
-        if not isinstance(photon_transport, PhotonTransportPlan):
-            raise TypeError("photon_transport must be PhotonTransportPlan.")
-        if not isinstance(charged_transport, ChargedParticleTransportPlan):
-            raise TypeError("charged_transport must be ChargedParticleTransportPlan.")
         photons, charged = int(photon_capacity), int(charged_capacity)
         generations = int(maximum_generations)
         if photons < 1 or charged < 1 or generations < 1:

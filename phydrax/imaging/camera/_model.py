@@ -26,6 +26,7 @@ from ...optics.geometric import (
     SequentialOpticsStatus,
     trace_planar_refractive_stack,
 )
+from ...typing import checked
 
 
 class ProjectionStatus(IntEnum):
@@ -135,6 +136,7 @@ class CameraModel(StrictModule):
     distortion: BrownConradyDistortion
     refractive_stack: PlanarRefractiveStack | None
 
+    @checked
     def __init__(
         self,
         intrinsics: CameraIntrinsics,
@@ -143,8 +145,6 @@ class CameraModel(StrictModule):
         distortion: BrownConradyDistortion | None = None,
         refractive_stack: PlanarRefractiveStack | None = None,
     ) -> None:
-        if not isinstance(intrinsics, CameraIntrinsics):
-            raise TypeError("intrinsics must be CameraIntrinsics.")
         pose_ = CameraPose(RigidFrame.identity(3)) if pose is None else pose
         distortion_ = BrownConradyDistortion() if distortion is None else distortion
         if not isinstance(pose_, CameraPose):

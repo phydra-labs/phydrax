@@ -20,6 +20,7 @@ from ....atomistic import (
     PolymerChainLayoutPlan,
     PreparedAtomisticDynamics,
 )
+from ....typing import checked
 
 
 class PrimitivePathSnapshotPlan(StrictModule, NonTrainableState):
@@ -109,6 +110,7 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
     expected_bonds: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PrimitivePathSnapshotPlan,
@@ -117,12 +119,6 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         chain_ids: tuple[str, ...],
         /,
     ) -> None:
-        if not isinstance(plan, PrimitivePathSnapshotPlan):
-            raise TypeError("plan must be PrimitivePathSnapshotPlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(layout, PolymerChainLayoutPlan):
-            raise TypeError("layout must be PolymerChainLayoutPlan.")
         identifiers = tuple(str(value).strip() for value in chain_ids)
         layout_shape = layout.particle_indices.shape
         indices = np.empty((layout_shape[0], layout_shape[1]), dtype=np.int32)
@@ -192,11 +188,10 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def capture(
         self, state: AtomisticDynamicsState, /
     ) -> tuple[PrimitivePathSnapshot, PrimitivePathSnapshotEvidence]:
-        if not isinstance(state, AtomisticDynamicsState):
-            raise TypeError("state must be AtomisticDynamicsState.")
         if state.prepared_dynamics_id != self.dynamics.prepared_id:
             raise ValueError("Source state belongs to another dynamics runtime.")
         unwrapped = self.dynamics._unwrapped(state.kinematics, state.cell_vectors)

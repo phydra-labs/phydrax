@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import AbstractGeodesicManifold
+from ..typing import checked
 
 
 class AbstractGroundCost(StrictModule):
@@ -122,9 +123,8 @@ class IntrinsicSquaredDistanceCost(AbstractGroundCost):
 
     geometry: AbstractGeodesicManifold
 
+    @checked
     def __init__(self, geometry: AbstractGeodesicManifold, /) -> None:
-        if not isinstance(geometry, AbstractGeodesicManifold):
-            raise TypeError("geometry must be an AbstractGeodesicManifold.")
         self.geometry = geometry
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:

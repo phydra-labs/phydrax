@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ...discretization._boundary_trace import BoundarySurfaceTrace
+from ...typing import checked
 from ...units import METER
 
 
@@ -59,6 +60,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
     reference_temperature: Array
     lateral: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trace: BoundarySurfaceTrace,
@@ -71,8 +73,6 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
         lateral: bool = True,
         orthogonality_tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(trace, BoundarySurfaceTrace):
-            raise TypeError("Surface runoff requires a BoundarySurfaceTrace.")
         if (
             spatial.length_unit.unit_id != METER.unit_id
             or spatial.length_coordinate_kind != "physical"

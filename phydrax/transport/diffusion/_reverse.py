@@ -25,7 +25,7 @@ from ...stochastic._gaussian_diffusion import (
     TerminalReferenceRelationship,
 )
 from ...stochastic._wiener import WienerRealization
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -192,6 +192,7 @@ class ReverseDiffusion(StrictModule):
     score_id: str = eqx.field(static=True)
     transport_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         process: AbstractGaussianDiffusion,
@@ -213,10 +214,6 @@ class ReverseDiffusion(StrictModule):
         precision: Any = None,
         transport_id: str | None = None,
     ) -> None:
-        if not isinstance(process, AbstractGaussianDiffusion):
-            raise TypeError("process must implement AbstractGaussianDiffusion.")
-        if not isinstance(terminal_reference, DiffusionTerminalReference):
-            raise TypeError("terminal_reference must be a DiffusionTerminalReference.")
         if terminal_reference.process_id != process.process_id:
             raise ValueError("Terminal reference and diffusion process IDs must match.")
         if tuple(terminal_reference.law.event_shape) != process.state_shape:
@@ -335,6 +332,7 @@ class ReverseDiffusion(StrictModule):
             realization_id=realization_id,
         )
 
+    @checked
     def solve(
         self,
         realization: ReverseDiffusionRealization,
@@ -342,8 +340,6 @@ class ReverseDiffusion(StrictModule):
         *,
         save_times: ArrayLike | None = None,
     ) -> ReverseDiffusionResult:
-        if not isinstance(realization, ReverseDiffusionRealization):
-            raise TypeError("realization must be a ReverseDiffusionRealization.")
         if (
             realization.process_id != self.process.process_id
             or realization.score_id != self.score_id

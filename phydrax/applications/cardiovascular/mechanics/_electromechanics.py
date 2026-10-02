@@ -18,6 +18,7 @@ from ...._trainable import NonTrainableState
 from ....discretization import DiscreteFieldSpace, FieldTransfer
 from ....nonlinear import FixedPointIteration, NonlinearTermination
 from ....solver import coupling
+from ....typing import checked
 from ._contraction import (
     ActivationDrivenContractionPlan,
     CalciumDrivenFirstOrderContractionPlan,
@@ -285,6 +286,7 @@ class PreparedElectromechanics(StrictModule, NonTrainableState):
     preparation: ElectromechanicsPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: coupling.CouplingProblem,
@@ -293,10 +295,6 @@ class PreparedElectromechanics(StrictModule, NonTrainableState):
         preparation: ElectromechanicsPreparationEvidence,
         /,
     ) -> None:
-        if not isinstance(problem, coupling.CouplingProblem):
-            raise TypeError("Prepared electromechanics requires CouplingProblem.")
-        if not isinstance(rollout, coupling.CouplingRolloutPlan):
-            raise TypeError("Prepared electromechanics requires CouplingRolloutPlan.")
         self.native = problem.prepare()
         self.problem = problem
         self.rollout = rollout
@@ -340,6 +338,7 @@ class PreparedElectromechanics(StrictModule, NonTrainableState):
         )
         return ElectromechanicsRun(solution, evidence)
 
+    @checked
     def restart(
         self,
         checkpoint: coupling.CouplingState,
@@ -348,8 +347,6 @@ class PreparedElectromechanics(StrictModule, NonTrainableState):
         *,
         rollout: coupling.CouplingRolloutPlan | None = None,
     ) -> PreparedElectromechanics:
-        if not isinstance(checkpoint, coupling.CouplingState):
-            raise TypeError("Electromechanics restart requires CouplingState checkpoint.")
         if (
             checkpoint.subsystem_ids != self.native.reference_state.subsystem_ids
             or checkpoint.exchange_ids != self.native.reference_state.exchange_ids
@@ -394,6 +391,7 @@ class OneWayElectromechanicsPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     fidelity_id: str = eqx.field(static=True, default="one-way-electromechanics")
 
+    @checked
     def __init__(
         self,
         forward_port: EPToMechanicsPort,
@@ -404,8 +402,6 @@ class OneWayElectromechanicsPlan(StrictModule, NonTrainableState):
         differentiation: coupling.CouplingDifferentiationPolicy | None = None,
     ) -> None:
         _validate_forward_contraction(forward_port, contraction_plan)
-        if not isinstance(cadence, ElectromechanicsCadence):
-            raise TypeError("One-way electromechanics requires ElectromechanicsCadence.")
         differentiation_ = (
             coupling.CouplingDifferentiationPolicy("none")
             if differentiation is None
@@ -554,6 +550,7 @@ class BidirectionalElectromechanicsPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     fidelity_id: str = eqx.field(static=True, default="bidirectional-electromechanics")
 
+    @checked
     def __init__(
         self,
         forward_port: EPToMechanicsPort,
@@ -568,12 +565,6 @@ class BidirectionalElectromechanicsPlan(StrictModule, NonTrainableState):
         differentiation: coupling.CouplingDifferentiationPolicy | None = None,
     ) -> None:
         _validate_forward_contraction(forward_port, contraction_plan)
-        if not isinstance(backward_port, StretchMechanicsToEPPort):
-            raise TypeError(
-                "Bidirectional coupling requires typed stretch feedback port."
-            )
-        if not isinstance(cadence, ElectromechanicsCadence):
-            raise TypeError("Bidirectional coupling requires ElectromechanicsCadence.")
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         maximum = int(maximum_iterations)

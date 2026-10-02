@@ -13,6 +13,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
 from ..discretization.lattice_boltzmann import PreparedLatticeBoltzmannDynamics
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -22,9 +23,8 @@ class LatticeBoltzmannFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
     dynamics: PreparedLatticeBoltzmannDynamics
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, dynamics: PreparedLatticeBoltzmannDynamics, /) -> None:
-        if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
-            raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {

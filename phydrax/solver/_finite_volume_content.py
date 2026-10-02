@@ -14,6 +14,7 @@ from ..discretization._conservation_ledger import (
     ConservationStageLedger,
 )
 from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
+from ..typing import checked
 
 
 def _nonempty_identifier(value: str, /, *, name: str) -> str:
@@ -65,6 +66,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
     evidence_policy_id: str = eqx.field(static=True)
     precision: FiniteVolumePrecisionPolicy
 
+    @checked
     def __init__(
         self,
         conservative_content: ArrayLike,
@@ -81,8 +83,6 @@ class FiniteVolumeConservativeContentState(StrictModule):
         evidence_version: ArrayLike,
         precision: FiniteVolumePrecisionPolicy,
     ) -> None:
-        if not isinstance(precision, FiniteVolumePrecisionPolicy):
-            raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         content = precision.storage(conservative_content)
         volumes = _reduction_value(precision, effective_cell_volumes)
         time_ = _reduction_value(precision, time)
@@ -148,6 +148,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         self.precision = precision
 
     @classmethod
+    @checked
     def from_cell_average(
         cls,
         cell_average: ArrayLike,
@@ -166,8 +167,6 @@ class FiniteVolumeConservativeContentState(StrictModule):
     ) -> FiniteVolumeConservativeContentState:
         """Form content from active averages; inactive content is exactly zero."""
 
-        if not isinstance(precision, FiniteVolumePrecisionPolicy):
-            raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         average = precision.storage(cell_average)
         volumes = _reduction_value(precision, effective_cell_volumes)
         if average.ndim < 2 or any(size <= 0 for size in average.shape):

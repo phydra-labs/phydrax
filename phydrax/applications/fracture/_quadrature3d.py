@@ -11,6 +11,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._geometry3d import CrackSurfaceGeometry3D
 
 
@@ -25,9 +26,8 @@ class SharpCrackQuadrature3D(StrictModule, NonTrainableState):
     front_tangents: Array
     quadrature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, geometry: CrackSurfaceGeometry3D, /) -> None:
-        if not isinstance(geometry, CrackSurfaceGeometry3D):
-            raise TypeError("geometry must be CrackSurfaceGeometry3D.")
         points = jnp.mean(geometry.vertices[geometry.triangles], axis=1)
         self.surface_points = points
         self.surface_weights = geometry.triangle_areas

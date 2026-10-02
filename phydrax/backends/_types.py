@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 
 
 BackendExecution: TypeAlias = Literal["host", "device"]
@@ -182,6 +182,7 @@ class BackendAvailability(StrictModule):
     reason: str = eqx.field(static=True)
     versions: tuple[tuple[str, str], ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -191,8 +192,6 @@ class BackendAvailability(StrictModule):
         reason: str,
         versions: tuple[tuple[str, str], ...] = (),
     ) -> None:
-        if not isinstance(capabilities, BackendCapabilities):
-            raise TypeError("capabilities must be BackendCapabilities.")
         requirement_ = str(requirement)
         reason_ = str(reason)
         versions_ = tuple((str(name), str(version)) for name, version in versions)

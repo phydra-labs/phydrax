@@ -62,6 +62,7 @@ from ...electromagnetics._trajectory_radiation import (
 )
 from ...typing import (
     Bool,
+    checked,
     ConvertibleToArray,
     Dim,
     Float64,
@@ -219,6 +220,7 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
     overflow: TrackOverflowPolicy = eqx.field(static=True)
     recorder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         species: Sequence[PICSpeciesPlan],
@@ -234,8 +236,6 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
         species_ = tuple(species)
         if not species_ or any(not isinstance(v, PICSpeciesPlan) for v in species_):
             raise TypeError("species must be a nonempty sequence of PICSpeciesPlan.")
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be RelativityScaleContract.")
         lanes = np.asarray(lane_species)
         hi = np.asarray(identities[0])
         lo = np.asarray(identities[1])
@@ -359,12 +359,11 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
                 "read in other units."
             )
 
+    @checked
     def shift_frame(
         self, state: PICTrackRecorderState, axis: int, distance: float, /
     ) -> PICTrackRecorderState:
         """Accumulate a moving-window shift so recorded positions stay in the fixed frame."""
-        if not isinstance(state, PICTrackRecorderState):
-            raise TypeError("state must be PICTrackRecorderState.")
         return dataclasses.replace(
             state, frame_offset=state.frame_offset.at[axis].add(distance)
         )
@@ -541,6 +540,7 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
         )
         return dataclasses.replace(state, radiation=radiation)
 
+    @checked
     def record(
         self,
         state: PICTrackRecorderState,
@@ -549,8 +549,6 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
         step_index: Array,
         /,
     ) -> PICTrackRecorderState:
-        if not isinstance(state, PICTrackRecorderState):
-            raise TypeError("state must be PICTrackRecorderState.")
         observed = self._observe(species)
         present = observed.present
         now = jnp.asarray(time, dtype=jnp.float64).reshape(())
@@ -651,6 +649,7 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
             return jnp.zeros((), dtype=jnp.int32)
         return jnp.maximum(state.sample_count - self.sample_capacity, 0)
 
+    @checked
     def to_charged_trajectory(
         self, state: PICTrackRecorderState, scale: ElectromagneticScaleContract, /
     ) -> ChargedTrajectory:
@@ -660,8 +659,6 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
         inactive and repeat the last written time. ``scale`` must share the
         recorder's dimensional scale and exact speed of light.
         """
-        if not isinstance(state, PICTrackRecorderState):
-            raise TypeError("state must be PICTrackRecorderState.")
         buffer = state.buffer
         capacity = self.sample_capacity
         if buffer is None or capacity is None:
@@ -691,12 +688,11 @@ class PICTrackRecorder(AbstractPICRecorder, NonTrainableState):
             elementary_charge,
         )
 
+    @checked
     def finalize_radiation(
         self, state: PICTrackRecorderState, /
     ) -> TrajectoryRadiationResult:
         """Far-field spectrum of every sample emitted so far."""
-        if not isinstance(state, PICTrackRecorderState):
-            raise TypeError("state must be PICTrackRecorderState.")
         if self.radiation is None or state.radiation is None:
             raise ValueError("This track recorder streams no radiation.")
         return self.radiation.finalize(state.radiation)

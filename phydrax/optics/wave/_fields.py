@@ -17,7 +17,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PreparedTensorGrid
 from ...geometry import RigidFrame
-from ...typing import parse
+from ...typing import checked, parse
 
 
 PlaneTopology: TypeAlias = Literal["finite-window", "periodic-cell"]
@@ -89,6 +89,7 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
     topology: PlaneTopology = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -98,8 +99,6 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
         *,
         space_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         if len(grid.shape) != 2:
             raise ValueError(
                 "A plane field space requires an exactly two-dimensional grid."
@@ -182,6 +181,7 @@ class ScalarPlaneField(StrictModule):
     angular_frequency: Array
     longitudinal_coordinate: Array
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -190,8 +190,6 @@ class ScalarPlaneField(StrictModule):
         longitudinal_coordinate: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         self.space = space
         self.values = _complex_field_values("values", values, space.shape)
         self.angular_frequency = _angular_frequency(angular_frequency)
@@ -206,6 +204,7 @@ class TangentialPlaneField(StrictModule):
     angular_frequency: Array
     longitudinal_coordinate: Array
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -214,8 +213,6 @@ class TangentialPlaneField(StrictModule):
         longitudinal_coordinate: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         self.space = space
         self.values = _complex_field_values("values", values, space.shape + (2,))
         self.angular_frequency = _angular_frequency(angular_frequency)
@@ -230,6 +227,7 @@ class IntensityPlane(StrictModule):
     angular_frequency: Array
     longitudinal_coordinate: Array
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -238,8 +236,6 @@ class IntensityPlane(StrictModule):
         longitudinal_coordinate: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         array = jnp.asarray(values)
         if array.shape != space.shape:
             raise ValueError(f"values must have shape {space.shape}; got {array.shape}.")

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._conservation_boundary import AbstractConservationBoundary
 from .._integration_domain import IntegrationDomain
 from .._reference_cell import FacetOrientationAction
@@ -81,6 +82,7 @@ class FiniteElementBoundaryPatch(StrictModule, NonTrainableState):
     boundary: AbstractConservationBoundary
     patch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -91,8 +93,6 @@ class FiniteElementBoundaryPatch(StrictModule, NonTrainableState):
         patch_name = _canonical_patch_name(name)
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
             raise TypeError("Finite-element boundary patches require an exterior domain.")
-        if not isinstance(boundary, AbstractConservationBoundary):
-            raise TypeError("Finite-element patches require conservation boundaries.")
         self.name = patch_name
         self.domain = domain
         self.boundary = boundary
@@ -239,6 +239,7 @@ class FiniteElementBoundarySet(StrictModule, NonTrainableState):
     entity_set_id: str = eqx.field(static=True)
     boundary_set_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -247,8 +248,6 @@ class FiniteElementBoundarySet(StrictModule, NonTrainableState):
         *,
         periodic_pairs: Sequence[FiniteElementPeriodicFacetPair] = (),
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be a FiniteElementDiscretization.")
         if not isinstance(physical, Mapping):
             raise TypeError("physical must map patch names to facets and policies.")
         pairs = tuple(periodic_pairs)

@@ -50,7 +50,7 @@ from ..operators.quantum import (
     ComplexParameterMode,
     LogAmplitude,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._variational_monte_carlo import (
     _clipped_direction,
     _FrozenVMCRun,
@@ -242,6 +242,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
     complex_parameter_modes: tuple[ComplexParameterMode, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         models: Sequence[Any],
@@ -260,10 +261,6 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
             raise ValueError("Subspace VMC requires at least two amplitude models.")
         if any(not callable(model) for model in models_):
             raise TypeError("Every subspace VMC model must be callable.")
-        if not isinstance(operator, AbstractDiscreteQuantumOperator):
-            raise TypeError("operator must implement AbstractDiscreteQuantumOperator.")
-        if not isinstance(kernel, MetropolisHastings):
-            raise TypeError("kernel must be a MetropolisHastings instance.")
         configurations = jnp.asarray(initial_configurations)
         expected_rank = 1 + len(operator.configuration_shape)
         if (

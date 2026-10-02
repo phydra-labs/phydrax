@@ -30,7 +30,7 @@ from ..geometry import (
 )
 from ..geometry._contracts import ClosestPointResult
 from ..geometry._sampling import require_complete
-from ..typing import Bool, PRNGKey, Scalar
+from ..typing import Bool, checked, PRNGKey, Scalar
 from ._base import _make_compact_boundary_factor, AbstractGeometry
 
 
@@ -40,9 +40,8 @@ class GeometryDomain(AbstractGeometry):
     geometry: CompiledGeometry
     _label: str
 
+    @checked
     def __init__(self, geometry: CompiledGeometry, *, label: str = "x") -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("GeometryDomain requires a CompiledGeometry.")
         if geometry.kind is not GeometryKind.REGION:
             raise ValueError("GeometryDomain currently adapts region kernels only.")
         if not isinstance(label, str) or not label:

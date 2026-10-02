@@ -18,7 +18,7 @@ from jaxtyping import PyTree
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 from .._photometry import ObservationDataProvenance
 from ._status import GravitationalWaveStatus
 
@@ -190,6 +190,7 @@ class CallableFrequencyDomainWaveform(AbstractFrequencyDomainWaveform):
     parameter_map: Callable[[PyTree[Any]], PyTree[Any]] | None = eqx.field(static=True)
     provenance: ObservationDataProvenance
 
+    @checked
     def __init__(
         self,
         function: Callable[[Array, PyTree[Any]], ArrayLike | Mapping[str, ArrayLike]],
@@ -204,10 +205,6 @@ class CallableFrequencyDomainWaveform(AbstractFrequencyDomainWaveform):
             parameter_map is not None and not callable(parameter_map)
         ):
             raise TypeError("Waveform function and parameter map must be callable.")
-        if not isinstance(capabilities, WaveformCapabilities):
-            raise TypeError("capabilities must be WaveformCapabilities.")
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         identifier = str(waveform_id).strip()
         if not identifier:
             raise ValueError("waveform_id must be non-empty.")
@@ -258,6 +255,7 @@ class SineGaussianWaveformPlan(AbstractFrequencyDomainWaveform, NonTrainableStat
 
     provenance: ObservationDataProvenance
 
+    @checked
     def __init__(
         self,
         provenance: ObservationDataProvenance,
@@ -266,8 +264,6 @@ class SineGaussianWaveformPlan(AbstractFrequencyDomainWaveform, NonTrainableStat
         parameterization_id: str = "sine-gaussian",
         waveform_id: str = "native-sine-gaussian",
     ) -> None:
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         self.capabilities = WaveformCapabilities(
             ("plus", "cross"),
             arbitrary_frequencies=True,

@@ -24,6 +24,7 @@ from ...equations import (
     FiniteElementForm,
 )
 from ...equations.fem import symmetric_gradient
+from ...typing import checked
 
 
 class PhaseFieldFractureParameters(StrictModule, NonTrainableState):
@@ -194,9 +195,8 @@ class PhaseFieldHistoryTransaction(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def commit(self, current: PhaseFieldHistoryState, /) -> PhaseFieldHistoryState:
-        if not isinstance(current, PhaseFieldHistoryState):
-            raise TypeError("current must be a PhaseFieldHistoryState.")
         if current.state_version != self.base_state_version:
             raise ValueError(
                 "Phase-field history transaction targets a stale state version."
@@ -298,14 +298,13 @@ class BoundedNeuralFixedHistoryController(StrictModule):
             {"kind": "bounded-neural-fixed-history-controller", "declared_id": identifier}
         )
 
+    @checked
     def evaluate(
         self,
         features: ArrayLike,
         accepted: PhaseFieldHistoryState,
         /,
     ) -> FixedHistoryNeuralBlock:
-        if not isinstance(accepted, PhaseFieldHistoryState):
-            raise TypeError("accepted must be a PhaseFieldHistoryState.")
         features_ = jnp.asarray(features)
         damage_shape = accepted.accepted_damage.shape
         if (
@@ -343,6 +342,7 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
     damage_field: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: PhaseFieldFractureParameters,
@@ -352,8 +352,6 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
         damage_field: str = "damage",
         model_id: str = "phase-field-fracture",
     ) -> None:
-        if not isinstance(parameters, PhaseFieldFractureParameters):
-            raise TypeError("parameters must be PhaseFieldFractureParameters.")
         displacement = str(displacement_field)
         damage = str(damage_field)
         identifier = str(model_id)

@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import FaceVelocity, PreparedMACOperators
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 
@@ -56,9 +57,8 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, operators: PreparedMACOperators, density: float, /) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         density_ = float(density)
         if density_ <= 0.0:
             raise ValueError("density must be positive.")

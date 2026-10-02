@@ -16,6 +16,7 @@ from .._trainable import (
     parameter_field,
     resolve_array_roles,
 )
+from ..typing import checked
 from ._array import AbstractArrayModel
 from ._component import ModelExecutionContract
 
@@ -41,9 +42,8 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
         }
     )
 
+    @checked
     def __init__(self, model: AbstractArrayModel, /) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("FrozenModel requires an AbstractArrayModel.")
         self.model = model
         self.in_size = model.in_size
         self.out_size = model.out_size

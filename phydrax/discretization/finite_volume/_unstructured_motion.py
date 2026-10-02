@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._cell_complex import (
     polygonal_connectivity,
     PolygonalConnectivity,
@@ -180,6 +181,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     geometry_layout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_plan: UnstructuredFiniteVolumePlan,
@@ -191,8 +193,6 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
     ) -> None:
-        if not isinstance(base_plan, UnstructuredFiniteVolumePlan):
-            raise TypeError("base_plan must be UnstructuredFiniteVolumePlan.")
         if not callable(motion):
             raise TypeError("motion must be callable.")
         if (

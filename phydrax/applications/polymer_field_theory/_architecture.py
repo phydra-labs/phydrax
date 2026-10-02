@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class ContourBlockPlan(StrictModule, NonTrainableState):
@@ -165,6 +166,7 @@ class PolymerComponentPlan(StrictModule, NonTrainableState):
     polymerization_index: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component_id: str,
@@ -176,8 +178,6 @@ class PolymerComponentPlan(StrictModule, NonTrainableState):
         identifier = str(component_id).strip()
         fraction = float(volume_fraction)
         polymerization = float(polymerization_index)
-        if not isinstance(architecture, PolymerContourArchitecturePlan):
-            raise TypeError("architecture must be PolymerContourArchitecturePlan.")
         if (
             not identifier
             or not math.isfinite(fraction)

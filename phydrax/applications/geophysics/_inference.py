@@ -31,6 +31,7 @@ from ..._trainable import NonTrainableState
 from ...metrix import EuclideanStateGeometry
 from ...solver import FixedStepProblem, FixedStepRolloutPlan
 from ...solver._fixed_step import AbstractFixedStepMethod, FixedStepResult
+from ...typing import checked
 from ..atmosphere._interactive_column import (
     InteractiveMoistColumnPlan,
     InteractiveMoistColumnState,
@@ -306,6 +307,7 @@ class ColumnExperiment:
     source_id: str
     experiment_id: str
 
+    @checked
     def __init__(
         self,
         initial_state: InteractiveMoistColumnState,
@@ -328,8 +330,6 @@ class ColumnExperiment:
             isinstance(x, ColumnObservationBinding) for x in bindings
         ):
             raise ValueError("Experiment requires native physical observation bindings.")
-        if not isinstance(time, GeophysicalTimeSpec):
-            raise TypeError("time must be GeophysicalTimeSpec.")
         if not np.isfinite(dt) or dt <= 0 or int(steps) != steps or steps < 1:
             raise ValueError("dt and integer steps must be positive.")
         initial_time = float(initial_state.time)

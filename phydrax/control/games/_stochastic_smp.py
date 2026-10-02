@@ -21,6 +21,7 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
+from ...typing import checked
 from ..stochastic._evaluation import ControlledPathBatch
 from ..stochastic._smp import (
     _batched_stage_callback,
@@ -92,6 +93,7 @@ class OpenLoopStochasticGameSMPProblem(StrictModule):
     num_players: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -112,10 +114,6 @@ class OpenLoopStochasticGameSMPProblem(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         shared_callbacks = (
             drift,
             diffusion,

@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..exterior._basis import exterior_indices
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._complex import (
     AlmostComplexStructure,
@@ -66,16 +67,13 @@ class HermitianStructure(StrictModule):
     metric: RiemannianMetric
     complex_structure: AlmostComplexStructure
 
+    @checked
     def __init__(
         self,
         metric: RiemannianMetric,
         complex_structure: AlmostComplexStructure,
         /,
     ) -> None:
-        if not isinstance(metric, RiemannianMetric):
-            raise TypeError("HermitianStructure requires a RiemannianMetric.")
-        if not isinstance(complex_structure, AlmostComplexStructure):
-            raise TypeError("HermitianStructure requires an AlmostComplexStructure.")
         if not metric.chart.compatible_with(complex_structure.chart):
             raise ValueError("Hermitian metric and complex-structure charts must match.")
         self.metric = metric
@@ -168,9 +166,8 @@ class KahlerStructure(StrictModule):
 
     hermitian: HermitianStructure
 
+    @checked
     def __init__(self, hermitian: HermitianStructure, /) -> None:
-        if not isinstance(hermitian, HermitianStructure):
-            raise TypeError("KahlerStructure requires a HermitianStructure.")
         self.hermitian = hermitian
 
     @property

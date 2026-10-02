@@ -24,6 +24,7 @@ from ...discretization import CellMesh
 from ...geometry.brep import BRepEntityId, BRepModel
 from ...geometry.surface import SurfaceModel
 from ...logging import emit
+from ...typing import checked
 from .._boundary_layer import BoundaryLayerMesh
 from .._contracts import (
     MeshingCapability,
@@ -75,6 +76,7 @@ class GmshMeshingPlan(StrictModule, NonTrainableState):
     background_metric: BackgroundMetricControl | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: _BRepMeshingSource,
@@ -88,10 +90,6 @@ class GmshMeshingPlan(StrictModule, NonTrainableState):
         model = _brep_model(source)
         if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
             raise TypeError("specification must be surface or volume meshing.")
-        if not isinstance(options, GmshOptions):
-            raise TypeError("options must be GmshOptions.")
-        if not isinstance(support, ProviderSupportReport):
-            raise TypeError("support must be ProviderSupportReport.")
         background = _optional_background(background_metric)
         support.require_supported()
         planar_bands = source if isinstance(source, PlanarBandResult) else None
@@ -132,6 +130,7 @@ class GmshRemeshingPlan(StrictModule, NonTrainableState):
     background_metric: BackgroundMetricControl | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: SurfaceModel,
@@ -143,14 +142,6 @@ class GmshRemeshingPlan(StrictModule, NonTrainableState):
         *,
         background_metric: BackgroundMetricControl | None = None,
     ) -> None:
-        if not isinstance(source, SurfaceModel):
-            raise TypeError("source must be SurfaceModel.")
-        if not isinstance(specification, SurfaceRemeshingSpec):
-            raise TypeError("specification must be SurfaceRemeshingSpec.")
-        if not isinstance(options, GmshOptions):
-            raise TypeError("options must be GmshOptions.")
-        if not isinstance(support, ProviderSupportReport):
-            raise TypeError("support must be ProviderSupportReport.")
         background = _optional_background(background_metric)
         support.require_supported()
         if not isinstance(reconstruction, SurfaceReconstructionControl):
@@ -286,6 +277,7 @@ class GmshSession(AbstractMeshingSession):
             case _:
                 raise TypeError("plan must be GmshMeshingPlan or GmshRemeshingPlan.")
 
+    @checked
     def fill_boundary_layer_core(
         self,
         layers: BoundaryLayerMesh,
@@ -301,10 +293,6 @@ class GmshSession(AbstractMeshingSession):
         """
         if self.closed:
             raise RuntimeError("Cannot execute with a closed Gmsh session.")
-        if not isinstance(layers, BoundaryLayerMesh):
-            raise TypeError("layers must be BoundaryLayerMesh.")
-        if not isinstance(boundary, SurfaceModel):
-            raise TypeError("boundary must be SurfaceModel.")
         size = (
             None
             if maximum_size is None

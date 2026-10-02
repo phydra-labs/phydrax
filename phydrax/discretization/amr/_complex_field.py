@@ -27,6 +27,7 @@ from ...linalg import (
     OperatorProperties,
     PyTreeSpace,
 )
+from ...typing import checked
 from ._composite import CompositeAMRCellLayout
 from ._core import BlockHierarchyState, BlockHierarchyTopology
 from ._fd_halo import FDAMRFillPatchWorkspace, FillPatchSource
@@ -141,9 +142,8 @@ class ComplexCompositeAMRCellLayout(StrictModule, NonTrainableState):
             raise RuntimeError("Complex AMR cell space lost its tuple level structure.")
         return checked
 
+    @checked
     def bind_state(self, state: BlockHierarchyState, /) -> tuple[Array, ...]:
-        if not isinstance(state, BlockHierarchyState):
-            raise TypeError("Complex AMR layout can bind only BlockHierarchyState.")
         self.require_topology(state.topology)
         return self.validate(tuple(level.values for level in state.levels))
 

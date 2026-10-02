@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._structured import FiniteVolumeDiscretization
 
 
@@ -428,6 +428,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
             second_scale = second_scale[..., None]
         return first_scale * first, second_scale * second
 
+    @checked
     def contravariant_transport(
         self,
         velocity: tuple[ArrayLike, ArrayLike],
@@ -435,8 +436,6 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array]:
         """Integrate contravariant layer velocity through physical coordinate faces."""
-        if not isinstance(epoch, HydrostaticMetricEpoch):
-            raise TypeError("epoch must be a HydrostaticMetricEpoch.")
         normal = self.contravariant_to_normal_velocity(velocity)
         if normal[0].shape != self.cell_shape:
             raise ValueError("Layer transport requires cell-shaped velocity components.")
@@ -456,6 +455,7 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
     minimum_partial_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteVolumeDiscretization,
@@ -466,8 +466,6 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
         wet_depth: float = 1.0e-6,
         minimum_partial_fraction: float = 0.2,
     ) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) != 3:
             raise ValueError("Hydrostatic tensor-z grids require three dimensions.")
         if discretization.grid.structured_axes[2].periodic:

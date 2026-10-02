@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import (
     BOHR,
     conversion_factor,
@@ -102,9 +103,8 @@ class CallableCorrelatedManifoldProvider(AbstractCorrelatedManifoldProvider):
         self.evaluator = evaluator
         self.provider_id = provider
 
+    @checked
     def evaluate(self, plan: CorrelatedManifoldPlan, /) -> ElectronicManifoldResult:
-        if not isinstance(plan, CorrelatedManifoldPlan):
-            raise TypeError("plan must be CorrelatedManifoldPlan.")
         result = self.evaluator(plan)
         if not isinstance(result, ElectronicManifoldResult):
             raise TypeError(

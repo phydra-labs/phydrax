@@ -29,7 +29,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._architecture import (
     IncompressibleGaussianMixturePlan,
     PolymerComponentPlan,
@@ -60,6 +60,7 @@ class SCFTPlan(StrictModule, NonTrainableState):
     minimum_partition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: IncompressibleGaussianMixturePlan,
@@ -71,8 +72,6 @@ class SCFTPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 64,
         minimum_partition: float = 1.0e-14,
     ) -> None:
-        if not isinstance(model, IncompressibleGaussianMixturePlan):
-            raise TypeError("model must be IncompressibleGaussianMixturePlan.")
         integrator = (
             ContourIntegratorPlan() if contour_integrator is None else contour_integrator
         )
@@ -150,6 +149,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
     zero_mode_index: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SCFTPlan,
@@ -158,10 +158,6 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         *,
         symmetries: tuple[TensorSpectralSymmetry, ...],
     ) -> None:
-        if not isinstance(plan, SCFTPlan):
-            raise TypeError("plan must be SCFTPlan.")
-        if not isinstance(spectral, TensorSpectralDiscretization):
-            raise TypeError("spectral must be TensorSpectralDiscretization.")
         if spectral.periodic_cell is None or any(
             axis.family != "fourier" for axis in spectral.axes
         ):

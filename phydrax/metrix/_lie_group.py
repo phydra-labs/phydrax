@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._matrix_manifold import SpecialOrthogonalManifold
 from ._state_geometry import AbstractStateGeometry
 
@@ -421,9 +422,8 @@ class LieGroupStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, group: AbstractLieGroup, /) -> None:
-        if not isinstance(group, AbstractLieGroup):
-            raise TypeError("LieGroupStateGeometry requires an AbstractLieGroup.")
         self.group = group
         self.convention = "body"
         self.geometry_id = f"state-geometry:{group.group_id}:left:body"
@@ -571,9 +571,8 @@ class RightLieGroupStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, group: AbstractLieGroup, /) -> None:
-        if not isinstance(group, AbstractLieGroup):
-            raise TypeError("RightLieGroupStateGeometry requires an AbstractLieGroup.")
         self.group = group
         self.convention = "spatial"
         self.geometry_id = f"state-geometry:{group.group_id}:right:spatial"

@@ -22,6 +22,7 @@ from ..enforcement import EnforcementProgram
 from ..linalg import ArraySpace
 from ..nn.parameters import ParameterSubspace
 from ..nonlinear import NonlinearSystemProblem
+from ..typing import checked
 from ._functional_objective import (
     _FunctionalObjective,
     _PreparedObjective,
@@ -278,6 +279,7 @@ class PreparedFieldEquilibrium(StrictModule):
     provenance_id: str = eqx.field(static=True)
     formulation: FieldEquilibriumFormulation = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
@@ -287,8 +289,6 @@ class PreparedFieldEquilibrium(StrictModule):
         provenance_id: str,
         formulation: FieldEquilibriumFormulation,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
         residual = _field_residual(problem)
         if formulation != residual.formulation:
             raise ValueError("Prepared field-equilibrium formulation does not match.")

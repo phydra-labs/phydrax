@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..finite_volume import FaceVelocity
 from ..particle import ParticlePopulationState
 from ._transfer import PreparedFLIPParticleTransfer
@@ -59,6 +60,7 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
     maximum_phases: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedFLIPParticleTransfer,
@@ -68,8 +70,6 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
         maximum_phases: int | None = None,
         /,
     ) -> None:
-        if not isinstance(transfer, PreparedFLIPParticleTransfer):
-            raise TypeError("transfer must be PreparedFLIPParticleTransfer.")
         rho = np.asarray(densities, dtype=np.float64)
         mu = np.asarray(viscosities, dtype=np.float64)
         if rho.ndim != 1 or rho.size < 1 or mu.shape != rho.shape:

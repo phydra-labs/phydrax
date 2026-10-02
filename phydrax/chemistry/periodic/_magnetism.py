@@ -24,6 +24,7 @@ from ...operators.periodic import (
     PreparedPeriodicTranslationFamily,
 )
 from ...sparse import EdgeRelation
+from ...typing import checked
 
 
 class SpinorBasisConvention(StrictModule):
@@ -34,9 +35,8 @@ class SpinorBasisConvention(StrictModule):
     spin_eigenvalues: tuple[int, ...] = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, orbital_basis: PeriodicOrbitalBasisPlan, /) -> None:
-        if not isinstance(orbital_basis, PeriodicOrbitalBasisPlan):
-            raise TypeError("orbital_basis must be PeriodicOrbitalBasisPlan.")
         if orbital_basis.spin_order != "spinless":
             raise ValueError("L·S assembly requires an undoubled spinless orbital basis.")
         labels = tuple(
@@ -79,6 +79,7 @@ class SpinOrbitCouplingPlan(StrictModule):
     source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         convention: SpinorBasisConvention,
@@ -91,8 +92,6 @@ class SpinOrbitCouplingPlan(StrictModule):
         hermiticity_tolerance: float = 1.0e-10,
         algebra_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(convention, SpinorBasisConvention):
-            raise TypeError("convention must be SpinorBasisConvention.")
         angular = np.asarray(orbital_angular_momentum, dtype=np.complex128)
         expected = (3, convention.orbital_count, convention.orbital_count)
         if angular.shape != expected or np.any(~np.isfinite(angular)):
@@ -255,6 +254,7 @@ class SpinResolvedBandObservablePlan(StrictModule):
     degeneracy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         convention: SpinorBasisConvention,
@@ -262,8 +262,6 @@ class SpinResolvedBandObservablePlan(StrictModule):
         *,
         degeneracy_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(convention, SpinorBasisConvention):
-            raise TypeError("convention must be SpinorBasisConvention.")
         tolerance = float(degeneracy_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("degeneracy_tolerance must be finite and positive.")

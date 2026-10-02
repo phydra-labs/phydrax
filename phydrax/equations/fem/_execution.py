@@ -21,7 +21,7 @@ from ..._trainable import NonTrainableState
 from ...discretization.fem import SumFactorizationPlan
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
 from ...sparse import ElementTensorOperator, SparseCoordinateOperator
-from ...typing import parse
+from ...typing import checked, parse
 
 
 class PartialAssemblyOperator(StrictModule, NonTrainableState):
@@ -257,6 +257,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
     properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SumFactorizationPlan,
@@ -269,8 +270,6 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         properties: OperatorProperties | None = None,
     ) -> None:
-        if not isinstance(plan, SumFactorizationPlan):
-            raise TypeError("plan must be SumFactorizationPlan.")
         kind = parse(action_kind, TensorProductAction, "action_kind")
         data = jnp.asarray(quadrature_data)
         routes = jnp.asarray(gathers, dtype=jnp.int32)

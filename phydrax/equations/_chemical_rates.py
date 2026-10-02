@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from .._model import register_artifact_value
 from .._strict import StrictModule
+from ..typing import checked
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 
 
@@ -121,9 +122,8 @@ class ThirdBodyRatePlan(AbstractChemicalRatePlan):
     base: ArrheniusRatePlan
     efficiencies: Array
 
+    @checked
     def __init__(self, base: ArrheniusRatePlan, efficiencies: ArrayLike, /) -> None:
-        if not isinstance(base, ArrheniusRatePlan):
-            raise TypeError("base must be ArrheniusRatePlan.")
         values = jnp.asarray(efficiencies)
         if values.ndim != 1:
             raise ValueError("efficiencies must be one-dimensional.")
@@ -453,6 +453,7 @@ class SurfaceCoverageRatePlan(AbstractChemicalRatePlan):
     power_exponent: Array
     activation_energy_coefficient: Array
 
+    @checked
     def __init__(
         self,
         base: ArrheniusRatePlan,
@@ -463,8 +464,6 @@ class SurfaceCoverageRatePlan(AbstractChemicalRatePlan):
         power_exponent: ArrayLike = 0.0,
         activation_energy_coefficient: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(base, ArrheniusRatePlan):
-            raise TypeError("base must be ArrheniusRatePlan.")
         index = int(species_index)
         values = tuple(
             jnp.asarray(value)

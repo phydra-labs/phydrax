@@ -23,7 +23,7 @@ from ..linalg import (
     ArraySpace,
     FunctionLinearOperator,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ..units import ONE, UnitDefinition
 
 
@@ -149,6 +149,7 @@ class CouplingMeasurement(StrictModule, NonTrainableState):
     covector_norms: tuple[float, ...] = eqx.field(static=True)
     measurement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         functional: AbstractLinearOperator,
@@ -161,10 +162,6 @@ class CouplingMeasurement(StrictModule, NonTrainableState):
         component_ids: Sequence[str] = ("scalar",),
         normalization: MeasureNormalization = "physical",
     ) -> None:
-        if not isinstance(functional, AbstractLinearOperator):
-            raise TypeError("Measurement functional must be an AbstractLinearOperator.")
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("Measurement unit must be a UnitDefinition.")
         representation = parse(
             representation, CouplingMeasurementRepresentation, "representation"
         )
@@ -229,6 +226,7 @@ class CouplingMeasurement(StrictModule, NonTrainableState):
         return self.functional.transpose_mv(weights)
 
     @classmethod
+    @checked
     def from_measure(
         cls,
         measure: DiscreteMeasure,
@@ -243,10 +241,6 @@ class CouplingMeasurement(StrictModule, NonTrainableState):
         Coordinates flatten as `(entity, component)` with components fastest, the
         layout of `DiscreteFieldSpace` coefficient events.
         """
-        if not isinstance(measure, DiscreteMeasure):
-            raise TypeError("measure must be a DiscreteMeasure.")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         components = _component_ids(component_ids)
         entities = measure.weights.size
         width = len(components)
@@ -282,6 +276,7 @@ class CouplingMeasurement(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def extensive(
         cls,
         space: AbstractVectorSpace,
@@ -292,8 +287,6 @@ class CouplingMeasurement(StrictModule, NonTrainableState):
         component_ids: Sequence[str] = ("scalar",),
     ) -> CouplingMeasurement:
         """Sum entity-major extensive amounts once per component, without weights."""
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         components = _component_ids(component_ids)
         width = len(components)
         if space.size % width:

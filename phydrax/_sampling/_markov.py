@@ -30,7 +30,7 @@ from .._iteration import (
     update_iteration,
 )
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
 from ._proposals import AbstractProposal
@@ -367,6 +367,7 @@ class MetropolisHastings(StrictModule):
     proposal: AbstractProposal
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         proposal: AbstractProposal,
@@ -374,8 +375,6 @@ class MetropolisHastings(StrictModule):
         *,
         kernel_id: str = "metropolis-hastings",
     ) -> None:
-        if not isinstance(proposal, AbstractProposal):
-            raise TypeError("proposal must implement AbstractProposal.")
         if not isinstance(kernel_id, str) or not kernel_id:
             raise ValueError("kernel_id must be non-empty.")
         self.proposal = proposal
@@ -413,6 +412,7 @@ class MetropolisHastings(StrictModule):
             target_id=resolved.target_id,
         )
 
+    @checked
     def refresh(
         self,
         target: _MarkovTarget,
@@ -420,8 +420,6 @@ class MetropolisHastings(StrictModule):
         /,
     ) -> MarkovState:
         resolved = _resolve_target(target)
-        if not isinstance(state, MarkovState):
-            raise TypeError("state must be a MarkovState.")
         _validate_target_chain_capacity(resolved, state.num_chains)
         if state.target_id != resolved.target_id:
             raise ValueError("Target identity does not match the Markov state.")
@@ -451,6 +449,7 @@ class MetropolisHastings(StrictModule):
             target_id=resolved.target_id,
         )
 
+    @checked
     def rebind(
         self,
         target: _MarkovTarget,
@@ -459,8 +458,6 @@ class MetropolisHastings(StrictModule):
     ) -> MarkovState:
         """Rebuild target values and caches at unchanged chain positions."""
         resolved = _resolve_target(target)
-        if not isinstance(state, MarkovState):
-            raise TypeError("state must be a MarkovState.")
         _validate_target_chain_capacity(resolved, state.num_chains)
         if isinstance(resolved, IncrementalMarkovTarget):
             target_states = jax.lax.map(resolved.initialize, state.position)

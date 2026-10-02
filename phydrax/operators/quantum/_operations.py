@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._model import register_artifact_value
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ._register import _target_wire_ids, HilbertRegisterLayout
 
 
@@ -102,6 +102,7 @@ class QuantumProgram(StrictModule):
     state_kind: QuantumStateKind = eqx.field(static=True)
     program_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: HilbertRegisterLayout,
@@ -110,8 +111,6 @@ class QuantumProgram(StrictModule):
         *,
         state_kind: QuantumStateKind,
     ) -> None:
-        if not isinstance(layout, HilbertRegisterLayout):
-            raise TypeError("layout must be a HilbertRegisterLayout.")
         state_kind = parse(state_kind, QuantumStateKind, "state_kind")
         selected = tuple(operations)
         for operation in selected:

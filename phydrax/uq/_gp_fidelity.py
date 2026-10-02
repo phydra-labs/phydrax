@@ -18,6 +18,7 @@ from phydrax.kernels import AbstractPositiveDefiniteKernel
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..fidelity import FidelityDataset, FidelityPath
+from ..typing import checked
 from ._gp_multioutput import (
     AbstractMultiOutputKernel,
     MultiOutputDesign,
@@ -34,6 +35,7 @@ class AutoregressiveFidelityKernel(AbstractMultiOutputKernel):
     spatial_kernels: tuple[AbstractPositiveDefiniteKernel, ...]
     transfer_coefficients: Array
 
+    @checked
     def __init__(
         self,
         path: FidelityPath,
@@ -42,8 +44,6 @@ class AutoregressiveFidelityKernel(AbstractMultiOutputKernel):
         *,
         transfer_coefficients: ArrayLike,
     ) -> None:
-        if not isinstance(path, FidelityPath):
-            raise TypeError("path must be a FidelityPath.")
         kernels = tuple(spatial_kernels)
         if len(kernels) != path.num_levels or not all(
             isinstance(kernel, AbstractPositiveDefiniteKernel) for kernel in kernels
@@ -132,9 +132,8 @@ class AutoregressiveFidelityKernel(AbstractMultiOutputKernel):
         kernels = ",".join(kernel.kernel_id for kernel in self.spatial_kernels)
         return f"AutoregressiveFidelityKernel[{self.path.path_id};{kernels}]"
 
+    @checked
     def _validate_design(self, design: MultiOutputDesign, /) -> None:
-        if not isinstance(design, MultiOutputDesign):
-            raise TypeError("Expected a MultiOutputDesign.")
         if design.output_names != self.output_names:
             raise ValueError("Fidelity design levels do not match the kernel path.")
 
@@ -157,16 +156,13 @@ class FidelityGaussianProcess(StrictModule):
     discrepancy: MultiOutputGaussianProcessDiscrepancy
     dataset_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: FidelityPath,
         dataset: FidelityDataset,
         /,
     ) -> None:
-        if not isinstance(path, FidelityPath):
-            raise TypeError("path must be a FidelityPath.")
-        if not isinstance(dataset, FidelityDataset):
-            raise TypeError("dataset must be a FidelityDataset.")
         if (
             dataset.hierarchy.hierarchy_id != path.hierarchy_id
             or dataset.hierarchy.fingerprint != path.hierarchy_fingerprint
@@ -252,13 +248,12 @@ class FidelityGaussianProcess(StrictModule):
             target_level_id=self.path.target.level_id,
         )
 
+    @checked
     def validate_state(
         self,
         state: MultiOutputGaussianProcessLikelihoodState,
         /,
     ) -> None:
-        if not isinstance(state, MultiOutputGaussianProcessLikelihoodState):
-            raise TypeError("state must be a MultiOutputGaussianProcessLikelihoodState.")
         if state.kernel.output_names != self.path.level_ids:
             raise ValueError("GP state fidelity levels do not match the model path.")
 

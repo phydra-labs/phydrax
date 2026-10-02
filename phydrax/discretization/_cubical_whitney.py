@@ -24,7 +24,16 @@ from ..exterior._chains import (
     SegmentWeight,
 )
 from ..exterior._form_type import FormProxy
-from ..typing import Dim, Float64, HostFloat64, HostInt32, Identifier, parse, Size
+from ..typing import (
+    checked,
+    Dim,
+    Float64,
+    HostFloat64,
+    HostInt32,
+    Identifier,
+    parse,
+    Size,
+)
 from ._structured_cochain import StructuredCochainBridge
 from ._tensor_support import TensorEntityLayout
 from .splatting import (
@@ -173,11 +182,10 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
     periodic: tuple[bool, ...] = eqx.field(static=True)
     uniform: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, bridge: StructuredCochainBridge, shape_order: PICShapeOrder = 1, /
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         order = parse(shape_order, PICShapeOrder, "shape_order")
         axes = bridge.grid.structured_axes
         widths = tuple(
@@ -582,9 +590,8 @@ class CubicalGridGeometry(StrictModule):
     edge_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     edge_offsets: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, bridge: StructuredCochainBridge, /) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         axes = bridge.grid.structured_axes
         self.dimension = bridge.dimension
         self.periodic = tuple(bool(axis.periodic) for axis in axes)

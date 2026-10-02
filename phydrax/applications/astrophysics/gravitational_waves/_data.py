@@ -19,7 +19,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....series import SampledSeries
 from ....signal import hann_window, tukey_window, WelchSpectrumPlan
-from ....typing import parse
+from ....typing import checked, parse
 from .._photometry import ObservationDataProvenance
 
 
@@ -68,6 +68,7 @@ class OneSidedPowerSpectralDensity(StrictModule, NonTrainableState):
     duration: float = eqx.field(static=True)
     psd_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frequency: ArrayLike,
@@ -115,8 +116,6 @@ class OneSidedPowerSpectralDensity(StrictModule, NonTrainableState):
             values_host[active_host] <= 0.0
         ):
             raise ValueError("Active PSD values must be finite and strictly positive.")
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         identifier = _identifier(psd_id, "psd_id")
         safe_values = np.where(active_host, values_host, 1.0)
         self.frequency = jnp.asarray(frequency_host)
@@ -157,6 +156,7 @@ class DetectorStrainData(StrictModule, NonTrainableState):
     start_time_gps: float = eqx.field(static=True)
     data_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         detector_id: str,
@@ -169,10 +169,6 @@ class DetectorStrainData(StrictModule, NonTrainableState):
         active: ArrayLike | None = None,
         window_power: float = 1.0,
     ) -> None:
-        if not isinstance(psd, OneSidedPowerSpectralDensity):
-            raise TypeError("psd must be OneSidedPowerSpectralDensity.")
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         identifier = _identifier(detector_id, "detector_id")
         start = float(start_time_gps)
         power = float(window_power)

@@ -25,6 +25,7 @@ from .._differentiation import (
 from .._model import AbstractArrayModel, FrozenModel, ModelPorts, PortProvider
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._batch import MLBatch
 from ._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
@@ -131,6 +132,7 @@ class OperationDerivativeContract(StrictModule, NonTrainableState):
     runtime_valid: Array | None
     runtime_status: Array | None
 
+    @checked
     def __init__(
         self,
         operation: str,
@@ -145,8 +147,6 @@ class OperationDerivativeContract(StrictModule, NonTrainableState):
             raise TypeError("operation must be an identifier string.")
         if not operation.isidentifier():
             raise ValueError("operation must be a nonempty identifier.")
-        if not isinstance(contract, DerivativeContract):
-            raise TypeError("contract must be a DerivativeContract.")
         surfaces = tuple(runtime_surfaces)
         if any(not isinstance(surface, DerivativeSurface) for surface in surfaces):
             raise TypeError("runtime_surfaces must contain DerivativeSurface members.")
@@ -235,6 +235,7 @@ class FitResult(StrictModule):
     operation_derivatives: tuple[OperationDerivativeContract, ...]
     default_operation: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -248,8 +249,6 @@ class FitResult(StrictModule):
         operation_derivatives: tuple[OperationDerivativeContract, ...] = (),
         default_operation: str | None = None,
     ) -> None:
-        if not isinstance(derivative_contract, DerivativeContract):
-            raise TypeError("derivative_contract must be a DerivativeContract.")
         if not isinstance(operation_derivatives, tuple) or any(
             not isinstance(entry, OperationDerivativeContract)
             for entry in operation_derivatives

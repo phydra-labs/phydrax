@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .lattice._compile import (
     prepare_quantum_lattice,
     PreparedQuantumLattice,
@@ -49,9 +50,8 @@ class QuantumSpinObservablePlan(StrictModule):
     components: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, model: QuantumSpinModel, components: Sequence[str], /) -> None:
-        if not isinstance(model, QuantumSpinModel):
-            raise TypeError("model must be QuantumSpinModel.")
         values = tuple(str(value) for value in components)
         if not values or any(value not in ("x", "y", "z") for value in values):
             raise ValueError("Spin observable components must be selected from x, y, z.")

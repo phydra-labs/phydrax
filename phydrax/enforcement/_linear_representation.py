@@ -32,6 +32,7 @@ from ..linalg._operators import AbstractLinearOperator
 from ..linalg._real_coordinates import AbstractRealCoordinateMap, RealCoordinateEvidence
 from ..linalg._spaces import AbstractVectorSpace, ArraySpace, BlockSpace
 from ..linalg._structured_operators import StackedLinearOperator
+from ..typing import checked
 from ._lifecycle import (
     commit_refresh,
     propose_refresh,
@@ -375,6 +376,7 @@ class LinearConditionAssembly(StrictModule, NonTrainableState):
     numeric_version: int = eqx.field(static=True)
     assembly_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -384,10 +386,6 @@ class LinearConditionAssembly(StrictModule, NonTrainableState):
         codomain_coordinates: Callable[[Any], PyTree[Any]] | None = None,
         numeric_version: int = 0,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
-        if not isinstance(evidence, LinearAssemblyEvidence):
-            raise TypeError("evidence must be LinearAssemblyEvidence.")
         if operator.batch_shape:
             raise ValueError("A linear condition assembly must be unbatched.")
         if not isinstance(operator.target, ArraySpace):
@@ -631,6 +629,7 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
     numeric_version: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_spec: ProductFieldSpec,
@@ -647,8 +646,6 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
         numeric_version: int = 0,
         prepared_id: str | None = None,
     ) -> None:
-        if not isinstance(field_spec, ProductFieldSpec):
-            raise TypeError("field_spec must be ProductFieldSpec.")
         if not isinstance(
             native_coefficient_space, AbstractVectorSpace
         ) or not isinstance(coefficient_space, AbstractVectorSpace):
@@ -658,8 +655,6 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
             for action in (extraction, replacement, synthesis, assembly)
         ):
             raise TypeError("Linear representation actions must be callable.")
-        if not isinstance(certificate, LinearRepresentationCertificate):
-            raise TypeError("certificate must be LinearRepresentationCertificate.")
         if certificate.field_spec_id != field_spec.field_spec_id:
             raise ValueError("Representation certificate names a different field spec.")
         if certificate.field_names != field_spec.sources:
@@ -946,9 +941,8 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             result.update(fields)
         return frozendict(result)
 
+    @checked
     def assemble(self, bound: BoundCondition, /) -> LinearConditionAssembly:
-        if not isinstance(bound, BoundCondition):
-            raise TypeError("bound must be a BoundCondition.")
         if bound.condition.fields.sources != self.field_spec.sources:
             raise ValueError(
                 "A product representation must cover all bound condition sources in order."
@@ -1092,6 +1086,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
     realization_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         representation: AbstractLinearRepresentation,
@@ -1100,10 +1095,6 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
         *,
         prepared_operator: PreparedConstraintOperator | None = None,
     ) -> None:
-        if not isinstance(representation, AbstractLinearRepresentation):
-            raise TypeError("representation must be AbstractLinearRepresentation.")
-        if not isinstance(assembly, LinearConditionAssembly):
-            raise TypeError("assembly must be LinearConditionAssembly.")
         if not assembly.operator.source.compatible(representation.coefficient_space):
             raise ValueError(
                 "Assembly source must match the representation coefficient space."
@@ -1190,6 +1181,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
             evidence=evidence,
         )
 
+    @checked
     def realize(
         self,
         fields: Mapping[str, Any],
@@ -1197,8 +1189,6 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
         *,
         context: ConditionEvaluationContext,
     ) -> FieldRealizationResult:
-        if not isinstance(context, ConditionEvaluationContext):
-            raise TypeError("context must be ConditionEvaluationContext.")
         current = RealizationLifecycleState.initial() if state is None else state
         if not isinstance(current, RealizationLifecycleState):
             raise TypeError("state must be RealizationLifecycleState or None.")

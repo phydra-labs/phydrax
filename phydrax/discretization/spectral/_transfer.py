@@ -19,6 +19,7 @@ from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator
+from ...typing import checked
 from .._core import DiscretizationCapability, PreparationReport
 from .._transfer import FieldTransfer, TransferProperties
 from ._basis import AbstractSpectralBasisPlan, PreparedSpectralAxis
@@ -468,6 +469,7 @@ class PreparedSpectralModalTransfer(StrictModule, NonTrainableState):
     report: SpectralModalTransferReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SpectralModalTransferPlan,
@@ -475,12 +477,8 @@ class PreparedSpectralModalTransfer(StrictModule, NonTrainableState):
         report: SpectralModalTransferReport,
         /,
     ) -> None:
-        if not isinstance(plan, SpectralModalTransferPlan):
-            raise TypeError("plan must be a SpectralModalTransferPlan.")
         if not isinstance(transfer, (FieldTransfer, FunctionLinearOperator)):
             raise TypeError("transfer must be a FieldTransfer or FunctionLinearOperator.")
-        if not isinstance(report, SpectralModalTransferReport):
-            raise TypeError("report must be a SpectralModalTransferReport.")
         self.plan = plan
         self.transfer = transfer
         self.report = report

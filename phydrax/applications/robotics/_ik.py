@@ -36,6 +36,7 @@ from ...optim import (
     NonlinearLeastSquaresProblem,
     OptimizationTermination,
 )
+from ...typing import checked
 
 
 _SO3 = SpecialOrthogonalGroup(3)
@@ -408,6 +409,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
     configuration_chart_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         articulation: PreparedReducedArticulation,
@@ -420,8 +422,6 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
         configuration_chart_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(articulation, PreparedReducedArticulation):
-            raise TypeError("articulation must be PreparedReducedArticulation.")
         tasks_ = tuple(tasks)
         if not tasks_ or any(
             not isinstance(task, (FramePositionTask, FrameOrientationTask, FramePoseTask))
@@ -615,6 +615,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
             problem_id=self.plan_id,
         )
 
+    @checked
     def implicit_solution(
         self,
         initial_configuration: ArrayLike,
@@ -625,14 +626,10 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
     ) -> Array:
         """Return the regular local IK root with native implicit sensitivity."""
 
-        if not isinstance(method, AbstractLeastSquaresMethod):
-            raise TypeError("method must be an AbstractLeastSquaresMethod.")
         if isinstance(method, AbstractBoundedLeastSquaresMethod):
             raise ValueError("Implicit IK sensitivity does not support joint bounds.")
         if not method.capabilities.implicit_differentiation:
             raise ValueError("method does not support implicit differentiation.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination.")
         initial = self._require_configuration(initial_configuration)
         problem = self.least_squares_problem(initial)
         candidate = implicit_least_squares(
@@ -643,6 +640,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
         )
         return self.canonical_configuration(initial, candidate)
 
+    @checked
     def solve(
         self,
         initial_configuration: ArrayLike,
@@ -654,10 +652,6 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
     ) -> FrameInverseKinematicsResult:
         """Solve one explicitly configured local least-squares IK problem."""
 
-        if not isinstance(method, AbstractLeastSquaresMethod):
-            raise TypeError("method must be an AbstractLeastSquaresMethod.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination.")
         bounded_method = isinstance(method, AbstractBoundedLeastSquaresMethod)
         if bounded_method != (joint_bounds is not None):
             raise ValueError(

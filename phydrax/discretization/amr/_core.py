@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import KeyGroupLookup, KeyGroupPlan, KeyGroupState
+from ...typing import checked
 from .._tensor_support import PreparedTensorGrid
 from .._topology_epoch import TopologyEpoch
 from ._patches import LogicalPatchBox
@@ -96,6 +97,7 @@ class BlockHierarchyPlan(StrictModule, NonTrainableState):
     periodic_axes: tuple[bool, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -103,8 +105,6 @@ class BlockHierarchyPlan(StrictModule, NonTrainableState):
         /,
     ) -> None:
         values = tuple(levels)
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         if not values or not all(isinstance(level, BlockLevelPlan) for level in values):
             raise TypeError("levels must contain BlockLevelPlan values.")
         if tuple(level.level for level in values) != tuple(range(len(values))):
@@ -228,6 +228,7 @@ class BlockMetadata(StrictModule, NonTrainableState):
     block_groups: KeyGroupState
     metadata_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: BlockLevelPlan,
@@ -239,8 +240,6 @@ class BlockMetadata(StrictModule, NonTrainableState):
         logical_indices: ArrayLike,
         neighbor_slots: ArrayLike,
     ) -> None:
-        if not isinstance(plan, BlockLevelPlan):
-            raise TypeError("plan must be a BlockLevelPlan.")
         mask = np.asarray(active, dtype=np.bool_)
         ids = np.asarray(block_ids, dtype=np.int32)
         parents = np.asarray(parent_ids, dtype=np.int32)

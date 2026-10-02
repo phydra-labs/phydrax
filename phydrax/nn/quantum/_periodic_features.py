@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
+from ...typing import checked
 
 
 class PeriodicCellFeatureResult(StrictModule):
@@ -52,6 +53,7 @@ class PeriodicCellFeatures(StrictModule, NonTrainableState):
     boundary_id: str = eqx.field(static=True)
     differentiation_scope: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell: PeriodicCell,
@@ -60,8 +62,6 @@ class PeriodicCellFeatures(StrictModule, NonTrainableState):
         *,
         twist: ArrayLike,
     ) -> None:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
         mode_host = np.asarray(reciprocal_modes)
         if (
             mode_host.ndim != 2

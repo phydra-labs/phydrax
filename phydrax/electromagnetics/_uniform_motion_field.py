@@ -45,6 +45,7 @@ from .._strict import StrictModule
 from ..special import kve
 from ..typing import (
     Bool,
+    checked,
     Complex128,
     ConvertibleToArray,
     Dim,
@@ -231,6 +232,7 @@ class UniformMotionFieldPlan(StrictModule):
     geometry: UniformMotionGeometry = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: UniformMotionGeometry,
@@ -243,8 +245,6 @@ class UniformMotionFieldPlan(StrictModule):
         direction: ConvertibleToArray,
     ) -> None:
         geometry = parse(geometry, UniformMotionGeometry, "geometry")
-        if not isinstance(medium, UniformMotionMedium):
-            raise TypeError("medium must be a UniformMotionMedium.")
         match geometry:
             case "point":
                 dimension = 3

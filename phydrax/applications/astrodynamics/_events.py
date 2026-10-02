@@ -23,6 +23,7 @@ from ...solver import (
     HybridGuardPlan,
     localize_hybrid_event,
 )
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -63,6 +64,7 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
     terminal: bool = eqx.field(static=True)
     event_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         guard: Callable[[Array, Array, Any], Array],
@@ -97,8 +99,6 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
         ``*_semantic_id``/``*_numeric_id`` pair (index-aligned sequences for
         ``competing_guards``); missing identities raise ``TypeError``.
         """
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         if isinstance(direction, bool) or not isinstance(direction, int):
             raise TypeError("event direction must be an integer.")
         direction_ = direction

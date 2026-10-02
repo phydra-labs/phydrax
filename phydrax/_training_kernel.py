@@ -68,7 +68,7 @@ from ._training_objective import (
     _ObjectiveContribution,
 )
 from ._tree_math import tree_inner, tree_norm, tree_where
-from .typing import PRNGKey
+from .typing import checked, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -458,6 +458,7 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
     rule_id: str = eqx.field(static=True)
     reevaluates_objective: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         optimizer: optax.GradientTransformation,
@@ -467,8 +468,6 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
         reevaluates_objective: bool = False,
         evaluation_parameters: EvaluationParametersFn | None = None,
     ) -> None:
-        if not isinstance(optimizer, optax.GradientTransformation):
-            raise TypeError("optimizer must be an optax.GradientTransformation.")
         if not isinstance(reevaluates_objective, bool):
             raise TypeError("reevaluates_objective must be a bool.")
         if reevaluates_objective and not isinstance(
@@ -872,6 +871,7 @@ class TrainingKernelSpec(StrictModule):
     target_policy: TargetPolicy | None = eqx.field(static=True)
     accumulation_dtype: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rule: AbstractKernelUpdateRule,
@@ -883,8 +883,6 @@ class TrainingKernelSpec(StrictModule):
         lane_layout: LaneLayout | None = None,
         accumulation_dtype: Any = jnp.float64,
     ) -> None:
-        if not isinstance(rule, AbstractKernelUpdateRule):
-            raise TypeError("rule must be an AbstractKernelUpdateRule.")
         context_ = _identifier(context, "context")
         if isinstance(rejection_budget, bool) or not isinstance(rejection_budget, int):
             raise TypeError("rejection_budget must be an integer.")

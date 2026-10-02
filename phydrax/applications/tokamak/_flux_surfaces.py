@@ -20,6 +20,7 @@ from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import MetricLinePlan, PreparedMetricLine
+from ...typing import checked
 from ._equilibrium import AxisymmetricEquilibrium
 
 
@@ -207,9 +208,8 @@ class FluxSurfacePlan:
             ),
         )
 
+    @checked
     def prepare(self, equilibrium: AxisymmetricEquilibrium, /) -> FluxSurfaceGeometry:
-        if not isinstance(equilibrium, AxisymmetricEquilibrium):
-            raise TypeError("equilibrium must be AxisymmetricEquilibrium.")
         axis = equilibrium.magnetic_axis_rz_m
         normalized = equilibrium.normalized_flux
         axis_value = _bilinear(

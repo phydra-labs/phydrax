@@ -21,6 +21,7 @@ from ..discretization.finite_volume._vof_phase_change import (
     VOFPhaseChangePlan,
     VOFPhaseChangeStageEvaluation,
 )
+from ..typing import checked
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_runtime import (
     FiniteVolumeAdvanceResult,
@@ -50,16 +51,13 @@ class FiniteVolumePhaseChangeStrangMethod(StrictModule):
     phase_change: VOFPhaseChangePlan
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transport_runtime: PreparedFiniteVolumeRuntime,
         phase_change: VOFPhaseChangePlan,
         /,
     ) -> None:
-        if not isinstance(transport_runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("transport_runtime must be PreparedFiniteVolumeRuntime.")
-        if not isinstance(phase_change, VOFPhaseChangePlan):
-            raise TypeError("phase_change must be VOFPhaseChangePlan.")
         dynamics = transport_runtime.dynamics
         if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
             raise TypeError("Phase-change Strang splitting requires unstructured FV.")
@@ -142,14 +140,13 @@ class FiniteVolumePhaseChangeStrangMethod(StrictModule):
             plic,
         )
 
+    @checked
     def step(
         self,
         runtime_state: FiniteVolumeRuntimeState,
         args: Any = None,
         /,
     ) -> FiniteVolumePhaseChangeStrangResult:
-        if not isinstance(runtime_state, FiniteVolumeRuntimeState):
-            raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
         step = runtime_state.step_size
         original = runtime_state.content_state.cell_average()
         first = self._half_source(original, step, runtime_state.content_state)

@@ -15,7 +15,7 @@ from ..._differentiation import DerivativeContract, DerivativeRoute, DerivativeS
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._products import (
     CosmologyProductProvenance,
     MatterPowerDescriptor,
@@ -146,6 +146,7 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
     differentiation: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale_factors: ArrayLike,
@@ -158,10 +159,6 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             route=DerivativeRoute.DIRECT
         ),
     ) -> None:
-        if not isinstance(card, CorrectionModelCard):
-            raise TypeError("card must be CorrectionModelCard.")
-        if not isinstance(differentiation, DerivativeContract):
-            raise TypeError("differentiation must be DerivativeContract.")
         scales = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         wavenumbers_ = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
         factors = jnp.asarray(factor_values)
@@ -197,11 +194,10 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def apply(
         self, power: MatterPowerTable, /, *, strength: ArrayLike = 1.0
     ) -> MatterPowerCorrectionResult:
-        if not isinstance(power, MatterPowerTable):
-            raise TypeError("power must be MatterPowerTable.")
         if power.descriptor.stage != self.card.denominator_stage:
             raise ValueError("Correction denominator stage does not match input power.")
         if (

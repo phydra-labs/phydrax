@@ -25,6 +25,7 @@ from ..operators.quantum import (
     ApproximationQuantity,
     OpenSystemApproximationEvidence,
 )
+from ..typing import checked
 
 
 class StateVectorOperator(StrictModule):
@@ -88,6 +89,7 @@ class QuantumJumpProblem(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hamiltonian: StateVectorOperator,
@@ -98,8 +100,6 @@ class QuantumJumpProblem(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         problem_id: str = "quantum-jump",
     ) -> None:
-        if not isinstance(hamiltonian, StateVectorOperator):
-            raise TypeError("hamiltonian must be a StateVectorOperator.")
         collapse = tuple(collapse_operators)
         if any(
             not isinstance(operator, StateVectorOperator)
@@ -141,6 +141,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         states: ArrayLike,
@@ -156,10 +157,6 @@ class QuantumTrajectoryEnsemble(StrictModule):
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
     ) -> None:
-        if not isinstance(temporal_precision, TemporalPrecisionPolicy):
-            raise TypeError("temporal_precision must be TemporalPrecisionPolicy.")
-        if not isinstance(geometry_precision, GeometryPrecisionPolicy):
-            raise TypeError("geometry_precision must be GeometryPrecisionPolicy.")
         states_ = jnp.asarray(states)
         times_ = jnp.asarray(times)
         temporal_precision.validate_state(states_[0, 0])

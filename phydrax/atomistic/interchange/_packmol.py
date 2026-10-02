@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...logging import emit
+from ...typing import checked
 from .._frame import AtomisticFrame
 from .._units import AtomisticUnitSystem
 
@@ -67,6 +68,7 @@ class PackmolComponentPlan(StrictModule, NonTrainableState):
     constraints: tuple[PackmolRegionConstraint, ...]
     component_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         template: AtomisticFrame,
@@ -75,8 +77,6 @@ class PackmolComponentPlan(StrictModule, NonTrainableState):
         *,
         constraints: Iterable[PackmolRegionConstraint] = (),
     ) -> None:
-        if not isinstance(template, AtomisticFrame):
-            raise TypeError("template must be AtomisticFrame.")
         count_ = int(count)
         values = tuple(constraints)
         if count_ <= 0 or any(

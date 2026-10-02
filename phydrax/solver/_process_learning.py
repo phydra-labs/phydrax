@@ -20,6 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix import ComplexStiefelManifold
+from ..typing import checked
 
 
 class ProcessExperimentPlan(StrictModule):
@@ -391,9 +392,8 @@ class QuantumDigitalTwinState(StrictModule, NonTrainableState):
     fit_valid: Array
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, result: ProcessFitResult, /, *, prior_iterations: int = 0) -> None:
-        if not isinstance(result, ProcessFitResult):
-            raise TypeError("result must be ProcessFitResult.")
         completed = int(prior_iterations) + result.iterations
         self.model = result.model
         self.training_loss_history = result.training_loss_history

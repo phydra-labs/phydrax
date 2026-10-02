@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from ..cosmology._dark_sector_species import DarkSectorSpeciesPlan
 from ..cosmology._quantum_dark_kinetics import QuantumKineticState
 from ..relativistic_scattering._unit_contract import (
@@ -117,6 +118,7 @@ class CoherentTransportPlan(StrictModule, NonTrainableState):
     unit_contract_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quantum_support: QuantumKineticState,
@@ -132,8 +134,6 @@ class CoherentTransportPlan(StrictModule, NonTrainableState):
         maximum_matrix_bytes: int = 256_000_000,
         production_evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(quantum_support, QuantumKineticState):
-            raise TypeError("quantum_support must be a QuantumKineticState.")
         if not isinstance(quantum_support.units, RelativisticUnitContract):
             raise TypeError("Quantum support must own a RelativisticUnitContract.")
         if not isinstance(quantum_support.frame, LocalRelativisticFramePlan):

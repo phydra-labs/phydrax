@@ -47,7 +47,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...applications.detector._core import SensitiveHitBank
 from ...applications.detector._digitization import SensitiveHitPlan
-from ...typing import ConvertibleToArray, Dim, Float64, parse, PRNGKey, Size
+from ...typing import checked, ConvertibleToArray, Dim, Float64, parse, PRNGKey, Size
 from ._optical_monte_carlo import OpticalDetectorArrivals
 
 
@@ -212,6 +212,7 @@ class PhotodetectionPlan(StrictModule, NonTrainableState):
     dark_count_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         photodetector: OpticalPhotodetector,
@@ -222,10 +223,6 @@ class PhotodetectionPlan(StrictModule, NonTrainableState):
         hit_capacity: int,
         dark_count_capacity: int = 0,
     ) -> None:
-        if not isinstance(photodetector, OpticalPhotodetector):
-            raise TypeError("photodetector must be an OpticalPhotodetector.")
-        if not isinstance(hit_plan, SensitiveHitPlan):
-            raise TypeError("hit_plan must be a SensitiveHitPlan.")
         if hit_plan.element_count != photodetector.detector_count:
             raise ValueError("hit_plan must map exactly one element per photodetector.")
         start, end = (float(value) for value in gate)

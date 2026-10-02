@@ -65,6 +65,7 @@ from ...solver import (
     MACCompartmentProjectionPlan,
     MACCompartmentProjectionResult,
 )
+from ...typing import checked
 from ._bubble_components import (
     BubbleComponentLabels,
     BubbleComponentPlan,
@@ -227,6 +228,7 @@ class BubblyFlowPlan(StrictModule):
     atmosphere_pressure: Array = parameter_field()
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         two_phase: PreparedIncompressibleTwoPhaseVOF,
@@ -239,12 +241,8 @@ class BubblyFlowPlan(StrictModule):
         near_contact_pressure: ArrayLike = 0.0,
         atmosphere_pressure: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(two_phase, PreparedIncompressibleTwoPhaseVOF):
-            raise TypeError("two_phase must be PreparedIncompressibleTwoPhaseVOF.")
         if two_phase.geometry is not None:
             raise ValueError("Bubbly flow does not compose qualified sharp geometry.")
-        if not isinstance(identity, BubbleComponentPlan):
-            raise TypeError("identity must be a BubbleComponentPlan.")
         dimension = len(two_phase.plan.discretization.cell_shape)
         capacity = identity.component_capacity
         if markers is not None and markers.component_capacity != capacity:

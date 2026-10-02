@@ -33,6 +33,7 @@ from ..applications.relativistic_scattering._unit_contract import (
     RelativisticUnitContract,
 )
 from ..equations._dark_radiation_moments import DarkRadiationFourForce
+from ..typing import checked
 from ._dark_sector_epoch_runtime import (
     DarkSectorEpochPlan,
     DarkSectorEpochState,
@@ -238,6 +239,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     epoch_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capacity: int,
@@ -256,10 +258,6 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         owners = int(owner_count)
         if packets <= 0 or events <= 0 or owners <= 0:
             raise ValueError("Packet, event, and owner capacities must be positive.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be RelativisticUnitContract.")
-        if not isinstance(epoch_plan, DarkSectorEpochPlan):
-            raise TypeError("epoch_plan must be DarkSectorEpochPlan.")
         if (
             epoch_plan.radiation_capacity < packets
             or epoch_plan.event_capacity < events
@@ -1014,9 +1012,8 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         )
         return replace_dark_sector_conservation(epoch, conservation, conservation)
 
+    @checked
     def _check_frame(self, frame: LocalRelativisticFramePlan, /) -> None:
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be LocalRelativisticFramePlan.")
         if frame.units.contract_id != self.units.contract_id:
             raise ValueError("Packet frame and plan use different unit contracts.")
         if frame.geometry.leading_shape != ():
@@ -1024,9 +1021,8 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
                 "Packet transport currently requires one scalar local frame stage."
             )
 
+    @checked
     def _check_state_shapes(self, state: DarkRadiationPacketState, /) -> None:
-        if not isinstance(state, DarkRadiationPacketState):
-            raise TypeError("state must be DarkRadiationPacketState.")
         if (
             state.plan_id != self.plan_id
             or state.unit_contract_id != self.units.contract_id

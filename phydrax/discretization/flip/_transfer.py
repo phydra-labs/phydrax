@@ -13,6 +13,7 @@ from ..._interpolation import GatherStencil
 from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_entities import TensorEntityLayout
 from ..finite_volume import FaceVelocity, PreparedMACOperators
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
@@ -42,6 +43,7 @@ class FLIPParticleTransferPlan(StrictModule, NonTrainableState):
     budget: ParticleGridSplatBudget
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -52,8 +54,6 @@ class FLIPParticleTransferPlan(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         assignment_ = (
             TensorBSplineSplatAssignment(1) if assignment is None else assignment
         )
@@ -91,13 +91,10 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
     faces: tuple[PreparedParticleGridSplat, ...]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: FLIPParticleTransferPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, FLIPParticleTransferPlan):
-            raise TypeError("plan must be FLIPParticleTransferPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         operators = plan.operators
         if particles.ambient_dimension != len(operators.discretization.cell_shape):
             raise ValueError("FLIP particles and MAC grid dimensions must match.")

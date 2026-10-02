@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._homogeneous_thermodynamics import HomogeneousHelmholtzPlan
 
 
@@ -114,6 +115,7 @@ class RadiationCoefficientTable(StrictModule, NonTrainableState):
     provenance: str = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         temperature_axis: ArrayLike,
@@ -129,8 +131,6 @@ class RadiationCoefficientTable(StrictModule, NonTrainableState):
         pressure = np.asarray(pressure_axis, dtype=np.float64)
         values = np.asarray(coefficient, dtype=np.float64)
         source = str(provenance)
-        if not isinstance(frequency_grid, SpectralFrequencyGrid):
-            raise TypeError("frequency_grid must be SpectralFrequencyGrid.")
         if not isinstance(role, RadiationCoefficientRole):
             raise TypeError("role must be RadiationCoefficientRole.")
         if (
@@ -284,6 +284,7 @@ class RadiationMatterExchangePlan(StrictModule):
     radiation_constant: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
@@ -293,10 +294,6 @@ class RadiationMatterExchangePlan(StrictModule):
         absorption_coefficient: float,
         radiation_constant: float = _RADIATION_CONSTANT,
     ) -> None:
-        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
-            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
-        if not isinstance(scale, RadiationScaleContract):
-            raise TypeError("scale must be RadiationScaleContract.")
         absorption = float(absorption_coefficient)
         constant = float(radiation_constant)
         if (

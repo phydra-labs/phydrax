@@ -30,6 +30,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ..geometry.surface import InterfaceSide
+from ..typing import checked
 from ._assembly import MeshPart
 from ._association import (
     _centroids,
@@ -346,10 +347,9 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
     def sided(self) -> bool:
         return self.orientation != 0
 
+    @checked
     def require_current(self, part: MeshPart, /) -> None:
         """Refuse a part that is not the exact revision this attachment binds."""
-        if not isinstance(part, MeshPart):
-            raise TypeError("part must be MeshPart.")
         if part.name != self.part_name:
             raise ValueError(
                 f"Mesh part {part.name!r} does not own attachment of {self.part_name!r}."

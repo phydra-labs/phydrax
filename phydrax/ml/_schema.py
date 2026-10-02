@@ -22,7 +22,7 @@ from .._model._component import ModelExecutionContract, RandomnessContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._typing_plan import validate_tree
-from ..typing import parse
+from ..typing import checked, parse
 from ..units._dimension import DimensionSignature
 
 
@@ -250,6 +250,7 @@ class TargetSchema(StrictModule, NonTrainableState):
         self.port = port
 
     @classmethod
+    @checked
     def from_port(cls, port: ValuePort, /) -> "TargetSchema":
         """Return the continuous target schema of one owner port's value.
 
@@ -257,8 +258,6 @@ class TargetSchema(StrictModule, NonTrainableState):
         dimensions. Fitted executables estimating this target declare `port` as
         their output port, so they bind to its owner through a `PortMapping`.
         """
-        if not isinstance(port, ValuePort):
-            raise TypeError("port must be a ValuePort.")
         return cls(
             "continuous",
             names=port.component_ids,
@@ -379,6 +378,7 @@ class AbstractFittedModel(AbstractArrayModel):
         object.__setattr__(self, "target_schema", None)
         return self
 
+    @checked
     def bind_schemas(
         self,
         feature_schema: FeatureSchema,
@@ -390,8 +390,6 @@ class AbstractFittedModel(AbstractArrayModel):
         Schemas the fit already bound (for example a learned class vocabulary)
         are kept; the feature schema must match an integer `in_size`.
         """
-        if not isinstance(feature_schema, FeatureSchema):
-            raise TypeError("feature_schema must be a FeatureSchema.")
         if target_schema is not None and not isinstance(target_schema, TargetSchema):
             raise TypeError("target_schema must be a TargetSchema or None.")
         if isinstance(self.in_size, int) and len(feature_schema.names) != self.in_size:

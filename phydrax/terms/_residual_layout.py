@@ -14,6 +14,7 @@ import phydrax.axes as cx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class ResidualBlockLayout(StrictModule, NonTrainableState):
@@ -84,12 +85,9 @@ class ResidualBlockLayout(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown residual block {name!r}.")
         return self.names.index(name_)
 
+    @checked
     def split(self, field: cx.AxisArray, /) -> tuple[cx.AxisArray, ...]:
         """Split a residual field while preserving its event-axis dimension."""
-        if not isinstance(field, cx.AxisArray):
-            raise TypeError(
-                "ResidualBlockLayout.split requires a phydrax.axes.AxisArray."
-            )
         event_positions = tuple(
             index for index, dimension in enumerate(field.dims) if dimension is None
         )

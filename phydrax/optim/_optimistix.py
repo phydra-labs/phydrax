@@ -17,6 +17,7 @@ from .._tree_math import (
     tree_allfinite as _tree_allfinite,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
+from ..typing import checked
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
     MinimizationProblem,
@@ -36,6 +37,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
     adjoint: optx.AbstractAdjoint
     options: frozendict[str, Any]
 
+    @checked
     def __init__(
         self,
         solver: optx.AbstractMinimiser,
@@ -44,8 +46,6 @@ class OptimistixMethod(AbstractMinimizationMethod):
         adjoint: optx.AbstractAdjoint | None = None,
         options: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(solver, optx.AbstractMinimiser):
-            raise TypeError("solver must be an optimistix.AbstractMinimiser.")
         adjoint_ = optx.ImplicitAdjoint() if adjoint is None else adjoint
         if not isinstance(adjoint_, optx.AbstractAdjoint):
             raise TypeError("adjoint must be an optimistix.AbstractAdjoint or None.")
@@ -69,6 +69,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
             implicit_differentiation=isinstance(self.adjoint, optx.ImplicitAdjoint),
         )
 
+    @checked
     def solve(
         self,
         problem: MinimizationProblem,
@@ -78,10 +79,6 @@ class OptimistixMethod(AbstractMinimizationMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> MinimizationResult:
-        if not isinstance(problem, MinimizationProblem):
-            raise TypeError("problem must be a MinimizationProblem.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be an OptimizationTermination.")
         if problem.bounds is not None or problem.constraints:
             raise ValueError(
                 "OptimistixMethod does not translate Phydrax bounds or constraints; use a native constrained method."

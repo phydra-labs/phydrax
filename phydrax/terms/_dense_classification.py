@@ -43,7 +43,7 @@ from ..ml._overlap import (
     reduce_overlap_score,
 )
 from ..ml._schema import TargetSchema
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._data_metrics import (
     configured_case_indices,
     sample_case_indices,
@@ -67,6 +67,7 @@ class DenseSiteClassificationBatch(StrictModule):
     case_axis: str = eqx.field(static=True)
     site_axes: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         points: GridBatch,
@@ -79,8 +80,6 @@ class DenseSiteClassificationBatch(StrictModule):
         case_axis: str,
         site_axes: tuple[str, ...],
     ) -> None:
-        if not isinstance(points, GridBatch):
-            raise TypeError("points must be a GridBatch.")
         index_array = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         target_array = jnp.asarray(target)
         if target_array.ndim == 0 or target_array.shape[0] != index_array.shape[0]:
@@ -366,6 +365,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
     weight: Array
     label: str | None
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -384,10 +384,6 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         weight: ArrayLike = 1.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(component, DomainComponent):
-            raise TypeError("component must be a DomainComponent.")
-        if not isinstance(target_schema, TargetSchema):
-            raise TypeError("target_schema must declare a classification target kind.")
         parse(target_schema.kind, ClassificationKind, "target_schema.kind")
         dataset = _dataset_factor(component)
         template, case_count, case_axis, site_labels = _normalize_grid_sampling(
@@ -876,6 +872,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
     score: OverlapScoreConfig
     support_measure: SupportMeasure = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -897,8 +894,6 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         weight: ArrayLike = 1.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(score, OverlapScoreConfig):
-            raise TypeError("score must be an OverlapScoreConfig.")
         support_measure = parse(support_measure, SupportMeasure, "support_measure")
         objective_ = ClassificationObjective.nll() if objective is None else objective
         if not isinstance(objective_, ClassificationObjective):

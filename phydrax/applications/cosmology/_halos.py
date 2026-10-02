@@ -18,7 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._background import FLRWBackground
 from ._products import MatterField, MatterPowerTable
 
@@ -160,6 +160,7 @@ class LinearVariancePlan(StrictModule, NonTrainableState):
         direct = 3.0 * (jnp.sin(safe) - safe * jnp.cos(safe)) / safe**3
         return jnp.where(jnp.abs(argument) < 1.0e-3, series, direct)
 
+    @checked
     def sigma(
         self,
         background: FLRWBackground,
@@ -168,8 +169,6 @@ class LinearVariancePlan(StrictModule, NonTrainableState):
         scale_factor: ArrayLike,
         /,
     ) -> Array:
-        if not isinstance(power, MatterPowerTable):
-            raise TypeError("power must be MatterPowerTable.")
         if (
             power.descriptor.stage != "linear"
             or power.descriptor.left_field != self.required_field
@@ -222,6 +221,7 @@ class NFWProfile(StrictModule, NonTrainableState):
     order: int = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mass_definition: SphericalOverdensityMassDefinition,
@@ -229,8 +229,6 @@ class NFWProfile(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 64,
     ) -> None:
-        if not isinstance(mass_definition, SphericalOverdensityMassDefinition):
-            raise TypeError("mass_definition must be SphericalOverdensityMassDefinition.")
         order = int(quadrature_order)
         if order < 8:
             raise ValueError("NFW quadrature order must be at least eight.")

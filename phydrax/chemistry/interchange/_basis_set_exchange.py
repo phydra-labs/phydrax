@@ -25,6 +25,7 @@ from ...operators.quantum.gaussian import (
     GaussianShellRepresentation,
 )
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 
 
 class GaussianBasisImport(StrictModule, NonTrainableState):
@@ -33,6 +34,7 @@ class GaussianBasisImport(StrictModule, NonTrainableState):
     package_version: str = eqx.field(static=True)
     import_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: GaussianBasisPlan,
@@ -40,10 +42,6 @@ class GaussianBasisImport(StrictModule, NonTrainableState):
         package_version: str,
         /,
     ) -> None:
-        if not isinstance(basis, GaussianBasisPlan):
-            raise TypeError("basis must be GaussianBasisPlan.")
-        if not isinstance(artifact, ReferenceArtifactManifest):
-            raise TypeError("artifact must be ReferenceArtifactManifest.")
         version = str(package_version).strip()
         if not version or basis.source_artifact_id != artifact.manifest_id:
             raise ValueError("Basis import artifact and package identity must match.")

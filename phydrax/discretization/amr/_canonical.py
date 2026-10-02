@@ -17,6 +17,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import BlockHierarchyTopology
 from ._patches import (
     BlockHierarchyCapacityPlan,
@@ -43,6 +44,7 @@ class CanonicalPatchBucket(StrictModule, NonTrainableState):
     boxes: tuple[LogicalPatchBox | None, ...] = eqx.field(static=True)
     bucket_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PatchBucketPlan,
@@ -55,8 +57,6 @@ class CanonicalPatchBucket(StrictModule, NonTrainableState):
         leaf_active: np.ndarray,
         boxes: Sequence[LogicalPatchBox | None],
     ) -> None:
-        if not isinstance(plan, PatchBucketPlan):
-            raise TypeError("Canonical patch buckets require PatchBucketPlan.")
         lane_count = plan.lane_capacity
         dimension = len(plan.signature.envelope_shape)
         lane_shape = (lane_count,)
@@ -409,6 +409,7 @@ class BlockAMRResourcePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def preflight(
         self,
         hierarchy: CanonicalPatchHierarchy,
@@ -420,8 +421,6 @@ class BlockAMRResourcePlan(StrictModule, NonTrainableState):
         additional_host_bytes: int = 0,
         additional_device_bytes: int = 0,
     ) -> BlockAMRResourceEvidence:
-        if not isinstance(hierarchy, CanonicalPatchHierarchy):
-            raise TypeError("AMR resource preflight requires CanonicalPatchHierarchy.")
         components = int(physical_component_count)
         if components <= 0:
             raise ValueError("physical_component_count must be positive.")

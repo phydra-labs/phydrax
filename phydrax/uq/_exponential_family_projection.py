@@ -23,6 +23,7 @@ from .._numerics._weighted_moments import (
     WeightedMomentsDiagnostics,
 )
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class ExponentialFamilyEstimateResult(StrictModule):
@@ -85,6 +86,7 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
     minimum_log_weight: Array
     weighted_log_weight_sum: Array
 
+    @checked
     def __init__(
         self,
         *,
@@ -96,8 +98,6 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         minimum_log_weight: ArrayLike,
         weighted_log_weight_sum: ArrayLike,
     ) -> None:
-        if not isinstance(family, AbstractExponentialFamily):
-            raise TypeError("family must implement AbstractExponentialFamily.")
         batch_shape = moments.log_scale.shape
         if moments.weighted_value_sum.shape != batch_shape + (
             family.signature.dimension,
@@ -122,6 +122,7 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_log_weights(
         cls,
         family: AbstractExponentialFamily,
@@ -132,8 +133,6 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         sample_axes: int | tuple[int, ...] = 0,
         mask: ArrayLike | None = None,
     ) -> "ExponentialFamilyProjectionAccumulator":
-        if not isinstance(family, AbstractExponentialFamily):
-            raise TypeError("family must implement AbstractExponentialFamily.")
         observation_array = jnp.asarray(observations)
         weight_array = jnp.asarray(log_weights, dtype=jnp.float64)
         event_shape = family.signature.event_shape

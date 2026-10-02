@@ -33,6 +33,7 @@ from ...domain import (
     partition_of_unity_field,
     SubdomainCover,
 )
+from ...typing import checked
 from .._functional_solver import FunctionalSolver
 
 
@@ -43,6 +44,7 @@ class FunctionalPatchParticipant(StrictModule):
     patch_id: str = eqx.field(static=True)
     participant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         patch_id: str,
@@ -51,8 +53,6 @@ class FunctionalPatchParticipant(StrictModule):
         *,
         participant_id: str | None = None,
     ) -> None:
-        if not isinstance(solver, FunctionalSolver):
-            raise TypeError("solver must be a FunctionalSolver.")
         patch = str(patch_id)
         if not patch:
             raise ValueError("patch_id must be non-empty.")

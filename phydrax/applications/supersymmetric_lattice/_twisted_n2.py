@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ...typing import checked
 from ._actions import (
     prepare_twisted_sym,
     PreparedTwistedSYMAction,
@@ -136,9 +137,8 @@ class TwistedSYMCoordinateLayout(StrictModule):
     coordinate_shape: tuple[int, ...] = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, prepared: PreparedTwistedSYMAction, /) -> None:
-        if not isinstance(prepared, PreparedTwistedSYMAction):
-            raise TypeError("prepared must be PreparedTwistedSYMAction.")
         shape = prepared.plan.lattice_shape + (
             2,
             len(prepared.plan.lattice_shape),
@@ -172,9 +172,8 @@ class TwistedSYMCoordinateLayout(StrictModule):
         reverse = jnp.take(complex_values, 1, axis=branch_axis)
         return self.prepared.configuration(forward, reverse)
 
+    @checked
     def pack(self, configuration: TwistedSYMConfiguration, /) -> Array:
-        if not isinstance(configuration, TwistedSYMConfiguration):
-            raise TypeError("configuration must be TwistedSYMConfiguration.")
         self.prepared._validate(configuration)
         branch_axis = len(self.prepared.plan.lattice_shape)
         complex_values = jnp.stack(

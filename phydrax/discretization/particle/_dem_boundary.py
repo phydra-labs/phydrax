@@ -17,6 +17,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._dem_contact import (
     DEMContactBatch,
     DEMContactHistory,
@@ -231,6 +232,7 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
             jnp.asarray(False),
         )
 
+    @checked
     def update(
         self,
         state: ServoDEMBarrierState,
@@ -241,8 +243,6 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         reaction_torque: Array | None = None,
         minimum_radius: Array | None = None,
     ) -> ServoDEMBarrierState:
-        if not isinstance(state, ServoDEMBarrierState):
-            raise TypeError("state must be a ServoDEMBarrierState.")
         dt = jnp.asarray(step_size)
         dt = eqx.error_if(
             dt,

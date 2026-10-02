@@ -37,6 +37,7 @@ from ...linalg import (
     LinearSystem,
     solve,
 )
+from ...typing import checked
 from ...units import conversion_factor, derived_unit, JOULE, METER, SECOND
 from ._observables import PeriodicVelocityResult
 
@@ -80,6 +81,7 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
     rank_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energies_joule: ArrayLike,
@@ -101,8 +103,6 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
         temperature = positive_finite_float(temperature_kelvin, "temperature_kelvin")
         volume = positive_finite_float(cell_volume_m3, "cell_volume_m3")
         rank_tolerance_ = positive_finite_float(rank_tolerance, "rank_tolerance")
-        if not isinstance(relaxation_time, ConstantRelaxationTime):
-            raise TypeError("relaxation_time must be ConstantRelaxationTime.")
         if isinstance(spin_degeneracy, bool) or not isinstance(
             spin_degeneracy, (int, np.integer)
         ):
@@ -160,6 +160,7 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
         return self.band_velocities_m_per_s.shape[-1]
 
     @classmethod
+    @checked
     def from_periodic_results(
         cls,
         spectrum: PeriodicSpectrumResult,
@@ -176,12 +177,6 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
     ) -> "PeriodicBoltzmannPlan":
         """Bind canonical spectrum/velocity/mesh results to the SI transport plan."""
 
-        if not isinstance(spectrum, PeriodicSpectrumResult):
-            raise TypeError("spectrum must be PeriodicSpectrumResult.")
-        if not isinstance(velocity, PeriodicVelocityResult):
-            raise TypeError("velocity must be PeriodicVelocityResult.")
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
         if (
             spectrum.support_id != mesh.mesh_id
             or spectrum.cell_id != mesh.cell_id

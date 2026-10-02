@@ -19,7 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, parameter_field
 from ...dynamics import HeldInputPolicy, InputLayout
-from ...typing import parse
+from ...typing import checked, parse
 
 
 StopDirection: TypeAlias = Literal["below", "above"]
@@ -430,6 +430,7 @@ class BatteryProtocolValues(StrictModule):
     stop_thresholds: Array = parameter_field()
     protocol_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         protocol: BatteryProtocolPlan,
@@ -437,8 +438,6 @@ class BatteryProtocolValues(StrictModule):
         stop_thresholds: ArrayLike | Sequence[float] = (),
         /,
     ) -> None:
-        if not isinstance(protocol, BatteryProtocolPlan):
-            raise TypeError("protocol must be a BatteryProtocolPlan.")
         current_input = jnp.asarray(current_amplitudes_a)
         threshold_input = jnp.asarray(stop_thresholds)
         if jnp.iscomplexobj(current_input) or jnp.iscomplexobj(threshold_input):

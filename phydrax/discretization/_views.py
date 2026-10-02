@@ -40,7 +40,7 @@ from .._model._ports import intrinsic_model_ports, ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
-from ..typing import parse
+from ..typing import checked, parse
 
 
 if TYPE_CHECKING:
@@ -863,6 +863,7 @@ class DiscreteFieldEvaluator(StrictModule, NonTrainableState):
     side: FieldSideBinding | None
     derivative: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: PreparedFieldReconstruction,
@@ -872,8 +873,6 @@ class DiscreteFieldEvaluator(StrictModule, NonTrainableState):
         side: FieldSideBinding | None = None,
         derivative: tuple[int, ...] | None = None,
     ) -> None:
-        if not isinstance(reconstruction, PreparedFieldReconstruction):
-            raise TypeError("reconstruction must be a PreparedFieldReconstruction.")
         self.reconstruction = reconstruction
         self.coefficients = reconstruction.validate_coefficients(coefficients)
         self.side = reconstruction._side(side)

@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from .._preconditioning import PreparedPreconditioner
 from .._spaces import _coordinate_dtype
 from ._plans import EigenSolvePlan
@@ -68,6 +69,7 @@ class PreparedEigenSolve(StrictModule):
     symbolic_version: int = eqx.field(static=True)
     numeric_version: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: EigenproblemLike,
@@ -85,8 +87,6 @@ class PreparedEigenSolve(StrictModule):
     ) -> None:
         if not isinstance(problem, (Eigenproblem, GeneralizedEigenproblem)):
             raise TypeError("problem must be an Eigenproblem or GeneralizedEigenproblem.")
-        if not isinstance(plan, EigenSolvePlan):
-            raise TypeError("plan must be an EigenSolvePlan.")
         if plan.problem_id != problem.problem_id:
             raise ValueError("Prepared problem and plan IDs must match.")
         symbolic = int(symbolic_version)

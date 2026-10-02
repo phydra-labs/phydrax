@@ -13,6 +13,7 @@ from ..._differentiation import (
     DerivativeContract,
 )
 from ..._model import AbstractArrayModel, ModelBinding, ValuePort
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -120,9 +121,8 @@ class FittedPipeline(AbstractFittedModel):
             composed_blockwise=blockwise,
         )
 
+    @checked
     def transform_batch(self, batch: MLBatch, /, *, key: Any = None) -> MLBatch:
-        if not isinstance(batch, MLBatch):
-            raise TypeError("transform_batch requires an MLBatch.")
         keys = _split_key(key, len(self.steps))
         current = batch
         for (_, model), stage_key in zip(self.steps, keys, strict=True):
@@ -140,9 +140,8 @@ class Pipeline(AbstractRecipe):
             steps, kind="Pipeline", recipe_type=AbstractRecipe
         )
 
+    @checked
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        if not isinstance(batch, MLBatch):
-            raise TypeError("Pipeline.fit_batch requires an already-selected MLBatch.")
         keys = _split_key(key, 2 * len(self.steps) - 1)
         current = batch
         fitted_steps: list[tuple[str, AbstractArrayModel]] = []

@@ -28,6 +28,7 @@ from ....geometry import (
     SignReliability,
     ZeroSetAccuracy,
 )
+from ....typing import checked
 
 
 if TYPE_CHECKING:
@@ -164,6 +165,7 @@ class BoundaryPanelPartition2D(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: BoundaryAtlas,
@@ -174,8 +176,6 @@ class BoundaryPanelPartition2D(StrictModule, NonTrainableState):
         grading_order: int = 3,
         corner_topology: BoundaryCornerTopology2D | None = None,
     ) -> None:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("BoundaryPanelPartition2D requires a BoundaryAtlas.")
         panels = int(panels_per_chart)
         order = int(grading_order)
         if panels <= 0:
@@ -262,6 +262,7 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
     source_support_id: str = eqx.field(static=True)
     panelization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: BoundaryAtlas,
@@ -272,8 +273,6 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
         geometry: CompiledGeometry | None = None,
         partition: BoundaryPanelPartition2D | None = None,
     ) -> None:
-        if not isinstance(atlas, BoundaryAtlas):
-            raise TypeError("BoundaryPanelization2D requires a BoundaryAtlas.")
         if atlas.ambient_dimension != 2 or atlas.reference_dimension != 1:
             raise ValueError("BoundaryPanelization2D requires curve charts in 2D.")
         if partition is None:

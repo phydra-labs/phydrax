@@ -31,6 +31,7 @@ from ..operators.integral.layer_potential._quadrature3d import (
     evaluate_double_layer_self_triangle_3d,
     evaluate_single_layer_self_triangle_3d,
 )
+from ..typing import checked
 
 
 class ExteriorHelmholtzDirichletResult3D(StrictModule):
@@ -43,6 +44,7 @@ class ExteriorHelmholtzDirichletResult3D(StrictModule):
     boundary_residual_norm: Array = fixed_field()
     valid: Array = fixed_field()
 
+    @checked
     def __init__(
         self,
         *,
@@ -52,12 +54,6 @@ class ExteriorHelmholtzDirichletResult3D(StrictModule):
         assembly_report: BoundaryOperatorAssemblyReport,
         boundary_residual_norm: Array,
     ) -> None:
-        if not isinstance(potential, HelmholtzCombinedField3D):
-            raise TypeError("potential must be HelmholtzCombinedField3D.")
-        if not isinstance(linear_result, LinearSolveResult):
-            raise TypeError("linear_result must be LinearSolveResult.")
-        if not isinstance(assembly_report, BoundaryOperatorAssemblyReport):
-            raise TypeError("assembly_report must be BoundaryOperatorAssemblyReport.")
         residual = jnp.asarray(boundary_residual_norm)
         self.density = jnp.asarray(density)
         self.potential = potential

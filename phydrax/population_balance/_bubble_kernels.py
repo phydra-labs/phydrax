@@ -42,7 +42,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
 from .._validation import positive_integer
 from ..ein import contract
-from ..typing import as_host_array, Dim, Float64, HostFloat64, Scalar
+from ..typing import as_host_array, checked, Dim, Float64, HostFloat64, Scalar
 
 
 _EXPONENT_LIMIT: Final = -math.log(float(np.finfo(np.float64).tiny))
@@ -394,6 +394,7 @@ class PrinceBlanchCoalescenceKernel(StrictModule):
     weber_support: tuple[float, float] | None = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         liquid: TurbulentBubblyLiquid,
@@ -405,8 +406,6 @@ class PrinceBlanchCoalescenceKernel(StrictModule):
         shear_rate: ArrayLike | None = None,
         weber_support: tuple[float, float] | None = None,
     ) -> None:
-        if not isinstance(liquid, TurbulentBubblyLiquid):
-            raise TypeError("liquid must be a TurbulentBubblyLiquid.")
         coefficient = _physical_scalar(collision_coefficient, "collision_coefficient")
         initial = _physical_scalar(initial_film_thickness, "initial_film_thickness")
         critical = _physical_scalar(critical_film_thickness, "critical_film_thickness")
@@ -502,6 +501,7 @@ class LehrCoalescenceKernel(StrictModule):
     weber_support: tuple[float, float] | None = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         liquid: TurbulentBubblyLiquid,
@@ -512,8 +512,6 @@ class LehrCoalescenceKernel(StrictModule):
         maximum_packing_fraction: ArrayLike = 0.6,
         weber_support: tuple[float, float] | None = None,
     ) -> None:
-        if not isinstance(liquid, TurbulentBubblyLiquid):
-            raise TypeError("liquid must be a TurbulentBubblyLiquid.")
         packing = _physical_scalar(
             maximum_packing_fraction, "maximum_packing_fraction", upper=1.0
         )
@@ -642,6 +640,7 @@ class LuoSvendsenBreakageKernel(StrictModule):
     weber_support: tuple[float, float] | None = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         liquid: TurbulentBubblyLiquid,
@@ -653,8 +652,6 @@ class LuoSvendsenBreakageKernel(StrictModule):
         minimum_eddy_ratio: ArrayLike = 11.4,
         weber_support: tuple[float, float] | None = None,
     ) -> None:
-        if not isinstance(liquid, TurbulentBubblyLiquid):
-            raise TypeError("liquid must be a TurbulentBubblyLiquid.")
         holdup = _physical_scalar(
             gas_volume_fraction, "gas_volume_fraction", inclusive=True, upper=1.0
         )

@@ -22,7 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import ScientificArtifactEnvelope
 from ...qualification import ReferenceArtifactManifest
-from ...typing import parse
+from ...typing import checked, parse
 from ._dark_sector_species import DarkSectorSpeciesPlan
 
 
@@ -677,6 +677,7 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def constant_isotropic(
         cls,
         species: DarkSectorSpeciesPlan,
@@ -687,8 +688,6 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
     ) -> TwoBodyDifferentialKernelPlan:
         """Create the unbounded-speed constant-isotropic specialization."""
 
-        if not isinstance(species, DarkSectorSpeciesPlan):
-            raise TypeError("Constant isotropic kernels require DarkSectorSpeciesPlan.")
         value = float(cross_section)
         unit = str(cross_section_unit).strip()
         if not np.isfinite(value) or value < 0.0:
@@ -903,6 +902,7 @@ class SmallAngleSplitPlan(StrictModule, NonTrainableState):
     reconstruction_tolerance: float = eqx.field(static=True)
     split_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: TwoBodyDifferentialKernelPlan,
@@ -911,10 +911,6 @@ class SmallAngleSplitPlan(StrictModule, NonTrainableState):
         *,
         reconstruction_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(kernel, TwoBodyDifferentialKernelPlan):
-            raise TypeError(
-                "Small-angle splitting requires TwoBodyDifferentialKernelPlan."
-            )
         split = np.asarray(split_cosines, dtype=np.float64)
         if split.shape == ():
             split = np.full(kernel.relative_speeds.shape, float(split))

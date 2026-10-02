@@ -19,7 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import nonnegative_integer, positive_integer, unique_identifiers
-from ...typing import Bool, Dim, Identifier, Int64, Integer, parse, Size
+from ...typing import Bool, checked, Dim, Identifier, Int64, Integer, parse, Size
 from ._contracts import (
     MultiRegionDomain,
     MultiRegionKind,
@@ -271,6 +271,7 @@ class MultiRegionSurfaceTopology(StrictModule, NonTrainableState):
     topology_id: Identifier = eqx.field(static=True)
     lineage_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MultiRegionSurfaceCapacityPlan,
@@ -286,8 +287,6 @@ class MultiRegionSurfaceTopology(StrictModule, NonTrainableState):
         epoch: int = 0,
         domain: MultiRegionDomain = "free_space",
     ) -> None:
-        if not isinstance(plan, MultiRegionSurfaceCapacityPlan):
-            raise TypeError("plan must be a MultiRegionSurfaceCapacityPlan.")
         domain_ = parse(domain, MultiRegionDomain, "domain")
         if domain_ == "periodic":
             raise ValueError(

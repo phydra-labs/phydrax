@@ -15,6 +15,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_index import PreparedTensorIndexSpace, TensorIndexLayout
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
 from ..spatial import SparseBlockTopologyPlan, SparseBlockTopologyState
@@ -57,6 +58,7 @@ class SparseFLIPParticleTransferPlan(StrictModule, NonTrainableState):
     budget: ParticleGridSplatBudget
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         index_space: PreparedTensorIndexSpace,
@@ -69,15 +71,11 @@ class SparseFLIPParticleTransferPlan(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
     ) -> None:
-        if not isinstance(index_space, PreparedTensorIndexSpace):
-            raise TypeError("index_space must be PreparedTensorIndexSpace.")
         faces = tuple(face_topologies)
         if len(faces) != len(index_space.axis_names) or not all(
             isinstance(value, SparseBlockTopologyPlan) for value in faces
         ):
             raise TypeError("One sparse face topology is required per tensor axis.")
-        if not isinstance(cell_topology, SparseBlockTopologyPlan):
-            raise TypeError("cell_topology must be SparseBlockTopologyPlan.")
         if cell_topology.layout.layout_id != index_space.cells().layout_id:
             raise ValueError("cell_topology must use the index-space cell layout.")
         for axis, topology in zip(index_space.axis_names, faces, strict=True):
@@ -126,16 +124,13 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
     faces: tuple[PreparedParticleGridSplat, ...]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SparseFLIPParticleTransferPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, SparseFLIPParticleTransferPlan):
-            raise TypeError("plan must be SparseFLIPParticleTransferPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         if particles.ambient_dimension != len(plan.index_space.axis_names):
             raise ValueError("FLIP particles and tensor index dimensions must match.")
 
@@ -243,6 +238,7 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
             transfer_id=self.prepared_id,
         )
 
+    @checked
     def build_fixed(
         self,
         position: ArrayLike,
@@ -252,8 +248,6 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
         active_mask: ArrayLike | None = None,
     ) -> SparseFLIPTransferState:
         """Build numeric routes against one already allocated topology."""
-        if not isinstance(topology, SparseFLIPTransferState):
-            raise TypeError("topology must be SparseFLIPTransferState.")
         cell_routes = self.cell.build(position, active_mask=active_mask)
         face_routes = tuple(
             value.build(position, active_mask=active_mask) for value in self.faces
@@ -470,9 +464,8 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
             case_shape=routes.stencil.case_shape,
         )
 
+    @checked
     def _validate_state(self, state: SparseFLIPTransferState, /) -> None:
-        if not isinstance(state, SparseFLIPTransferState):
-            raise TypeError("state must be SparseFLIPTransferState.")
         if state.transfer_id != self.prepared_id:
             raise ValueError("Sparse FLIP state belongs to another prepared transfer.")
 

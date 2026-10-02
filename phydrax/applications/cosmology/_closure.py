@@ -21,6 +21,7 @@ from ...observation import (
     PrecisionCovarianceAction,
     TheoryVector,
 )
+from ...typing import checked
 
 
 class CosmologyPhysicalState(StrictModule):
@@ -99,9 +100,8 @@ class PhysicalDependencyProjection(StrictModule, NonTrainableState):
             {"kind": "physical-dependency-projection", "names": list(names_)}
         )
 
+    @checked
     def project(self, state: CosmologyPhysicalState, /) -> CosmologyRealizationSignature:
-        if not isinstance(state, CosmologyPhysicalState):
-            raise TypeError("state must be CosmologyPhysicalState.")
         missing = tuple(name for name in self.names if name not in state.names)
         if missing:
             raise ValueError(f"Physical state is missing projected parameters {missing}.")

@@ -14,6 +14,7 @@ from ...._strict import StrictModule
 from ....discretization.vortex._interfaces import VortexFieldRequest
 from ....discretization.vortex._ring_sheet import VortexRingSheetState
 from ....discretization.vortex._source import VortexTargetState
+from ....typing import checked
 from ._filament3d import regularized_filament_velocity_3d
 
 
@@ -31,9 +32,8 @@ class PreparedRingSheetField3D(StrictModule):
     state: VortexRingSheetState
     evaluator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, state: VortexRingSheetState, /) -> None:
-        if not isinstance(state, VortexRingSheetState):
-            raise TypeError("state must be VortexRingSheetState.")
         self.state = state
         self.evaluator_id = canonical_fingerprint(
             {

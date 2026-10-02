@@ -35,6 +35,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...nonlinear import LocalRootPlan
+from ...typing import checked
 from ._structured import FiniteVolumeDiscretization
 
 
@@ -191,6 +192,7 @@ class StructuredPLICPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteVolumeDiscretization,
@@ -198,8 +200,6 @@ class StructuredPLICPlan(StrictModule, NonTrainableState):
         *,
         mixed_tolerance: float | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) not in (2, 3):
             raise ValueError("Structured PLIC supports two or three dimensions.")
         epsilon = float(np.finfo(np.dtype(discretization.cell_volumes.dtype)).eps)
@@ -504,6 +504,7 @@ class StructuredPLICPlan(StrictModule, NonTrainableState):
             plan_id=self.plan_id,
         )
 
+    @checked
     def interface_delta(
         self,
         alpha: ArrayLike,
@@ -521,8 +522,6 @@ class StructuredPLICPlan(StrictModule, NonTrainableState):
         value = jnp.asarray(alpha)
         if value.shape != self.discretization.cell_shape:
             raise ValueError("PLIC alpha must match the cell shape.")
-        if not isinstance(reconstruction, StructuredPLICReconstruction):
-            raise TypeError("reconstruction must be StructuredPLICReconstruction.")
         if reconstruction.plan_id != self.plan_id:
             raise ValueError("PLIC reconstruction belongs to another PLIC plan.")
         gradient = self._youngs_gradient(self.pad(value, 1), self.cell_widths())

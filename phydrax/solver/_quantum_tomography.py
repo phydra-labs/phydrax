@@ -19,6 +19,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy
 from ..metrix import BuresDensityManifold, FaithfulDensityReport
+from ..typing import checked
 from ..uq import (
     QuantumPOVM,
     QuantumTomographyData,
@@ -145,6 +146,7 @@ class QuantumTomographyResult(StrictModule):
     hermitian_precision_evidence: PrecisionEvidenceEnvelope
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         density: ArrayLike,
@@ -172,12 +174,6 @@ class QuantumTomographyResult(StrictModule):
             & jnp.all(self.minimum_eigenvalue_history > 0.0)
         )
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
-        if not isinstance(hermitian_precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError(
-                "hermitian_precision_evidence must be PrecisionEvidenceEnvelope."
-            )
         self.precision_evidence = precision_evidence
         self.hermitian_precision_evidence = hermitian_precision_evidence
         self.problem_id = str(problem_id)

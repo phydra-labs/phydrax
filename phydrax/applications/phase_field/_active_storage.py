@@ -15,6 +15,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import align_key_groups, KeyGroupPlan, KeyGroupState, KeyGroupTransition
+from ...typing import checked
 
 
 class ActivePhaseStorageEvidence(StrictModule):
@@ -297,9 +298,8 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
             successful,
         )
 
+    @checked
     def _validate(self, state: ActivePhaseFieldState, /) -> None:
-        if not isinstance(state, ActivePhaseFieldState):
-            raise TypeError("state must be ActivePhaseFieldState.")
         shape = (self.dof_count, self.local_capacity)
         if (
             state.phase_ids.shape != shape

@@ -65,7 +65,7 @@ from ....discretization.spectral import (
     SpectralMeshTopology,
 )
 from ....sparse import SparseLinearMap
-from ....typing import parse
+from ....typing import checked, parse
 from ..._maxwell_antenna import SampledPlaneCurrentAntennaPlan
 from ..._maxwell_far_field import (
     _gather_map,
@@ -1319,6 +1319,7 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SpectralMaxwellPlan,
@@ -1326,8 +1327,6 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
         currents: Sequence[ChargeConservingCurrentPlan],
         /,
     ) -> None:
-        if not isinstance(plan, SpectralMaxwellPlan):
-            raise TypeError("plan must be a SpectralMaxwellPlan.")
         transfer_values = tuple(transfers)
         current_values = tuple(currents)
         if len(transfer_values) != len(current_values):
@@ -2419,9 +2418,8 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
         )
         return self.complete_advance(time, field, current, dt, update)
 
+    @checked
     def _require_source(self, current: SpectralMaxwellSource, /) -> None:
-        if not isinstance(current, SpectralMaxwellSource):
-            raise TypeError("Spectral Maxwell advances with a SpectralMaxwellSource.")
         if current.current.shape != (self.plan.current_intervals, *self.plan.counts, 3):
             raise ValueError("The deposited source does not match the current intervals.")
 

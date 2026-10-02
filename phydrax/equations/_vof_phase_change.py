@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._multiphase import TwoMaterialVOFSystem
 
 
@@ -482,16 +483,13 @@ class TwoMaterialVOFPhaseChangePlan(StrictModule, NonTrainableState):
     rate_law: AbstractVOFMassTransferPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: TwoMaterialVOFSystem,
         rate_law: AbstractVOFMassTransferPlan,
         /,
     ) -> None:
-        if not isinstance(system, TwoMaterialVOFSystem):
-            raise TypeError("system must be TwoMaterialVOFSystem.")
-        if not isinstance(rate_law, AbstractVOFMassTransferPlan):
-            raise TypeError("rate_law must implement AbstractVOFMassTransferPlan.")
         self.system = system
         self.rate_law = rate_law
         self.plan_id = canonical_fingerprint(

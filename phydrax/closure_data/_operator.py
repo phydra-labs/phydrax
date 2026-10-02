@@ -29,6 +29,7 @@ from ..nn.operator.training._dataset import (
 )
 from ..nn.operator.training._execution import PreparedOperatorInput
 from ..nn.operator.training._trained_operator import TrainedOperator
+from ..typing import checked
 from ._analysis import ClosureAnalysisDAG, ClosureTarget
 from ._binding import LearnedStressBindingPlan, PreparedLearnedStressBinding
 from ._dataset import (
@@ -448,6 +449,7 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
     output_shape: tuple[int, ...] | None
     predictor_id: str
 
+    @checked
     def __init__(
         self,
         trained: TrainedOperator,
@@ -458,8 +460,6 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
         target_name: str,
         output_shape: Sequence[int] | None = None,
     ) -> None:
-        if not isinstance(trained, TrainedOperator):
-            raise TypeError("trained must be a TrainedOperator.")
         if not trained.artifact_id:
             raise ValueError("Trained closure operators require an artifact identity.")
         if trained.normalization is not None:

@@ -22,6 +22,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._sampling._targets import IncrementalMarkovTarget
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -107,9 +108,8 @@ class FixedPathEnsemble(AbstractPathEnsemble, NonTrainableState):
         self.path_length = count
         self.ensemble_id = _nonempty(identity, "ensemble_id")
 
+    @checked
     def contains(self, path: PathBuffer, /) -> Array:
-        if not isinstance(path, PathBuffer):
-            raise TypeError("path must be a PathBuffer.")
         valid = path.valid() & (path.length == self.path_length) & _finite_active(path)
         if self.initial_region is not None:
             valid = valid & self.initial_region.contains(path.positions[0])
@@ -273,6 +273,7 @@ class MinusPathEnsemble(AbstractPathEnsemble, NonTrainableState):
     ensemble_id: str = eqx.field(static=True)
     requires_terminal_hit: bool = eqx.field(static=True, default=True)
 
+    @checked
     def __init__(
         self,
         initial_region: StateRegionPlan,
@@ -283,8 +284,6 @@ class MinusPathEnsemble(AbstractPathEnsemble, NonTrainableState):
         coordinate_id: str,
         ensemble_id: str | None = None,
     ) -> None:
-        if not isinstance(initial_region, StateRegionPlan):
-            raise TypeError("initial_region must be StateRegionPlan.")
         if not callable(coordinate):
             raise TypeError("coordinate must be callable.")
         level = float(interface_value)
@@ -433,6 +432,7 @@ class DeterministicPathAction(AbstractPathAction, NonTrainableState):
     action_id: str = eqx.field(static=True)
     normalized: bool = eqx.field(static=True, default=False)
 
+    @checked
     def __init__(
         self,
         kernel: FunctionalDynamicsKernel,
@@ -440,8 +440,6 @@ class DeterministicPathAction(AbstractPathAction, NonTrainableState):
         *,
         action_id: str | None = None,
     ) -> None:
-        if not isinstance(kernel, FunctionalDynamicsKernel):
-            raise TypeError("kernel must be FunctionalDynamicsKernel.")
         if kernel.capabilities.stochastic:
             raise ValueError("DeterministicPathAction requires deterministic dynamics.")
         identity = action_id or canonical_fingerprint(
@@ -481,6 +479,7 @@ class NormalizedStochasticPathAction(AbstractPathAction, NonTrainableState):
     action_id: str = eqx.field(static=True)
     normalized: bool = eqx.field(static=True, default=True)
 
+    @checked
     def __init__(
         self,
         kernel: FunctionalDynamicsKernel,
@@ -490,8 +489,6 @@ class NormalizedStochasticPathAction(AbstractPathAction, NonTrainableState):
         initial_density_id: str,
         action_id: str | None = None,
     ) -> None:
-        if not isinstance(kernel, FunctionalDynamicsKernel):
-            raise TypeError("kernel must be FunctionalDynamicsKernel.")
         if (
             not kernel.capabilities.stochastic
             or not kernel.capabilities.normalized_transition_density
@@ -634,6 +631,7 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
     potential_id: str = eqx.field(static=True)
     inverse_temperature: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ensemble: AbstractPathEnsemble,
@@ -643,8 +641,6 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
         inverse_temperature: float,
         potential_id: str | None = None,
     ) -> None:
-        if not isinstance(ensemble, AbstractPathEnsemble):
-            raise TypeError("ensemble must implement AbstractPathEnsemble.")
         if (
             not isinstance(action, NormalizedStochasticPathAction)
             or not action.normalized

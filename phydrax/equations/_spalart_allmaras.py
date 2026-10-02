@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
 from ._homogeneous_thermodynamics import (
     DensityEnergyStateResult,
@@ -285,6 +286,7 @@ class SpalartAllmarasCompressibleSystem(
     base: HomogeneousMixtureCompressibleNavierStokesSystem
     model: SpalartAllmarasNegativePlan
 
+    @checked
     def __init__(
         self,
         base: HomogeneousMixtureCompressibleNavierStokesSystem,
@@ -292,8 +294,6 @@ class SpalartAllmarasCompressibleSystem(
         /,
     ) -> None:
         model_ = SpalartAllmarasNegativePlan() if model is None else model
-        if not isinstance(base, HomogeneousMixtureCompressibleNavierStokesSystem):
-            raise TypeError("SA-neg requires canonical mixture Navier-Stokes.")
         if base.favre_les is not None:
             raise ValueError("SA-neg and Favre LES cannot share one canonical state.")
         if not isinstance(model_, SpalartAllmarasNegativePlan):

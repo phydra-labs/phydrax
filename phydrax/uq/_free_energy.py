@@ -28,7 +28,7 @@ from ..linalg._dense_pseudoinverse import (
     factor_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
-from ..typing import parse
+from ..typing import checked, parse
 from ._correlation_selection import (
     correlation_inefficiency,
     synchronous_block_indices,
@@ -893,6 +893,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
     dataset_id: str = eqx.field(static=True)
     selection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         retained: ArrayLike,
@@ -913,8 +914,6 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
         dataset_kind: str,
         dataset_id: str,
     ) -> None:
-        if not isinstance(plan, FreeEnergySelectionPlan):
-            raise TypeError("plan must be FreeEnergySelectionPlan.")
         kept = jnp.asarray(retained, dtype=jnp.bool_)
         block = _index_array(block_index, "block_index")
         group = _index_array(block_group_index, "block_group_index")

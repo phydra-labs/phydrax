@@ -18,7 +18,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 _LESFormula: TypeAlias = Literal["smagorinsky", "wale", "vreman", "amd"]
@@ -187,6 +187,7 @@ class LESParameterProvenance(StrictModule, NonTrainableState):
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         resolved_filter: ResolvedLESFilter,
@@ -197,8 +198,6 @@ class LESParameterProvenance(StrictModule, NonTrainableState):
         source_kind: _LESParameterSourceKind,
         evidence_ids: tuple[str, ...],
     ) -> None:
-        if not isinstance(resolved_filter, ResolvedLESFilter):
-            raise TypeError("resolved_filter must be a ResolvedLESFilter.")
         if not isinstance(discretization_id, str) or not isinstance(regime, str):
             raise TypeError("LES discretization identity and regime must be strings.")
         discretization = discretization_id.strip()
@@ -238,14 +237,13 @@ class AlgebraicLESInputs(StrictModule):
     velocity_gradient: Array
     filter_scale: LESFilterScale
 
+    @checked
     def __init__(
         self,
         velocity_gradient: ArrayLike,
         filter_scale: LESFilterScale,
         /,
     ) -> None:
-        if not isinstance(filter_scale, LESFilterScale):
-            raise TypeError("filter_scale must be a LESFilterScale.")
         gradient = jnp.asarray(velocity_gradient)
         if not jnp.issubdtype(gradient.dtype, jnp.inexact):
             gradient = gradient.astype(inexact_result_type(gradient))
@@ -293,16 +291,13 @@ class PreparedAlgebraicLESModel(StrictModule, NonTrainableState):
     provenance: LESParameterProvenance
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractAlgebraicLESModel,
         provenance: LESParameterProvenance,
         /,
     ) -> None:
-        if not isinstance(model, AbstractAlgebraicLESModel):
-            raise TypeError("model must be an AbstractAlgebraicLESModel.")
-        if not isinstance(provenance, LESParameterProvenance):
-            raise TypeError("provenance must be LESParameterProvenance.")
         coefficient_array = model.coefficient
         if isinstance(coefficient_array, jax_core.Tracer):
             raise TypeError("Prepared LES coefficients must have concrete values.")

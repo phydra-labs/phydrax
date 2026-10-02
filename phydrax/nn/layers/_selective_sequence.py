@@ -18,7 +18,7 @@ import phydrax.ein as ein
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._keys import EvalKey
 from ._linear_recurrent_unit import _last_valid_array
 from ._physical_sequence import normalize_physical_schedule
@@ -86,6 +86,7 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
             dtype=jnp.result_type(dtype, self.weight.dtype),
         )
 
+    @checked
     def evaluate_with_state(
         self,
         batch: RecurrentBatch,
@@ -93,8 +94,6 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
         *,
         initial_state: Array | None = None,
     ) -> CausalConvolutionResult:
-        if not isinstance(batch, RecurrentBatch):
-            raise TypeError("batch must be a RecurrentBatch.")
         values = jnp.asarray(batch.inputs)
         if values.ndim < 1 or values.shape[-1] != self.channels:
             raise ValueError(

@@ -34,6 +34,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import checked
 from ._closures import evaluate_prism_closure, PRISMClosureEvaluation, PRISMClosurePlan
 from ._mixture import (
     SequenceFormFactorPlan,
@@ -57,6 +58,7 @@ class PRISMPlan(StrictModule, NonTrainableState):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         closure: PRISMClosurePlan,
@@ -75,8 +77,6 @@ class PRISMPlan(StrictModule, NonTrainableState):
         relative = float(relative_tolerance)
         iterations = int(maximum_iterations)
         condition = float(maximum_condition)
-        if not isinstance(closure, PRISMClosurePlan):
-            raise TypeError("closure must be PRISMClosurePlan.")
         if (
             not math.isfinite(damping_)
             or not 0.0 < damping_ <= 1.0
@@ -150,6 +150,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
     omega: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PRISMPlan,
@@ -159,16 +160,8 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         potential: SitePairPotentialPlan,
         /,
     ) -> None:
-        if not isinstance(plan, PRISMPlan):
-            raise TypeError("plan must be PRISMPlan.")
-        if not isinstance(transform, PreparedIsotropicRadialTransform):
-            raise TypeError("transform must be PreparedIsotropicRadialTransform.")
-        if not isinstance(mixture, SiteMixturePlan):
-            raise TypeError("mixture must be SiteMixturePlan.")
         if not isinstance(form_factor, (SequenceFormFactorPlan, TabulatedFormFactorPlan)):
             raise TypeError("form_factor must be a supported form-factor plan.")
-        if not isinstance(potential, SitePairPotentialPlan):
-            raise TypeError("potential must be SitePairPotentialPlan.")
         if (
             mixture.site_count != form_factor.site_count
             or mixture.site_count != potential.site_count

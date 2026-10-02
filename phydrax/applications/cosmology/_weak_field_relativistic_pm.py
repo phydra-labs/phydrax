@@ -33,7 +33,7 @@ from ...discretization.spectral._incompressible import PeriodicLerayProjector
 from ...discretization.spectral._space import TensorSpectralDiscretization
 from ...linalg import HermitianSpectrum
 from ...metrix import StressEnergyProjection
-from ...typing import parse
+from ...typing import checked, parse
 
 
 WeakFieldDifferentiation: TypeAlias = Literal["piecewise-fixed-route", "none"]
@@ -276,6 +276,7 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
     workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stress_transfer: RelativisticStressDepositPlan,
@@ -287,12 +288,6 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
         scalar_only: bool = False,
         policy: WeakFieldRelativisticPMPolicy | None = None,
     ) -> None:
-        if not isinstance(stress_transfer, RelativisticStressDepositPlan):
-            raise TypeError("stress_transfer must be RelativisticStressDepositPlan.")
-        if not isinstance(spectral, TensorSpectralDiscretization):
-            raise TypeError("spectral must be a TensorSpectralDiscretization.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
         if stress_transfer.units.contract_id != units.contract_id:
             raise ValueError("Stress transfer and weak-field PM units differ.")
         if len(spectral.axes) != 3 or any(
@@ -890,6 +885,7 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
             original.source_id,
         )
 
+    @checked
     def step(
         self,
         state: RelativisticParticleState,
@@ -898,8 +894,6 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
         /,
     ) -> WeakFieldRelativisticPMStepResult:
         """Execute source/metric/geodesic/endpoint-source as one rollback transaction."""
-        if not isinstance(state, RelativisticParticleState):
-            raise TypeError("state must be RelativisticParticleState.")
         self.stress_transfer._require_frame(start_frame)
         self.stress_transfer._require_frame(endpoint_frame)
         if (

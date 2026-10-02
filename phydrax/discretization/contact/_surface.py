@@ -27,6 +27,7 @@ from ...linalg import (
     DualSpace,
     FunctionLinearOperator,
 )
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from .._cell_mesh import CellMesh
 from ._precision import ContactPrecisionPolicy
@@ -771,6 +772,7 @@ class PreparedCollisionSurface(StrictModule, NonTrainableState):
     precision: ContactPrecisionPolicy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CollisionSurfacePlan,
@@ -781,10 +783,6 @@ class PreparedCollisionSurface(StrictModule, NonTrainableState):
         precision: ContactPrecisionPolicy | None = None,
         prepared_id: str | None = None,
     ) -> None:
-        if not isinstance(plan, CollisionSurfacePlan):
-            raise TypeError("plan must be CollisionSurfacePlan.")
-        if not isinstance(displacement_operator, AbstractLinearOperator):
-            raise TypeError("displacement_operator must be AbstractLinearOperator.")
         policy = ContactPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, ContactPrecisionPolicy):
             raise TypeError("precision must be ContactPrecisionPolicy or None.")

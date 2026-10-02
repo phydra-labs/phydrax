@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import checked
 from ...integral.layer_potential import (
     BoundaryPanelization2D,
     LaplaceLayerPotential2D,
@@ -31,9 +32,8 @@ class NativePanelGeometry2D(StrictModule):
     geometry_id: str = eqx.field(static=True)
 
     @classmethod
+    @checked
     def from_panelization(cls, panelization: BoundaryPanelization2D, /) -> Self:
-        if not isinstance(panelization, BoundaryPanelization2D):
-            raise TypeError("panelization must be BoundaryPanelization2D.")
         chart = jnp.repeat(panelization.panel_chart_indices, 2)
         reference = panelization.panel_reference_bounds.reshape((-1, 1))
         frame = panelization.atlas.frame(chart, reference)

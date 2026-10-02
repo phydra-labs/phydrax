@@ -13,6 +13,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import FaceVelocity, PreparedMACOperators
 from ._mac_boundary import (
     MACBoundaryPlan,
@@ -126,6 +127,7 @@ class MACMomentumPlan(StrictModule, NonTrainableState):
     precision: FiniteVolumePrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -134,8 +136,6 @@ class MACMomentumPlan(StrictModule, NonTrainableState):
         boundaries: PreparedMACBoundaryPlan | MACBoundaryPlan | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
             MACBoundaryPlan(operators).prepare()
             if boundaries is None
@@ -182,9 +182,8 @@ class PreparedMACMomentumOperators(StrictModule, NonTrainableState):
     report: MACMomentumReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACMomentumPlan, /) -> None:
-        if not isinstance(plan, MACMomentumPlan):
-            raise TypeError("plan must be MACMomentumPlan.")
         grid = plan.operators.discretization.grid
         dual_widths = []
         for axis in grid.structured_axes:

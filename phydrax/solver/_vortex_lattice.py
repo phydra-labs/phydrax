@@ -25,6 +25,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..operators.integral.vortex._filament3d import regularized_filament_velocity_3d
+from ..typing import checked
 
 
 class VortexLatticeResult(StrictModule):
@@ -49,6 +50,7 @@ class SteadyVortexLatticePlan(StrictModule, NonTrainableState):
     linear_policy: LinearSolvePolicy | None
     solver_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedLiftingSurface,
@@ -60,8 +62,6 @@ class SteadyVortexLatticePlan(StrictModule, NonTrainableState):
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(surface, PreparedLiftingSurface):
-            raise TypeError("surface must be PreparedLiftingSurface.")
         direction = jnp.asarray(wake_direction, dtype=surface.bound_start.dtype)
         if direction.shape != (3,):
             raise ValueError("wake_direction must have shape (3,).")

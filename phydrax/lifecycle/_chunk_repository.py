@@ -15,7 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification._registry import SupportTuple
-from ..typing import parse
+from ..typing import checked, parse
 
 
 ChunkEncoding: TypeAlias = Literal["identity", "zlib"]
@@ -129,6 +129,7 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_resource_request(
         cls,
         request: ResourceRequest,
@@ -137,8 +138,6 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
         maximum_manifest_bytes: int,
         maximum_chunk_bytes: int,
     ) -> CheckpointResourcePolicy:
-        if not isinstance(request, ResourceRequest):
-            raise TypeError("request must be ResourceRequest.")
         staging = request.maximum_checkpoint_staging_bytes
         if staging is None or staging <= 0:
             raise ValueError(
@@ -174,11 +173,10 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
             maximum_outbox_bytes=min(backlog, staging),
         )
 
+    @checked
     def validate_manifest(self, manifest: ArtifactManifest, /) -> None:
         """Reject aggregate manifest resource excess before any chunk read."""
 
-        if not isinstance(manifest, ArtifactManifest):
-            raise TypeError("manifest must be ArtifactManifest.")
         chunks = manifest.chunks
         if len(chunks) > self.maximum_chunks:
             raise RepositoryCorruptionError(

@@ -21,6 +21,7 @@ from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import checked
 from ._finite_density import (
     FiniteDensityStatus,
     SusceptibilityEstimate,
@@ -36,9 +37,8 @@ class PreparedTaylorEOS(StrictModule, NonTrainableState):
     inverse_factorials: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, estimate: SusceptibilityEstimate, /) -> None:
-        if not isinstance(estimate, SusceptibilityEstimate):
-            raise TypeError("estimate must be SusceptibilityEstimate.")
         exponents = np.asarray(
             [value.orders for value in estimate.indices], dtype=np.int32
         )

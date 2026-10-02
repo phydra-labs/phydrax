@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
 from ._manifold import AbstractGeodesicManifold
 from ._state_geometry import AbstractStateGeometry
 
@@ -27,9 +28,8 @@ class GeodesicManifoldStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, manifold: AbstractGeodesicManifold, /) -> None:
-        if not isinstance(manifold, AbstractGeodesicManifold):
-            raise TypeError("manifold must be an AbstractGeodesicManifold.")
         self.manifold = manifold
         self.geometry_id = f"state-geometry:{manifold.manifold_id}:geodesic"
         self.retraction_method = "geodesic-exponential"

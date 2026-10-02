@@ -25,19 +25,17 @@ from jax import Array
 
 import phydrax as phx
 from benchmarks._runtime import logical_array_bytes
-from phydrax.discretization.meshfree._conservation_solve import (
+from phydrax.discretization.meshfree import (
+    EdgeFeatureCoverage,
+    EdgeFeatureField,
+    EdgeFrameFeatures,
     MeshfreeConservationProblem,
+    MeshfreeExteriorCalculusPlan,
+    MeshfreeMetricPolicy,
+    MonotoneEdgeConductance,
     prepare_meshfree_conservation_solve,
     PreparedMeshfreeConservationSolve,
 )
-from phydrax.discretization.meshfree._constitutive import (
-    EdgeFeatureField,
-    EdgeFrameFeatures,
-    MonotoneEdgeConductance,
-)
-from phydrax.discretization.meshfree._coverage import EdgeFeatureCoverage
-from phydrax.discretization.meshfree._exterior import MeshfreeExteriorCalculusPlan
-from phydrax.discretization.meshfree._exterior_metric import MeshfreeMetricPolicy
 from phydrax.nn.models import PartiallyInputConvexNetwork
 from phydrax.solver.coupling import ParameterBinding, RuntimeInput
 from phydrax.typing import Dim, Float64, Scalar

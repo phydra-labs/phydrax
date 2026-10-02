@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from numbers import Integral
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import checked
 from ._identity import NuclearSpeciesKey, NuclearSpeciesTable
 from ._provenance import NuclearDataProvenance
 
@@ -146,6 +147,7 @@ class NuclearReactionChannel:
         )
 
     @classmethod
+    @checked
     def from_species_table(
         cls,
         name: str,
@@ -155,8 +157,6 @@ class NuclearReactionChannel:
         data: NuclearDataProvenance,
         /,
     ) -> NuclearReactionChannel:
-        if not isinstance(species, NuclearSpeciesTable):
-            raise TypeError("species must be NuclearSpeciesTable.")
         reactants_ = tuple(reactants)
         products_ = tuple(products)
         reactant_mass = sum(

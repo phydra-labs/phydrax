@@ -21,6 +21,7 @@ from ....discretization import (
     FiniteElementPlan,
 )
 from ....geometry import CompiledGeometry, MeshRegion
+from ....typing import checked
 from ._surface3d import SurfacePanelization3D
 
 
@@ -39,6 +40,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
     numeric_version: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         region: MeshRegion,
@@ -47,8 +49,6 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
         quadrature_order: int,
         numeric_version: str,
     ) -> None:
-        if not isinstance(region, MeshRegion):
-            raise TypeError("[geometry] 3D Galerkin preparation requires a MeshRegion.")
         version = str(numeric_version)
         if not version:
             raise ValueError("[numeric-version] numeric_version must be non-empty.")

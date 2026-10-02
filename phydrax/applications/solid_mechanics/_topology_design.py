@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...optim import PreparedDensityTransform
+from ...typing import checked
 
 
 def _real_array(name: str, value: ArrayLike, /, *, nonempty: bool = True) -> Array:
@@ -56,6 +57,7 @@ class DensityTransform(StrictModule, NonTrainableState):
     beta: Array
     transform_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedDensityTransform,
@@ -63,8 +65,6 @@ class DensityTransform(StrictModule, NonTrainableState):
         *,
         beta: ArrayLike = 1.0,
     ) -> None:
-        if not isinstance(prepared, PreparedDensityTransform):
-            raise TypeError("prepared must be a PreparedDensityTransform.")
         beta_ = np.asarray(beta)
         if (
             beta_.shape != ()

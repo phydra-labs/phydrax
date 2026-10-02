@@ -48,7 +48,7 @@ from ...solver._quantum_program import (
     DenseQuantumProgramPolicy,
     DenseQuantumProgramResult,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._schema import AbstractFittedModel
 
 
@@ -342,6 +342,7 @@ class BinaryVariationalCircuitClassifier(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: Literal["scalar"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         feature_model: DenseCircuitExpectationModel,
@@ -351,8 +352,6 @@ class BinaryVariationalCircuitClassifier(AbstractFittedModel):
         positive_label: float,
         /,
     ) -> None:
-        if not isinstance(feature_model, DenseCircuitExpectationModel):
-            raise TypeError("feature_model must be DenseCircuitExpectationModel.")
         selected_weight = jnp.asarray(weight)
         selected_bias = jnp.asarray(bias)
         labels = (float(negative_label), float(positive_label))

@@ -25,6 +25,7 @@ from ...equations import (
     MPMLinearizedConstitutiveResponse,
 )
 from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -217,6 +218,7 @@ class FiniteStrainJ2MPMConstitutivePlan(
             plastic_determinant,
         )
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -228,8 +230,6 @@ class FiniteStrainJ2MPMConstitutivePlan(
         /,
     ) -> MPMConstitutiveResponse:
         del time
-        if not isinstance(parameters, FiniteStrainJ2Parameters):
-            raise TypeError("parameters must be FiniteStrainJ2Parameters.")
         deformation = jnp.asarray(deformation_gradient)
         if deformation.shape[-2:] != (3, 3):
             raise ValueError("Finite-strain J2 deformation must end in 3x3.")

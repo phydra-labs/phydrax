@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
+from ...typing import checked
 
 
 class ChemicalModeTrackingState(StrictModule):
@@ -67,6 +68,7 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -77,8 +79,6 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
         maximum_condition: float = 1.0e10,
         tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         labels = tuple(str(value).strip() for value in contribution_labels)
         if len(set(labels)) != len(labels) or any(not value for value in labels):
             raise ValueError("CEMA contribution labels must be unique and nonempty.")

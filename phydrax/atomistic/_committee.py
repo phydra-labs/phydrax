@@ -19,6 +19,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
+from ..typing import checked
 from ._frame import AtomisticFrame
 from ._potential_program import PreparedAtomisticPotentialProgram
 
@@ -331,9 +332,8 @@ class CommitteeAcquisitionScorePolicy(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def score(self, evidence: AtomisticUncertaintyEvidence, /) -> tuple[Array, Array]:
-        if not isinstance(evidence, AtomisticUncertaintyEvidence):
-            raise TypeError("evidence must be AtomisticUncertaintyEvidence.")
         components = jnp.asarray(
             [
                 evidence.energy_standard_deviation / self.energy_scale,
@@ -355,6 +355,7 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
     scoring: CommitteeAcquisitionScorePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maximum_frames: int,
@@ -365,8 +366,6 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
     ) -> None:
         if int(maximum_frames) <= 0 or float(minimum_score) < 0.0:
             raise ValueError("Acquisition capacity or minimum score is invalid.")
-        if not isinstance(scoring, CommitteeAcquisitionScorePolicy):
-            raise TypeError("scoring must be CommitteeAcquisitionScorePolicy.")
         self.maximum_frames = int(maximum_frames)
         self.minimum_score = float(minimum_score)
         self.scoring = scoring

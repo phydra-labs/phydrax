@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._materialization import MaterializationPolicy
 from .._policies import FailurePolicy
 from .._spaces import _coordinate_dtype
@@ -100,6 +101,7 @@ class SelfAdjointSpectrumCostEstimate(StrictModule):
     retained_bytes: int = eqx.field(static=True)
     workspace_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: EigenCostEstimate,
@@ -108,8 +110,6 @@ class SelfAdjointSpectrumCostEstimate(StrictModule):
         retained_bytes: int,
         workspace_bytes: int,
     ) -> None:
-        if not isinstance(source, EigenCostEstimate):
-            raise TypeError("source must be an EigenCostEstimate.")
         retained = int(retained_bytes)
         workspace = int(workspace_bytes)
         if retained < 0 or workspace < 0:
@@ -128,6 +128,7 @@ class SelfAdjointSpectrumPlan(StrictModule):
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: EigenproblemLike,
@@ -137,18 +138,12 @@ class SelfAdjointSpectrumPlan(StrictModule):
         /,
     ) -> None:
         _require_problem(problem)
-        if not isinstance(policy, SelfAdjointSpectrumPolicy):
-            raise TypeError("policy must be a SelfAdjointSpectrumPolicy.")
-        if not isinstance(eigen_plan, EigenSolvePlan):
-            raise TypeError("eigen_plan must be an EigenSolvePlan.")
         if not isinstance(eigen_plan.selected_method, DenseEigh):
             raise ValueError("A self-adjoint spectrum requires DenseEigh.")
         if eigen_plan.policy.count != problem.dimension:
             raise ValueError(
                 "A self-adjoint spectrum plan must retain the full spectrum."
             )
-        if not isinstance(cost, SelfAdjointSpectrumCostEstimate):
-            raise TypeError("cost must be a SelfAdjointSpectrumCostEstimate.")
         self.policy = policy
         self.eigen_plan = eigen_plan
         self.cost = cost

@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._periodic_cell import PeriodicCell
 
 
@@ -280,6 +281,7 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
     cell_id: str = eqx.field(static=True)
     connectivity_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: ReciprocalMeshPlan,
@@ -295,8 +297,6 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
         maximum_plaquettes: int = 2_000_000,
         closure_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
         source = np.asarray(source_indices, dtype=np.int64)
         target = np.asarray(target_indices, dtype=np.int64)
         shift = np.asarray(reciprocal_shifts)
@@ -407,6 +407,7 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def regular(
         cls,
         mesh: ReciprocalMeshPlan,
@@ -416,8 +417,6 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
         maximum_edges: int = 4_000_000,
         maximum_plaquettes: int = 2_000_000,
     ) -> "ReciprocalConnectivityPlan":
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
         selected = (
             tuple(
                 axis
@@ -517,9 +516,8 @@ class PreparedReciprocalConnectivity(StrictModule, NonTrainableState):
     cartesian_displacements: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ReciprocalConnectivityPlan, /) -> None:
-        if not isinstance(plan, ReciprocalConnectivityPlan):
-            raise TypeError("plan must be ReciprocalConnectivityPlan.")
         points = plan.mesh.fractional_points
         fractional = (
             points[plan.target_indices]

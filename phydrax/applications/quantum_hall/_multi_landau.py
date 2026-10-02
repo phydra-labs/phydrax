@@ -29,6 +29,7 @@ from ...operators.quantum.lattice import (
     SectorBasisResourcePolicy,
     SectorChargeMap,
 )
+from ...typing import checked
 from ._identity import HallChargeSector, MonopoleLandauLevel, MonopoleOrbitalKey
 
 
@@ -80,6 +81,7 @@ class MultiLandauLevelSpherePlan(StrictModule, NonTrainableState):
     maximum_table_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_count: int,
@@ -102,8 +104,6 @@ class MultiLandauLevelSpherePlan(StrictModule, NonTrainableState):
             not isinstance(value, MonopoleLandauLevel) for value in manifolds_
         ):
             raise TypeError("manifolds must contain MonopoleLandauLevel values.")
-        if not isinstance(sector, HallChargeSector):
-            raise TypeError("sector must be HallChargeSector.")
         if particles < 1 or particles > sum(value.orbital_count for value in manifolds_):
             raise ValueError("Multi-level particle count is outside the orbital roster.")
         if len({value.manifold_id for value in manifolds_}) != len(manifolds_):

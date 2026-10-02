@@ -16,6 +16,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class EquationOfStateTable(StrictModule, NonTrainableState):
@@ -112,9 +113,8 @@ class TovPlan(StrictModule, NonTrainableState):
     radial_nodes: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, eos: EquationOfStateTable, radial_nodes: ArrayLike, /) -> None:
-        if not isinstance(eos, EquationOfStateTable):
-            raise TypeError("eos must be an EquationOfStateTable.")
         radii = np.asarray(radial_nodes, dtype=np.float64)
         if (
             radii.ndim != 1

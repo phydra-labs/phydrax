@@ -19,6 +19,7 @@ from ....observation import (
     PrecisionCovarianceAction,
 )
 from ....solver import FieldObservationPlan
+from ....typing import checked
 from ....units import conversion_factor, convert_value, UnitDefinition, VOLT
 from ....uq import ParameterSpace, PosteriorProblem
 from ._finite_patch import DC_CONDUCTIVITY_UNIT, PreparedDC
@@ -172,6 +173,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
     def log_likelihood(self, parameters: ArrayLike, /) -> Array:
         return self.field_observation.log_likelihood(self.predict(parameters))
 
+    @checked
     def posterior(self, parameter_space: ParameterSpace, /) -> PosteriorProblem:
         """Compose real native posterior inference on one log-increment array.
 
@@ -179,8 +181,6 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         supplied prior and any bijector/Jacobian semantics remain authoritative.
         The observation term only evaluates the physical PDE likelihood.
         """
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be ParameterSpace.")
         if jax.tree_util.tree_structure(
             parameter_space.initial
         ) != jax.tree_util.tree_structure(

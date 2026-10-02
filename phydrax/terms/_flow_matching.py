@@ -31,7 +31,7 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import AbstractTimeSamplingPolicy, UniformTimeSamplingPolicy
 
@@ -310,14 +310,13 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             )
         return velocity
 
+    @checked
     def _evaluate_nodes(
         self,
         functions: Mapping[str, DomainFunction],
         batch: FlowMatchingBatch,
         /,
     ) -> _FlowMatchingNodeEvaluation:
-        if not isinstance(batch, FlowMatchingBatch):
-            raise TypeError("batch must be FlowMatchingBatch.")
         velocity = self._velocity_function(functions, batch)
         count = batch.num_pairs
         state_shape = batch.event_shape

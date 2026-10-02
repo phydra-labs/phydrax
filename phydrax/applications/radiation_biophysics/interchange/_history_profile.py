@@ -17,6 +17,7 @@ from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import conversion_factor, SECOND, UnitDefinition
 
+from ....typing import checked
 from .._interactions import _text, PrimaryHistoryKey, RadiationSource
 
 
@@ -55,6 +56,7 @@ class TimedRadiationHistoryProfile:
     chemical_reference: ReferenceArtifactManifest | None
     profile_id: str
 
+    @checked
     def __init__(
         self,
         source: RadiationSource,
@@ -74,8 +76,6 @@ class TimedRadiationHistoryProfile:
         transport_reference: ReferenceArtifactManifest | None,
         chemical_reference: ReferenceArtifactManifest | None,
     ) -> None:
-        if not isinstance(source, RadiationSource):
-            raise TypeError("source must be RadiationSource.")
         if (
             not isinstance(histories, tuple)
             or not histories

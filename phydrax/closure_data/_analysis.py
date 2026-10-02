@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._filters import FavreFilter, PreparedFilter
 from ._state import ClosureSnapshot
 
@@ -97,9 +97,8 @@ class ClosureField(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_snapshot(cls, snapshot: ClosureSnapshot, name: str, /) -> ClosureField:
-        if not isinstance(snapshot, ClosureSnapshot):
-            raise TypeError("snapshot must be a ClosureSnapshot.")
         index = snapshot.schema.index(name)
         return cls(
             snapshot.values[..., index],
@@ -223,9 +222,8 @@ class ClosureAnalysisDAG(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def append(self, node: ClosureAnalysisNode, /) -> ClosureAnalysisDAG:
-        if not isinstance(node, ClosureAnalysisNode):
-            raise TypeError("node must be a ClosureAnalysisNode.")
         return ClosureAnalysisDAG(self.external_input_ids, (*self.nodes, node))
 
 
@@ -239,6 +237,7 @@ class ClosureTarget(StrictModule, NonTrainableState):
     lineage_ids: tuple[str, ...] = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -248,8 +247,6 @@ class ClosureTarget(StrictModule, NonTrainableState):
         target_kind: ClosureTargetKind,
         schema_id: str,
     ) -> None:
-        if not isinstance(node, ClosureAnalysisNode):
-            raise TypeError("node must be a ClosureAnalysisNode.")
         array = jnp.asarray(values)
         kind = str(target_kind).strip()
         schema = str(schema_id).strip()

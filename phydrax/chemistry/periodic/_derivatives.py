@@ -21,7 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import derived_unit, ENERGY, LENGTH, UnitDefinition
 
 
@@ -278,6 +278,7 @@ class PeriodicStationaryDerivativeResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energy: ArrayLike,
@@ -290,10 +291,6 @@ class PeriodicStationaryDerivativeResult(StrictModule, NonTrainableState):
         plan_id: str,
         /,
     ) -> None:
-        if not isinstance(ledger, PeriodicDerivativeLedger):
-            raise TypeError("ledger must be PeriodicDerivativeLedger.")
-        if not isinstance(evidence, PeriodicStationaryDerivativeEvidence):
-            raise TypeError("evidence must be PeriodicStationaryDerivativeEvidence.")
         energy_kind = parse(energy_kind, StationaryEnergyKind, "energy_kind")
         energy_ = jnp.asarray(energy).reshape(())
         force = jnp.asarray(forces, dtype=energy_.dtype)

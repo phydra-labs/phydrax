@@ -9,6 +9,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._resources import CliffordResourceEvidence
 
 
@@ -27,6 +28,7 @@ class CliffordProductEvidence(StrictModule, NonTrainableState):
     resource_evidence: CliffordResourceEvidence
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -58,8 +60,6 @@ class CliffordProductEvidence(StrictModule, NonTrainableState):
         zeros = int(structural_zero_count)
         if terms < 0 or zeros < 0:
             raise ValueError("Clifford product evidence counts must be nonnegative.")
-        if not isinstance(resource_evidence, CliffordResourceEvidence):
-            raise TypeError("resource_evidence must be CliffordResourceEvidence.")
         self.algebra_id = identifiers[0]
         self.left_layout_id = identifiers[1]
         self.right_layout_id = identifiers[2]

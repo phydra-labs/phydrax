@@ -23,6 +23,7 @@ from ...discretization.discrete_velocity import (
     KineticSpeciesTransportEvidence,
     KineticSpeciesTransportPlan,
 )
+from ...typing import checked
 
 
 class KineticAerothermodynamicState(StrictModule):
@@ -52,6 +53,7 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
     radiation_ablation: KineticRadiationAblationPlan | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: CompressibleKineticRuntimePlan,
@@ -60,8 +62,6 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
         species_transport: KineticSpeciesTransportPlan | None = None,
         radiation_ablation: KineticRadiationAblationPlan | None = None,
     ) -> None:
-        if not isinstance(runtime, CompressibleKineticRuntimePlan):
-            raise TypeError("runtime must be CompressibleKineticRuntimePlan.")
         if species_transport is not None and not isinstance(
             species_transport, KineticSpeciesTransportPlan
         ):

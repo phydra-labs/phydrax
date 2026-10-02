@@ -19,7 +19,7 @@ from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import conversion_factor, SECOND, UnitDefinition
 
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from ._scenario import _identity, _label, GeneIdentity
 
 
@@ -259,6 +259,7 @@ class LabeledTranscriptCounts:
     preprocessing_parent_ids: tuple[str, ...]
     observation_id: str
 
+    @checked
     def __init__(
         self,
         gene: GeneIdentity,
@@ -277,8 +278,6 @@ class LabeledTranscriptCounts:
         preprocessing_parent_ids: tuple[str, ...],
         valid: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(gene, GeneIdentity):
-            raise TypeError("gene must be GeneIdentity.")
         ids = tuple(_identity(value, "cell_id") for value in cell_ids)
         cultures = tuple(_label(value, "culture_id") for value in culture_ids)
         plates = tuple(_label(value, "plate_id") for value in plate_ids)

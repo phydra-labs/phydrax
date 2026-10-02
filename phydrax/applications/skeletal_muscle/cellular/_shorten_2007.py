@@ -37,6 +37,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....solver import DifferentialProblem, solve_diffrax
+from ....typing import checked
 from ...electrophysiology._reaction import (
     _ExactFirstOrderGates,
     _FixedReactionLayout,
@@ -1838,14 +1839,13 @@ class _ShortenIntegrationSchedule(StrictModule, NonTrainableState):
     protocol: ShortenPulseProtocol
     schedule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_grid_ms: ArrayLike,
         protocol: ShortenPulseProtocol,
         /,
     ) -> None:
-        if not isinstance(protocol, ShortenPulseProtocol):
-            raise TypeError("protocol must be a ShortenPulseProtocol.")
         grid = np.asarray(time_grid_ms)
         if grid.ndim != 1 or grid.size < 2 or not np.all(np.isfinite(grid)):
             raise ValueError("time_grid_ms must be a finite one-dimensional grid.")
@@ -1885,6 +1885,7 @@ class ShortenIntegrationPlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: ShortenFastTwitchModel,
@@ -1897,8 +1898,6 @@ class ShortenIntegrationPlan(StrictModule):
         initial_step_ms: float = 1.0e-5,
         maximum_steps: int = 131072,
     ) -> None:
-        if not isinstance(model, ShortenFastTwitchModel):
-            raise TypeError("model must be a ShortenFastTwitchModel.")
         selected_protocol = _DEFAULT_PULSE_PROTOCOL if protocol is None else protocol
         schedule = _ShortenIntegrationSchedule(time_grid_ms, selected_protocol)
         scalars = (relative_tolerance, absolute_tolerance, initial_step_ms)
@@ -1987,9 +1986,8 @@ class PreparedShortenIntegrator(StrictModule):
     method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ShortenIntegrationPlan, /) -> None:
-        if not isinstance(plan, ShortenIntegrationPlan):
-            raise TypeError("plan must be a ShortenIntegrationPlan.")
         self.plan = plan
         self.solver = dfx.Kvaerno5()
         self.method_id = "diffrax-kvaerno5-stiff-adaptive-source-complete"
@@ -2000,14 +1998,13 @@ class PreparedShortenIntegrator(StrictModule):
             self.plan.time_grid_ms[0], self.plan.model.initialize(dtype=dtype)
         )
 
+    @checked
     def candidate(
         self,
         state: ShortenCellState,
         step_index: ArrayLike,
         /,
     ) -> ShortenStepCandidate:
-        if not isinstance(state, ShortenCellState):
-            raise TypeError("state must be a ShortenCellState.")
         index = jnp.asarray(step_index, dtype=jnp.int32)
         if index.shape != ():
             raise ValueError("step_index must be scalar.")

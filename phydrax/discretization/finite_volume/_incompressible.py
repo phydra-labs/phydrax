@@ -22,6 +22,7 @@ from ...linalg import (
     FunctionLinearOperator,
     HilbertComplex,
 )
+from ...typing import checked
 from ._structured import FiniteVolumeDiscretization
 
 
@@ -55,9 +56,8 @@ class MACOperatorPlan(StrictModule, NonTrainableState):
     discretization: FiniteVolumeDiscretization
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, discretization: FiniteVolumeDiscretization, /) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be a FiniteVolumeDiscretization.")
         self.discretization = discretization
         self.plan_id = canonical_fingerprint(
             {
@@ -81,9 +81,8 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
     report: MACOperatorReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACOperatorPlan, /) -> None:
-        if not isinstance(plan, MACOperatorPlan):
-            raise TypeError("plan must be a MACOperatorPlan.")
         discretization = plan.discretization
         volumes = discretization.cell_volumes
         pressure_space = ArraySpace(

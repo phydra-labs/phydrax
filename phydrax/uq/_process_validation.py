@@ -21,7 +21,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..stochastic._jump import JUMP_MAX_EVENTS, JUMP_SUCCESS, JumpEventBatch
-from ..typing import parse
+from ..typing import checked, parse
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
 from ._metrics import energy_score
 from ._predictive import PredictionInterval
@@ -645,6 +645,7 @@ class HorizonScaleCalibrator(StrictModule):
     split: ProcessValidationSplit
 
     @classmethod
+    @checked
     def fit(
         cls,
         location: ArrayLike,
@@ -658,8 +659,6 @@ class HorizonScaleCalibrator(StrictModule):
         horizon_axis: int = 1,
         mask: ArrayLike | None = None,
     ) -> HorizonScaleCalibrator:
-        if not isinstance(split, ProcessValidationSplit):
-            raise TypeError("split must be a ProcessValidationSplit.")
         location_values = jnp.asarray(location, dtype=jnp.float64)
         scale_values = jnp.asarray(scale, dtype=jnp.float64)
         target_values = jnp.asarray(target, dtype=jnp.float64)
@@ -728,6 +727,7 @@ class HorizonScaleCalibrator(StrictModule):
             raise ValueError("horizons must be finite and strictly increasing.")
         return cls(multiplier, horizon_values, split)
 
+    @checked
     def __init__(
         self,
         scale_multiplier: ArrayLike,
@@ -740,8 +740,6 @@ class HorizonScaleCalibrator(StrictModule):
             raise ValueError("scale_multiplier and horizons must be equal vectors.")
         if bool(jnp.any(~jnp.isfinite(multiplier) | (multiplier <= 0.0))):
             raise ValueError("scale_multiplier must be finite and positive.")
-        if not isinstance(split, ProcessValidationSplit):
-            raise TypeError("split must be a ProcessValidationSplit.")
         self.scale_multiplier = multiplier
         self.horizons = horizon_values
         self.split = split
@@ -767,6 +765,7 @@ class ProcessConformalCalibrator(StrictModule):
     kind: ProcessConformalKind = eqx.field(static=True)
     observable_name: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calibrator: ConformalCalibrator,
@@ -780,8 +779,6 @@ class ProcessConformalCalibrator(StrictModule):
             calibrator, (FunctionalConformal, NormalizedConformal, SplitConformal)
         ):
             raise TypeError("calibrator must be a supported conformal calibrator.")
-        if not isinstance(split, ProcessValidationSplit):
-            raise TypeError("split must be a ProcessValidationSplit.")
         kind = parse(kind, ProcessConformalKind, "kind")
         name = None if observable_name is None else str(observable_name)
         if kind == "trajectory" and name is not None:
@@ -796,6 +793,7 @@ class ProcessConformalCalibrator(StrictModule):
         self.observable_name = name
 
     @classmethod
+    @checked
     def calibrate_trajectory(
         cls,
         center: cx.AxisArray | ArrayLike,
@@ -812,8 +810,6 @@ class ProcessConformalCalibrator(StrictModule):
         weights: ArrayLike | None = None,
         score: Literal["max", "l2"] = "max",
     ) -> ProcessConformalCalibrator:
-        if not isinstance(split, ProcessValidationSplit):
-            raise TypeError("split must be a ProcessValidationSplit.")
         count = _case_count(target, case_axis)
         split.require_case_count(count, partition="calibration")
         if isinstance(target, cx.AxisArray):
@@ -853,6 +849,7 @@ class ProcessConformalCalibrator(StrictModule):
         )
 
     @classmethod
+    @checked
     def calibrate_observable(
         cls,
         center: cx.AxisArray | ArrayLike,
@@ -869,8 +866,6 @@ class ProcessConformalCalibrator(StrictModule):
         weights: ArrayLike | None = None,
         score: Literal["max", "l2"] = "max",
     ) -> ProcessConformalCalibrator:
-        if not isinstance(split, ProcessValidationSplit):
-            raise TypeError("split must be a ProcessValidationSplit.")
         count = _case_count(target, case_axis)
         split.require_case_count(count, partition="calibration")
         rank = (

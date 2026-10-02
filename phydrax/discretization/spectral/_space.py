@@ -19,7 +19,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
-from ...typing import parse
+from ...typing import checked, parse
 from .._axis import AxisDiscretization
 from .._axis_domain import AxisDomain
 from .._core import (
@@ -315,6 +315,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     _quadrature_weights: Array
     _points: Array
 
+    @checked
     def __init__(
         self,
         plan: TensorSpectralPlan,
@@ -323,8 +324,6 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         *,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(plan, TensorSpectralPlan):
-            raise TypeError("plan must be a TensorSpectralPlan.")
         axes_ = tuple(axes)
         if len(axes_) != len(plan.bases) or not all(
             isinstance(axis, PreparedSpectralAxis) for axis in axes_

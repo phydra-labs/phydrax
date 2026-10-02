@@ -14,6 +14,7 @@ import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class PointIntegrationBatch(StrictModule):
@@ -28,6 +29,7 @@ class PointIntegrationBatch(StrictModule):
     num_strata: int | None = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         points: Any,
@@ -41,10 +43,6 @@ class PointIntegrationBatch(StrictModule):
         num_strata: int | None = None,
         provenance: str = "fixed",
     ) -> None:
-        if not isinstance(weights, cx.AxisArray):
-            raise TypeError(
-                "PointIntegrationBatch weights must be a phydrax.axes.AxisArray."
-            )
         missing = tuple(axis for axis in axes if axis not in weights.named_dims)
         if missing:
             raise ValueError(f"Point integration weights are missing axes {missing!r}.")

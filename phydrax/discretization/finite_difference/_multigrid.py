@@ -36,7 +36,7 @@ from ...linalg import (
     pseudoinverse,
     RankPolicy,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
 from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
@@ -751,6 +751,7 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     precision: FDExecutionPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         finest_operator: PreparedConservativeDiffusion,
@@ -769,10 +770,6 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         cycle_kind: MultigridCycleKind = "v",
         precision: FDExecutionPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(finest_operator, PreparedConservativeDiffusion):
-            raise TypeError(
-                "Structured multigrid requires PreparedConservativeDiffusion."
-            )
         finite_volume_precision = finest_operator.precision
         precision_ = (
             FDExecutionPrecisionPolicy(
@@ -869,9 +866,8 @@ class PreparedStructuredMultigrid(StrictModule):
     nullspace_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: StructuredMultigridPlan, /) -> None:
-        if not isinstance(plan, StructuredMultigridPlan):
-            raise TypeError("plan must be StructuredMultigridPlan.")
         grids = [plan.finest_operator.plan.grid]
         diffusions = [plan.finest_operator]
         transfers = []

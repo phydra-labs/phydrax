@@ -32,7 +32,7 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._ir import PDEExpression, PDEField, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
@@ -112,6 +112,7 @@ class DiscreteStateLayout(StrictModule):
     squeezed: bool = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fields: Sequence[PDEField],
@@ -125,8 +126,6 @@ class DiscreteStateLayout(StrictModule):
             not isinstance(field, PDEField) for field in field_values
         ):
             raise TypeError("fields must be a non-empty sequence of PDEField objects.")
-        if not isinstance(discretization, AbstractStrongFormDiscretization):
-            raise TypeError("discretization must be an AbstractStrongFormDiscretization.")
         names = tuple(field.name for field in field_values)
         if len(set(names)) != len(names):
             raise ValueError("Discrete field names must be unique.")

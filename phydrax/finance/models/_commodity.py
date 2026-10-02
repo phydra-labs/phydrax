@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from phydrax._interpolation import linear_interpolate
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._dependence import CorrelationMatrix
 
 
@@ -179,6 +180,7 @@ class CommodityFactorModel(StrictModule):
     dependence: CorrelationMatrix
     factor_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mean_reversions: ArrayLike,
@@ -188,8 +190,6 @@ class CommodityFactorModel(StrictModule):
         dependence: CorrelationMatrix,
         /,
     ) -> None:
-        if not isinstance(dependence, CorrelationMatrix):
-            raise TypeError("dependence must be a CorrelationMatrix.")
         count = dependence.dimension
         arrays = tuple(
             jnp.asarray(value, dtype=jnp.float64)

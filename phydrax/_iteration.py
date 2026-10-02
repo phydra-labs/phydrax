@@ -28,7 +28,7 @@ from ._execution_control import (
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
-from .typing import parse
+from .typing import checked, parse
 
 
 IterationGranularity: TypeAlias = Literal[
@@ -96,6 +96,7 @@ class IterationRecord(StrictModule):
     status: Array
     metrics: PyTree[Any]
 
+    @checked
     def __init__(
         self,
         coordinates: IterationCoordinates,
@@ -103,8 +104,6 @@ class IterationRecord(StrictModule):
         metrics: PyTree[Any],
         /,
     ) -> None:
-        if not isinstance(coordinates, IterationCoordinates):
-            raise TypeError("coordinates must be IterationCoordinates.")
         self.coordinates = coordinates
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.metrics = metrics
@@ -944,9 +943,8 @@ class IterationSession:
     def snapshot(self) -> IterationSessionState:
         return IterationSessionState(self._session_id, self._cursor, self._stop_requested)
 
+    @checked
     def restore(self, state: IterationSessionState, /) -> None:
-        if not isinstance(state, IterationSessionState):
-            raise TypeError("state must be IterationSessionState.")
         if state.session_id != self._session_id:
             raise ValueError("Iteration session state belongs to another session.")
         if self._cursor not in (0, state.cursor) or (

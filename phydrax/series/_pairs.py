@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._sampled import SampledSeries
 
 
@@ -23,6 +24,7 @@ class SeriesPairView(StrictModule):
     source_indices: Array
     target_indices: Array
 
+    @checked
     def __init__(
         self,
         series: SampledSeries,
@@ -30,8 +32,6 @@ class SeriesPairView(StrictModule):
         target_indices: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(series, SampledSeries):
-            raise TypeError("series must be a SampledSeries.")
         if series.alignment != "node":
             raise ValueError("SeriesPairView requires a node-aligned series.")
         source = jnp.asarray(source_indices)

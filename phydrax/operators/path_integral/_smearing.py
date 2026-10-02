@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...graph._gauge_transport import GaugeStaplePlan
 from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
+from ...typing import checked
 
 
 class StoutSmearingResourcePolicy(StrictModule):
@@ -80,6 +81,7 @@ class StoutSmearingPlan(StrictModule):
     group_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         staples: GaugeStaplePlan,
@@ -90,8 +92,6 @@ class StoutSmearingPlan(StrictModule):
         resources: StoutSmearingResourcePolicy | None = None,
         dtype: Any = jnp.complex64,
     ) -> None:
-        if not isinstance(staples, GaugeStaplePlan):
-            raise TypeError("staples must be GaugeStaplePlan.")
         rho_ = float(rho)
         count = int(iterations)
         if not math.isfinite(rho_):

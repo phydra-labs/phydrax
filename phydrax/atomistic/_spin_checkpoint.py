@@ -17,6 +17,7 @@ from .._array_archive import (
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._spin_dynamics import ClassicalSpinDynamicsState, PreparedLandauLifshitzGilbert
 from ._units import AtomisticUnitSystem
 
@@ -29,6 +30,7 @@ class AtomisticSpinCheckpointPlan(StrictModule, NonTrainableState):
     scope_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedLandauLifshitzGilbert,
@@ -36,8 +38,6 @@ class AtomisticSpinCheckpointPlan(StrictModule, NonTrainableState):
         *,
         scope_id: str | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedLandauLifshitzGilbert):
-            raise TypeError("dynamics must be PreparedLandauLifshitzGilbert.")
         if scope_id is not None and (
             not isinstance(scope_id, str) or not scope_id or scope_id != scope_id.strip()
         ):

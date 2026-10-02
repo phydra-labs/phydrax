@@ -23,6 +23,7 @@ from ...solver import (
     solve_diffrax,
     StormerVerlet,
 )
+from ...typing import checked
 from ._forces import (
     AbstractAstrodynamicsForce,
     astrodynamics_continuous_system,
@@ -82,6 +83,7 @@ class AstrodynamicsPropagationPlan(StrictModule):
     dense: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         force: AbstractAstrodynamicsForce,
@@ -100,8 +102,6 @@ class AstrodynamicsPropagationPlan(StrictModule):
         stepsize_controller_id: str | None = None,
         adjoint_id: str | None = None,
     ) -> None:
-        if not isinstance(force, AbstractAstrodynamicsForce):
-            raise TypeError("force must be an AbstractAstrodynamicsForce.")
         times = jnp.asarray(save_times, dtype=jnp.float64)
         if times.ndim != 1 or times.size < 2:
             raise ValueError(
@@ -199,14 +199,13 @@ class AstrodynamicsPropagationPlan(StrictModule):
             angular_momentum_drift,
         )
 
+    @checked
     def solve(
         self,
         initial_state: CartesianOrbitState,
         args: Any = None,
         /,
     ) -> AstrodynamicsPropagationResult:
-        if not isinstance(initial_state, CartesianOrbitState):
-            raise TypeError("initial_state must be a CartesianOrbitState.")
         self.force.context.require_compatible(initial_state.context)
         drift = self._drift()
         problem = DifferentialProblem(

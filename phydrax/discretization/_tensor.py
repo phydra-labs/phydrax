@@ -21,6 +21,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from ..linalg import ArraySpace, DiagonalPairing
+from ..typing import checked
 from ._axis import AxisDiscretization
 from ._core import (
     DiscretizationCapability,
@@ -384,6 +385,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
     _state_shape: tuple[int, ...] = eqx.field(static=True)
     _discretization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SpectralDecomposition,
@@ -394,8 +396,6 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
         numeric_version: str = "0",
         dtype: Any = jnp.float64,
     ) -> None:
-        if not isinstance(plan, SpectralDecomposition):
-            raise TypeError("plan must be a SpectralDecomposition.")
         weights = plan.quadrature_weights
         if weights is None:
             raise ValueError(

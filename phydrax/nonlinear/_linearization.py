@@ -28,7 +28,7 @@ from ..sparse import (
     PreparedSparseDerivative,
     SparseDerivativePlan,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._types import _guarded_call, NonlinearSystemProblem
 
 
@@ -86,6 +86,7 @@ class PreparedJacobian(StrictModule):
     derivative_id: str = eqx.field(static=True)
     residual_evaluations: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         residual: PyTree,
@@ -97,8 +98,6 @@ class PreparedJacobian(StrictModule):
         derivative_id: str,
         residual_evaluations: int = 1,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if sparse_derivative is not None and not isinstance(
             sparse_derivative, PreparedSparseDerivative
         ):

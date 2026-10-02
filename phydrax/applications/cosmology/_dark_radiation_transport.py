@@ -41,6 +41,7 @@ from ...solver._dark_radiation_packets import (
     DarkRadiationPacketPlan,
     DarkRadiationPacketState,
 )
+from ...typing import checked
 from ..relativistic_scattering._unit_contract import LocalRelativisticFramePlan
 from ._dark_radiation import DarkRadiationLedger, DarkRadiationLedgerPlan
 
@@ -150,16 +151,13 @@ class DarkRadiationLedgerSourceAdapter(StrictModule, NonTrainableState):
     packet_plan: DarkRadiationPacketPlan
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ledger_plan: DarkRadiationLedgerPlan,
         packet_plan: DarkRadiationPacketPlan,
         /,
     ) -> None:
-        if not isinstance(ledger_plan, DarkRadiationLedgerPlan):
-            raise TypeError("ledger_plan must be DarkRadiationLedgerPlan.")
-        if not isinstance(packet_plan, DarkRadiationPacketPlan):
-            raise TypeError("packet_plan must be DarkRadiationPacketPlan.")
         if ledger_plan.capacity > packet_plan.capacity:
             raise ValueError(
                 "Packet transport capacity is smaller than source ledger capacity."
@@ -184,6 +182,7 @@ class DarkRadiationLedgerSourceAdapter(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def adapt(
         self,
         ledger: DarkRadiationLedger,
@@ -199,8 +198,6 @@ class DarkRadiationLedgerSourceAdapter(StrictModule, NonTrainableState):
         *,
         target_state_id: str,
     ) -> DarkRadiationSourceAdapterResult:
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be LocalRelativisticFramePlan.")
         if frame.units.contract_id != self.packet_plan.units.contract_id:
             raise ValueError("Source adapter frame and packet plan use different units.")
         ledger_valid = self.ledger_plan.valid(ledger)
@@ -476,6 +473,7 @@ class DarkRadiationGravitySource(StrictModule, NonTrainableState):
     unit_contract_id: str = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         projection: StressEnergyProjection,
@@ -491,10 +489,6 @@ class DarkRadiationGravitySource(StrictModule, NonTrainableState):
         unit_contract_id: str,
         frame_realization_id: str,
     ) -> None:
-        if not isinstance(projection, StressEnergyProjection):
-            raise TypeError("projection must be StressEnergyProjection.")
-        if not isinstance(exchange, DarkRadiationFourForce):
-            raise TypeError("exchange must be DarkRadiationFourForce.")
         source = _identifier(source_state_id, "source_state_id")
         frame = _identifier(frame_id, "frame_id")
         units = _identifier(unit_contract_id, "unit_contract_id")
@@ -869,6 +863,7 @@ class DarkRadiationM1Checkpoint(StrictModule, NonTrainableState):
     epoch_manifest_id: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: ArrayLike,
@@ -887,8 +882,6 @@ class DarkRadiationM1Checkpoint(StrictModule, NonTrainableState):
         partition_id: str,
         epoch_manifest_id: str,
     ) -> None:
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be LocalRelativisticFramePlan.")
         values = jnp.asarray(state)
         reflux = jnp.asarray(reflux_register, dtype=values.dtype)
         identifiers = jnp.asarray(global_cell_ids, dtype=jnp.int64)

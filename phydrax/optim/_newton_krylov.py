@@ -37,6 +37,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
@@ -172,6 +173,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             raise TypeError("value_function must be callable.")
         return self.init(parameters)
 
+    @checked
     def step(
         self,
         value_function: _ValueFunction,
@@ -183,8 +185,6 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
     ) -> tuple[PyTree[Any], ScalarIterativeState, Any]:
         if not callable(value_function):
             raise TypeError("value_function must be callable.")
-        if not isinstance(state, ScalarIterativeState):
-            raise TypeError("state must be a ScalarIterativeState.")
         if state.linear_refresh_state is None:
             raise ValueError("NewtonKrylov state is missing linear refresh state.")
         linear_refresh_state = state.linear_refresh_state
@@ -385,9 +385,8 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             objective,
         )
 
+    @checked
     def step_metrics(self, state: ScalarIterativeState, /) -> IterativeStepMetrics:
-        if not isinstance(state, ScalarIterativeState):
-            raise TypeError("state must be a ScalarIterativeState.")
         return state.metrics
 
     def solve(

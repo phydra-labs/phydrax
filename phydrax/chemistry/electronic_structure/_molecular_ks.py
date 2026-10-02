@@ -30,6 +30,7 @@ from ...operators.quantum.gaussian import (
     PreparedGaussianBasis,
     range_separated_electron_repulsion_tensor,
 )
+from ...typing import checked
 from ...units import BOHR, conversion_factor, HARTREE
 from .._context import ElectronicInitialGuessState
 from .._method import DensityFunctionalPlan
@@ -76,6 +77,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
     linear_dependence_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -92,8 +94,6 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         guess: InitialGuessPlan | None = None,
         linear_dependence_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         if (
             not isinstance(basis, PreparedGaussianBasis)
             or basis.system_id != system.system_id

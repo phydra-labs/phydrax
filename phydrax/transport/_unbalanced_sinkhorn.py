@@ -14,6 +14,7 @@ from jax.scipy.special import logsumexp
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._geometry import column_logsumexp, row_logsumexp
 from ._results import TransportProvenance
 from ._status import TransportStatus
@@ -93,6 +94,7 @@ class UnbalancedSinkhorn(StrictModule):
         self.early_stop = bool(early_stop)
         self.store_history = bool(store_history)
 
+    @checked
     def __call__(
         self,
         problem: UnbalancedTransportProblem,
@@ -100,8 +102,6 @@ class UnbalancedSinkhorn(StrictModule):
         *,
         initial_potentials: tuple[ArrayLike, ArrayLike] | None = None,
     ) -> UnbalancedSinkhornResult:
-        if not isinstance(problem, UnbalancedTransportProblem):
-            raise TypeError("problem must be an UnbalancedTransportProblem.")
         source_count, target_count = problem.shape
         dtype = jnp.result_type(
             problem.source.points,

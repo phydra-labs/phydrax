@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import BlockHierarchyState, BlockHierarchyTopology
 from ._fd_transfer import AMREntityTransferPlan
 
@@ -123,6 +124,7 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
     physical_boundary_mask: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: BlockHierarchyTopology,
@@ -130,8 +132,6 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
         transfer: AMREntityTransferPlan | None = None,
         /,
     ) -> None:
-        if not isinstance(topology, BlockHierarchyTopology):
-            raise TypeError("FillPatch preparation requires BlockHierarchyTopology.")
         level_ = int(level)
         if level_ < 0 or level_ >= len(topology.plan.levels):
             raise ValueError("FillPatch level is out of range.")

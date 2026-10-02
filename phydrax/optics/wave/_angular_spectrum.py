@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._fields import PlaneFieldSpace, ScalarPlaneField, TangentialPlaneField
 
 
@@ -185,9 +186,8 @@ class AngularSpectrumPlan(StrictModule, NonTrainableState):
         self.maximum_leakage_fraction = tolerance
         self.plan_id = identifier
 
+    @checked
     def prepare(self, space: PlaneFieldSpace, /) -> PreparedAngularSpectrum:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         if space.topology == "periodic-cell":
             if self.padding is not None:
                 raise ValueError("Periodic-cell propagation requires padding=None.")

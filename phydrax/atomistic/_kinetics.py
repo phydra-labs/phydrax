@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from ..dynamics import StateLayout
 from ..dynamics.identification import AbstractFeatureLibrary, FeatureEvaluation
+from ..typing import checked
 from ._dynamics import PreparedAtomisticDynamics
 from .sampling._collective_variable import AbstractCollectiveVariableProgram
 
@@ -26,16 +27,13 @@ class CollectiveVariableFeatureLibrary(AbstractFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedAtomisticDynamics,
         variables: AbstractCollectiveVariableProgram,
         /,
     ) -> None:
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(variables, AbstractCollectiveVariableProgram):
-            raise TypeError("variables must implement AbstractCollectiveVariableProgram.")
         layout = StateLayout(
             (2, dynamics.system.capacity, 3),
             axes=("kinematic", "atom", "cartesian"),

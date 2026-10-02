@@ -15,7 +15,7 @@ from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity, SMOOTH, sum_regularity
 from .._keys import EvalKey
@@ -48,6 +48,7 @@ class KANEdgeBlock(StrictModule, ParameterOwner):
     edge_basis: AbstractEdgeBasis
     coeffs: Any
 
+    @checked
     def __init__(
         self,
         *,
@@ -64,8 +65,6 @@ class KANEdgeBlock(StrictModule, ParameterOwner):
             )
         if any(index < 0 for index in (*outputs, *inputs)):
             raise ValueError("KAN edge-block indices must be nonnegative.")
-        if not isinstance(edge_basis, AbstractEdgeBasis):
-            raise TypeError("edge_basis must implement AbstractEdgeBasis.")
         for leaf in jax.tree.leaves(coeffs):
             if eqx.is_array(leaf) and (
                 leaf.ndim < 2 or leaf.shape[:2] != (len(outputs), 1)

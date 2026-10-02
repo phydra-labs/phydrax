@@ -21,7 +21,7 @@ from ...tensor_train import (
     TensorTrainCompressionResult,
     TTCrossResult,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ..core import FinanceEvidenceBinding, PricingLaw
 
 
@@ -46,6 +46,7 @@ class TensorValuationApplicability(StrictModule):
     maximum_core_bytes: int = eqx.field(static=True)
     maximum_validation_points: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pricing_law: PricingLaw,
@@ -64,10 +65,6 @@ class TensorValuationApplicability(StrictModule):
         maximum_validation_points: int,
         quantics_layout: QuanticsLayout | None = None,
     ) -> None:
-        if not isinstance(pricing_law, PricingLaw):
-            raise TypeError("pricing_law must be a PricingLaw.")
-        if not isinstance(grid, TensorizedGrid):
-            raise TypeError("grid must be a TensorizedGrid.")
         route = parse(route, TensorRoute, "route")
         if route == "qtt":
             if not isinstance(quantics_layout, QuanticsLayout):

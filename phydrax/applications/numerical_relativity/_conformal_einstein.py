@@ -19,6 +19,7 @@ from phydrax.linalg import inverse
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 class ConformalEinsteinState(StrictModule):
@@ -80,6 +81,7 @@ class ConformalEinsteinDerivativeData(StrictModule):
     riemann: Array
     derivative_source_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: ConformalEinsteinState,
@@ -93,8 +95,6 @@ class ConformalEinsteinDerivativeData(StrictModule):
         riemann: ArrayLike,
         derivative_source_id: str,
     ) -> None:
-        if not isinstance(state, ConformalEinsteinState):
-            raise TypeError("state must be ConformalEinsteinState.")
         shape = state.spatial_shape
         gradient = jnp.asarray(conformal_gradient, dtype=state.metric.dtype)
         hessian = jnp.asarray(conformal_hessian, dtype=state.metric.dtype)
