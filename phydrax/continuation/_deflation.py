@@ -25,6 +25,7 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ..typing import checked
 
 
 class DeflatedRootStatus(IntEnum):
@@ -58,6 +59,7 @@ class VectorSpaceDeflationMetric(AbstractDeflationMetric):
     space: AbstractVectorSpace
     metric_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: AbstractVectorSpace,
@@ -65,8 +67,6 @@ class VectorSpaceDeflationMetric(AbstractDeflationMetric):
         *,
         metric_id: str | None = None,
     ) -> None:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         identifier = (
             f"vector-space:{space.space_id}" if metric_id is None else str(metric_id)
         )
@@ -205,6 +205,7 @@ class DeflatedRootResult(StrictModule):
     nearest_known_root: Array
     provenance: DeflationProvenance
 
+    @checked
     def __init__(
         self,
         *,
@@ -217,10 +218,6 @@ class DeflatedRootResult(StrictModule):
         nearest_known_root: Any,
         provenance: DeflationProvenance,
     ) -> None:
-        if not isinstance(nonlinear_result, NonlinearResult):
-            raise TypeError("nonlinear_result must be a NonlinearResult.")
-        if not isinstance(provenance, DeflationProvenance):
-            raise TypeError("provenance must be DeflationProvenance.")
         self.state = state
         self.original_residual = original_residual
         self.nonlinear_result = nonlinear_result
@@ -244,6 +241,7 @@ class RootDeflation(StrictModule):
     policy: DeflationPolicy
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
@@ -254,8 +252,6 @@ class RootDeflation(StrictModule):
         policy: DeflationPolicy | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
         roots = tuple(
             validate_inexact_tree(root, name="known deflated root")
             for root in known_roots
@@ -265,8 +261,6 @@ class RootDeflation(StrictModule):
         reference_structure = jax.tree.structure(roots[0])
         if any(jax.tree.structure(root) != reference_structure for root in roots[1:]):
             raise ValueError("Every known root must have the same PyTree structure.")
-        if not isinstance(metric, AbstractDeflationMetric):
-            raise TypeError("metric must be an AbstractDeflationMetric.")
         policy_ = DeflationPolicy() if policy is None else policy
         if not isinstance(policy_, DeflationPolicy):
             raise TypeError("policy must be a DeflationPolicy or None.")
@@ -346,6 +340,7 @@ class RootDeflation(StrictModule):
             problem_id=self.problem_id,
         )
 
+    @checked
     def solve(
         self,
         method: AbstractNonlinearMethod,
@@ -355,10 +350,6 @@ class RootDeflation(StrictModule):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> DeflatedRootResult:
-        if not isinstance(method, AbstractNonlinearMethod):
-            raise TypeError("method must be an AbstractNonlinearMethod.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         nonlinear_result = method.solve(
             self.as_problem(),
             initial_state,

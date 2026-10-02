@@ -18,7 +18,7 @@ from scipy.spatial import Delaunay, QhullError
 
 from ..._mass import Mass
 from ...measurement.lidar import LidarPointProduct
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -91,9 +91,8 @@ class ReconstructedGeometrySource(GeometrySource):
     source: GeometrySource
     report: ReconstructionReport = eqx.field(static=True)
 
+    @checked
     def __init__(self, source: GeometrySource, report: ReconstructionReport) -> None:
-        if not isinstance(source, GeometrySource):
-            raise TypeError("source must implement GeometrySource.")
         self.source = source
         self.report = report
 

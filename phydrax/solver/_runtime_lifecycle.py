@@ -35,7 +35,7 @@ from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..lifecycle import CompositionRebindReceipt
 from ..linalg._real_coordinates import RealCoordinateEvidence
 from ..logging import emit
-from ..typing import parse
+from ..typing import checked, parse
 
 
 ReplayClassification: TypeAlias = Literal["bitwise", "tolerance", "unsupported"]
@@ -82,6 +82,7 @@ class RuntimeCheckpointLeafBinding(StrictModule, NonTrainableState):
     evidence: RealCoordinateEvidence
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         leaf_index: int,
@@ -92,10 +93,6 @@ class RuntimeCheckpointLeafBinding(StrictModule, NonTrainableState):
         index = int(leaf_index)
         if index < 0:
             raise ValueError("Checkpoint encoding leaf_index must be nonnegative.")
-        if not isinstance(coordinates, HermitianSpectralCoordinates):
-            raise TypeError("coordinates must be HermitianSpectralCoordinates.")
-        if not isinstance(evidence, RealCoordinateEvidence):
-            raise TypeError("evidence must be RealCoordinateEvidence.")
         if evidence.evidence_id != coordinates.evidence.evidence_id:
             raise ValueError(
                 "Checkpoint coordinate evidence does not bind the coordinate map."
@@ -218,6 +215,7 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         return cls(topology_id, topology_id, classification="bitwise")
 
     @classmethod
+    @checked
     def from_composition_rebind(
         cls,
         receipt: CompositionRebindReceipt,
@@ -237,8 +235,6 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         archived arrays. A refused or structure-preserving rebind admits none.
         """
 
-        if not isinstance(receipt, CompositionRebindReceipt):
-            raise TypeError("receipt must be a CompositionRebindReceipt.")
         if not receipt.published:
             raise ValueError("A refused composition rebind admits no restart relation.")
         if receipt.source_structure_id == receipt.composition.structure_id:
@@ -1024,6 +1020,7 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
             jnp.asarray(-jnp.inf, dtype=dtype),
         )
 
+    @checked
     def update(
         self,
         time: ArrayLike,
@@ -1032,8 +1029,6 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> StreamingObservableState:
-        if not isinstance(state, StreamingObservableState):
-            raise TypeError("state must be StreamingObservableState.")
         value = jnp.asarray(self.evaluator(jnp.asarray(time), simulation_state, args))
         if value.shape != state.total.shape:
             raise ValueError("Observable evaluator changed its declared shape.")

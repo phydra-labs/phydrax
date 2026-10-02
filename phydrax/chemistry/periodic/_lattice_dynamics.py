@@ -30,6 +30,7 @@ from ...operators.periodic import (
     prepare_periodic_translation_family,
     PreparedPeriodicTranslationFamily,
 )
+from ...typing import checked
 from ._lattice_force_constants import (
     second_order_force_constant_unit,
     SecondOrderForceConstants,
@@ -49,6 +50,7 @@ class NonanalyticPhononCorrection(StrictModule, NonTrainableState):
     convention_id: str = eqx.field(static=True)
     correction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         born_effective_charges: ArrayLike,
@@ -68,8 +70,6 @@ class NonanalyticPhononCorrection(StrictModule, NonTrainableState):
             )
         if np.any(~np.isfinite(born)) or np.any(~np.isfinite(dielectric)):
             raise ValueError("Polar tensors must be finite.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         neutrality = float(np.max(np.abs(np.sum(born, axis=0)), initial=0.0))
         symmetry = float(np.max(np.abs(dielectric - dielectric.T), initial=0.0))
         dielectric_symmetric = 0.5 * (dielectric + dielectric.T)
@@ -227,6 +227,7 @@ class HarmonicPhononPlan(StrictModule, NonTrainableState):
     acoustic_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ifc2: SecondOrderForceConstants,
@@ -238,10 +239,6 @@ class HarmonicPhononPlan(StrictModule, NonTrainableState):
         maximum_dense_eigen_work: int = 10_000_000_000,
         acoustic_tolerance: float = 1.0e-7,
     ) -> None:
-        if not isinstance(ifc2, SecondOrderForceConstants):
-            raise TypeError("ifc2 must be SecondOrderForceConstants.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         expected_unit = second_order_force_constant_unit(
             units.scale.energy_unit, units.scale.length_unit
         )

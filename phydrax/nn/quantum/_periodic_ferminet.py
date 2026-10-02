@@ -48,6 +48,7 @@ from ...operators.quantum._electronic_advanced import ElectronicVMCResourcePlan
 from ...operators.quantum._periodic_electronic import (
     AbstractPeriodicElectronicAmplitude,
 )
+from ...typing import checked
 from ._complex_determinant import complex_determinant_mixture
 from ._periodic_features import PeriodicCellFeatureResult, PeriodicCellFeatures
 
@@ -304,6 +305,7 @@ class PeriodicFermiNet(AbstractPeriodicElectronicAmplitude, ParameterOwner):
     network_id: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell: PeriodicCell,
@@ -331,8 +333,6 @@ class PeriodicFermiNet(AbstractPeriodicElectronicAmplitude, ParameterOwner):
             raise ValueError(
                 "determinant_coefficients must have one entry per determinant."
             )
-        if not isinstance(resource_plan, ElectronicVMCResourcePlan):
-            raise TypeError("resource_plan must be ElectronicVMCResourcePlan.")
         if (
             resource_plan.electron_count != electrons
             or resource_plan.determinant_count != determinants

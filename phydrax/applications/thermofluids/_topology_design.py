@@ -41,6 +41,7 @@ from ...solver._fixed_step import (
     FixedStepRolloutResult,
     SSPRK33FixedStepMethod,
 )
+from ...typing import checked
 
 
 class ThermofluidMaterial(StrictModule):
@@ -255,6 +256,7 @@ class ThermofluidTopologyDesign(StrictModule):
     reference_temperature: float = eqx.field(static=True)
     diffusive_resistance_rate: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACScalarBuoyancyDynamics,
@@ -271,14 +273,6 @@ class ThermofluidTopologyDesign(StrictModule):
         resistance_weight: float = 0.0,
         reference_temperature: float = 0.0,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACScalarBuoyancyDynamics):
-            raise TypeError(
-                "dynamics must be compiled native MAC scalar/buoyancy dynamics."
-            )
-        if not isinstance(transform, PreparedDensityTransform):
-            raise TypeError("transform must be PreparedDensityTransform.")
-        if not isinstance(material, ThermofluidMaterial):
-            raise TypeError("material must be ThermofluidMaterial.")
         if (
             dynamics.momentum.dimension != 2
             or dynamics.transport.layout.field_names != ("temperature",)

@@ -29,6 +29,7 @@ from ..transport import (
     sliced_wasserstein_distance,
     soft_quantile,
 )
+from ..typing import checked
 
 
 Provider = Callable[[Mapping[str, DomainFunction]], Any] | Any
@@ -46,6 +47,7 @@ class SpatialSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
     weight: Array
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         measure_builder: Callable[
@@ -61,8 +63,6 @@ class SpatialSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
     ) -> None:
         if not callable(measure_builder):
             raise TypeError("measure_builder must be callable.")
-        if not isinstance(reference, PreparedSinkhornReference):
-            raise TypeError("reference must be a PreparedSinkhornReference.")
         if encoder is not None and not callable(encoder):
             raise TypeError("encoder must be callable or None.")
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
@@ -121,6 +121,7 @@ class EmpiricalSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
     sample_axis: int = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         samples: Provider,
@@ -134,8 +135,6 @@ class EmpiricalSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         weight: ArrayLike = 1.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(reference, PreparedSinkhornReference):
-            raise TypeError("reference must be a PreparedSinkhornReference.")
         if encoder is not None and not callable(encoder):
             raise TypeError("encoder must be callable or None.")
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
@@ -207,6 +206,7 @@ class BarycenterObjectiveTerm(AbstractEvaluatedScalarTerm):
     weight: Array
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem_builder: Callable[
@@ -221,8 +221,6 @@ class BarycenterObjectiveTerm(AbstractEvaluatedScalarTerm):
     ) -> None:
         if not callable(problem_builder):
             raise TypeError("problem_builder must be callable.")
-        if not isinstance(solver, SinkhornBarycenter):
-            raise TypeError("solver must be a SinkhornBarycenter.")
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
         self.problem_builder = problem_builder
         self.solver = solver

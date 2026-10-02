@@ -24,6 +24,7 @@ from ..equations._resistive_grmhd import (
     RelativisticOhmEvaluation,
     ResistiveGRMHDOhmicClosure,
 )
+from ..typing import checked
 from ._grrmhd_runtime import (
     FixedGridGRRMHDIMEXPlan,
     GRRMHDState,
@@ -96,6 +97,7 @@ class FixedGridResistiveGRRMHDIMEXPlan(StrictModule, NonTrainableState):
     balance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: FixedGridGRRMHDIMEXPlan,
@@ -104,10 +106,6 @@ class FixedGridResistiveGRRMHDIMEXPlan(StrictModule, NonTrainableState):
         *,
         balance_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(base, FixedGridGRRMHDIMEXPlan):
-            raise TypeError("base must be FixedGridGRRMHDIMEXPlan.")
-        if not isinstance(ohm, ResistiveGRMHDOhmicClosure):
-            raise TypeError("ohm must be ResistiveGRMHDOhmicClosure.")
         material = base.material_transport.system
         if (
             ohm.scale.scale_id != material.scale.scale_id
@@ -265,6 +263,7 @@ class FixedGridResistiveGRRMHDIMEXPlan(StrictModule, NonTrainableState):
                 rate = rate - jnp.diff(integrated, axis=axis) / volumes
         return rate, boundary_flux
 
+    @checked
     def advance(
         self,
         state: ResistiveGRRMHDState,
@@ -279,8 +278,6 @@ class FixedGridResistiveGRRMHDIMEXPlan(StrictModule, NonTrainableState):
         *,
         transport_extinction: ArrayLike = 0.0,
     ) -> ResistiveGRRMHDStepResult:
-        if not isinstance(state, ResistiveGRRMHDState):
-            raise TypeError("state must be ResistiveGRRMHDState.")
         base_result = self.base.advance(
             state.grrmhd,
             start_time,

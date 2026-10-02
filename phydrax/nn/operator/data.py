@@ -27,7 +27,7 @@ from ...graph._operator_topology import (
     slice_operator_topology,
     stack_operator_topologies,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 @dataclass(frozen=True)
@@ -1008,6 +1008,7 @@ class OperatorFieldBatch(StrictModule, NonTrainableState):
     query_name: str
     spec: OperatorOutputSpec
 
+    @checked
     def __init__(
         self,
         values: Array,
@@ -1019,8 +1020,6 @@ class OperatorFieldBatch(StrictModule, NonTrainableState):
         resolved_query = str(query_name)
         if not resolved_query:
             raise ValueError("Operator output fields require a query name.")
-        if not isinstance(spec, OperatorOutputSpec):
-            raise TypeError("Operator output field spec must be an OperatorOutputSpec.")
         self.values = jnp.asarray(values)
         self.query_name = resolved_query
         self.spec = spec

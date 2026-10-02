@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 
 
 class SlipSpringPlan(StrictModule, NonTrainableState):
@@ -117,9 +117,8 @@ class PreparedSlipSpring(StrictModule, NonTrainableState):
     allowed_pairs: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SlipSpringPlan, allowed_pairs: ArrayLike, /) -> None:
-        if not isinstance(plan, SlipSpringPlan):
-            raise TypeError("plan must be SlipSpringPlan.")
         pairs = np.asarray(allowed_pairs, dtype=np.int32)
         if pairs.ndim != 2 or pairs.shape[1] != 2 or pairs.shape[0] == 0:
             raise ValueError("allowed_pairs must have nonzero shape (pair, 2).")

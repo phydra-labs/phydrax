@@ -12,6 +12,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...measurement._operations import OperationalCoordinate, ResolvedConditionSnapshot
+from ...typing import checked
 
 
 def _identifiers(
@@ -89,6 +90,7 @@ class FrameworkEventContext(StrictModule, NonTrainableState):
     side_effects: tuple[str, ...] = eqx.field(static=True)
     context_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinate: OperationalCoordinate,
@@ -104,8 +106,6 @@ class FrameworkEventContext(StrictModule, NonTrainableState):
         stream_id: str,
         side_effects: Sequence[str] = ("none",),
     ) -> None:
-        if not isinstance(coordinate, OperationalCoordinate):
-            raise TypeError("coordinate must be OperationalCoordinate.")
         if (
             not isinstance(conditions, ResolvedConditionSnapshot)
             or conditions.coordinate.coordinate_id != coordinate.coordinate_id

@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellComplexTopology
 from ..discretization._cell_complex import simplicial_cell_complex
+from ..typing import checked
 from ._coefficients import PrimeField
 from ._resources import TopologyResourcePolicy
 
@@ -410,11 +411,10 @@ class MultiFiltration(StrictModule, NonTrainableState):
     grades: tuple[Array, ...]
     parameter_dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, topology: CellComplexTopology, grades: Sequence[ArrayLike], /
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be a CellComplexTopology.")
         grades_ = tuple(np.asarray(value) for value in grades)
         if len(grades_) != len(topology.entity_sets) or not grades_:
             raise ValueError("One grade array is required per cell degree.")
@@ -753,6 +753,7 @@ class CellDiagonalApproximation(StrictModule, NonTrainableState):
     coefficients: Array
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -765,8 +766,6 @@ class CellDiagonalApproximation(StrictModule, NonTrainableState):
         coefficients: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be a CellComplexTopology.")
         source_degree_ = int(source_degree)
         left_degree_ = int(left_degree)
         right_degree_ = int(right_degree)
@@ -926,6 +925,7 @@ class CellularSheaf(StrictModule, NonTrainableState):
     restrictions: tuple[Array, ...]
     field: PrimeField
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -935,10 +935,6 @@ class CellularSheaf(StrictModule, NonTrainableState):
         *,
         field: PrimeField,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be a CellComplexTopology.")
-        if not isinstance(field, PrimeField):
-            raise TypeError("field must be a PrimeField.")
         raw_dimensions = tuple(np.asarray(value) for value in stalk_dimensions)
         if len(raw_dimensions) != len(topology.entity_sets) or any(
             value.shape != (entity.count,)

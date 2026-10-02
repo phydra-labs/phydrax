@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
+from ..typing import checked
 from ._costs import SquaredEuclideanCost
 from ._problem import DiscreteTransportProblem
 from ._results import (
@@ -183,6 +184,7 @@ class PositiveKernelFactors(StrictModule):
     diagnostics: PositiveKernelApproximationDiagnostics
     factorization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_factors: ArrayLike,
@@ -221,8 +223,6 @@ class PositiveKernelFactors(StrictModule):
             raise ValueError("target_points must match the target factor rows.")
         if source_design.shape[1] != target_design.shape[1]:
             raise ValueError("Factor source and target points must share an event size.")
-        if not isinstance(diagnostics, PositiveKernelApproximationDiagnostics):
-            raise TypeError("diagnostics must be PositiveKernelApproximationDiagnostics.")
         scalar_evidence = (
             diagnostics.status,
             diagnostics.rank,
@@ -369,11 +369,10 @@ class GaussianPositiveFeatures(StrictModule):
         self.rank = feature_rank
         self.num_probes = probes
 
+    @checked
     def __call__(
         self, problem: DiscreteTransportProblem, epsilon: ArrayLike, /
     ) -> PositiveKernelFactors:
-        if not isinstance(problem, DiscreteTransportProblem):
-            raise TypeError("problem must be a DiscreteTransportProblem.")
         if not isinstance(problem.cost, SquaredEuclideanCost):
             raise TypeError("GaussianPositiveFeatures requires SquaredEuclideanCost.")
         epsilon_ = jnp.asarray(
@@ -618,6 +617,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
     store_history: bool = eqx.field(static=True)
     statistic_block_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         epsilon: ArrayLike,
@@ -632,8 +632,6 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
         store_history: bool = False,
         statistic_block_size: int = 256,
     ) -> None:
-        if not isinstance(feature_map, GaussianPositiveFeatures):
-            raise TypeError("feature_map must be GaussianPositiveFeatures.")
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)
@@ -666,6 +664,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
         self.store_history = bool(store_history)
         self.statistic_block_size = block_size
 
+    @checked
     def __call__(
         self,
         problem: DiscreteTransportProblem,
@@ -675,8 +674,6 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
         initial_scalings: tuple[ArrayLike, ArrayLike] | None = None,
         exact_ground_cost: bool = False,
     ) -> PositiveFeatureSinkhornResult:
-        if not isinstance(problem, DiscreteTransportProblem):
-            raise TypeError("problem must be a DiscreteTransportProblem.")
         if factors is None:
             factors_ = self.feature_map(problem, self.epsilon)
         else:

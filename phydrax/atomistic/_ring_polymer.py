@@ -17,7 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import AbstractPreparedParticleNeighborhood
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._potential_program import PreparedAtomisticPotentialProgram
 from ._thermal import stable_particle_normals
 
@@ -101,6 +101,7 @@ class PreparedRingPolymerDynamics(StrictModule):
     spring_frequency: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RingPolymerPlan,
@@ -108,12 +109,6 @@ class PreparedRingPolymerDynamics(StrictModule):
         neighborhood: AbstractPreparedParticleNeighborhood,
         /,
     ) -> None:
-        if not isinstance(plan, RingPolymerPlan):
-            raise TypeError("plan must be RingPolymerPlan.")
-        if not isinstance(potential, PreparedAtomisticPotentialProgram):
-            raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
         if (
             neighborhood.particle_discretization_id
             != potential.system.particles.prepared_id

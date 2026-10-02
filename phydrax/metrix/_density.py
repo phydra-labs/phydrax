@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap
 from ._metric import AbstractSemiRiemannianMetric
@@ -25,6 +26,7 @@ class VolumeDensity(StrictModule):
     log_coefficient_function: Callable[[Array], Array] | None
     chart: CoordinateChart
 
+    @checked
     def __init__(
         self,
         coefficient: Callable[[Array], Array],
@@ -37,8 +39,6 @@ class VolumeDensity(StrictModule):
             raise TypeError("Volume density coefficient must be callable.")
         if log_coefficient is not None and not callable(log_coefficient):
             raise TypeError("log_coefficient must be callable when supplied.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Volume density chart must be a CoordinateChart.")
         self.coefficient_function = coefficient
         self.log_coefficient_function = log_coefficient
         self.chart = chart

@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._models import AbstractScatteringComponent, ScatteringResponse
 from ._ports import WavePort
 
@@ -145,12 +146,11 @@ class WaveProbe(StrictModule):
     port: InstancePort
     probe_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, probe_id: str, port: InstancePort, /) -> None:
         identifier = str(probe_id)
         if not identifier:
             raise ValueError("probe_id must be non-empty.")
-        if not isinstance(port, InstancePort):
-            raise TypeError("port must be InstancePort.")
         self.port = port
         self.probe_id = identifier
 

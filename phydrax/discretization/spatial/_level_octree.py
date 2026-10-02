@@ -25,6 +25,7 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.sparse import EdgeRelation, RelationExecutionPlan, RelationExecutionState
 
+from ...typing import checked
 from ._morton import morton_encode_integer, MortonAddressPlan
 
 
@@ -563,6 +564,7 @@ class AdaptiveOctreePlan(StrictModule):
     x_capacity: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         address_plan: MortonAddressPlan,
@@ -576,8 +578,6 @@ class AdaptiveOctreePlan(StrictModule):
         w_capacity: int | None = None,
         x_capacity: int | None = None,
     ) -> None:
-        if not isinstance(address_plan, MortonAddressPlan):
-            raise TypeError("address_plan must be a MortonAddressPlan.")
         if not isinstance(balanced, bool):
             raise TypeError("balanced must be a bool.")
         if any(address_plan.periodic_axes):

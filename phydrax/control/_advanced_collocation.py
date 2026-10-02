@@ -24,6 +24,7 @@ from ..solver._dae_events import DAEResetMap
 from ..solver._hybrid_event import HybridEventTape
 from ..solver._hybrid_schedule import ScheduledHybridGuard
 from ..solver._radau_iia import RadauIIAMethod
+from ..typing import checked
 from ._direct_collocation import (
     DirectCollocationBounds,
     DirectCollocationDecision,
@@ -121,6 +122,7 @@ class DirectCollocationPhase(StrictModule, NonTrainableState):
     bounds: DirectCollocationBounds | None
     phase_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: TrajectoryOptimizationProblem,
@@ -131,8 +133,6 @@ class DirectCollocationPhase(StrictModule, NonTrainableState):
         *,
         phase_id: str,
     ) -> None:
-        if not isinstance(problem, TrajectoryOptimizationProblem):
-            raise TypeError("phase problem must be a TrajectoryOptimizationProblem.")
         if not isinstance(plan, (DirectCollocationPlan, RadauIIAMethod)):
             raise TypeError("phase plan must be DirectCollocationPlan or RadauIIAMethod.")
         if bounds is not None and not isinstance(bounds, DirectCollocationBounds):

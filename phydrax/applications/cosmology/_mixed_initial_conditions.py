@@ -30,7 +30,7 @@ from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...discretization.spectral._space import TensorSpectralDiscretization
 from ...qualification import ReferenceArtifactManifest
 from ...stochastic._random_field import GaussianCoefficientRealization
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import derived_unit, DIMENSIONLESS, UnitDefinition
 from ._background import FLRWBackground
 from ._closure import CosmologyRealizationSignature
@@ -448,6 +448,7 @@ class PrimordialModeRealization(StrictModule):
         return identifiers
 
     @classmethod
+    @checked
     def from_gaussian_modes(
         cls,
         discretization: TensorSpectralDiscretization,
@@ -457,15 +458,11 @@ class PrimordialModeRealization(StrictModule):
         *,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
     ) -> PrimordialModeRealization:
-        if not isinstance(gaussian, GaussianCoefficientRealization):
-            raise TypeError("gaussian must be GaussianCoefficientRealization.")
         if gaussian.sample_shape != ():
             raise ValueError(
                 "Primordial Gaussian modes must have scalar sample shape; component and "
                 "spectral identities are already encoded by mode_ids."
             )
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be CosmologyScaleContract.")
         components = _names(primordial_components, "primordial_components")
         _periodic_geometry(discretization)
         coordinates, identifiers, positions = _semantic_coordinate_layout(
@@ -609,6 +606,7 @@ class ComponentTransferMatrixProduct(StrictModule):
     requested_use_id: str = eqx.field(static=True)
     product_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale_factors: ArrayLike,
@@ -631,12 +629,6 @@ class ComponentTransferMatrixProduct(StrictModule):
         component_units: Sequence[UnitDefinition] | None = None,
         spatial_dimension: int = 3,
     ) -> None:
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be CosmologyScaleContract.")
-        if not isinstance(provenance, CosmologyProductProvenance):
-            raise TypeError("provenance must be CosmologyProductProvenance.")
-        if not isinstance(realization, CosmologyRealizationSignature):
-            raise TypeError("realization must be CosmologyRealizationSignature.")
         if artifact is not None and not isinstance(artifact, ScientificArtifactEnvelope):
             raise TypeError("artifact must be ScientificArtifactEnvelope or None.")
         if manifest is not None and not isinstance(manifest, ReferenceArtifactManifest):
@@ -864,14 +856,13 @@ class ComponentTransferMatrixProduct(StrictModule):
         matrix = self.evaluate_matrix(wavenumber, scale_factor)
         return ein.contract("...cp,...dp->...cd", matrix, matrix)
 
+    @checked
     def realize(
         self,
         primordial: PrimordialModeRealization,
         scale_factor: ArrayLike,
         /,
     ) -> ComponentModeRealization:
-        if not isinstance(primordial, PrimordialModeRealization):
-            raise TypeError("primordial must be PrimordialModeRealization.")
         if primordial.scale.scale_id != self.scale.scale_id:
             raise ValueError("Primordial and component transfer units disagree.")
         if primordial.primordial_components != self.primordial_components:
@@ -967,6 +958,7 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
     mass_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: ComponentTransferMatrixProduct,
@@ -979,12 +971,6 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
         mode_relative_tolerance: float = 1.0e-9,
         mass_relative_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(transfer, ComponentTransferMatrixProduct):
-            raise TypeError("transfer must be ComponentTransferMatrixProduct.")
-        if not isinstance(particle_lpt, LagrangianPerturbationInitialConditionPlan):
-            raise TypeError(
-                "particle_lpt must be LagrangianPerturbationInitialConditionPlan."
-            )
         component = str(particle_component).strip()
         if component not in transfer.components:
             raise ValueError("particle_component is absent from the transfer product.")
@@ -1083,6 +1069,7 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
             self.transfer.realization,
         )
 
+    @checked
     def project_particles(
         self,
         modes: ComponentModeRealization,
@@ -1090,8 +1077,6 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
         growth: LagrangianGrowthHistory,
         /,
     ) -> ParticleInitialConditionProjection:
-        if not isinstance(modes, ComponentModeRealization):
-            raise TypeError("modes must be ComponentModeRealization.")
         if modes.product_id != self.transfer.product_id:
             raise ValueError("Component modes do not belong to this mixed IC plan.")
         if modes.gauge != self.gauge:
@@ -1238,6 +1223,7 @@ class WavePhaseSeedPlan(StrictModule, NonTrainableState):
     mass_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedPeriodicWaveDarkMatter,
@@ -1249,8 +1235,6 @@ class WavePhaseSeedPlan(StrictModule, NonTrainableState):
         phase_gauge_tolerance: float = 1.0e-10,
         mass_relative_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         dimension = len(prepared.discretization.axes)
         values = tuple(
             float(value)
@@ -1558,6 +1542,7 @@ class SolitonSeedPlan(StrictModule, NonTrainableState):
     mass_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedPeriodicWaveDarkMatter,
@@ -1570,8 +1555,6 @@ class SolitonSeedPlan(StrictModule, NonTrainableState):
         profile_exponent: float = 8.0,
         mass_relative_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         origins, lengths, _ = _periodic_geometry(prepared.discretization)
         center_ = tuple(float(value) for value in center)
         values = (
@@ -1732,6 +1715,7 @@ class VortexSeedPlan(StrictModule, NonTrainableState):
     node_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedPeriodicWaveDarkMatter,
@@ -1747,8 +1731,6 @@ class VortexSeedPlan(StrictModule, NonTrainableState):
         winding_tolerance: float = 1.0e-10,
         node_relative_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         if isinstance(winding_number, bool) or not isinstance(winding_number, Integral):
             raise TypeError("Vortex winding_number must be an integer.")
         winding = int(winding_number)
@@ -2007,6 +1989,7 @@ class ImportedComplexFieldValidationPlan(StrictModule, NonTrainableState):
     mass_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedPeriodicWaveDarkMatter,
@@ -2021,12 +2004,6 @@ class ImportedComplexFieldValidationPlan(StrictModule, NonTrainableState):
         export: bool = False,
         mass_relative_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be ScientificArtifactEnvelope.")
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("manifest must be ReferenceArtifactManifest.")
         artifact_kind = str(expected_artifact_kind).strip()
         if not artifact_kind or artifact.artifact_kind != artifact_kind:
             raise ValueError("Imported complex-field artifact kind disagrees.")
@@ -2068,6 +2045,7 @@ class ImportedComplexFieldValidationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def validate(
         self,
         psi: ArrayLike,
@@ -2079,8 +2057,6 @@ class ImportedComplexFieldValidationPlan(StrictModule, NonTrainableState):
         coordinate_convention: str,
         normalization: str,
     ) -> ImportedComplexFieldValidationResult:
-        if not isinstance(wavefunction_unit, UnitDefinition):
-            raise TypeError("wavefunction_unit must be UnitDefinition.")
         if wavefunction_unit.unit_id != self.wavefunction_unit.unit_id:
             raise ValueError("Imported complex-field units disagree.")
         if str(coordinate_convention).strip() != self.coordinate_convention:

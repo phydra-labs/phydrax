@@ -16,6 +16,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import GeomagneticHarmonicModel, ICGEMGravityModel
 from ....special._spherical_harmonic import _real_spherical_harmonic_table
+from ....typing import checked
 
 
 Normalization = Literal["unnormalized", "schmidt", "fully_normalized"]
@@ -46,11 +47,10 @@ class SphericalHarmonicGravityPlan(StrictModule, NonTrainableState):
     maximum_degree: int = eqx.field(static=True)
     normalization: Normalization = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, model: ICGEMGravityModel, /, *, maximum_degree: int | None = None
     ) -> None:
-        if not isinstance(model, ICGEMGravityModel):
-            raise TypeError("Spherical gravity requires ICGEMGravityModel.")
         maximum = model.maximum_degree if maximum_degree is None else int(maximum_degree)
         if not 0 <= maximum <= model.maximum_degree:
             raise ValueError("Gravity synthesis degree lies outside model support.")
@@ -109,11 +109,10 @@ class SphericalHarmonicMagneticPlan(StrictModule, NonTrainableState):
     model: GeomagneticHarmonicModel
     maximum_degree: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, model: GeomagneticHarmonicModel, /, *, maximum_degree: int | None = None
     ) -> None:
-        if not isinstance(model, GeomagneticHarmonicModel):
-            raise TypeError("Spherical magnetics requires GeomagneticHarmonicModel.")
         maximum = model.maximum_degree if maximum_degree is None else int(maximum_degree)
         if not 1 <= maximum <= model.maximum_degree:
             raise ValueError("Magnetic synthesis degree lies outside model support.")

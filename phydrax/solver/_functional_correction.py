@@ -28,7 +28,7 @@ from ..domain import (
 )
 from ..domain._derivative import DerivativeRuleProvider
 from ..terms import ResidualPenalty
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -37,9 +37,8 @@ class _FrozenFieldEvaluator(
 ):
     field: DomainFunction
 
+    @checked
     def __init__(self, field: DomainFunction, /) -> None:
-        if not isinstance(field, DomainFunction):
-            raise TypeError("field must be a DomainFunction.")
         self.field = field
 
     def __call_batch__(
@@ -137,10 +136,9 @@ class FunctionalCorrectionProblem(StrictModule):
     replacement_functions: frozendict[str, DomainFunction]
     epsilon: float = eqx.field(static=True)
 
+    @checked
     def finalize(self, trained: FunctionalSolver, /) -> FunctionalSolver:
         """Bind trained composed fields back to the unscaled physical objective."""
-        if not isinstance(trained, FunctionalSolver):
-            raise TypeError("trained must be a FunctionalSolver.")
         if (
             trained.discretization_bundle.bundle_id
             != self.training_solver.discretization_bundle.bundle_id

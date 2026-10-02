@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan
 from ...sparse import RowRelation, SparseLinearMap
+from ...typing import checked
 from .._cell_mesh import CellBlock, CellMesh
 from ._generic import (
     FiniteElementDiscretization,
@@ -124,6 +125,7 @@ class FiniteElementHPGeometry(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: FiniteElementHPTopology,
@@ -132,8 +134,6 @@ class FiniteElementHPGeometry(StrictModule, NonTrainableState):
         reference_upper: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(topology, FiniteElementHPTopology):
-            raise TypeError("topology must be FiniteElementHPTopology.")
         vertices = np.asarray(cell_vertices)
         lower = np.asarray(reference_lower)
         upper = np.asarray(reference_upper)

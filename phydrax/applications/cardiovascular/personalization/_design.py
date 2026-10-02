@@ -47,6 +47,7 @@ from ....optim import (
     solve_integer_hull,
     StateDesignResult,
 )
+from ....typing import checked
 
 
 class SensitivitySVDResult(StrictModule):
@@ -589,6 +590,7 @@ class ForwardAdjointEvidence(StrictModule):
         self.successful = values[0] & values[1] & values[2] & values[3]
 
     @classmethod
+    @checked
     def from_state_design(
         cls,
         result: StateDesignResult,
@@ -597,8 +599,6 @@ class ForwardAdjointEvidence(StrictModule):
         fixed_topology: ArrayLike,
         derivative_finite: ArrayLike,
     ) -> "ForwardAdjointEvidence":
-        if not isinstance(result, StateDesignResult):
-            raise TypeError("result must be a StateDesignResult.")
         adjoint = (
             jnp.asarray(False)
             if result.adjoint_acceptance is None
@@ -622,6 +622,7 @@ class ExperimentDesignCandidate(StrictModule, NonTrainableState):
     cost: float = eqx.field(static=True)
     candidate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate_id: str,
@@ -649,8 +650,6 @@ class ExperimentDesignCandidate(StrictModule, NonTrainableState):
             raise ValueError("Candidate derivative and precision must be finite.")
         if bool(jnp.any(jnp.abs(precision - precision.T) > 1.0e-10)):
             raise ValueError("Candidate noise_precision must be symmetric.")
-        if not isinstance(evidence, ForwardAdjointEvidence):
-            raise TypeError("evidence must be ForwardAdjointEvidence.")
         cost_ = float(cost)
         if not math.isfinite(cost_) or cost_ <= 0.0:
             raise ValueError("Candidate cost must be finite and positive.")
@@ -837,9 +836,8 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
     plan: ExperimentDesignPlan
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ExperimentDesignPlan, /) -> None:
-        if not isinstance(plan, ExperimentDesignPlan):
-            raise TypeError("plan must be an ExperimentDesignPlan.")
         self.plan = plan
         self.runtime_id = canonical_fingerprint(
             {"kind": "prepared-cardiovascular-experiment-design", "plan": plan.plan_id}

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from .._fingerprint import canonical_fingerprint, canonical_json
-from ..typing import parse
+from ..typing import checked, parse
 from ._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
@@ -827,6 +827,7 @@ class EventGraphRepository:
         self.maximum_lineage_records = int(maximum_lineage_records)
         self.failure_injector = failure_injector
 
+    @checked
     def put_entity(
         self,
         entity: GlobalEntity,
@@ -835,17 +836,14 @@ class EventGraphRepository:
         *,
         committed_at: int | None = None,
     ) -> ArtifactManifest:
-        if not isinstance(entity, GlobalEntity):
-            raise TypeError("entity must be GlobalEntity.")
         return self._put_record(
             "entity", entity.entity_id, entity.to_record(), writer_id, committed_at
         )
 
+    @checked
     def put_event(
         self, event: GlobalEvent, writer_id: str, /, *, committed_at: int | None = None
     ) -> ArtifactManifest:
-        if not isinstance(event, GlobalEvent):
-            raise TypeError("event must be GlobalEvent.")
         for entity_id in (*event.input_entity_ids, *event.output_entity_ids):
             self.get_entity(entity_id)
         for parent_id in event.parent_event_ids:
@@ -854,6 +852,7 @@ class EventGraphRepository:
             "event", event.event_id, event.to_record(), writer_id, committed_at
         )
 
+    @checked
     def put_edge(
         self,
         edge: GlobalEventEdge,
@@ -862,8 +861,6 @@ class EventGraphRepository:
         *,
         committed_at: int | None = None,
     ) -> ArtifactManifest:
-        if not isinstance(edge, GlobalEventEdge):
-            raise TypeError("edge must be GlobalEventEdge.")
         source = self.get_event(edge.source_event_id)
         target = self.get_event(edge.target_event_id)
         self.get_entity(edge.entity_id)
@@ -878,6 +875,7 @@ class EventGraphRepository:
             "edge", edge.edge_id, edge.to_record(), writer_id, committed_at
         )
 
+    @checked
     def put_work(
         self,
         work: GlobalWorkItem,
@@ -886,8 +884,6 @@ class EventGraphRepository:
         *,
         committed_at: int | None = None,
     ) -> ArtifactManifest:
-        if not isinstance(work, GlobalWorkItem):
-            raise TypeError("work must be GlobalWorkItem.")
         for entity_id in work.input_entity_ids:
             self.get_entity(entity_id)
         if work.parent_work_id is not None:
@@ -941,6 +937,7 @@ class EventGraphRepository:
             )
         return self.load_epoch(_string(record, "epoch_manifest_id")).manifest
 
+    @checked
     def append_epoch(
         self,
         manifest: EventGraphEpochManifest,
@@ -952,8 +949,6 @@ class EventGraphRepository:
     ) -> EpochCommitReceipt:
         """Commit an immutable epoch then advance the run tip by compare-and-swap."""
 
-        if not isinstance(manifest, EventGraphEpochManifest):
-            raise TypeError("manifest must be EventGraphEpochManifest.")
         payload = bytes(checkpoint_payload)
         if len(payload) > self.maximum_record_bytes:
             raise ValueError("Checkpoint payload exceeds maximum_record_bytes.")
@@ -1048,6 +1043,7 @@ class EventGraphRepository:
             raise RepositoryCorruptionError("Persisted checkpoint identity is invalid.")
         return PersistedEventGraphEpoch(manifest, checkpoint)
 
+    @checked
     def acquire_work_lease(
         self,
         work: GlobalWorkItem,
@@ -1060,8 +1056,6 @@ class EventGraphRepository:
     ) -> WorkLease:
         """Claim work, allowing deterministic stealing only after lease expiry."""
 
-        if not isinstance(work, GlobalWorkItem):
-            raise TypeError("work must be GlobalWorkItem.")
         persisted = self.get_work(work.work_id)
         if persisted != work:
             raise RepositoryCorruptionError(

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import KILOGRAM, KILOMETER, SECOND, UnitDefinition
 from ._context import (
     AstrodynamicsContext,
@@ -145,9 +146,8 @@ class TLEPropagationEpoch(StrictModule):
     offset_seconds: Array
     epoch_model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, source: TimeInstant, offset_seconds: ArrayLike, /) -> None:
-        if not isinstance(source, TimeInstant):
-            raise TypeError("source must be a TimeInstant.")
         if source.scale != "UTC":
             raise ValueError("A TLE propagation epoch must use the UTC scale.")
         offset = jnp.asarray(offset_seconds).reshape(())
@@ -240,6 +240,7 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
             FrameDefinition("earth", "TEME", pseudo_inertial=True),
         )
 
+    @checked
     def __init__(
         self,
         record: TleRecord,
@@ -254,8 +255,6 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
         j3: SupportsFloat = -2.53881e-6,
         j4: SupportsFloat = -1.65597e-6,
     ) -> None:
-        if not isinstance(record, TleRecord):
-            raise TypeError("record must be a TleRecord.")
         native_context = self.native_context(record)
         if context is not None:
             if not isinstance(context, AstrodynamicsContext):

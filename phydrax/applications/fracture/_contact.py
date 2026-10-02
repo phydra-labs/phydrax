@@ -32,6 +32,7 @@ from ...discretization.contact import (
     selection_collision_operator,
 )
 from ...linalg import ArraySpace
+from ...typing import checked
 from ..contact import (
     AbstractNormalContactLaw,
     AbstractTangentialContactLaw,
@@ -233,6 +234,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     mapping_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: SharpCrackTopology,
@@ -246,12 +248,6 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
         minus_material_id: int = 0,
         adapter_id: str = "sharp-crack-face-contact",
     ) -> None:
-        if not isinstance(topology, SharpCrackTopology):
-            raise TypeError("topology must be SharpCrackTopology.")
-        if not isinstance(normal_law, AbstractNormalContactLaw):
-            raise TypeError("normal_law must implement AbstractNormalContactLaw.")
-        if not isinstance(material_table, ContactMaterialPairTable):
-            raise TypeError("material_table must be ContactMaterialPairTable.")
         if tangential_law is not None and not isinstance(
             tangential_law, AbstractTangentialContactLaw
         ):
@@ -476,6 +472,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def evaluate(
         self,
         accepted: ContactRouteState,
@@ -483,8 +480,6 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
         minus_displacement: ArrayLike,
         /,
     ) -> CrossDiscretizationContactResult:
-        if not isinstance(accepted, ContactRouteState):
-            raise TypeError("accepted must be ContactRouteState.")
         states = (jnp.asarray(plus_displacement), jnp.asarray(minus_displacement))
         self.current_coordinates(*states)
         positions = self.scene.positions(states)
@@ -518,6 +513,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
             self.scene.scene_id,
         )
 
+    @checked
     def transfer_state(
         self,
         previous_adapter: "CrackFaceContactAdapter",
@@ -526,8 +522,6 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
     ) -> ContactStateTransferResult:
         if not isinstance(previous_adapter, CrackFaceContactAdapter):
             raise TypeError("previous_adapter must be CrackFaceContactAdapter.")
-        if not isinstance(previous, ContactRouteState):
-            raise TypeError("previous must be ContactRouteState.")
         if previous.closure_id != self.closure_plan.closure_id:
             raise ValueError("Crack contact closures differ across topology transfer.")
         old_identity = {

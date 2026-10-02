@@ -24,6 +24,7 @@ from ..._differentiation import (
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
 from ...optim._differential_evolution import _bounded_differential_evolution
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from ._cross_validation import (
@@ -734,6 +735,7 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
     maximize: bool | None = eqx.field(static=True)
     primary_metric: MetricPath = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_vector: Any,
@@ -746,8 +748,6 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
         maximize: bool | None = None,
         primary_metric: MetricPath = None,
     ) -> None:
-        if not isinstance(search, DifferentialEvolutionSearch):
-            raise TypeError("search must be a DifferentialEvolutionSearch.")
         initial = jnp.asarray(initial_vector)
         lower = jnp.asarray(lower_bounds)
         upper = jnp.asarray(upper_bounds)

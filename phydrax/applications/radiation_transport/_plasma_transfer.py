@@ -47,6 +47,7 @@ from ...optics.geometric import ColdPlasmaHamiltonian, ColdPlasmaRayPath
 from ...typing import (
     as_array,
     Bool,
+    checked,
     Dim,
     Float64,
     Int32,
@@ -231,6 +232,7 @@ class PlasmaRayTransferPlan(StrictModule, NonTrainableState):
     anisotropy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: ColdPlasmaRayPath,
@@ -240,8 +242,6 @@ class PlasmaRayTransferPlan(StrictModule, NonTrainableState):
         coupling_tolerance: float = 0.1,
         anisotropy_tolerance: float = 1.0e-2,
     ) -> None:
-        if not isinstance(path, ColdPlasmaRayPath):
-            raise TypeError("path must be a ColdPlasmaRayPath.")
         coupling_ = parse(coupling, ModeCouplingLimit, "coupling")
         tolerances = (float(coupling_tolerance), float(anisotropy_tolerance))
         if any(not isfinite(value) or value <= 0.0 for value in tolerances):

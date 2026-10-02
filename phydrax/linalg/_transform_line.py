@@ -19,6 +19,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._linear_transform import AbstractLinearTransform
 from ._policies import DifferentiationPolicy
 
@@ -445,6 +446,7 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
     maximum_resource_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         representation: TransformLineRepresentation,
@@ -458,8 +460,6 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
         maximum_resource_bytes: int = 512 * 1024**2,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(representation, TransformLineRepresentation):
-            raise TypeError("representation must be TransformLineRepresentation.")
         scale = jnp.asarray(operator_scale, dtype=representation.line_diagonal.dtype)
         shift = jnp.asarray(diagonal_shift, dtype=representation.line_diagonal.dtype)
         if (
@@ -566,9 +566,8 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
     resources: TransformLineResourceEstimate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TransformLineSolvePlan, /) -> None:
-        if not isinstance(plan, TransformLineSolvePlan):
-            raise TypeError("plan must be TransformLineSolvePlan.")
         representation = plan.representation
         line_count = int(np.prod(representation.transverse_modal_values.shape))
         line_size = representation.line_diagonal.size

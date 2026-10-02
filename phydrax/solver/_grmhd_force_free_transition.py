@@ -25,6 +25,7 @@ from ..equations._relativistic_mhd import (
     ValenciaPrimitiveRecovery,
 )
 from ..metrix._adm_exchange import ADMGridGeometry
+from ..typing import checked
 
 
 class GRMHDForceFreeHybridState(StrictModule):
@@ -77,6 +78,7 @@ class GRMHDForceFreeTransitionPlan(StrictModule, NonTrainableState):
     exit_magnetization: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grmhd: IdealValenciaGRMHDSystem,
@@ -86,10 +88,6 @@ class GRMHDForceFreeTransitionPlan(StrictModule, NonTrainableState):
         enter_magnetization: float,
         exit_magnetization: float,
     ) -> None:
-        if not isinstance(grmhd, IdealValenciaGRMHDSystem):
-            raise TypeError("grmhd must be IdealValenciaGRMHDSystem.")
-        if not isinstance(force_free, GRForceFreeSystem):
-            raise TypeError("force_free must be GRForceFreeSystem.")
         if (
             grmhd.scale.scale_id != force_free.scale.scale_id
             or grmhd.convention.convention_id != force_free.convention.convention_id
@@ -210,6 +208,7 @@ class GRMHDForceFreeTransitionPlan(StrictModule, NonTrainableState):
             jnp.zeros(geometry.leading_shape, dtype=conserved.dtype),
         )
 
+    @checked
     def transition(
         self,
         state: GRMHDForceFreeHybridState,
@@ -219,8 +218,6 @@ class GRMHDForceFreeTransitionPlan(StrictModule, NonTrainableState):
         material_support: ArrayLike | None = None,
         composition: ArrayLike | None = None,
     ) -> GRMHDForceFreeTransitionResult:
-        if not isinstance(state, GRMHDForceFreeHybridState):
-            raise TypeError("state must be GRMHDForceFreeHybridState.")
         material_recovery = self.grmhd.recover(
             state.grmhd_conserved, geometry, composition
         )

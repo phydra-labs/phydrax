@@ -35,6 +35,7 @@ from ..lifecycle._distributed_checkpoint import (
     restore_global_array_from_checkpoint,
 )
 from ..lifecycle._models import CheckpointManifest
+from ..typing import checked
 
 
 _KrylovCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
@@ -504,6 +505,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
     required_bytes: int = eqx.field(static=True)
     execution_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: PreparedDistributedBlockAMRHierarchy,
@@ -525,8 +527,6 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         source_prepared_id: str,
         physics_id: str,
     ) -> None:
-        if not isinstance(hierarchy, PreparedDistributedBlockAMRHierarchy):
-            raise TypeError("hierarchy must be PreparedDistributedBlockAMRHierarchy.")
         if execution_plan is not None and not isinstance(execution_plan, ExecutionPlan):
             raise TypeError("execution_plan must be ExecutionPlan or None.")
         routes = _PackedCompositeRoutes(hierarchy, layout, diffusion)
@@ -735,11 +735,10 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         self._validate_payload(arrays, scale, accepted)
         return self._bind_unchecked(arrays, scale, accepted)
 
+    @checked
     def validate_state(
         self, state: DistributedWaveAMRState, /
     ) -> DistributedWaveAMRState:
-        if not isinstance(state, DistributedWaveAMRState):
-            raise TypeError("state must be DistributedWaveAMRState.")
         if (
             state.execution_id != self.execution_id
             or state.topology_id != self.topology_id
@@ -756,6 +755,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             accepted_boundary=state.accepted_boundary,
         )
 
+    @checked
     def migrate_accepted_state(
         self,
         state: DistributedWaveAMRState,
@@ -767,8 +767,6 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             raise ValueError(
                 "Distributed Wave AMR migration requires an accepted boundary."
             )
-        if not isinstance(target, PreparedDistributedWaveAMR):
-            raise TypeError("target must be PreparedDistributedWaveAMR.")
         if (
             self.source_prepared_id != target.source_prepared_id
             or self.topology_id != target.topology_id
@@ -855,6 +853,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             )
         return publication, evidence
 
+    @checked
     def _validate_checkpoint_manifest(
         self,
         manifest: CheckpointManifest,
@@ -863,8 +862,6 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(manifest, CheckpointManifest) or not manifest.complete:
             raise ValueError("Distributed Wave AMR restore requires a complete manifest.")
-        if not isinstance(source, PreparedDistributedWaveAMR):
-            raise TypeError("source must be PreparedDistributedWaveAMR.")
         if manifest.execution_plan_id != source.execution_id:
             raise ValueError("Checkpoint execution identity does not match its source.")
         if (

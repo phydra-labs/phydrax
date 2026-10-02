@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import CategoricalStatePrior
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._kernel import (
     _path_indices,
     bridge_path_log_prob,
@@ -34,9 +34,8 @@ class BridgeInferenceAdapter(StrictModule):
     result: SchrodingerBridgeResult
     transition: ControlledTransitionKernel
 
+    @checked
     def __init__(self, result: SchrodingerBridgeResult, /) -> None:
-        if not isinstance(result, SchrodingerBridgeResult):
-            raise TypeError("result must be a SchrodingerBridgeResult.")
         result = require_converged_bridge(result)
         self.result = result
         self.transition = ControlledTransitionKernel(result)
@@ -77,9 +76,8 @@ class TerminalDistributionControlAdapter(StrictModule):
     terminal_probabilities: Array
     terminal_weights: Array
 
+    @checked
     def __init__(self, result: SchrodingerBridgeResult, /) -> None:
-        if not isinstance(result, SchrodingerBridgeResult):
-            raise TypeError("result must be a SchrodingerBridgeResult.")
         result = require_converged_bridge(result)
         self.result = result
         self.transition = ControlledTransitionKernel(result)

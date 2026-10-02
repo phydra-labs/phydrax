@@ -18,6 +18,7 @@ import phydrax.ein as ein
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..typing import checked
 from ._canonical import _canonical_sweep
 from ._core import MatrixProductOperator, MatrixProductState
 from ._precision import TensorNetworkPrecisionPolicy
@@ -34,6 +35,7 @@ class ChainCompressionEvidence(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     precision_policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         truncations: tuple[TensorTruncationEvidence, ...],
@@ -46,8 +48,6 @@ class ChainCompressionEvidence(StrictModule):
         records = tuple(truncations)
         if any(not isinstance(record, TensorTruncationEvidence) for record in records):
             raise TypeError("truncations must contain TensorTruncationEvidence values.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         weights = (
             jnp.stack([record.discarded_weight for record in records])
             if records

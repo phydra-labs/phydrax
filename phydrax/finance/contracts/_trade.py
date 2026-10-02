@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import CurrencyAmount, FinancialTimestamp
 from ._base import AbstractContract, AbstractResolvedContract
 from ._exercise import SettlementTerms
@@ -47,6 +48,7 @@ class Trade(StrictModule, NonTrainableState):
     transaction_price: CurrencyAmount | None
     trade_key: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trade_id: str,
@@ -59,13 +61,7 @@ class Trade(StrictModule, NonTrainableState):
         transaction_price: CurrencyAmount | None = None,
     ) -> None:
         identifier = _identifier(trade_id, "trade_id")
-        if not isinstance(contract, AbstractContract):
-            raise TypeError("contract must be an unresolved AbstractContract definition.")
         quantity_ = _quantity(quantity, "quantity", nonzero=True)
-        if not isinstance(execution_time, FinancialTimestamp):
-            raise TypeError("execution_time must be a FinancialTimestamp.")
-        if not isinstance(settlement, SettlementTerms):
-            raise TypeError("settlement must be SettlementTerms.")
         if transaction_price is not None and not isinstance(
             transaction_price, CurrencyAmount
         ):
@@ -138,6 +134,7 @@ class Position(StrictModule, NonTrainableState):
     account_id: str = eqx.field(static=True)
     position_key: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         position_id: str,
@@ -149,8 +146,6 @@ class Position(StrictModule, NonTrainableState):
     ) -> None:
         identifier = _identifier(position_id, "position_id")
         account = _identifier(account_id, "account_id")
-        if not isinstance(contract, AbstractResolvedContract):
-            raise TypeError("contract must be a resolved AbstractResolvedContract.")
         quantity_ = _quantity(quantity, "quantity", nonzero=False)
         self.position_id = identifier
         self.contract = contract

@@ -23,6 +23,7 @@ from ...observation import (
     ObservationCovarianceAction,
     PrecisionCovarianceAction,
 )
+from ...typing import checked
 from ...uq._foundation import PosteriorRecord
 from ..compact_objects._inverse import (
     fixed_branch_model_evaluation,
@@ -66,6 +67,7 @@ class FixedBranchRayInferencePlan(StrictModule, NonTrainableState):
     observation_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         adapter: FixedBranchInverseAdapter,
@@ -81,8 +83,6 @@ class FixedBranchRayInferencePlan(StrictModule, NonTrainableState):
         prior_log_density: Callable[[Array], ArrayLike] | None = None,
         plan_id: str,
     ) -> None:
-        if not isinstance(adapter, FixedBranchInverseAdapter):
-            raise TypeError("adapter must be a FixedBranchInverseAdapter.")
         if adapter.model_kind != "gr-ray":
             raise ValueError("Ray inference requires a gr-ray inverse adapter.")
         if not isinstance(
@@ -368,6 +368,7 @@ class GRPosteriorRealizationBinding(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_posterior(
         cls,
         posterior: PosteriorRecord,
@@ -376,8 +377,6 @@ class GRPosteriorRealizationBinding(StrictModule, NonTrainableState):
         inference_plan_id: str,
         forward_realization_id: str,
     ) -> GRPosteriorRealizationBinding:
-        if not isinstance(posterior, PosteriorRecord):
-            raise TypeError("posterior must be a native PosteriorRecord.")
         return cls(
             posterior.record_id,
             inference_plan_id,
@@ -410,6 +409,7 @@ class GRPosteriorRealizationBinding(StrictModule, NonTrainableState):
             draw_count=self.draw_count,
         )
 
+    @checked
     def predict(
         self,
         posterior: PosteriorRecord,
@@ -419,8 +419,6 @@ class GRPosteriorRealizationBinding(StrictModule, NonTrainableState):
     ) -> GRPosteriorPrediction:
         """Evaluate the authoritative posterior without flattening its sample axes."""
 
-        if not isinstance(posterior, PosteriorRecord):
-            raise TypeError("posterior must be a native PosteriorRecord.")
         if posterior.record_id != self.posterior_id:
             raise ValueError(
                 "Posterior identity does not match the GR realization binding."

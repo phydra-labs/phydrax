@@ -15,7 +15,7 @@ from jax import Array
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ...operators.interpolation import BSplineInterpolationPlan, fit_bspline
-from ...typing import parse
+from ...typing import checked, parse
 from .._trajectory import TrajectoryData
 
 
@@ -41,9 +41,8 @@ class DerivativeEstimate(StrictModule):
     dataset_id: str = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def attach(self, data: TrajectoryData, /) -> TrajectoryData:
-        if not isinstance(data, TrajectoryData):
-            raise TypeError("data must be TrajectoryData.")
         if data.dataset_id != self.dataset_id:
             raise ValueError(
                 "Derivative estimate belongs to a different trajectory dataset."

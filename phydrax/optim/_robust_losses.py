@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class RobustLossEvaluation(StrictModule):
@@ -178,9 +179,8 @@ class ScaledLoss(AbstractRobustLoss):
     loss: AbstractRobustLoss
     scale: float = eqx.field(static=True)
 
+    @checked
     def __init__(self, loss: AbstractRobustLoss, scale: float, /) -> None:
-        if not isinstance(loss, AbstractRobustLoss):
-            raise TypeError("loss must be AbstractRobustLoss.")
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Loss scale must be finite and positive.")

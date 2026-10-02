@@ -53,7 +53,7 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._mac_separable import (
     certify_separable_action,
     diagonal_resource_counts,
@@ -200,6 +200,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
     closure_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -214,8 +215,6 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         hybrid_line_axis: int | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
             MACBoundaryPlan(operators).prepare()
             if boundaries is None

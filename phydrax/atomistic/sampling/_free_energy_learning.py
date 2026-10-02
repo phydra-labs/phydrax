@@ -43,7 +43,7 @@ from ..._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import _ObjectiveContribution
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._dynamics import PreparedAtomisticDynamics
 from ._bias import (
     AbstractAtomisticBiasPlan,
@@ -542,6 +542,7 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
     rejected_uncertainty: float = eqx.field(static=True)
     bias_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         variables: AbstractCollectiveVariableProgram,
@@ -554,8 +555,6 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
         trusted_uncertainty: float = 0.0,
         rejected_uncertainty: float = 1.0,
     ) -> None:
-        if not isinstance(variables, AbstractCollectiveVariableProgram):
-            raise TypeError("variables must implement AbstractCollectiveVariableProgram.")
         members = tuple(models)
         identifiers = tuple(str(value).strip() for value in model_ids)
         if (
@@ -628,16 +627,13 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
     dynamics: PreparedAtomisticDynamics
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LearnedFreeEnergyBiasPlan,
         dynamics: PreparedAtomisticDynamics,
         /,
     ) -> None:
-        if not isinstance(plan, LearnedFreeEnergyBiasPlan):
-            raise TypeError("plan must be LearnedFreeEnergyBiasPlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         self.plan = plan
         self.dynamics = dynamics
         self.prepared_id = canonical_fingerprint(
@@ -712,6 +708,7 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
             self.prepared_id,
         )
 
+    @checked
     def update(
         self,
         state: AbstractAtomisticBiasState,
@@ -723,8 +720,6 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
             raise TypeError("state must be a LearnedFreeEnergyBiasState.")
         if state.bias_id != self.plan.bias_id:
             raise ValueError("Learned bias state belongs to another bias plan.")
-        if not isinstance(evaluation, AtomisticBiasEvaluation):
-            raise TypeError("evaluation must be an AtomisticBiasEvaluation.")
         if evaluation.bias_id != self.prepared_id:
             raise ValueError(
                 "Learned bias evaluation belongs to another prepared runtime."

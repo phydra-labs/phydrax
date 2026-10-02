@@ -19,6 +19,7 @@ from ..._array_archive import (
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._units import AtomisticUnitSystem
 from ._multistate import (
     _identity_token,
@@ -37,6 +38,7 @@ class AtomisticMultistateCheckpointPlan(StrictModule, NonTrainableState):
     scope_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedAtomisticMultistate,
@@ -45,8 +47,6 @@ class AtomisticMultistateCheckpointPlan(StrictModule, NonTrainableState):
         *,
         scope_id: str | None = None,
     ) -> None:
-        if not isinstance(runtime, PreparedAtomisticMultistate):
-            raise TypeError("runtime must be PreparedAtomisticMultistate.")
         capacity = int(segment_capacity)
         if capacity <= 0:
             raise ValueError("segment_capacity must be positive.")

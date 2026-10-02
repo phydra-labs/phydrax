@@ -38,6 +38,7 @@ from ...linalg import (
     StabilityLowerBound,
 )
 from ...sparse import SparseCoordinateOperator, SparseLinearMap
+from ...typing import checked
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 from ._lifecycle import ConvexProgramExecution, PreparedConvexProgram
 from ._policy import ConicGeneralizedDerivativePolicy
@@ -89,11 +90,9 @@ class ConicProgramData(StrictModule):
         self.upper_bounds = jnp.asarray(upper_bounds)
 
     @classmethod
+    @checked
     def zeros_like(cls, program: ConicProgram, /) -> ConicProgramData:
         """Return the zero tangent in one conic program's numerical data space."""
-
-        if not isinstance(program, ConicProgram):
-            raise TypeError("program must be a ConicProgram.")
 
         def zero_numeric(
             value: Array | AbstractSparseLinearOperator,

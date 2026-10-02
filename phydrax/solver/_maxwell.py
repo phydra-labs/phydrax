@@ -55,7 +55,7 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..topology import CellSubcomplex
-from ..typing import parse
+from ..typing import checked, parse
 from ._harmonic_constraints import HarmonicConstraint
 from ._maxwell_boundaries import MaxwellBoundaryPlan, PreparedMaxwellBoundary
 from ._maxwell_observers import (
@@ -101,6 +101,7 @@ class MaxwellCochainLayout(StrictModule, NonTrainableState):
     charge_form_type: FormType | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: AbstractDeRhamComplex,
@@ -108,8 +109,6 @@ class MaxwellCochainLayout(StrictModule, NonTrainableState):
         /,
     ) -> None:
         polarization = parse(polarization, MaxwellPolarization, "polarization")
-        if not isinstance(bridge, AbstractDeRhamComplex):
-            raise TypeError("Maxwell layout requires an AbstractDeRhamComplex.")
         if bridge.primal_twist != "untwisted":
             raise ValueError("Maxwell E and B require an untwisted primal realization.")
         dimension = bridge.dimension
@@ -502,14 +501,13 @@ class InstantaneousMaxwellFrequencyResponse(AbstractMaxwellFrequencyResponse):
     lossless: bool = eqx.field(static=True)
     dispersive: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         constitutive: AbstractPreparedMaxwellConstitutive,
         angular_frequency: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(constitutive, AbstractPreparedMaxwellConstitutive):
-            raise TypeError("constitutive must be a prepared Maxwell constitutive law.")
         capabilities = constitutive.capabilities
         if not capabilities.lossless or capabilities.dispersive:
             raise ValueError(
@@ -766,6 +764,7 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
     layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DiagonalMaxwellConstitutivePlan,
@@ -773,8 +772,6 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         layout: MaxwellCochainLayout,
         /,
     ) -> None:
-        if not isinstance(layout, MaxwellCochainLayout):
-            raise TypeError("Maxwell constitutive preparation requires a cochain layout.")
         epsilon = _positive_material(
             "permittivity",
             plan.permittivity,
@@ -977,6 +974,7 @@ class CompatibleMaxwellPlan(StrictModule):
     courant_factor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: AbstractCellDeRhamComplex,
@@ -994,8 +992,6 @@ class CompatibleMaxwellPlan(StrictModule):
         courant_factor: float = 0.95,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(bridge, AbstractCellDeRhamComplex):
-            raise TypeError("Compatible Maxwell requires an AbstractCellDeRhamComplex.")
         layout = MaxwellCochainLayout(bridge, polarization)
         material = (
             DiagonalMaxwellConstitutivePlan() if constitutive is None else constitutive
@@ -1093,9 +1089,8 @@ class PreparedCompatibleMaxwell(StrictModule):
     discretization_bundle: DiscretizationBundle
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CompatibleMaxwellPlan, /) -> None:
-        if not isinstance(plan, CompatibleMaxwellPlan):
-            raise TypeError("plan must be a CompatibleMaxwellPlan.")
         layout = plan.layout
         cochain = (
             plan.bridge.cochain
@@ -1445,9 +1440,8 @@ class PreparedCompatibleMaxwell(StrictModule):
             material_state=self.constitutive.initialize_state(),
         )
 
+    @checked
     def _state(self, state: CompatibleMaxwellState, /) -> CompatibleMaxwellState:
-        if not isinstance(state, CompatibleMaxwellState):
-            raise TypeError("state must be CompatibleMaxwellState.")
         electric_count, magnetic_count, charge_count = self.primary_counts
         primary = state.primary
         if (

@@ -23,7 +23,7 @@ from ...discretization.finite_volume._hydrostatic_grid import (
 )
 from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
 from ...solver._hydrostatic_free_surface import LinearImplicitFreeSurfacePlan
-from ...typing import parse
+from ...typing import checked, parse
 from ._external_mode import ExternalModeSubcyclePolicy
 
 
@@ -501,6 +501,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
     subcycle_policy: ExternalModeSubcyclePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: PreparedHydrostaticGrid,
@@ -519,8 +520,6 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
         wet_depth: float = 1.0e-6,
         subcycle_policy: ExternalModeSubcyclePolicy | None = None,
     ) -> None:
-        if not isinstance(geometry, PreparedHydrostaticGrid):
-            raise TypeError("geometry must be PreparedHydrostaticGrid.")
         from ._teos10 import TEOS10GSW75EOS
 
         eos_ = LinearHydrostaticEOS() if eos is None else eos

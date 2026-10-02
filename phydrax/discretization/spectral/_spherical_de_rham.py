@@ -25,7 +25,7 @@ from ...linalg._complexes import (
 from ...linalg._operators import FunctionLinearOperator
 from ...linalg._pairings import DiagonalPairing
 from ...linalg._spaces import ArraySpace
-from ...typing import Bool, Complex, Dim, Float, Int32, Size
+from ...typing import Bool, checked, Complex, Dim, Float, Int32, Size
 from ._complex_support import (
     analytic_decomposition_policy,
     closed_boundary,
@@ -70,9 +70,8 @@ class SphericalDeRhamComplex(AbstractDeRhamComplex):
     _realization_id: str = eqx.field(static=True)
     scalar_count: Size[SphericalScalarCoordinateDim] = eqx.field(static=True)
 
+    @checked
     def __init__(self, space: SphericalSpectralDiscretization, /) -> None:
-        if not isinstance(space, SphericalSpectralDiscretization):
-            raise TypeError("space must be a prepared spherical spectral discretization.")
         vector = PreparedSphericalVectorOperators(space)
         limit = space.layout.bandlimit
         width = space.coefficient_shape[1]

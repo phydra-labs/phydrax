@@ -22,6 +22,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..compact_objects._inverse import (
     FixedBranchInverseAdapter,
     FixedBranchModelEvaluation,
@@ -803,6 +804,7 @@ class LearnedClosureAdmission(StrictModule, NonTrainableState):
     native_model_id: str = eqx.field(static=True)
     admission_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evidence: LearnedClosureAdmissionEvidence,
@@ -813,8 +815,6 @@ class LearnedClosureAdmission(StrictModule, NonTrainableState):
         admitted: bool,
         refusal_reasons: tuple[str, ...],
     ) -> None:
-        if not isinstance(evidence, LearnedClosureAdmissionEvidence):
-            raise TypeError("evidence must be LearnedClosureAdmissionEvidence.")
         candidate = _identifier(candidate_id, "candidate_id")
         native = _identifier(native_model_id, "native_model_id")
         reasons = tuple(refusal_reasons)

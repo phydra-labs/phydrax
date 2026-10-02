@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..exterior._complex import AbstractDeRhamComplex, ComplexBoundary, DiscreteForm
-from ..typing import parse
+from ..typing import checked, parse
 
 
 @final
@@ -54,11 +54,10 @@ class AbelianMaxwellOperator(StrictModule):
     complex: AbstractDeRhamComplex
     boundary: ComplexBoundary = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, complex: AbstractDeRhamComplex, /, *, boundary: ComplexBoundary = "absolute"
     ) -> None:
-        if not isinstance(complex, AbstractDeRhamComplex):
-            raise TypeError("complex must be an AbstractDeRhamComplex.")
         boundary_ = parse(boundary, ComplexBoundary, "boundary")
         self.complex = complex
         self.boundary = boundary_

@@ -24,6 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import precision_itemsize, PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._core import MatrixProductOperator, MatrixProductState
 from ._precision import TensorNetworkPrecisionPolicy
 from ._schedule import (
@@ -191,10 +192,9 @@ class ContractionPlanCache(NonTrainableState):
     def lookup(self, key: str, /) -> ContractionPlan | None:
         return self._plans.get(str(key))
 
+    @checked
     def store(self, key: str, plan: ContractionPlan, /) -> None:
         key_ = str(key)
-        if not isinstance(plan, ContractionPlan):
-            raise TypeError("plan must be ContractionPlan.")
         if key_ in self._plans:
             del self._plans[key_]
         elif len(self._plans) == self.capacity:

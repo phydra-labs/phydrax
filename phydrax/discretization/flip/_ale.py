@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..fem import PreparedFiniteElementCellMap
 from ..particle import ParticlePopulationState
 from ..splatting import (
@@ -31,6 +32,7 @@ class ALEFLIPPlan(StrictModule, NonTrainableState):
     gcl_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         splat: PreparedMeshParticleGridSplat,
@@ -39,10 +41,6 @@ class ALEFLIPPlan(StrictModule, NonTrainableState):
         *,
         gcl_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(splat, PreparedMeshParticleGridSplat):
-            raise TypeError("splat must be PreparedMeshParticleGridSplat.")
-        if not isinstance(cell_map, PreparedFiniteElementCellMap):
-            raise TypeError("cell_map must be PreparedFiniteElementCellMap.")
         if splat.target.mesh.topology_id != cell_map.topology_id:
             raise ValueError("ALE FLIP splat and FE cell map topologies differ.")
         if gcl_tolerance <= 0.0:

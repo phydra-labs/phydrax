@@ -36,6 +36,7 @@ from .._training_kernel import (
     TrainingKeys,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import checked
 from ._diffrax_cde import solve_diffrax_cde
 from ._driving_path import AbstractDifferentiableDrivingPath
 from ._rough import RoughDifferentialProblem
@@ -257,6 +258,7 @@ class NeuralCDETrainingState(StrictModule):
     shuffle: bool = eqx.field(static=True)
     ordering: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vector_field: Any,
@@ -277,8 +279,6 @@ class NeuralCDETrainingState(StrictModule):
     ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
-        if not isinstance(training, TrainingKernelState):
-            raise TypeError("training must be a TrainingKernelState.")
         update_step = int(jax.device_get(training.accepted_cursor))
         if min(int(epoch), int(batch_index), update_step, int(seed)) < 0:
             raise ValueError("Training progress and seed must be nonnegative.")

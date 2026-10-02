@@ -14,6 +14,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import (
     AMOUNT,
     ANGSTROM,
@@ -135,6 +136,7 @@ class AtomisticUnitSystem(StrictModule, NonTrainableState):
     reduced_planck_constant: float = eqx.field(static=True)
     unit_system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: AtomisticScaleContract,
@@ -146,8 +148,6 @@ class AtomisticUnitSystem(StrictModule, NonTrainableState):
         temperature_unit: UnitDefinition,
         constant_set_id: str,
     ) -> None:
-        if not isinstance(scale, AtomisticScaleContract):
-            raise TypeError("scale must be an AtomisticScaleContract.")
         reference = scale.length_unit.reference_system_id
         _require_unit(mass_unit, MASS, "mass_unit", reference)
         _require_unit(time_unit, TIME, "time_unit", reference)

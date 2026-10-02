@@ -19,7 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.fem import FiniteElementTopologyTransfer
 from ...stochastic import WienerRealization
-from ...typing import parse
+from ...typing import checked, parse
 
 
 PhaseFieldNoiseKind: TypeAlias = Literal["allen-cahn", "cahn-hilliard"]
@@ -44,6 +44,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
     kind: PhaseFieldNoiseKind = eqx.field(static=True)
     noise_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kind: PhaseFieldNoiseKind,
@@ -55,8 +56,6 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         conservation_weights: ArrayLike | None = None,
     ) -> None:
         kind = parse(kind, PhaseFieldNoiseKind, "kind")
-        if not isinstance(realization, WienerRealization):
-            raise TypeError("realization must be WienerRealization.")
         modes = np.asarray(basis)
         scale = np.asarray(amplitude)
         if (
@@ -125,6 +124,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
             conservation_weights=conservation_weights,
         )
 
+    @checked
     def transfer(
         self,
         transfer: FiniteElementTopologyTransfer,
@@ -134,8 +134,6 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
     ) -> PhaseFieldNoisePlan:
         """Transfer the same global Wiener modes to a successor FE epoch."""
 
-        if not isinstance(transfer, FiniteElementTopologyTransfer):
-            raise TypeError("Noise-basis transfer must be FiniteElementTopologyTransfer.")
         if transfer.source_size != self.basis.shape[0]:
             raise ValueError(
                 "Noise-basis transfer must map source DOFs to successor DOFs."

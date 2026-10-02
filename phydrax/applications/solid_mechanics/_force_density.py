@@ -50,7 +50,7 @@ from ...nonlinear import (
     refresh_nonlinear,
 )
 from ...sparse import SparseCoordinateOperator
-from ...typing import parse
+from ...typing import checked, parse
 from ._force_density_loads import (
     AbstractForceDensityLoadModel,
     evaluate_force_density_load,
@@ -243,6 +243,7 @@ class ForceDensityProblem(StrictModule, NonTrainableState):
     tolerances: ForceDensityTolerances
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         structure: ForceDensityStructure,
@@ -254,8 +255,6 @@ class ForceDensityProblem(StrictModule, NonTrainableState):
         tolerances: ForceDensityTolerances | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(structure, ForceDensityStructure):
-            raise TypeError("structure must be a ForceDensityStructure.")
         model = FixedNodalLoadModel() if load_model is None else load_model
         if not isinstance(model, AbstractForceDensityLoadModel):
             raise TypeError("load_model must be an AbstractForceDensityLoadModel.")

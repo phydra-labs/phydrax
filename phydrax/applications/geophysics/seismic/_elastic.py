@@ -18,6 +18,7 @@ from ...._numerics._checkpointed_scan import (
 )
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._acquisition import AcousticGrid, PreparedAcousticSampling
 
 
@@ -89,6 +90,7 @@ class PeriodicIsotropicElasticWavePlan(StrictModule, NonTrainableState):
     voigt_pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: AcousticGrid,
@@ -99,8 +101,6 @@ class PeriodicIsotropicElasticWavePlan(StrictModule, NonTrainableState):
         *,
         cfl_limit: float = 0.9,
     ) -> None:
-        if not isinstance(grid, AcousticGrid):
-            raise TypeError("Elastic waves require AcousticGrid.")
         dt, maximum = float(time_step_s), float(maximum_p_wavespeed_m_s)
         steps = int(step_count)
         courant = float(dt * maximum * np.sqrt(sum(value**-2 for value in grid.spacing)))

@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import ReciprocalMeshPlan
+from ...typing import checked
 from ._orbital import PreparedPeriodicOrbitalPencil
 from ._topology import PeriodicOverlapBundle
 
@@ -46,6 +47,7 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pencil: PreparedPeriodicOrbitalPencil,
@@ -55,10 +57,6 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
-            raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
         mesh.require_cell(pencil.plan.basis.cell)
         value = np.asarray(unitary)
         count = pencil.plan.basis.orbital_count
@@ -178,6 +176,7 @@ class PeriodicZ2Plan(StrictModule, NonTrainableState):
     endpoint_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bundle: PeriodicOverlapBundle,
@@ -188,10 +187,6 @@ class PeriodicZ2Plan(StrictModule, NonTrainableState):
         transverse_axis: int = 1,
         endpoint_tolerance: float = 1.0e-5,
     ) -> None:
-        if not isinstance(bundle, PeriodicOverlapBundle):
-            raise TypeError("bundle must be PeriodicOverlapBundle.")
-        if not isinstance(time_reversal, PeriodicTimeReversalEvidence):
-            raise TypeError("time_reversal must be PeriodicTimeReversalEvidence.")
         mesh = bundle.connectivity.plan.mesh
         axes = (int(loop_axis), int(transverse_axis))
         tolerance = float(endpoint_tolerance)

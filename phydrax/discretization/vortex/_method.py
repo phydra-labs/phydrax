@@ -18,6 +18,7 @@ import phydrax.linalg as la
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
 from ._capabilities import VortexDiffusionCapabilities
@@ -97,14 +98,13 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
             }
         )
 
+    @checked
     def evaluate(
         self,
         source: VortexSourceState,
         viscosity: ArrayLike,
         /,
     ) -> VortexDiffusionEvaluation:
-        if not isinstance(source, VortexSourceState):
-            raise TypeError("source must be VortexSourceState.")
         if source.capacity != self.capacity or source.dimension != self.dimension:
             raise ValueError("Inviscid vortex source does not match prepared capacity.")
         positions = source.safe_positions()
@@ -153,6 +153,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         velocity: AbstractVortexVelocityPlan,
@@ -164,8 +165,6 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
         diffusive_cfl: float = 0.125,
         name: str = "vortex-particle-method",
     ) -> None:
-        if not isinstance(velocity, AbstractVortexVelocityPlan):
-            raise TypeError("velocity must be an AbstractVortexVelocityPlan.")
         diffusion_ = (
             InviscidVortexDiffusionPlan(velocity.dimension)
             if diffusion is None
@@ -250,6 +249,7 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -264,16 +264,6 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         background_velocity: BackgroundVortexVelocity | None = None,
         background_velocity_id: str | None = None,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(properties, VortexParticleProperties):
-            raise TypeError("properties must be VortexParticleProperties.")
-        if not isinstance(velocity, AbstractPreparedVortexVelocity):
-            raise TypeError("velocity must be a prepared vortex velocity.")
-        if not isinstance(diffusion, AbstractPreparedVortexDiffusion):
-            raise TypeError("diffusion must be a prepared vortex diffusion.")
-        if not isinstance(method, VortexParticleMethodPlan):
-            raise TypeError("method must be VortexParticleMethodPlan.")
         dimension = particles.ambient_dimension
         if (
             dimension not in (2, 3)

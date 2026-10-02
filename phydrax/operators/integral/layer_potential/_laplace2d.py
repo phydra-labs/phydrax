@@ -19,7 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....operators.differential._jet import jet_terms
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from ._core import (
     AbstractLayerKernel,
     BoundaryPanelization2D,
@@ -94,6 +94,7 @@ class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
     _discretization: LayerDiscretizationReport
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: BoundaryPanelization2D,
@@ -102,8 +103,6 @@ class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
         kind: Literal["single", "double"] = "double",
         density: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(panelization, BoundaryPanelization2D):
-            raise TypeError("panelization must be BoundaryPanelization2D.")
         if kind not in ("single", "double"):
             raise ValueError("Laplace layer kind must be 'single' or 'double'.")
         density_ = (

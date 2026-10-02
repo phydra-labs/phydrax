@@ -22,7 +22,7 @@ from ....discretization.particle._pairwise import (
     scatter_pair_exchange,
 )
 from ....discretization.particle._precision import ParticleAccumulation
-from ....typing import parse
+from ....typing import checked, parse
 from ..data import FunctionSamples, OperatorBatch
 from ..training._trained_operator import TrainedOperator
 
@@ -140,6 +140,7 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         feature_schema: PairwiseExchangeFeatureSchema,
@@ -153,8 +154,6 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         accumulation: ParticleAccumulation = "deterministic",
         conservation_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(feature_schema, PairwiseExchangeFeatureSchema):
-            raise TypeError("feature_schema must be PairwiseExchangeFeatureSchema.")
         kind = str(exchange_kind)
         artifact = str(model_artifact_id).strip()
         source = str(source_name).strip()
@@ -189,6 +188,7 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         trained: TrainedOperator,
@@ -196,8 +196,6 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         geometry: ParticlePairGeometry,
         /,
     ) -> PreparedPairwiseExchangeBinding:
-        if not isinstance(trained, TrainedOperator):
-            raise TypeError("trained must be TrainedOperator.")
         if trained.artifact_id != self.model_artifact_id:
             raise ValueError("Trained pair model artifact does not match the plan.")
         if not pairs.same_set or not pairs.unordered:

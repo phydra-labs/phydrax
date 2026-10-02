@@ -22,6 +22,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import checked
 from ._ambient import RegularLevelSetManifold
 from ._atlas import CoordinateAtlas
 from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
@@ -85,6 +86,7 @@ class AtlasCandidate(StrictModule):
     orientation: int = eqx.field(static=True)
     candidate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chart: CoordinateChart,
@@ -96,8 +98,6 @@ class AtlasCandidate(StrictModule):
         candidate_id: str,
         orientation: int = 1,
     ) -> None:
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if not all(
             callable(value) for value in (parameterization, inverse, coordinate_support)
         ):

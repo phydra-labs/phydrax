@@ -19,6 +19,7 @@ from ...discretization.finite_volume._unstructured import (
 )
 from ...ein import contract
 from ...nonlinear import implicit_root_result, NonlinearSystemProblem
+from ...typing import checked
 from ._materials import _finite
 from ._richards import _cell_array, _finish_root, RichardsPlan
 from ._state import PorousFluxes, PorousStepResult, WaterHeatState
@@ -45,6 +46,7 @@ class CoupledWaterHeatPlan(StrictModule):
     temperature_scale_K: float = eqx.field(static=True)
     energy_rate_scale_W: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         water: RichardsPlan,
@@ -62,8 +64,6 @@ class CoupledWaterHeatPlan(StrictModule):
             raise TypeError(
                 "Coupled water-heat requires RichardsPlan and PorousThermalMaterial."
             )
-        if not isinstance(thermal_boundaries, HybridDiffusionBoundary):
-            raise TypeError("Thermal boundaries must be HybridDiffusionBoundary.")
         if thermal_boundaries.geometry_id != water.discretization.geometry_id:
             raise ValueError("Thermal boundaries must share the water geometry.")
         self.water, self.thermal, self.thermal_boundaries = (

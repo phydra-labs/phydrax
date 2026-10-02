@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import (
     conversion_factor,
     derived_unit,
@@ -145,6 +146,7 @@ class StokesImage(StrictModule, NonTrainableState):
     integration_unit_factor: float = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stokes: ArrayLike,
@@ -161,10 +163,6 @@ class StokesImage(StrictModule, NonTrainableState):
         flux_density_unit: UnitDefinition,
         frequency_unit: UnitDefinition = HERTZ,
     ) -> None:
-        if not isinstance(screen, GRImageScreen):
-            raise TypeError("screen must be a GRImageScreen.")
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         if (
             not isinstance(intensity_unit, UnitDefinition)
             or not isinstance(flux_density_unit, UnitDefinition)

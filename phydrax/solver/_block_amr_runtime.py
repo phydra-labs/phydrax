@@ -37,6 +37,7 @@ from ..discretization.finite_volume._block_amr import (
     BlockAMRFiniteVolumeStageResult,
     PreparedBlockAMRFiniteVolumeDynamics,
 )
+from ..typing import checked
 from ._finite_volume_topology_events import (
     FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
@@ -76,6 +77,7 @@ class AMRTimeSchedulePlan(StrictModule, NonTrainableState):
     subcycling: bool = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: PreparedFDAMRHierarchy,
@@ -85,8 +87,6 @@ class AMRTimeSchedulePlan(StrictModule, NonTrainableState):
         temporal_method_id: str = "temporal:ssprk33",
         edge_substeps: Sequence[int] | None = None,
     ) -> None:
-        if not isinstance(hierarchy, PreparedFDAMRHierarchy):
-            raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(subcycling, bool):
             raise TypeError("subcycling must be boolean.")
         method_id = str(temporal_method_id)
@@ -130,6 +130,7 @@ class BlockAMRRuntimeState(StrictModule):
     level_accepted_steps: Array
     last_status: Array
 
+    @checked
     def __init__(
         self,
         hierarchy_state: BlockHierarchyState,
@@ -141,10 +142,6 @@ class BlockAMRRuntimeState(StrictModule):
         level_accepted_steps: ArrayLike | None = None,
         last_status: ArrayLike = BlockAMRAdvancePhase.SUCCESS,
     ) -> None:
-        if not isinstance(hierarchy_state, BlockHierarchyState):
-            raise TypeError("hierarchy_state must be BlockHierarchyState.")
-        if not isinstance(topology_journal, FiniteVolumeTopologyEventJournal):
-            raise TypeError("topology_journal must be FiniteVolumeTopologyEventJournal.")
         epoch_id = hierarchy_state.topology.epoch.epoch_id
         if topology_journal.current_epoch_id != epoch_id:
             raise ValueError(
@@ -322,6 +319,7 @@ class BlockAMRRuntimePlan(StrictModule):
     topology_transaction_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         finite_volume: BlockAMRFiniteVolumePlan,
@@ -336,8 +334,6 @@ class BlockAMRRuntimePlan(StrictModule):
         topology_transaction: Callable[..., Any] | None = None,
         topology_transaction_id: str | None = None,
     ) -> None:
-        if not isinstance(finite_volume, BlockAMRFiniteVolumePlan):
-            raise TypeError("finite_volume must be BlockAMRFiniteVolumePlan.")
         if subcycling is not None and not isinstance(subcycling, bool):
             raise TypeError("subcycling must be boolean or None.")
         schedule_ = (
@@ -424,11 +420,10 @@ class PreparedBlockAMRRuntime(StrictModule):
     topology_artifacts: FiniteVolumeTopologyArtifacts
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: BlockAMRRuntimePlan, topology: BlockHierarchyTopology, /
     ) -> None:
-        if not isinstance(plan, BlockAMRRuntimePlan):
-            raise TypeError("plan must be BlockAMRRuntimePlan.")
         if not isinstance(topology, BlockHierarchyTopology) or (
             topology.plan.plan_id != plan.finite_volume.hierarchy.plan.hierarchy.plan_id
         ):
@@ -518,9 +513,8 @@ class PreparedBlockAMRRuntime(StrictModule):
             raise ValueError("Block AMR payload has a stale partition route.")
         self.dynamics._validate_state(state)
 
+    @checked
     def _validate_state(self, state: BlockAMRRuntimeState, /) -> None:
-        if not isinstance(state, BlockAMRRuntimeState):
-            raise TypeError("state must be BlockAMRRuntimeState.")
         self._validate_hierarchy_state(state.hierarchy_state)
         if (
             state.topology_journal.current_epoch_id

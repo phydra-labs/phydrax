@@ -38,7 +38,7 @@ from ..linalg import (
     prepare_linearization,
     PreparedLinearization,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._views import (
     _checked_queries,
     FieldApproximation,
@@ -93,6 +93,7 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
     complete: bool = eqx.field(static=True)
     query_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: PreparedFieldReconstruction,
@@ -103,8 +104,6 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
         side: FieldSideBinding | None = None,
         coverage: FieldQueryCoverage = "complete",
     ) -> None:
-        if not isinstance(reconstruction, PreparedFieldReconstruction):
-            raise TypeError("reconstruction must be a PreparedFieldReconstruction.")
         coverage_ = parse(coverage, FieldQueryCoverage, "coverage")
         index = reconstruction.derivative_index(derivative)
         binding = reconstruction._side(side)
@@ -192,6 +191,7 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
             return self.reconstruction.regularity
         return self.reconstruction.regularity.differentiate(self.order)
 
+    @checked
     def require_reconstruction(
         self, reconstruction: PreparedFieldReconstruction, /
     ) -> None:
@@ -201,8 +201,6 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
         field-space change produces another reconstruction and requires a new
         query.
         """
-        if not isinstance(reconstruction, PreparedFieldReconstruction):
-            raise TypeError("reconstruction must be a PreparedFieldReconstruction.")
         if reconstruction.reconstruction_id != self.reconstruction.reconstruction_id:
             raise ValueError(
                 "The prepared query was located on another reconstruction revision; "

@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
 from ...execution import HostTaskExecutor, InlineTaskExecutor
+from ...typing import checked
 from .._optimization import _require_structure_matches_system
 from .._surface import (
     AbstractPreparedPotentialEnergySurface,
@@ -40,6 +41,7 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         raw_hessian: ArrayLike,
@@ -61,8 +63,6 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
         residual = jnp.asarray(antisymmetry_residual, dtype=raw.dtype).reshape(())
         count = jnp.asarray(evaluation_count, dtype=jnp.int32).reshape(())
         successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         system_id_ = str(system_id).strip()
         geometry_id_ = str(geometry_id).strip()
         if not system_id_ or not geometry_id_:
@@ -108,6 +108,7 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
     antisymmetry_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -117,10 +118,6 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         displacement: float = 1.0e-3,
         antisymmetry_tolerance: float = 1.0e-5,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
-        if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
-            raise TypeError("surface must be a prepared potential-energy surface.")
         if surface.system_id != system.system_id:
             raise ValueError("Hessian surface belongs to another system.")
         if surface.units.unit_system_id != system.units.unit_system_id:
@@ -148,6 +145,7 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         structure: AtomicStructure,
@@ -155,8 +153,6 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         *,
         executor: HostTaskExecutor | None = None,
     ) -> MolecularHessianResult:
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be AtomicStructure.")
         _require_structure_matches_system(structure, self.system)
         positions = np.asarray(
             structure.positions, dtype=np.dtype(self.system.coordinate_dtype)

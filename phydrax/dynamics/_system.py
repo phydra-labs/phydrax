@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ..typing import checked
 from ._layout import InputLayout, StateLayout
 
 
@@ -349,6 +350,7 @@ class DiscreteSystem(StrictModule):
         self.minimum_step_size = minimum_step
         self.maximum_step_size = maximum_step
 
+    @checked
     def evaluate_result(
         self,
         context: DiscreteStepContext,
@@ -364,8 +366,6 @@ class DiscreteSystem(StrictModule):
             raise ValueError(
                 f"state must have shape {self.state_layout.shape}; got {state_array.shape}."
             )
-        if not isinstance(context, DiscreteStepContext):
-            raise TypeError("DiscreteSystem evaluation requires DiscreteStepContext.")
         duration = context.duration
         finite_interval = jnp.isfinite(context.source) & jnp.isfinite(context.target)
         duration_valid = finite_interval & (duration > 0.0)
@@ -504,6 +504,7 @@ class CallableInputPolicy(AbstractInputPolicy):
     input_layout: InputLayout
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: Callable[..., ArrayLike],
@@ -514,8 +515,6 @@ class CallableInputPolicy(AbstractInputPolicy):
     ) -> None:
         if not callable(policy):
             raise TypeError("CallableInputPolicy policy must be callable.")
-        if not isinstance(input_layout, InputLayout):
-            raise TypeError("input_layout must be an InputLayout.")
         self.policy = policy
         self.input_layout = input_layout
         self.policy_id = _identifier(policy_id, "CallableInputPolicy policy_id")
@@ -557,6 +556,7 @@ class HeldInputPolicy(AbstractInputPolicy):
     node_side: Literal["left", "right"] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         times: ArrayLike,
@@ -567,8 +567,6 @@ class HeldInputPolicy(AbstractInputPolicy):
         node_side: Literal["left", "right"] = "left",
         policy_id: str,
     ) -> None:
-        if not isinstance(input_layout, InputLayout):
-            raise TypeError("input_layout must be an InputLayout.")
         if node_side not in ("left", "right"):
             raise ValueError("node_side must be 'left' or 'right'.")
         identifier = _identifier(policy_id, "HeldInputPolicy policy_id")

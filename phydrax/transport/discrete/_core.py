@@ -27,7 +27,7 @@ from ...pgm import (
     PreparedChromaticGibbs,
     sample_gibbs,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class AbstractDiscreteNoisingKernel(StrictModule):
@@ -112,6 +112,7 @@ class FactorGraphReverseKernel(StrictModule):
     schedule: GibbsSchedule
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         graph: DiscreteFactorGraph,
@@ -121,10 +122,6 @@ class FactorGraphReverseKernel(StrictModule):
         schedule: GibbsSchedule,
         /,
     ) -> None:
-        if not isinstance(graph, DiscreteFactorGraph):
-            raise TypeError("graph must be DiscreteFactorGraph.")
-        if not isinstance(prepared, PreparedChromaticGibbs):
-            raise TypeError("prepared must be PreparedChromaticGibbs.")
         inputs = jnp.asarray(input_variables, dtype=jnp.int32).reshape((-1,))
         outputs = jnp.asarray(output_variables, dtype=jnp.int32).reshape((-1,))
         if prepared.graph.structure_id != graph.structure_id:
@@ -142,8 +139,6 @@ class FactorGraphReverseKernel(StrictModule):
             or max(input_host + output_host) >= graph.num_variables
         ):
             raise ValueError("Reverse variable indices must be unique and in bounds.")
-        if not isinstance(schedule, GibbsSchedule):
-            raise TypeError("schedule must be GibbsSchedule.")
         self.graph = graph
         self.prepared = prepared
         self.input_variables = inputs
@@ -206,14 +201,13 @@ class DiscreteDenoisingProcess(StrictModule):
     reverse: tuple[FactorGraphReverseKernel, ...]
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         forward: DiscreteForwardProcess,
         reverse: Sequence[FactorGraphReverseKernel],
         /,
     ) -> None:
-        if not isinstance(forward, DiscreteForwardProcess):
-            raise TypeError("forward must be DiscreteForwardProcess.")
         reverse_values = tuple(reverse)
         if any(
             not isinstance(value, FactorGraphReverseKernel) for value in reverse_values
@@ -345,11 +339,10 @@ class HybridDiscreteEmbedding(StrictModule):
     process: DiscreteDenoisingProcess
     embedding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, encoder: Callable, decoder: Callable, process: DiscreteDenoisingProcess, /
     ) -> None:
-        if not isinstance(process, DiscreteDenoisingProcess):
-            raise TypeError("process must be DiscreteDenoisingProcess.")
         if not callable(encoder) or not callable(decoder):
             raise TypeError("encoder and decoder must be callable.")
         self.encoder = encoder

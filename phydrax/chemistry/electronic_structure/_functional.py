@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...typing import checked
 from .._method import DensityFunctionalPlan
 
 
@@ -125,9 +126,8 @@ class NativeXCFunctional(StrictModule, NonTrainableState):
     plan: DensityFunctionalPlan
     functional_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: DensityFunctionalPlan, /) -> None:
-        if not isinstance(plan, DensityFunctionalPlan):
-            raise TypeError("plan must be DensityFunctionalPlan.")
         supported = {
             "slater-x",
             "pw92-c",

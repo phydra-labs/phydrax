@@ -21,7 +21,7 @@ from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from ._validation import canonical_identifier
-from .typing import parse
+from .typing import checked, parse
 
 
 class AdmissibilityReason(IntFlag):
@@ -263,6 +263,7 @@ class AdmissibilityTransitionRequest(StrictModule, NonTrainableState):
     target_model_id: str = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         region_mask: ArrayLike,
@@ -272,8 +273,6 @@ class AdmissibilityTransitionRequest(StrictModule, NonTrainableState):
         target_model_id: str,
         /,
     ) -> None:
-        if not isinstance(evidence, AdmissibilityHeader):
-            raise TypeError("evidence must be AdmissibilityHeader.")
         region = jnp.asarray(region_mask, dtype=jnp.bool_)
         epoch = jnp.asarray(requested_epoch, dtype=jnp.int32)
         if epoch.shape != ():

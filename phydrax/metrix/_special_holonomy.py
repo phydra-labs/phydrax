@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..exterior._basis import exterior_indices, wedge_sign
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._curvature import ricci_tensor
 from ._forms import DifferentialForm, exterior_derivative, hodge_star, to_untwisted, wedge
@@ -43,6 +44,7 @@ class LocalSUNStructure(StrictModule):
     holomorphic_volume: DifferentialForm
     volume_bidegree: tuple[int, int] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kahler: KahlerStructure,
@@ -51,10 +53,6 @@ class LocalSUNStructure(StrictModule):
         *,
         volume_bidegree: tuple[int, int],
     ) -> None:
-        if not isinstance(kahler, KahlerStructure):
-            raise TypeError("LocalSUNStructure requires a KahlerStructure.")
-        if not isinstance(holomorphic_volume, DifferentialForm):
-            raise TypeError("holomorphic_volume must be a DifferentialForm.")
         if not kahler.chart.compatible_with(holomorphic_volume.chart):
             raise ValueError("Kähler and volume-form charts must match.")
         complex_dimension = kahler.chart.dimension // 2
@@ -271,6 +269,7 @@ class LocalG2Structure(StrictModule):
     associative_form: DifferentialForm
     orientation: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         metric: RiemannianMetric,
@@ -279,10 +278,6 @@ class LocalG2Structure(StrictModule):
         *,
         orientation: int = 1,
     ) -> None:
-        if not isinstance(metric, RiemannianMetric):
-            raise TypeError("LocalG2Structure requires a RiemannianMetric.")
-        if not isinstance(associative_form, DifferentialForm):
-            raise TypeError("associative_form must be a DifferentialForm.")
         if metric.chart.dimension != 7:
             raise ValueError("A local G2 structure requires a seven-dimensional chart.")
         if associative_form.degree != 3:
@@ -318,6 +313,7 @@ class OctonionG2Bridge(StrictModule):
     orientation: int = eqx.field(static=True)
     bridge_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: OctonionAlgebraSpec,
@@ -326,10 +322,6 @@ class OctonionG2Bridge(StrictModule):
         *,
         orientation: int = 1,
     ) -> None:
-        if not isinstance(algebra, OctonionAlgebraSpec):
-            raise TypeError("OctonionG2Bridge requires an OctonionAlgebraSpec.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("OctonionG2Bridge requires a CoordinateChart.")
         if chart.dimension != 7:
             raise ValueError("Octonion G2 coordinates require a seven-dimensional chart.")
         if orientation not in (-1, 1):

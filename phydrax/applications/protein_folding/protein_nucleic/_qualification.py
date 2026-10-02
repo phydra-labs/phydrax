@@ -22,6 +22,7 @@ from ....qualification import (
     ScientificCampaign,
     ScientificClaimProfile,
 )
+from ....typing import checked
 from ....units import conversion_factor, UnitDefinition
 from ...nucleic_acid_biophysics._construct import NucleicAcidConstruct
 from .._construct import ProteinConstruct
@@ -100,6 +101,7 @@ class ProteinNucleicMechanicalObservations:
     source: ReferenceArtifactManifest
     observation_id: str
 
+    @checked
     def __init__(
         self,
         protein: ProteinConstruct,
@@ -161,8 +163,6 @@ class ProteinNucleicMechanicalObservations:
             (observed < 0.0) | (observed > 1.0)
         ):
             raise ValueError("Contact probabilities must lie in [0, 1].")
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("Complex observations require a ReferenceArtifactManifest.")
         source.require_rights()
         source.require_uncertainty()
         complex_construct_id = canonical_fingerprint(
@@ -225,6 +225,7 @@ class ProteinNucleicModelFit:
     fit_integrity_ids: tuple[str, ...]
     fit_id: str
 
+    @checked
     def __init__(
         self,
         model_id: str,
@@ -235,8 +236,6 @@ class ProteinNucleicModelFit:
         fit_execution_evidence: QualificationEvidence,
         /,
     ) -> None:
-        if not isinstance(campaign, ScientificCampaign):
-            raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
         calibration = _role_case_ids(campaign, "calibration")
         selection = _role_case_ids(campaign, "model_selection")
@@ -272,11 +271,7 @@ class ProteinNucleicModelFit:
             )
         for artifact in artifacts:
             artifact.require_rights(training_use=True)
-        if not isinstance(prediction_code, ReferenceArtifactManifest):
-            raise TypeError("prediction_code must be a ReferenceArtifactManifest.")
         prediction_code.require_rights()
-        if not isinstance(fit_execution_evidence, QualificationEvidence):
-            raise TypeError("fit_execution_evidence must be QualificationEvidence.")
         required_subjects = {
             campaign.campaign_id,
             model,
@@ -365,6 +360,7 @@ class ProteinNucleicAffinityInputs:
     observation_id: str
     input_id: str
 
+    @checked
     def __init__(
         self,
         condition_ids: tuple[str, ...],
@@ -398,8 +394,6 @@ class ProteinNucleicAffinityInputs:
         standard_states = tuple(standard_state_ids)
         cases = tuple(case_ids)
         preparations = tuple(preparation_ids)
-        if not isinstance(fit, ProteinNucleicModelFit):
-            raise TypeError("fit must be a ProteinNucleicModelFit.")
         shared_lineage = tuple(
             sorted(
                 _identifier(value, "shared_sampling_lineage_id")
@@ -810,6 +804,7 @@ class ProteinNucleicMechanicsPrediction:
     fit_preparation_ids: tuple[str, ...]
     prediction_id: str
 
+    @checked
     def __init__(
         self,
         observations: ProteinNucleicMechanicalObservations,
@@ -820,10 +815,6 @@ class ProteinNucleicMechanicsPrediction:
         *,
         unit: UnitDefinition,
     ) -> None:
-        if not isinstance(observations, ProteinNucleicMechanicalObservations):
-            raise TypeError("observations must be ProteinNucleicMechanicalObservations.")
-        if not isinstance(fit, ProteinNucleicModelFit):
-            raise TypeError("fit must be a ProteinNucleicModelFit.")
         _validate_locked_mechanics_campaign(fit.campaign, observations)
         predicted = np.asarray(values, dtype=np.float64)
         errors = np.asarray(standard_errors, dtype=np.float64)
@@ -900,6 +891,7 @@ class ProteinNucleicQualificationAssessment:
             return "inconclusive"
         return "ready-for-claim-evaluation"
 
+    @checked
     def evaluate_claim(
         self,
         claim: ScientificClaimProfile,
@@ -918,8 +910,6 @@ class ProteinNucleicQualificationAssessment:
         issued_at: int,
         expires_at: int,
     ) -> QualificationEvidence:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
         if (
             claim.capability_name != self.capability_name
             or claim.observable_ids != self.observable_ids

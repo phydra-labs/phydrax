@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._array_archive import array_collection_digest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._abelian import AbelianCharge, AbelianLeg
 
 
@@ -324,6 +325,7 @@ class AbelianLindbladian(StrictModule):
     jumps: tuple[AbelianKrausOperator, ...]
     lindbladian_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         physical_leg: AbelianLeg,
@@ -331,8 +333,6 @@ class AbelianLindbladian(StrictModule):
         jumps: Sequence[AbelianKrausOperator],
         /,
     ) -> None:
-        if not isinstance(physical_leg, AbelianLeg):
-            raise TypeError("physical_leg must be AbelianLeg.")
         blocks = tuple(jnp.asarray(value) for value in hamiltonian_blocks)
         jumps_ = tuple(jumps)
         if len(blocks) != len(physical_leg.charges):

@@ -23,6 +23,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
 from ...metrix._state_geometry import AbstractStateGeometry
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -121,6 +122,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         contact: DEMContactModelPlan,
@@ -135,8 +137,6 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         name: str = "soft-sphere-dem",
         method_id: str | None = None,
     ) -> None:
-        if not isinstance(contact, DEMContactModelPlan):
-            raise TypeError("contact must be a DEMContactModelPlan.")
         if multicontact is not None and not isinstance(
             multicontact, AbstractDEMContactGraphCorrectionPlan
         ):
@@ -519,6 +519,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bodies: PreparedRigidSphereSet,
@@ -536,18 +537,6 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         execution: ParticleExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(bodies, PreparedRigidSphereSet):
-            raise TypeError("bodies must be a PreparedRigidSphereSet.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError(
-                "neighborhood must be an AbstractPreparedParticleNeighborhood."
-            )
-        if not isinstance(pair_key_space, ParticlePairKeySpace):
-            raise TypeError("pair_key_space must be a ParticlePairKeySpace.")
-        if not isinstance(contact_model, PreparedDEMContactModel):
-            raise TypeError("contact_model must be a PreparedDEMContactModel.")
-        if not isinstance(method, SoftSphereDEMMethodPlan):
-            raise TypeError("method must be a SoftSphereDEMMethodPlan.")
         if neighborhood.particle_discretization_id != bodies.particles.prepared_id:
             raise ValueError(
                 "DEM neighborhood was prepared for another particle support."
@@ -1193,6 +1182,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             initialized.liquid,
         )
 
+    @checked
     def apply_body_properties(
         self,
         time: Array,
@@ -1203,10 +1193,6 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         *,
         args: Any = None,
     ) -> DEMBodyPropertyUpdateResult:
-        if not isinstance(state, DEMRuntimeState):
-            raise TypeError("state must be a DEMRuntimeState.")
-        if not isinstance(properties, ParticleDynamicBodyProperties):
-            raise TypeError("properties must be ParticleDynamicBodyProperties.")
         mobile = (properties.active & ~self.bodies.fixed_mask)[:, None]
         kinematics = RigidSphereKinematics(
             state.kinematics.position,
@@ -1262,6 +1248,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         accepted = tree_where(successful, candidate, state)
         return DEMBodyPropertyUpdateResult(candidate, accepted, evaluation, successful)
 
+    @checked
     def evaluate(
         self,
         time: Array,
@@ -1270,8 +1257,6 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         args: Any,
         /,
     ) -> DEMEvaluation:
-        if not isinstance(state, DEMRuntimeState):
-            raise TypeError("state must be a DEMRuntimeState.")
         properties = state.body_properties
         expected = (self.bodies.capacity,)
         body_shapes_valid = (

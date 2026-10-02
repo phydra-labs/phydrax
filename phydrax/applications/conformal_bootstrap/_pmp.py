@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 def _decimal(value: str, *, name: str) -> str:
@@ -111,6 +112,7 @@ class PolynomialMatrixBlock(StrictModule):
     maximum_degree: int = eqx.field(static=True)
     block_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prefactor: DampedRationalPrefactor,
@@ -122,8 +124,6 @@ class PolynomialMatrixBlock(StrictModule):
         reduced_sample_scalings: Sequence[str] = (),
         bilinear_basis: Sequence[Sequence[str]] = (),
     ) -> None:
-        if not isinstance(prefactor, DampedRationalPrefactor):
-            raise TypeError("prefactor must be DampedRationalPrefactor.")
         raw_rows = tuple(tuple(row) for row in polynomials)
         if not raw_rows or any(len(row) != len(raw_rows) for row in raw_rows):
             raise ValueError("Polynomial matrix blocks must be nonempty and square.")

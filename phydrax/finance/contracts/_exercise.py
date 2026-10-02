@@ -16,6 +16,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import (
     adjust_business_day,
     BusinessDayRule,
@@ -146,6 +147,7 @@ class SettlementTerms(StrictModule, NonTrainableState):
     settlement_type: SettlementType = eqx.field(static=True)
     terms_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         currency: Currency,
@@ -156,8 +158,6 @@ class SettlementTerms(StrictModule, NonTrainableState):
         business_day_rule: BusinessDayRule,
         settlement_type: SettlementType = SettlementType.CASH,
     ) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if (
             isinstance(settlement_lag_days, bool)
             or not isinstance(settlement_lag_days, int)
@@ -186,6 +186,7 @@ class SettlementTerms(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def resolve_date(
         self,
         trade_date: FinanceDate,
@@ -194,10 +195,6 @@ class SettlementTerms(StrictModule, NonTrainableState):
     ) -> FinanceDate:
         """Resolve the settlement date on the host using the pinned calendar."""
 
-        if not isinstance(trade_date, FinanceDate):
-            raise TypeError("trade_date must be a FinanceDate.")
-        if not isinstance(calendar, CalendarSnapshot):
-            raise TypeError("calendar must be a CalendarSnapshot.")
         if calendar.calendar_id != self.calendar_id:
             raise ValueError("Settlement terms and calendar identifiers do not match.")
         candidate = trade_date

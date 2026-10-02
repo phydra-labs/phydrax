@@ -99,7 +99,7 @@ from ..sparse import (
     SparseCoordinateOperator,
     SparseLinearMap,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ..variational import (
     Functional,
     FunctionalEvaluation,
@@ -686,6 +686,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
     rules: tuple[tuple[str, ReferenceRule], ...]
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_name: str,
@@ -702,10 +703,6 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
         identifier = str(action_id)
         if not field or not identifier:
             raise ValueError("SIPG field and term IDs must be non-empty.")
-        if not isinstance(penalty_policy, SIPGPenaltyPolicy):
-            raise TypeError("penalty_policy must be SIPGPenaltyPolicy.")
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be an IntegrationDomain.")
         expected_kind = "interior_facet" if boundary is None else "exterior_facet"
         if domain.kind != expected_kind:
             raise ValueError(f"SIPG facet term requires a {expected_kind} domain.")
@@ -806,6 +803,7 @@ class LocalFunctionalAction(StrictModule, NonTrainableState):
     rules: tuple[tuple[str, ReferenceRule], ...]
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         term: LocalIntegralTerm,
@@ -817,8 +815,6 @@ class LocalFunctionalAction(StrictModule, NonTrainableState):
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
     ) -> None:
-        if not isinstance(term, LocalIntegralTerm):
-            raise TypeError("term must be a variational.LocalIntegralTerm.")
         bindings = tuple(
             (spec.field_name, str(field_bindings[spec.field_name]))
             for spec in term.fields
@@ -960,6 +956,7 @@ class PreparedOperatorAction(StrictModule, NonTrainableState):
     rules: tuple[tuple[str, ReferenceRule], ...] = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_name: str,
@@ -973,8 +970,6 @@ class PreparedOperatorAction(StrictModule, NonTrainableState):
         identifier = str(action_id)
         if not field or not identifier:
             raise ValueError("Operator action field and term IDs must be non-empty.")
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if domain is not None and domain.kind != "cell":
             raise ValueError("PreparedOperatorAction requires a cell domain.")
         self.field_name = field
@@ -1654,6 +1649,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         form: FiniteElementForm,
@@ -1676,10 +1672,6 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
     ) -> None:
-        if not isinstance(form, FiniteElementForm):
-            raise TypeError("form must be a FiniteElementForm.")
-        if not isinstance(discretization, AbstractPreparedLocalDiscretization):
-            raise TypeError("discretization must be AbstractPreparedLocalDiscretization.")
         policy = (
             (
                 FiniteElementExecutionPolicy()
@@ -2294,10 +2286,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
         return PreparedFluxAction(flux, trace, evaluator)
 
+    @checked
     def _traced_field_position(self, trace: PreparedTraceAction, /) -> int:
         """Form position of the field a trace of this problem's discretization acts on."""
-        if not isinstance(trace, PreparedTraceAction):
-            raise TypeError("trace must be a PreparedTraceAction.")
         descriptor = trace.descriptor
         discretization = self.discretization
         if descriptor.owner_id != discretization.prepared_id:
@@ -2559,6 +2550,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def preconditioner_operator(
         self,
         preconditioner_form: FiniteElementForm,
@@ -2566,8 +2558,6 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         args: object = None,
         /,
     ) -> BlockLinearOperator | FunctionLinearOperator:
-        if not isinstance(preconditioner_form, FiniteElementForm):
-            raise TypeError("preconditioner_form must be a FiniteElementForm.")
         if preconditioner_form.field_names != self.form.field_names:
             raise ValueError(
                 "Preconditioner form fields must exactly match the problem form."
@@ -3532,6 +3522,7 @@ class _FiniteElementReactionEvaluator(AbstractSideFluxEvaluator):
     field_position: int = eqx.field(static=True)
     row_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: CompiledFiniteElementProblem,
@@ -3540,8 +3531,6 @@ class _FiniteElementReactionEvaluator(AbstractSideFluxEvaluator):
         row_shape: tuple[int, ...],
         /,
     ) -> None:
-        if not isinstance(problem, CompiledFiniteElementProblem):
-            raise TypeError("problem must be a CompiledFiniteElementProblem.")
         if not 0 <= field_position < len(problem.form.field_names):
             raise ValueError("field_position must name one field of the form.")
         self.problem = problem

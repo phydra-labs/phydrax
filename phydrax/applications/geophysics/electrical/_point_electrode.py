@@ -30,6 +30,7 @@ from ....equations import (
     TensorDiffusionAction,
 )
 from ....geometry.simplicial import AffineSimplexMap
+from ....typing import checked
 from ....units import AMPERE, convert_value, METER, UnitDefinition
 from ._finite_patch import (
     _conductivity_tensor,
@@ -151,6 +152,7 @@ class PointElectrodeDCPlan(StrictModule, NonTrainableState):
     background_conductivity_S_m: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -161,8 +163,6 @@ class PointElectrodeDCPlan(StrictModule, NonTrainableState):
         conductivity_unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
     ) -> None:
         _validate_connected_tetrahedra(mesh)
-        if not isinstance(survey, PointElectrodeSurvey):
-            raise TypeError("Point-electrode DC requires PointElectrodeSurvey.")
         background = float(
             convert_value(
                 background_conductivity,
@@ -200,9 +200,8 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PointElectrodeDCPlan, /) -> None:
-        if not isinstance(plan, PointElectrodeDCPlan):
-            raise TypeError("Prepared point-electrode model requires its plan.")
         cells = np.concatenate(
             [np.asarray(block.vertices, dtype=np.int32) for block in plan.mesh.blocks]
         )

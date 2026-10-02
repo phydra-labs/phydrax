@@ -14,6 +14,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._model import (
     AbstractElectronicMethodPlan,
     ElectronicMethodFamily,
@@ -224,14 +225,13 @@ class KohnShamMethodPlan(AbstractElectronicMethodPlan):
     definition_ids: tuple[str, ...] = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         functional: DensityFunctionalPlan,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
         /,
     ) -> None:
-        if not isinstance(functional, DensityFunctionalPlan):
-            raise TypeError("functional must be DensityFunctionalPlan.")
         _assign_method(
             self,
             ElectronicMethodFamily.KOHN_SHAM_DFT,

@@ -17,6 +17,7 @@ from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._envelope import PulseEnvelopeField
 from ._envelope_response import (
     envelope_spectrum,
@@ -50,6 +51,7 @@ class EnvelopePropagationPlan(StrictModule):
     maximum_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_space: PulseTimeSpace,
@@ -64,8 +66,6 @@ class EnvelopePropagationPlan(StrictModule):
         maximum_refinement_error: float = 1e-5,
         maximum_workspace_bytes: int = 1 << 30,
     ) -> None:
-        if not isinstance(time_space, PulseTimeSpace):
-            raise TypeError("time_space must be PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
             raise ValueError("Envelope propagation requires periodic-cell pulse time.")
         coefficients = tuple(

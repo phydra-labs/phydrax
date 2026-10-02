@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite
+from ...typing import checked
 from ._rigid_body import (
     _principal_angle,
     _quaternion_conjugate,
@@ -526,6 +527,7 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
     distance_rest_length: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RigidJointGraphPlan,
@@ -533,12 +535,6 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
         reference: RigidBodyKinematics,
         /,
     ) -> None:
-        if not isinstance(plan, RigidJointGraphPlan):
-            raise TypeError("plan must be a RigidJointGraphPlan.")
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be a PreparedRigidBodySet.")
-        if not isinstance(reference, RigidBodyKinematics):
-            raise TypeError("reference must be RigidBodyKinematics.")
         dimension = bodies.ambient_dimension
         angular_dimension = bodies.angular_dimension
         if dimension == 2 and plan.hinge is not None:

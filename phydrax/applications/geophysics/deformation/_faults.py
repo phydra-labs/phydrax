@@ -10,6 +10,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
+from ....typing import checked
 
 
 class PhaseFieldDamageMaterial(StrictModule):
@@ -158,6 +159,7 @@ class RateStateFaultLaw(StrictModule):
             jnp.zeros_like(self.reference_velocity_m_s),
         )
 
+    @checked
     def step(
         self,
         state: RateStateFaultState,
@@ -167,8 +169,6 @@ class RateStateFaultLaw(StrictModule):
         dt_s: ArrayLike,
         /,
     ) -> RateStateFaultResult:
-        if not isinstance(state, RateStateFaultState):
-            raise TypeError("Rate-state update requires RateStateFaultState.")
         velocity, normal, pressure, dt = jnp.broadcast_arrays(
             jnp.asarray(slip_rate_m_s),
             jnp.asarray(normal_compression_Pa),

@@ -19,6 +19,7 @@ from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import AbstractSparseLinearOperator, ArraySpace
+from ...typing import checked
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 
 
@@ -150,6 +151,7 @@ class ConicProgram(StrictModule):
     structure_id: str = eqx.field(static=True)
     convexity_evidence: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadratic: ArrayLike | AbstractSparseLinearOperator | None,
@@ -202,8 +204,6 @@ class ConicProgram(StrictModule):
             raise ValueError(
                 f"constraint_rhs must end in shape ({constraints},); got {rhs.shape}."
             )
-        if not isinstance(cone, AbstractConvexCone):
-            raise TypeError("cone must be an AbstractConvexCone.")
         if cone.dimension != constraints:
             raise ValueError(
                 f"cone dimension {cone.dimension} does not match {constraints} constraints."

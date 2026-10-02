@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._hybrid_event import (
     empty_hybrid_event_tape,
     HybridEventPlan,
@@ -35,6 +36,7 @@ class ScheduledHybridGuard(StrictModule, NonTrainableState):
     event: HybridEventPlan | None
     event_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         guard: HybridGuardPlan,
@@ -42,8 +44,6 @@ class ScheduledHybridGuard(StrictModule, NonTrainableState):
         *,
         event: HybridEventPlan | None = None,
     ) -> None:
-        if not isinstance(guard, HybridGuardPlan):
-            raise TypeError("guard must be a HybridGuardPlan.")
         if event is not None and not isinstance(event, HybridEventPlan):
             raise TypeError("event must be a HybridEventPlan or None.")
         if event is not None and event.guard_plan.guard_id != guard.guard_id:

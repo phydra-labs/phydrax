@@ -33,6 +33,7 @@ from ...solver import (
     GeneralizedAlphaSolution,
     solve_generalized_alpha,
 )
+from ...typing import checked
 
 
 VortexRigidFluidCoupler = Callable[
@@ -286,6 +287,7 @@ class VortexFlexibleCouplingPlan(StrictModule, NonTrainableState):
     method: GeneralizedAlphaMethod
     coupling_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         structure: SecondOrderDifferentialSystem,
@@ -293,8 +295,6 @@ class VortexFlexibleCouplingPlan(StrictModule, NonTrainableState):
         *,
         method: GeneralizedAlphaMethod | None = None,
     ) -> None:
-        if not isinstance(structure, SecondOrderDifferentialSystem):
-            raise TypeError("structure must be SecondOrderDifferentialSystem.")
         self.structure = structure
         self.method = GeneralizedAlphaMethod() if method is None else method
         self.coupling_id = canonical_fingerprint(

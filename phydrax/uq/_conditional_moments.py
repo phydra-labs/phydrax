@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._gaussian_factor import (
     _adjoint,
     _rank_aware_solve,
@@ -48,6 +49,7 @@ class ConditionalGaussianMoments(StrictModule):
     moments_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mean: ArrayLike,
@@ -62,8 +64,6 @@ class ConditionalGaussianMoments(StrictModule):
         cross_value = jnp.asarray(cross_covariance)
         if not jnp.issubdtype(mean_value.dtype, jnp.inexact):
             raise TypeError("mean must have an inexact dtype.")
-        if not isinstance(factor, GaussianFactor):
-            raise TypeError("factor must be a GaussianFactor.")
         if mean_value.ndim < 1 or mean_value.shape[-1] != factor.event_size:
             raise ValueError("mean must end in factor.event_size.")
         if cross_value.ndim < 2 or cross_value.shape[-1] != factor.event_size:
@@ -125,6 +125,7 @@ class GaussianRegression(StrictModule):
     regression_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         matrix: ArrayLike,
@@ -141,8 +142,6 @@ class GaussianRegression(StrictModule):
             offset_value.dtype, jnp.inexact
         ):
             raise TypeError("matrix and offset must have inexact dtypes.")
-        if not isinstance(noise_factor, GaussianFactor):
-            raise TypeError("noise_factor must be a GaussianFactor.")
         if matrix_value.ndim < 2:
             raise ValueError("matrix must have shape (..., output_size, input_size).")
         if matrix_value.shape[-2] != noise_factor.event_size:

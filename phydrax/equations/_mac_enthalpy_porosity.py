@@ -25,6 +25,7 @@ from ..discretization.finite_volume._mac_enthalpy import (
     PreparedMACEnthalpyTransport,
 )
 from ..discretization.finite_volume._mac_momentum import PreparedMACMomentumOperators
+from ..typing import checked
 from ._incompressible import IncompressibleFlowProblem
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
@@ -49,6 +50,7 @@ class MACEnthalpyPorosityProblem(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: SolidLiquidEnthalpyPlan,
@@ -58,8 +60,6 @@ class MACEnthalpyPorosityProblem(StrictModule, NonTrainableState):
         source: Any = None,
         source_id: str | None = None,
     ) -> None:
-        if not isinstance(material, SolidLiquidEnthalpyPlan):
-            raise TypeError("material must be SolidLiquidEnthalpyPlan.")
         gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
         if (
             gravity_.shape not in ((2,), (3,))

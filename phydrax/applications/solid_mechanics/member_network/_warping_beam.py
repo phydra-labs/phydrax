@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._properties import BeamSection
 
 
@@ -25,6 +26,7 @@ class WarpingBeamSection(StrictModule, NonTrainableState):
     monosymmetry_z: Array
     section_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: BeamSection,
@@ -37,8 +39,6 @@ class WarpingBeamSection(StrictModule, NonTrainableState):
         monosymmetry_z: ArrayLike = 0.0,
         section_id: str | None = None,
     ) -> None:
-        if not isinstance(base, BeamSection):
-            raise TypeError("base must be a BeamSection.")
         values = tuple(
             jnp.asarray(value, dtype=base.area.dtype)
             for value in (

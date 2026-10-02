@@ -21,6 +21,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 
 
 def polarized_propagation_matrix(
@@ -144,9 +145,8 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _geometry(self, geometry: ADMGridGeometry, /) -> ADMGridGeometry:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -284,6 +284,7 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
             projection_id=projection_id,
         )
 
+    @checked
     def advance(
         self,
         state: GRPolarizedRadiationFeedbackState,
@@ -294,8 +295,6 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> GRPolarizedRadiationFeedbackResult:
-        if not isinstance(state, GRPolarizedRadiationFeedbackState):
-            raise TypeError("state must be GRPolarizedRadiationFeedbackState.")
         geometry = self._geometry(geometry)
         end = jnp.asarray(end_time, dtype=state.stokes.dtype).reshape(())
         step = end - state.time

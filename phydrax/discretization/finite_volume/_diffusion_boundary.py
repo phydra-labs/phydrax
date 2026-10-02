@@ -14,6 +14,7 @@ import numpy as np
 from jax import Array
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
@@ -30,6 +31,7 @@ class HybridDiffusionBoundary(StrictModule):
     conductance: Array
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -39,8 +41,6 @@ class HybridDiffusionBoundary(StrictModule):
         neumann: Mapping[int, float] | None = None,
         robin: Mapping[int, tuple[float, float]] | None = None,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Boundary geometry must be native prepared unstructured FV.")
         exterior = np.asarray(discretization.neighbor_cells) < 0
         count = exterior.size
         kind = np.where(exterior, 2, 0).astype(np.int32)

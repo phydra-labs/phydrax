@@ -25,6 +25,7 @@ from ...observation import (
     PrecisionCovarianceAction,
 )
 from ...optim import CompositeLeastSquaresProblem, NonlinearLeastSquaresProblem
+from ...typing import checked
 from ...uq import ParameterSpace, PosteriorProblem
 from ._data import BatteryGroupSplit
 from ._ecm import ThermalEquivalentCircuitAdapter, ThermalEquivalentCircuitLedger
@@ -146,9 +147,8 @@ class BatteryCalibrationProjection(StrictModule, NonTrainableState):
             )
         return branches
 
+    @checked
     def pack(self, branches: BatteryCalibrationParameterBranches, /) -> PyTree[Any]:
-        if not isinstance(branches, BatteryCalibrationParameterBranches):
-            raise TypeError("Calibration projection pack requires parameter branches.")
         return self.pack_fn(branches)
 
 
@@ -352,6 +352,7 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
     residual_size: int = eqx.field(static=True)
     calibration_experiment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedBatteryExperiment,
@@ -369,10 +370,6 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
         ledger_success: Callable[[Any], ArrayLike] | None = None,
         ledger_success_id: str | None = None,
     ) -> None:
-        if not isinstance(prepared, PreparedBatteryExperiment):
-            raise TypeError("prepared must be a PreparedBatteryExperiment.")
-        if not isinstance(observation, BatteryTimeSeriesRecord):
-            raise TypeError("observation must be a BatteryTimeSeriesRecord.")
         save_times = np.asarray(prepared.plan.save_times_s, dtype=np.float64)
         observation_times = np.asarray(observation.time_s, dtype=np.float64)
         if not np.array_equal(save_times, observation_times):
@@ -634,6 +631,7 @@ class BatteryCalibrationPlan(StrictModule):
     problem_id: str = eqx.field(static=True)
     calibration_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         experiments: Sequence[BatteryCalibrationExperiment],
@@ -657,8 +655,6 @@ class BatteryCalibrationPlan(StrictModule):
         experiment_ids = tuple(value.calibration_experiment_id for value in experiments_)
         if len(set(experiment_ids)) != len(experiment_ids):
             raise ValueError("Battery calibration experiments must be unique.")
-        if not isinstance(group_split, BatteryGroupSplit):
-            raise TypeError("group_split must be a BatteryGroupSplit.")
         if fit_partition not in ("train", "calibration"):
             raise ValueError(
                 "fit_partition must be 'train' or 'calibration'; test data cannot enter calibration objectives."
@@ -696,8 +692,6 @@ class BatteryCalibrationPlan(StrictModule):
                 raise ValueError(
                     "Every calibration record and cell must belong to the declared fit_partition."
                 )
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         projection_ = _DEFAULT_PROJECTION if projection is None else projection
         if not isinstance(projection_, BatteryCalibrationProjection):
             raise TypeError("projection must be a BatteryCalibrationProjection or None.")
@@ -807,9 +801,8 @@ class PreparedBatteryCalibration(StrictModule):
     preparation_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: BatteryCalibrationPlan, /) -> None:
-        if not isinstance(plan, BatteryCalibrationPlan):
-            raise TypeError("plan must be a BatteryCalibrationPlan.")
         residual_size = sum(value.residual_size for value in plan.experiments)
         self.plan = plan
         self.residual_size = residual_size

@@ -33,6 +33,7 @@ from ...discretization._temporal import TemporalMesh
 from ...solver._finite_cptp import FiniteLindbladChannelPlan
 from ...solver._lindblad import LindbladProblem
 from ...solver._quantum_jump import QuantumJumpProblem, StateVectorOperator
+from ...typing import checked
 from ._angular_momentum import (
     AtomicManifold,
     electric_dipole_allowed,
@@ -324,9 +325,8 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: AtomicQuantumPlan, /) -> None:
-        if not isinstance(plan, AtomicQuantumPlan):
-            raise TypeError("plan must be an AtomicQuantumPlan.")
         manifold_by_label = {manifold.label: manifold for manifold in plan.manifolds}
         basis_labels = tuple(
             (manifold.label, twice_m)
@@ -586,6 +586,7 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
             problem_id=self.prepared_id,
         )
 
+    @checked
     def finite_plan(
         self,
         slicing: TemporalMesh,
@@ -593,8 +594,6 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1e-8,
     ) -> FiniteLindbladChannelPlan:
-        if not isinstance(slicing, TemporalMesh):
-            raise TypeError("slicing must be a TemporalMesh.")
         if not bool(jnp.all(slicing.active_intervals)):
             raise ValueError("Atomic finite evolution requires all intervals active.")
         return FiniteLindbladChannelPlan(

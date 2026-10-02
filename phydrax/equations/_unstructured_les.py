@@ -21,6 +21,7 @@ from .._trainable import NonTrainableState
 from ..discretization.finite_volume._unstructured_incompressible import (
     PreparedUnstructuredCollocatedOperators,
 )
+from ..typing import checked
 from ._favre_les import FavreLESInputs, FavreLESResult, PreparedFavreLESModel
 from ._ksgs import KSGSInputs, KSGSResult, KSGSState, StaticKSGSPlan
 
@@ -158,6 +159,7 @@ class UnstructuredLowMachLESPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         favre_model: PreparedFavreLESModel,
@@ -166,8 +168,6 @@ class UnstructuredLowMachLESPlan(StrictModule, NonTrainableState):
         ksgs_plan: StaticKSGSPlan | None = None,
         conservation_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(favre_model, PreparedFavreLESModel):
-            raise TypeError("favre_model must be PreparedFavreLESModel.")
         if ksgs_plan is not None and not isinstance(ksgs_plan, StaticKSGSPlan):
             raise TypeError("The unstructured route supports only StaticKSGSPlan.")
         tolerance = float(conservation_tolerance)
@@ -269,16 +269,13 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
     resource_evidence_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: UnstructuredLowMachLESPlan,
         operators: PreparedUnstructuredCollocatedOperators,
         /,
     ) -> None:
-        if not isinstance(plan, UnstructuredLowMachLESPlan):
-            raise TypeError("plan must be UnstructuredLowMachLESPlan.")
-        if not isinstance(operators, PreparedUnstructuredCollocatedOperators):
-            raise TypeError("operators must be PreparedUnstructuredCollocatedOperators.")
         discretization = operators.discretization
         if discretization.cell_dimension != 3:
             raise ValueError("Unstructured low-Mach LES supports only three dimensions.")
@@ -442,6 +439,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             linear_policy=linear_policy,
         )
 
+    @checked
     def semidiscrete_rate(
         self,
         state: UnstructuredLowMachLESState,
@@ -459,8 +457,6 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
     ) -> UnstructuredLowMachLESRateResult:
         """Evaluate transport using either Rhie--Chow or a projected face flux."""
 
-        if not isinstance(state, UnstructuredLowMachLESState):
-            raise TypeError("state must be UnstructuredLowMachLESState.")
         discretization = self.operators.discretization
         cell_count = discretization.cell_count
         species_count = len(self.plan.favre_model.fields.species_names)

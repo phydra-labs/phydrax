@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem, DifferentialSolution
+from ...typing import checked
 from ._experiment import BatteryRuntimeInputs
 from ._particle import BatteryParticleEvaluation
 from ._properties import (
@@ -157,6 +158,7 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
     initial_sei_film_thickness_m: Array
     parameter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spme_parameters: Marquis2019SpmeParameters,
@@ -174,8 +176,6 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
         electrolyte_thermodynamic_factor: _PropertyLaw | None = None,
         initial_sei_film_thickness_m: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(spme_parameters, Marquis2019SpmeParameters):
-            raise TypeError("spme_parameters must be Marquis2019SpmeParameters.")
         thermodynamic_factor = (
             ConstantPropertyLaw(
                 1.0,
@@ -508,9 +508,8 @@ class PreparedBrosaPlanellaSpmeSei(StrictModule, NonTrainableState):
     marquis: PreparedMarquis2019Spme
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /) -> None:
-        if not isinstance(plan, BrosaPlanellaSpmeSeiPlan):
-            raise TypeError("plan must be BrosaPlanellaSpmeSeiPlan.")
         marquis = plan.marquis_plan.prepare()
         self.plan = plan
         self.marquis = marquis
@@ -1518,9 +1517,8 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /) -> None:
-        if not isinstance(plan, BrosaPlanellaSpmeSeiPlan):
-            raise TypeError("plan must be BrosaPlanellaSpmeSeiPlan.")
         self.plan = plan
         self.model_id = "battery:spme:sei:brosa-planella-widanage:isothermal"
         self.equation_form = "ode"
@@ -1530,6 +1528,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedBrosaPlanellaSpmeSei:
         return self.plan.prepare()
 
+    @checked
     def initial_state(
         self,
         prepared_model: PreparedBrosaPlanellaSpmeSei,
@@ -1538,12 +1537,6 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         /,
     ) -> BrosaPlanellaSpmeSeiState:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(parameters, BrosaPlanellaSpmeSeiParameters):
-            raise TypeError("parameters must be BrosaPlanellaSpmeSeiParameters.")
-        if not isinstance(initial_condition, BrosaPlanellaSpmeSeiInitialCondition):
-            raise TypeError(
-                "initial_condition must be BrosaPlanellaSpmeSeiInitialCondition."
-            )
         base_adapter = Marquis2019SpmeAdapter(self.plan.marquis_plan)
         base = base_adapter.initial_state(
             prepared_model.marquis,
@@ -1565,6 +1558,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
             negative_porosity,
         )
 
+    @checked
     def problem(
         self,
         prepared_model: PreparedBrosaPlanellaSpmeSei,
@@ -1573,10 +1567,6 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         /,
     ) -> DifferentialProblem:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(initial_state, BrosaPlanellaSpmeSeiState):
-            raise TypeError("initial_state must be BrosaPlanellaSpmeSeiState.")
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, BrosaPlanellaSpmeSeiParameters):
             raise TypeError("SPMe+SEI runtime parameters have the wrong type.")
         expected_negative = prepared_model.spm.negative_particle.shell_count
@@ -1616,6 +1606,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def observe(
         self,
         prepared_model: PreparedBrosaPlanellaSpmeSei,
@@ -1625,10 +1616,6 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         /,
     ) -> BatteryModelOutput:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(states, BrosaPlanellaSpmeSeiState):
-            raise TypeError("states must be BrosaPlanellaSpmeSeiState.")
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, BrosaPlanellaSpmeSeiParameters):
             raise TypeError("SPMe+SEI runtime parameters have the wrong type.")
         times = jnp.asarray(times_s)
@@ -1771,6 +1758,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         domain_valid = evaluation.domain_valid & jnp.all(jnp.isfinite(values), axis=-1)
         return BatteryModelOutput(values, domain_valid)
 
+    @checked
     def ledger(
         self,
         prepared_model: PreparedBrosaPlanellaSpmeSei,
@@ -1779,8 +1767,6 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         /,
     ) -> BrosaPlanellaSpmeSeiLedger:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, BrosaPlanellaSpmeSeiParameters):
             raise TypeError("SPMe+SEI runtime parameters have the wrong type.")
         states = native_solution.states

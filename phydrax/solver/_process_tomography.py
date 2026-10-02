@@ -24,6 +24,7 @@ from ..linalg import (
 )
 from ..metrix import faithful_density_from_cholesky
 from ..tensor_network import CausalProcessTensor, QuantumInstrument
+from ..typing import checked
 
 
 def _process_probability(
@@ -217,9 +218,8 @@ class ProcessTomographyExperiment(StrictModule):
         self.experiment_id = identifier
         self.setting_fingerprint = _setting_fingerprint(operations, selected, effect)
 
+    @checked
     def probability(self, process: CausalProcessTensor, /) -> Array:
-        if not isinstance(process, CausalProcessTensor):
-            raise TypeError("process must be a CausalProcessTensor.")
         if (
             len(self.instruments) != process.spec.slot_count
             or self.instruments[0].dimension != process.spec.system_dimension

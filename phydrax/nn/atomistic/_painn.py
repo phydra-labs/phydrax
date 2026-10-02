@@ -35,7 +35,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ..layers import Linear
 from ..parameters import IdentityTransform
 
@@ -308,9 +308,8 @@ class PaiNNPotential(AbstractAtomisticPotential):
             species_kind=self.configuration.species_kind
         )
 
+    @checked
     def _validate_batch(self, batch: AtomisticBatch, /) -> None:
-        if not isinstance(batch, AtomisticBatch):
-            raise TypeError("batch must be an AtomisticBatch.")
         if batch.scale.scale_id != self.scale.scale_id:
             raise ValueError(
                 "Potential and structure must share one exact scale contract."

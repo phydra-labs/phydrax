@@ -16,6 +16,7 @@ from phydrax.qualification import (
     ScientificClaimProfile,
 )
 
+from ...typing import checked
 from ._plasmid_gel import PlasmidGelEvaluation, PlasmidGelObservations
 from ._qualification import RadiationStageEvidence
 from .interchange._history_profile import (
@@ -82,6 +83,7 @@ class RadiationInitialLesionAssessment:
             return "inconclusive"
         return "ready-for-claim-evaluation"
 
+    @checked
     def evaluate_claim(
         self,
         claim: ScientificClaimProfile,
@@ -102,8 +104,6 @@ class RadiationInitialLesionAssessment:
     ) -> QualificationEvidence:
         """Return failed/inconclusive evidence or delegate a ready exact claim."""
 
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
         _require_exact_claim_scope(claim)
         if (
             claim.campaign_id != self.campaign_id

@@ -20,6 +20,7 @@ from ..linalg import (
     OperatorProperties,
     PreparedLinearization,
 )
+from ..typing import checked
 from ._evolution import AbstractDifferentiableEvolution, EvolutionStep
 
 
@@ -34,6 +35,7 @@ class EvolutionJacobianAction(AbstractLinearOperator):
     primal: EvolutionStep
     linearization: PreparedLinearization
 
+    @checked
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
@@ -45,8 +47,6 @@ class EvolutionJacobianAction(AbstractLinearOperator):
         args: Any = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(evolution, AbstractDifferentiableEvolution):
-            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         state_array = jnp.asarray(state)
         if state_array.shape != evolution.state_layout.shape:
             raise ValueError(
@@ -154,6 +154,7 @@ class EvolutionArgumentJacobianAction(AbstractLinearOperator):
     linearization: PreparedLinearization
     operator: JacobianLinearOperator
 
+    @checked
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
@@ -165,8 +166,6 @@ class EvolutionArgumentJacobianAction(AbstractLinearOperator):
         *,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(evolution, AbstractDifferentiableEvolution):
-            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         state_array = jnp.asarray(state)
         source = jnp.asarray(source_coordinate)
         target = jnp.asarray(target_coordinate)

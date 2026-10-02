@@ -28,7 +28,7 @@ from ...particle_physics import (
     summarize_event_weights,
     WeightVariationKind,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._amplitudes import ScatteringProcess
 from ._events import WeightedEventStream
 from ._phase_space import kallen, TwoBodyPhaseSpaceMap
@@ -134,6 +134,7 @@ class HardProcessPlan(StrictModule, NonTrainableState):
     maximum_cosine: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         process: ScatteringProcess,
@@ -148,8 +149,6 @@ class HardProcessPlan(StrictModule, NonTrainableState):
         color_average: float = 1.0,
         cosine_range: tuple[float, float] = (-1.0, 1.0),
     ) -> None:
-        if not isinstance(process, ScatteringProcess):
-            raise TypeError("process must be ScatteringProcess.")
         if not isinstance(beam, BeamPlan) or not isinstance(scales, ScalePlan):
             raise TypeError("beam and scales must use their explicit plan types.")
         if len(process.incoming) != 2 or len(process.outgoing) != 2:
@@ -217,11 +216,10 @@ class PreparedHardProcess(StrictModule):
     flux: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: HardProcessPlan, matrix_element_squared: MatrixElementSquared, /
     ) -> None:
-        if not isinstance(plan, HardProcessPlan):
-            raise TypeError("plan must be HardProcessPlan.")
         if not callable(matrix_element_squared):
             raise TypeError("matrix_element_squared must be callable.")
         root_s = plan.beam.center_of_mass_energy

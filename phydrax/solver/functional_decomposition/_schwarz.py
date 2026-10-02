@@ -15,7 +15,7 @@ from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._term import AbstractScalarTerm
 from ...domain import DomainFunction, PairedSupport
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._problem import FunctionalDecompositionProblem
 
 
@@ -103,6 +103,7 @@ class DiscreteTracePenalty(AbstractScalarTerm):
     side: Literal["left", "right"] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_name: str,
@@ -115,8 +116,6 @@ class DiscreteTracePenalty(AbstractScalarTerm):
         scale: float = 1.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(pairing, PairedSupport):
-            raise TypeError("pairing must be a PairedSupport.")
         if side not in ("left", "right"):
             raise ValueError("side must be 'left' or 'right'.")
         target_ = jnp.asarray(target)

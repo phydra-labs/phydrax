@@ -37,6 +37,7 @@ from ...nn.operator.training import (
     split_operator_dataset,
     TrainedOperator,
 )
+from ...typing import checked
 from ._quantities import GeophysicalQuantity
 from ._time import GeophysicalTimeSpec
 
@@ -735,6 +736,7 @@ class NativeGeophysicalForecast:
     not in hidden adapter state. External model wrappers are not accepted.
     """
 
+    @checked
     def __init__(
         self,
         trained: TrainedOperator,
@@ -745,8 +747,6 @@ class NativeGeophysicalForecast:
         routes: Sequence[OperatorRolloutRoute],
         forcing: Sequence[GeophysicalForcingSchedule] = (),
     ) -> None:
-        if not isinstance(trained, TrainedOperator):
-            raise TypeError("Forecast execution accepts only a native TrainedOperator.")
         if (
             isinstance(trained.execution_model, ExternalOperatorAdapter)
             or "external_manifest" in trained.provenance

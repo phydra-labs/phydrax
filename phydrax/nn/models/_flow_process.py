@@ -20,7 +20,7 @@ from ...stochastic._process import (
     AbstractMarginalTransitionLaw,
     AbstractProcessDistribution,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ..flows import (
     AbstractFlowDistribution,
     coupling_flow,
@@ -133,6 +133,7 @@ class FlowProcessDistribution(AbstractProcessDistribution):
     uncertainty_source: str = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -142,8 +143,6 @@ class FlowProcessDistribution(AbstractProcessDistribution):
         event_shape: Sequence[int],
         process_id: str,
     ) -> None:
-        if not isinstance(flow, AbstractFlowDistribution):
-            raise TypeError("flow must be an AbstractFlowDistribution.")
         events = _shape(event_shape, name="event_shape")
         event_size = prod(events)
         if tuple(flow.shape) != (event_size,):
@@ -217,6 +216,7 @@ class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner
     process_id: str = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         flow: AbstractFlowDistribution,
@@ -228,8 +228,6 @@ class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner
         process_id: str | None = None,
         label: str | None = None,
     ) -> None:
-        if not isinstance(flow, AbstractFlowDistribution):
-            raise TypeError("flow must be an AbstractFlowDistribution.")
         if not callable(conditioner) or not callable(location_transition):
             raise TypeError("conditioner and location_transition must be callable.")
         states = _shape(state_shape, name="state_shape")

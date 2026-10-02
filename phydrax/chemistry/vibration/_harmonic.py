@@ -21,6 +21,7 @@ from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
 from ...linalg import DenseLinearOperator, OperatorProperties
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ...typing import checked
 from .._optimization import _require_structure_matches_system
 from .._units import angular_frequency_to_wavenumber
 from ..electronic_structure._derivatives import MolecularHessianResult
@@ -51,6 +52,7 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eigenvalues: ArrayLike,
@@ -92,8 +94,6 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
             raise ValueError("external_mode_count must be non-negative.")
         if not isinstance(stationary_point, StationaryPointKind):
             raise TypeError("stationary_point must be StationaryPointKind.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         system_id = str(source_system_id).strip()
         geometry_id = str(source_geometry_id).strip()
         if not system_id or not geometry_id:
@@ -151,6 +151,7 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
     imaginary_wavenumber_threshold: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -160,8 +161,6 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
         projection_tolerance: float = 1.0e-8,
         imaginary_wavenumber_threshold: float = 10.0,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         values = tuple(
             float(value)
             for value in (
@@ -188,16 +187,13 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         structure: AtomicStructure,
         hessian: MolecularHessianResult,
         /,
     ) -> VibrationalAnalysisResult:
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be AtomicStructure.")
-        if not isinstance(hessian, MolecularHessianResult):
-            raise TypeError("hessian must be MolecularHessianResult.")
         _require_structure_matches_system(structure, self.system)
         if hessian.units.unit_system_id != self.system.units.unit_system_id:
             raise ValueError("Hessian and vibration unit systems differ.")

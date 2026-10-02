@@ -25,7 +25,7 @@ from ..integration import (
     reduce,
 )
 from ..integration._api import _requires_random_key
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._integrated import (
     checked_estimate_field,
     resolve_term_realization,
@@ -50,6 +50,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
     weight: Array
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         condition: AbstractMomentCondition,
@@ -59,8 +60,6 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         scale: ArrayLike = 1.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(condition, AbstractMomentCondition):
-            raise TypeError("MomentPenalty requires an AbstractMomentCondition.")
         if isinstance(source, AdaptiveIntegration):
             raise TypeError(
                 "MomentPenalty does not support AdaptiveIntegration; "

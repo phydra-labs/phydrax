@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._coordinates import HermitianSpectralCoordinates
 from ._space import TensorSpectralDiscretization
 
@@ -35,6 +36,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     symmetry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -46,8 +48,6 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         component_count: int | None = None,
         symmetry_id: str | None = None,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         rank = len(discretization.axes)
         if axis_signs is not None and any(
             isinstance(value, bool) for value in axis_signs

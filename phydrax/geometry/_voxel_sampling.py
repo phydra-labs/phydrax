@@ -15,6 +15,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spatial import PreparedSparseVoxelGrid, SparseVoxelField
+from ..typing import checked
 from ._certificate import (
     DistanceSemantics,
     ExactSDFEnclosureCertificate,
@@ -60,6 +61,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
     narrow_band_width: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedSparseVoxelGrid,
@@ -69,8 +71,6 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
         enclosure_geometry: CompiledGeometry | None = None,
         narrow_band_width: float | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedSparseVoxelGrid):
-            raise TypeError("grid must be PreparedSparseVoxelGrid.")
         width = None if narrow_band_width is None else float(narrow_band_width)
         if width is not None and (not np.isfinite(width) or width < 0.0):
             raise ValueError("narrow_band_width must be finite and nonnegative.")
@@ -137,9 +137,8 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def sample(self, geometry: CompiledGeometry, /) -> PreparedVoxelGeometrySamples:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be CompiledGeometry.")
         if geometry.ambient_dimension != self.grid.dimension:
             raise ValueError("Geometry and voxel dimensions disagree.")
         centers = self.grid.voxel_centers()

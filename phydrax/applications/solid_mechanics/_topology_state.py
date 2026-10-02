@@ -27,6 +27,7 @@ from ...optim import (
     StateDesignProblem,
     StateEquationResult,
 )
+from ...typing import checked
 
 
 def _tree_allfinite(tree: PyTree[Any], /) -> Array:
@@ -118,6 +119,7 @@ class FiniteElementStateSolver(AbstractStateSolver):
     def authoritative(self) -> bool:
         return True
 
+    @checked
     def solve(
         self,
         problem: StateDesignProblem,
@@ -127,8 +129,6 @@ class FiniteElementStateSolver(AbstractStateSolver):
         *,
         args: Any,
     ) -> StateEquationResult:
-        if not isinstance(problem, StateDesignProblem):
-            raise TypeError("problem must be a StateDesignProblem.")
         reference = problem.residual(initial_state, design, args)
         candidate = self.solve_function(problem, design, initial_state, args)
         if not isinstance(candidate, MechanicsStateCandidate):
@@ -189,6 +189,7 @@ class NeuralVariationalStateSolver(AbstractStateSolver):
     absolute_residual_limit: float = eqx.field(static=True)
     solver_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         proposal: Callable,
@@ -202,8 +203,6 @@ class NeuralVariationalStateSolver(AbstractStateSolver):
     ) -> None:
         if not callable(proposal):
             raise TypeError("proposal must be callable.")
-        if not isinstance(finite_element_solver, FiniteElementStateSolver):
-            raise TypeError("finite_element_solver must be FiniteElementStateSolver.")
         if support is not None and not callable(support):
             raise TypeError("support must be callable or None.")
         relative = float(relative_residual_limit)

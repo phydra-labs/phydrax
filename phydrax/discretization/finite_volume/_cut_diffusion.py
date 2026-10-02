@@ -33,6 +33,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...typing import checked
 from ..amr._cut_complex import MultivaluedCutCellComplex
 
 
@@ -51,6 +52,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
     nullspace_components: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex_: MultivaluedCutCellComplex,
@@ -59,8 +61,6 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         *,
         dirichlet_face_indices: Sequence[int] = (),
     ) -> None:
-        if not isinstance(complex_, MultivaluedCutCellComplex):
-            raise TypeError("Cut-cell diffusion requires MultivaluedCutCellComplex.")
         cell_count = complex_.component_count
         coefficient = np.asarray(diffusivity, dtype=np.float64)
         if coefficient.shape == ():

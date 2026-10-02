@@ -35,6 +35,7 @@ from ...solver._field_equilibrium import (
     prepare_virtual_work_equilibrium,
     PreparedFieldEquilibrium,
 )
+from ...typing import checked
 
 
 MixedHyperelasticFormulation: TypeAlias = Literal["exact", "finite-bulk"]
@@ -343,9 +344,8 @@ class MixedHyperelasticModel(StrictModule):
 
     law: MixedHyperelasticLaw
 
+    @checked
     def __init__(self, law: MixedHyperelasticLaw, /) -> None:
-        if not isinstance(law, MixedHyperelasticLaw):
-            raise TypeError("law must be MixedHyperelasticLaw.")
         self.law = law
 
     def first_piola_points(self, deformation: Array, pressure: Array, /) -> Array:
@@ -656,6 +656,7 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
     constraint_reduction: float = eqx.field(static=True)
     constraint_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law: MixedHyperelasticLaw,
@@ -667,8 +668,6 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
         constraint_reduction: float = 0.25,
         constraint_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(law, MixedHyperelasticLaw):
-            raise TypeError("law must be MixedHyperelasticLaw.")
         if law.bulk_modulus is not None:
             raise ValueError("Augmented-Lagrangian outer updates require an exact law.")
         initial = float(initial_penalty)
@@ -697,6 +696,7 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
         self.constraint_reduction = reduction
         self.constraint_tolerance = tolerance
 
+    @checked
     def inner_response(
         self,
         state: MixedAugmentedLagrangianState,
@@ -705,8 +705,6 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
     ) -> MixedHyperelasticResponse:
         """Evaluate the primal AL stationarity with p + μg as pressure."""
 
-        if not isinstance(state, MixedAugmentedLagrangianState):
-            raise TypeError("state must be MixedAugmentedLagrangianState.")
         deformation = _deformation_gradient(deformation_gradient)
         if deformation.shape != state.deformation_gradient.shape:
             raise ValueError("AL inner and accepted deformation gradients must match.")
@@ -732,6 +730,7 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
             jnp.asarray(0, dtype=jnp.int32),
         )
 
+    @checked
     def advance(
         self,
         state: MixedAugmentedLagrangianState,
@@ -740,8 +739,6 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
         *,
         inner_successful: ArrayLike,
     ) -> MixedAugmentedLagrangianResult:
-        if not isinstance(state, MixedAugmentedLagrangianState):
-            raise TypeError("state must be MixedAugmentedLagrangianState.")
         deformation = _deformation_gradient(candidate_deformation_gradient)
         if deformation.shape != state.deformation_gradient.shape:
             raise ValueError("Candidate and accepted deformation gradients must match.")

@@ -14,6 +14,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._first_order import (
     AbstractRiemannianOptimizer,
     LearningRate,
@@ -69,6 +70,7 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
     amsgrad: bool = eqx.field(static=True)
     optimizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_geometry: ParameterGeometry,
@@ -81,8 +83,6 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
         amsgrad: bool = False,
         max_gradient_norm: float | None = None,
     ) -> None:
-        if not isinstance(parameter_geometry, ParameterGeometry):
-            raise TypeError("parameter_geometry must be a ParameterGeometry.")
         if isinstance(learning_rate, (int, float)):
             scalar = float(learning_rate)
             if not isfinite(scalar) or scalar <= 0.0:
@@ -186,6 +186,7 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
             ),
         )
 
+    @checked
     def update(
         self,
         gradients: PyTree[Any],
@@ -193,8 +194,6 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
         parameters: PyTree[Any],
         /,
     ) -> tuple[PyTree[Array], RiemannianAdamState]:
-        if not isinstance(state, RiemannianAdamState):
-            raise TypeError("RiemannianAdam requires RiemannianAdamState.")
         gradient, gradient_norm, clipping_scale = self._gradient_and_scale(
             gradients,
             parameters,
@@ -307,9 +306,8 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
             metrics,
         )
 
+    @checked
     def step_metrics(self, state: RiemannianAdamState, /) -> RiemannianStepMetrics:
-        if not isinstance(state, RiemannianAdamState):
-            raise TypeError("RiemannianAdam requires RiemannianAdamState.")
         return state.metrics
 
 

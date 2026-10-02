@@ -28,6 +28,7 @@ from ...discretization.particle._relativistic_stress_transfer import (
     RelativisticStressDepositResult,
 )
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import checked
 from ..relativistic_scattering._unit_contract import LocalRelativisticFramePlan
 from ._boundaries import AbstractZ4cBoundary, PeriodicBoundary, Z4cBoundaryEvidence
 from ._derivatives import FourthOrderDerivatives
@@ -156,6 +157,7 @@ class EinsteinVlasovMatterState(StrictModule):
     terminal: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         z4c: Z4cState,
@@ -169,10 +171,6 @@ class EinsteinVlasovMatterState(StrictModule):
         *,
         runtime_id: str,
     ) -> None:
-        if not isinstance(z4c, Z4cState):
-            raise TypeError("z4c must be a Z4cState.")
-        if not isinstance(particles, RelativisticParticleState):
-            raise TypeError("particles must be a RelativisticParticleState.")
         time_ = jnp.asarray(time)
         counters = tuple(
             jnp.asarray(value, dtype=jnp.int32)
@@ -406,6 +404,7 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
     require_derivative_valid: bool = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Z4cSystem,
@@ -433,16 +432,6 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Einstein-Vlasov requires canonical Z4c system and grid owners."
             )
-        if not isinstance(derivatives, FourthOrderDerivatives):
-            raise TypeError("derivatives must be FourthOrderDerivatives.")
-        if not isinstance(gauge, AbstractZ4cGauge):
-            raise TypeError("gauge must implement AbstractZ4cGauge.")
-        if not isinstance(boundary, AbstractZ4cBoundary):
-            raise TypeError("boundary must implement AbstractZ4cBoundary.")
-        if not isinstance(enforcement, Z4cAlgebraicEnforcement):
-            raise TypeError("enforcement must be Z4cAlgebraicEnforcement.")
-        if not isinstance(stress, RelativisticStressDepositPlan):
-            raise TypeError("stress must be RelativisticStressDepositPlan.")
         if not callable(frame_provider):
             raise TypeError("frame_provider must be callable.")
         if (
@@ -670,6 +659,7 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
             source.scale_factor,
         )
 
+    @checked
     def admit_initial_data(
         self,
         z4c: Z4cState,
@@ -681,8 +671,6 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
 
         if not isinstance(z4c, Z4cState) or z4c.grid_id != self.grid.grid_id:
             raise ValueError("Initial Z4c state does not belong to the plan grid.")
-        if not isinstance(particles, RelativisticParticleState):
-            raise TypeError("particles must be RelativisticParticleState.")
         if particles.topology_id != self.grid.grid_id:
             raise ValueError("Particle and Z4c topology identities differ.")
         if not callable(solver):
@@ -788,11 +776,10 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
             )
         return result.state
 
+    @checked
     def advance(self, state: EinsteinVlasovMatterState, /) -> EinsteinVlasovMatterResult:
         """Propose and atomically accept or roll back one coupled midpoint step."""
 
-        if not isinstance(state, EinsteinVlasovMatterState):
-            raise TypeError("state must be EinsteinVlasovMatterState.")
         if state.runtime_id != self.runtime_id:
             raise ValueError("Einstein-Vlasov state belongs to another runtime.")
         step = jnp.asarray(self.time_step, dtype=state.time.dtype)

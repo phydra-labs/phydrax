@@ -36,6 +36,7 @@ from ..measurement import (
     ValueLayout,
 )
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 from ..units import conversion_factor, UnitDefinition
 from ._asset import ImageFieldSpec
 
@@ -220,9 +221,8 @@ class ImageIndexAffine:
             f"{self.provenance}:{self.axis_convention.value}-to-{convention.value}",
         )
 
+    @checked
     def to_unit(self, unit: UnitDefinition, /) -> ImageIndexAffine:
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("unit must be UnitDefinition.")
         factor = float(conversion_factor(self.coordinate_contract.length_unit, unit))
         if factor == 1.0:
             return self

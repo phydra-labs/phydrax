@@ -20,6 +20,7 @@ from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._distributed_field import _color_directed_pairs
 from ._core import (
     BlockHierarchyPlan,
@@ -936,6 +937,7 @@ class BlockAMRPartitionPlan(StrictModule, NonTrainableState):
     axis_name: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: BlockHierarchyPlan,
@@ -946,8 +948,6 @@ class BlockAMRPartitionPlan(StrictModule, NonTrainableState):
     ) -> None:
         parts = int(part_count)
         axis = str(axis_name).strip()
-        if not isinstance(hierarchy, BlockHierarchyPlan):
-            raise TypeError("Distributed block AMR requires BlockHierarchyPlan.")
         if parts <= 0 or not axis:
             raise ValueError("AMR partition count and mesh axis name must be valid.")
         self.hierarchy = hierarchy
@@ -998,6 +998,7 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
     compilation_result_id: str | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: BlockAMRPartitionPlan,
@@ -1008,8 +1009,6 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         costs: Sequence[ArrayLike | None] | None = None,
         execution_group: ExecutionGroup | None = None,
     ) -> None:
-        if not isinstance(partition, BlockAMRPartitionPlan):
-            raise TypeError("partition must be BlockAMRPartitionPlan.")
         if isinstance(topology_result, BlockTopologyCompileResult):
             if not topology_result.status.successful:
                 raise ValueError("Cannot distribute an unsuccessful topology result.")

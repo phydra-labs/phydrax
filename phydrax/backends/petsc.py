@@ -28,7 +28,7 @@ from ..linalg import (
 )
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ..nonlinear import NonlinearStatus, NonlinearSystemProblem
-from ..typing import parse
+from ..typing import checked, parse
 from ._availability import import_backend_module, probe_backend
 from ._types import (
     AbstractExternalBackend,
@@ -565,6 +565,7 @@ class PETScBackend(AbstractExternalBackend):
             distributions=("petsc4py",),
         )
 
+    @checked
     def plan_linear(
         self,
         problem: LinearSystem,
@@ -573,8 +574,6 @@ class PETScBackend(AbstractExternalBackend):
         *,
         preconditioner_operator: AbstractSparseLinearOperator | None = None,
     ) -> PETScLinearPlan:
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("PETSc KSP requires a LinearSystem.")
         operator = _sparse_operator(problem.operator, role="system operator")
         _canonical_storage(operator, role="system operator")
         pmat = operator if preconditioner_operator is None else preconditioner_operator
@@ -582,9 +581,8 @@ class PETScBackend(AbstractExternalBackend):
             problem, pmat, PETScKSPPolicy() if policy is None else policy
         )
 
+    @checked
     def prepare_linear(self, plan: PETScLinearPlan, /) -> PreparedPETScLinearSolve:
-        if not isinstance(plan, PETScLinearPlan):
-            raise TypeError("plan must be a PETScLinearPlan.")
         petsc = import_backend_module(
             self.availability(), "linear-system", "petsc4py.PETSc"
         )
@@ -618,11 +616,10 @@ class PETScBackend(AbstractExternalBackend):
             ),
         )
 
+    @checked
     def solve_linear(
         self, prepared: PreparedPETScLinearSolve, rhs: PyTree[Any], /
     ) -> PETScLinearResult:
-        if not isinstance(prepared, PreparedPETScLinearSolve):
-            raise TypeError("prepared must be a PreparedPETScLinearSolve.")
         target, source = (
             prepared.plan.problem.operator.target,
             prepared.plan.problem.operator.source,
@@ -689,6 +686,7 @@ class PETScBackend(AbstractExternalBackend):
             _linear_provenance(prepared, solve_transfer),
         )
 
+    @checked
     def refresh_linear(
         self,
         prepared: PreparedPETScLinearSolve,
@@ -697,8 +695,6 @@ class PETScBackend(AbstractExternalBackend):
         *,
         preconditioner_operator: AbstractSparseLinearOperator | None = None,
     ) -> PreparedPETScLinearSolve:
-        if not isinstance(prepared, PreparedPETScLinearSolve):
-            raise TypeError("prepared must be a PreparedPETScLinearSolve.")
         if (
             problem.problem_id != prepared.plan.problem.problem_id
             or problem.operator.operator_id != prepared.plan.problem.operator.operator_id
@@ -778,11 +774,10 @@ class PETScBackend(AbstractExternalBackend):
             args=args,
         )
 
+    @checked
     def prepare_nonlinear(
         self, plan: PETScNonlinearPlan, /
     ) -> PreparedPETScNonlinearSolve:
-        if not isinstance(plan, PETScNonlinearPlan):
-            raise TypeError("plan must be a PETScNonlinearPlan.")
         petsc = import_backend_module(
             self.availability(), "nonlinear-system", "petsc4py.PETSc"
         )
@@ -804,14 +799,13 @@ class PETScBackend(AbstractExternalBackend):
             ),
         )
 
+    @checked
     def solve_nonlinear(
         self,
         prepared: PreparedPETScNonlinearSolve,
         initial_state: PyTree[Any] | None = None,
         /,
     ) -> PETScNonlinearResult:
-        if not isinstance(prepared, PreparedPETScNonlinearSolve):
-            raise TypeError("prepared must be a PreparedPETScNonlinearSolve.")
         plan = prepared.plan
         state = (
             plan.initial_state
@@ -891,6 +885,7 @@ class PETScBackend(AbstractExternalBackend):
             provenance=provenance,
         )
 
+    @checked
     def refresh_nonlinear(
         self,
         prepared: PreparedPETScNonlinearSolve,
@@ -900,8 +895,6 @@ class PETScBackend(AbstractExternalBackend):
         *,
         args: Any = None,
     ) -> PreparedPETScNonlinearSolve:
-        if not isinstance(prepared, PreparedPETScNonlinearSolve):
-            raise TypeError("prepared must be a PreparedPETScNonlinearSolve.")
         if problem.problem_id != prepared.plan.problem.problem_id:
             raise ValueError("PETSc SNES refresh must preserve problem_id.")
         plan = self.plan_nonlinear(

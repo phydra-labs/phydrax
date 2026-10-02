@@ -33,6 +33,7 @@ from ..measurement import (
     SpatialSamplingKind,
 )
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 from ..units import (
     BECQUEREL,
     BECQUEREL_SECOND,
@@ -381,9 +382,8 @@ class RegionalSValuePlan:
             self.plan_id,
         )
 
+    @checked
     def apply(self, source: TimeActivityIntegrationResult, /) -> RegionalDoseResult:
-        if not isinstance(source, TimeActivityIntegrationResult):
-            raise TypeError("source must be TimeActivityIntegrationResult.")
         asset = source.asset
         field_ = asset.field
         if (
@@ -705,9 +705,8 @@ class SpatialSValueConvolutionPlan:
             self.plan_id,
         )
 
+    @checked
     def apply(self, source: TimeActivityIntegrationResult, /) -> SpatialDoseResult:
-        if not isinstance(source, TimeActivityIntegrationResult):
-            raise TypeError("source must be TimeActivityIntegrationResult.")
         asset = source.asset
         field_ = asset.field
         if (

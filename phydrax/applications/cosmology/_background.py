@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._closure import (
     CosmologyPhysicalState,
     CosmologyRealizationSignature,
@@ -32,6 +33,7 @@ class FLRWBackground(StrictModule):
     scale: CosmologyScaleContract
     model_form_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hubble_constant: ArrayLike,
@@ -45,8 +47,6 @@ class FLRWBackground(StrictModule):
         dark_energy_wa: ArrayLike = 0.0,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
     ) -> None:
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be a CosmologyScaleContract.")
         dtype = jnp.result_type(
             hubble_constant,
             matter_density,

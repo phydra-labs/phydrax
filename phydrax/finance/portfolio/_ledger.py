@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core import (
     add_currency_amounts,
     AssetReference,
@@ -53,9 +54,8 @@ class Holding(StrictModule):
     asset: AssetReference = eqx.field(static=True)
     quantity: Array
 
+    @checked
     def __init__(self, asset: AssetReference, quantity: ArrayLike, /) -> None:
-        if not isinstance(asset, AssetReference):
-            raise TypeError("asset must be an AssetReference.")
         self.asset = asset
         self.quantity = _scalar(quantity, "quantity")
 
@@ -66,9 +66,8 @@ class CashBalance(StrictModule):
     amount: CurrencyAmount
     account_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, account_id: str, amount: CurrencyAmount, /) -> None:
-        if not isinstance(amount, CurrencyAmount):
-            raise TypeError("amount must be a CurrencyAmount.")
         self.account_id = _id(account_id, "account_id")
         self.amount = amount
 
@@ -86,6 +85,7 @@ class TaxLot(StrictModule):
     lot_id: str = eqx.field(static=True)
     acquired_index: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lot_id: str,
@@ -96,10 +96,6 @@ class TaxLot(StrictModule):
         *,
         acquired_index: int,
     ) -> None:
-        if not isinstance(asset, AssetReference):
-            raise TypeError("asset must be an AssetReference.")
-        if not isinstance(cost_basis, CurrencyAmount):
-            raise TypeError("cost_basis must be a CurrencyAmount.")
         if cost_basis.currency.currency_id != asset.currency.currency_id:
             raise ValueError("Tax-lot basis must use the asset currency.")
         quantity_ = _scalar(quantity, "quantity")
@@ -133,6 +129,7 @@ class LedgerTrade(StrictModule):
     execution_index: int = eqx.field(static=True)
     settlement_index: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trade_id: str,
@@ -147,8 +144,6 @@ class LedgerTrade(StrictModule):
         execution_index: int,
         settlement_index: int,
     ) -> None:
-        if not isinstance(asset, AssetReference):
-            raise TypeError("asset must be an AssetReference.")
         currency = _same_currency(principal_cash_flow, fees, tax_cost)
         if currency.currency_id != asset.currency.currency_id:
             raise ValueError("Trade cash postings must use the asset currency.")
@@ -183,6 +178,7 @@ class LotLedgerEntry(StrictModule):
     lot_id: str = eqx.field(static=True)
     effective_index: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         entry_id: str,
@@ -194,10 +190,6 @@ class LotLedgerEntry(StrictModule):
         *,
         effective_index: int,
     ) -> None:
-        if not isinstance(asset, AssetReference):
-            raise TypeError("asset must be an AssetReference.")
-        if not isinstance(basis_delta, CurrencyAmount):
-            raise TypeError("basis_delta must be a CurrencyAmount.")
         if basis_delta.currency.currency_id != asset.currency.currency_id:
             raise ValueError("Lot basis movement must use the asset currency.")
         quantity_ = _scalar(quantity_delta, "quantity_delta", nonzero=True)
@@ -226,6 +218,7 @@ class PortfolioLedger(StrictModule):
     base_currency: Currency = eqx.field(static=True)
     ledger_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ledger_id: str,
@@ -238,8 +231,6 @@ class PortfolioLedger(StrictModule):
         trades: tuple[LedgerTrade, ...] = (),
         lot_entries: tuple[LotLedgerEntry, ...] = (),
     ) -> None:
-        if not isinstance(base_currency, Currency):
-            raise TypeError("base_currency must be a Currency.")
         holdings, cash, lots = (
             tuple(initial_holdings),
             tuple(initial_cash),

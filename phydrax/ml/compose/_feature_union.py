@@ -13,6 +13,7 @@ from ..._differentiation import (
     DerivativeContract,
 )
 from ..._model import AbstractArrayModel, ModelBinding, ValuePort
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -116,9 +117,8 @@ class FittedFeatureUnion(AbstractFittedModel):
         )
         return _join_feature_values(outputs)
 
+    @checked
     def transform_batch(self, batch: MLBatch, /, *, key: Any = None) -> MLBatch:
-        if not isinstance(batch, MLBatch):
-            raise TypeError("transform_batch requires an MLBatch.")
         keys = _split_key(key, len(self.transformer_list))
         outputs = tuple(
             (
@@ -140,11 +140,8 @@ class FeatureUnion(AbstractRecipe):
             transformer_list, kind="FeatureUnion", recipe_type=AbstractRecipe
         )
 
+    @checked
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        if not isinstance(batch, MLBatch):
-            raise TypeError(
-                "FeatureUnion.fit_batch requires an already-selected MLBatch."
-            )
         keys = _split_key(key, 2 * len(self.transformer_list))
         fitted: list[tuple[str, AbstractArrayModel]] = []
         results: list[FitResult] = []

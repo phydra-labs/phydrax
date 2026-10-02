@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class SensorConfiguration(StrictModule, NonTrainableState):
@@ -88,6 +89,7 @@ class ObservationHistory(StrictModule, NonTrainableState):
     configuration: SensorConfiguration
     history_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -97,8 +99,6 @@ class ObservationHistory(StrictModule, NonTrainableState):
         configuration: SensorConfiguration,
         /,
     ) -> None:
-        if not isinstance(configuration, SensorConfiguration):
-            raise TypeError("configuration must be SensorConfiguration.")
         observations = jnp.asarray(values)
         coordinates = jnp.asarray(times)
         mask = jnp.asarray(valid, dtype=jnp.bool_)

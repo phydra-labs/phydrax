@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._context import AstrodynamicsContext, FrameDefinition
 from ._frames import KinematicFrameTransform, KinematicTransformEvaluation
 from ._state import CartesianOrbitState
@@ -24,6 +25,7 @@ class FrameTransformEdge(StrictModule, NonTrainableState):
     cost: int = eqx.field(static=True)
     edge_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transform: KinematicFrameTransform,
@@ -33,8 +35,6 @@ class FrameTransformEdge(StrictModule, NonTrainableState):
         required_products: tuple[str, ...] = (),
         cost: int = 1,
     ) -> None:
-        if not isinstance(transform, KinematicFrameTransform):
-            raise TypeError("transform must be a KinematicFrameTransform.")
         precision = str(precision_class).strip()
         requirements = tuple(str(value).strip() for value in required_products)
         if not precision or any(not value for value in requirements):

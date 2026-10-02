@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
 from ._status import AstrodynamicsStatus
@@ -38,6 +38,7 @@ class TrackingStationCatalog(StrictModule, NonTrainableState):
     station_ids: tuple[str, ...] = eqx.field(static=True)
     catalog_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         station_ids: Iterable[str],
@@ -52,10 +53,6 @@ class TrackingStationCatalog(StrictModule, NonTrainableState):
         position_ = np.asarray(position, dtype=np.float64)
         velocity_ = np.asarray(velocity, dtype=np.float64)
         horizon = np.asarray(horizon_elevation, dtype=np.float64)
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
-        if not isinstance(provenance, AstrodynamicsDataProvenance):
-            raise TypeError("provenance must be AstrodynamicsDataProvenance.")
         if (
             not ids
             or any(not value for value in ids)
@@ -179,13 +176,10 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
     schedule: ObservationSchedule
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, stations: TrackingStationCatalog, schedule: ObservationSchedule, /
     ) -> None:
-        if not isinstance(stations, TrackingStationCatalog):
-            raise TypeError("stations must be a TrackingStationCatalog.")
-        if not isinstance(schedule, ObservationSchedule):
-            raise TypeError("schedule must be an ObservationSchedule.")
         station_indices = np.asarray(schedule.station_index)
         if np.any(station_indices < 0) or np.any(
             station_indices >= len(stations.station_ids)

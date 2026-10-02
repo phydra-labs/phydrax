@@ -15,6 +15,7 @@ from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._basis import TensorSplineBasisSpec
 
 
@@ -75,6 +76,7 @@ class IsogeometricRuntimeData(StrictModule):
     numeric_version: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: TensorSplineBasisSpec,
@@ -84,10 +86,6 @@ class IsogeometricRuntimeData(StrictModule):
         topology_id: str,
         numeric_version: str,
     ) -> None:
-        if not isinstance(basis, TensorSplineBasisSpec):
-            raise TypeError("basis must be a TensorSplineBasisSpec.")
-        if not isinstance(geometry, NURBSGeometryState):
-            raise TypeError("geometry must be a NURBSGeometryState.")
         if geometry.control_shape != basis.control_shape:
             raise ValueError(
                 "NURBS geometry control shape must exactly match the spline basis."
@@ -322,11 +320,10 @@ class IsogeometricH1QualificationPolicy(StrictModule, NonTrainableState):
             else jnp.asarray(self.orientation_tolerance, dtype=dtype),
         )
 
+    @checked
     def check(
         self, evidence: IsogeometricGeometryEvidence, /
     ) -> IsogeometricGeometryEvidence:
-        if not isinstance(evidence, IsogeometricGeometryEvidence):
-            raise TypeError("evidence must be IsogeometricGeometryEvidence.")
         weight_tolerance, rank_tolerance, orientation_tolerance = (
             self.geometry_tolerances(evidence.minimum_rank_ratio.dtype)
         )

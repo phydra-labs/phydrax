@@ -15,7 +15,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import register_artifact_value
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ._operations import (
     LocalKrausChannelOperation,
     LocalUnitaryOperation,
@@ -106,6 +106,7 @@ class QuantumProgramTemplate(StrictModule):
     occurrence_angle_indices: tuple[int, ...] = eqx.field(static=True)
     template_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: HilbertRegisterLayout,
@@ -115,8 +116,6 @@ class QuantumProgramTemplate(StrictModule):
         state_kind: QuantumStateKind,
         dtype: DTypeLike = jnp.complex128,
     ) -> None:
-        if not isinstance(layout, HilbertRegisterLayout):
-            raise TypeError("layout must be a HilbertRegisterLayout.")
         state_kind = parse(state_kind, QuantumStateKind, "state_kind")
         selected_dtype = jnp.dtype(dtype)
         if selected_dtype not in (jnp.dtype(jnp.complex64), jnp.dtype(jnp.complex128)):

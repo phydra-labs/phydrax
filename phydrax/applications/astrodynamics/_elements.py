@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
@@ -42,6 +43,7 @@ class ModifiedEquinoctialElements(StrictModule):
     context: AstrodynamicsContext
     retrograde_factor: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -50,8 +52,6 @@ class ModifiedEquinoctialElements(StrictModule):
         *,
         retrograde_factor: int = 1,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         if isinstance(retrograde_factor, bool) or not isinstance(retrograde_factor, int):
             raise TypeError("retrograde_factor must be an integer.")
         factor = retrograde_factor
@@ -75,14 +75,13 @@ class ClassicalOrbitalElements(StrictModule):
     values: Array
     context: AstrodynamicsContext
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         values_ = jnp.asarray(values)
         if values_.shape != (6,):
             raise ValueError("Classical orbital elements must have shape (6,).")

@@ -20,6 +20,7 @@ from ....qualification import (
     ScientificCampaign,
     ScientificClaimProfile,
 )
+from ....typing import checked
 from ....units import conversion_factor, derived_unit, METER, SECOND, UnitDefinition
 
 
@@ -92,6 +93,7 @@ class CotranslationObservationLaw:
     calibration: ReferenceArtifactManifest
     law_id: str
 
+    @checked
     def __init__(
         self,
         observable_kind: Literal["length-resolved-fret", "calibrated-arrest-release"],
@@ -139,10 +141,6 @@ class CotranslationObservationLaw:
             radius = None
             radius_error = None
             unit = None
-        if not isinstance(calibration, ReferenceArtifactManifest):
-            raise TypeError(
-                "Observation calibration must be a ReferenceArtifactManifest."
-            )
         calibration.require_rights()
         calibration.require_uncertainty()
         object.__setattr__(self, "observable_kind", observable_kind)
@@ -241,6 +239,7 @@ class LengthResolvedCotranslationObservations:
     timing_reference: ReferenceArtifactManifest | None
     observation_id: str
 
+    @checked
     def __init__(
         self,
         case_ids: tuple[str, ...],
@@ -319,8 +318,6 @@ class LengthResolvedCotranslationObservations:
             raise ValueError(
                 "Length-resolved observations need positive lengths/timing/errors and responses in [0, 1]."
             )
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("Cotranslation observations require a source manifest.")
         if timing_reference is not None and not isinstance(
             timing_reference, ReferenceArtifactManifest
         ):
@@ -385,6 +382,7 @@ class CotranslationModelFit:
     fit_integrity_ids: tuple[str, ...]
     fit_id: str
 
+    @checked
     def __init__(
         self,
         model_id: str,
@@ -395,8 +393,6 @@ class CotranslationModelFit:
         fit_execution_evidence: QualificationEvidence,
         /,
     ) -> None:
-        if not isinstance(campaign, ScientificCampaign):
-            raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
         calibration = _role_case_ids(campaign, "calibration")
         selection = _role_case_ids(campaign, "model_selection")
@@ -433,11 +429,7 @@ class CotranslationModelFit:
             )
         for artifact in artifacts:
             artifact.require_rights(training_use=True)
-        if not isinstance(prediction_code, ReferenceArtifactManifest):
-            raise TypeError("prediction_code must be a ReferenceArtifactManifest.")
         prediction_code.require_rights()
-        if not isinstance(fit_execution_evidence, QualificationEvidence):
-            raise TypeError("fit_execution_evidence must be QualificationEvidence.")
         required_subjects = {
             campaign.campaign_id,
             model,
@@ -516,6 +508,7 @@ class CotranslationModelPrediction:
     fit_construct_ids: tuple[str, ...]
     prediction_id: str
 
+    @checked
     def __init__(
         self,
         observations: LengthResolvedCotranslationObservations,
@@ -526,15 +519,7 @@ class CotranslationModelPrediction:
         *,
         latent_unit: UnitDefinition,
     ) -> None:
-        if not isinstance(observations, LengthResolvedCotranslationObservations):
-            raise TypeError(
-                "observations must be LengthResolvedCotranslationObservations."
-            )
-        if not isinstance(fit, CotranslationModelFit):
-            raise TypeError("fit must be a CotranslationModelFit.")
         _validate_locked_campaign(fit.campaign, observations)
-        if not isinstance(latent_unit, UnitDefinition):
-            raise TypeError("latent_unit must be a UnitDefinition.")
         values = np.asarray(latent_values, dtype=np.float64)
         errors = np.asarray(latent_standard_errors, dtype=np.float64)
         if (
@@ -612,6 +597,7 @@ class CotranslationQualificationAssessment:
             return "inconclusive"
         return "ready-for-claim-evaluation"
 
+    @checked
     def evaluate_claim(
         self,
         claim: ScientificClaimProfile,
@@ -630,8 +616,6 @@ class CotranslationQualificationAssessment:
         issued_at: int,
         expires_at: int,
     ) -> QualificationEvidence:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
         if (
             claim.capability_name != self.capability_name
             or claim.observable_ids != self.observable_ids

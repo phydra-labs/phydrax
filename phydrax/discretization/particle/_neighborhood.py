@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -51,6 +52,7 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
     prepared_neighborhood_id: str = eqx.field(static=True)
     relation_schema_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pair_relation: ParticlePairRelation,
@@ -74,8 +76,6 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
         prepared_neighborhood_id: str,
         relation_schema_id: str,
     ) -> None:
-        if not isinstance(pair_relation, ParticlePairRelation):
-            raise TypeError("pair_relation must be a ParticlePairRelation.")
         if box is not None and not isinstance(box, (ParticleBox, PeriodicCell)):
             raise TypeError("box must be a ParticleBox, PeriodicCell, or None.")
         storage = jnp.asarray(storage_to_logical)
@@ -256,16 +256,13 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     artifact_kind: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DenseParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, DenseParticleNeighborhoodPlan):
-            raise TypeError("plan must be a DenseParticleNeighborhoodPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if (
             plan.box is not None
             and plan.box.ambient_dimension != particles.ambient_dimension

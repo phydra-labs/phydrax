@@ -18,6 +18,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....nonlinear import NewtonKrylov, NonlinearResult, NonlinearTermination
+from ....typing import checked
 from ._gasam import (
     PreparedEngelhardtGasam2025Material,
     QualifiedExactMixedGasamProblem,
@@ -86,6 +87,7 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         material: PreparedEngelhardtGasam2025Material,
@@ -95,8 +97,6 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
         *,
         pressure_pa: ArrayLike = 0.0,
     ) -> GasamQualificationEvidence:
-        if not isinstance(material, PreparedEngelhardtGasam2025Material):
-            raise TypeError("material must be PreparedEngelhardtGasam2025Material.")
         deformation = jnp.asarray(deformation_gradient)
         rate = jnp.asarray(deformation_rate_per_s)
         if deformation.shape != (3, 3) or rate.shape != (3, 3):

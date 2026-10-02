@@ -21,6 +21,7 @@ from ..._identity import callable_payload
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractVectorSpace, ArraySpace, DualSpace
+from ...typing import checked
 from ._guarantee import ContactCapability, ContactGuaranteeLevel
 from ._surface import (
     CollisionSurfacePlan,
@@ -153,9 +154,8 @@ class LinearContactParticipant(AbstractContactParticipant):
     _capabilities: ContactCapability = eqx.field(static=True)
     _participant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, surface: PreparedCollisionSurface, /) -> None:
-        if not isinstance(surface, PreparedCollisionSurface):
-            raise TypeError("surface must be PreparedCollisionSurface.")
         self.surface = surface
         self._capabilities = (
             ContactCapability.STATIC_DISTANCE
@@ -250,6 +250,7 @@ class FunctionContactParticipant(AbstractContactParticipant):
     _capabilities: ContactCapability = eqx.field(static=True)
     _participant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CollisionSurfacePlan,
@@ -267,12 +268,6 @@ class FunctionContactParticipant(AbstractContactParticipant):
         ) = None,
         participant_id: str | None = None,
     ) -> None:
-        if not isinstance(plan, CollisionSurfacePlan):
-            raise TypeError("plan must be CollisionSurfacePlan.")
-        if not isinstance(source_space, AbstractVectorSpace):
-            raise TypeError("source_space must be AbstractVectorSpace.")
-        if not isinstance(tangent_space, AbstractVectorSpace):
-            raise TypeError("tangent_space must be AbstractVectorSpace.")
         if not callable(position_action):
             raise TypeError("position_action must be callable.")
         if velocity_action is not None and not callable(velocity_action):

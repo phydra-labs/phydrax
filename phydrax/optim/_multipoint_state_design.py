@@ -18,6 +18,7 @@ from .._tree_math import (
     tree_norm as _tree_norm,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
+from ..typing import checked
 from ._iterative._types import (
     Bounds,
     OptimizationDiagnostics,
@@ -54,6 +55,7 @@ class StateDesignCase(StrictModule):
     design_binding: Callable
     args: Any
 
+    @checked
     def __init__(
         self,
         case_id: str,
@@ -67,8 +69,6 @@ class StateDesignCase(StrictModule):
         identifier = str(case_id)
         if not identifier:
             raise ValueError("case_id must be non-empty.")
-        if not isinstance(problem, StateDesignProblem):
-            raise TypeError("problem must be a StateDesignProblem.")
         if not callable(design_binding):
             raise TypeError("design_binding must be callable.")
         self.case_id = identifier

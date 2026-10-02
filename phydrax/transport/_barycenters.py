@@ -19,6 +19,7 @@ import phydrax.axes as cx
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization
 from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
+from ..typing import checked
 from ._costs import (
     AbstractGroundCost,
     SquaredEuclideanCost,
@@ -90,6 +91,7 @@ class FixedSupportBarycenterProblem(StrictModule):
     support_event_shape: tuple[int, ...] = eqx.field(static=True)
     mass_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         measures: tuple[BarycenterMeasure, ...],
@@ -106,8 +108,6 @@ class FixedSupportBarycenterProblem(StrictModule):
             raise TypeError(
                 "measures must be a nonempty tuple of finite integration measures."
             )
-        if not isinstance(cost, AbstractGroundCost):
-            raise TypeError("cost must be an AbstractGroundCost.")
         tolerance = float(mass_tolerance)
         if not math.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("mass_tolerance must be finite and nonnegative.")
@@ -428,6 +428,7 @@ class SinkhornBarycenter(StrictModule):
         self.early_stop = bool(early_stop)
         self.store_history = bool(store_history)
 
+    @checked
     def __call__(
         self,
         problem: FixedSupportBarycenterProblem,
@@ -436,8 +437,6 @@ class SinkhornBarycenter(StrictModule):
         initial_potentials: tuple[ArrayLike, ArrayLike] | None = None,
         initial_probabilities: ArrayLike | None = None,
     ) -> BarycenterResult:
-        if not isinstance(problem, FixedSupportBarycenterProblem):
-            raise TypeError("problem must be a FixedSupportBarycenterProblem.")
         dtype = jnp.result_type(
             problem.measure_points,
             problem.support_points,
@@ -911,6 +910,7 @@ class FreeSupportBarycenter(StrictModule):
     max_iterations: int = eqx.field(static=True)
     stagnation_patience: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         inner_solver: SinkhornBarycenter,
@@ -922,8 +922,6 @@ class FreeSupportBarycenter(StrictModule):
         stagnation_patience: int = 0,
         stagnation_tolerance: ArrayLike = 1e-6,
     ) -> None:
-        if not isinstance(inner_solver, SinkhornBarycenter):
-            raise TypeError("inner_solver must be a SinkhornBarycenter.")
         maximum = int(max_iterations)
         patience = int(stagnation_patience)
         if maximum < 1:
@@ -952,13 +950,12 @@ class FreeSupportBarycenter(StrictModule):
         self.max_iterations = maximum
         self.stagnation_patience = patience
 
+    @checked
     def __call__(
         self,
         problem: FixedSupportBarycenterProblem,
         /,
     ) -> FreeSupportBarycenterResult:
-        if not isinstance(problem, FixedSupportBarycenterProblem):
-            raise TypeError("problem must be a FixedSupportBarycenterProblem.")
         if not isinstance(
             problem.cost,
             (SquaredEuclideanCost, WeightedSquaredEuclideanCost),

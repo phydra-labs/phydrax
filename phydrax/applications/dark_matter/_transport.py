@@ -31,6 +31,7 @@ from ...stochastic import (
     JUMP_MAX_EVENTS,
     JUMP_SUCCESS,
 )
+from ...typing import checked
 from ._profiles import (
     LayeredTerrestrialProfile,
     RadialBodyProfile,
@@ -116,9 +117,8 @@ class RadialSignedDistanceGuard(StrictModule, NonTrainableState):
     geometry: CompiledGeometry
     frame_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, geometry: CompiledGeometry, /, *, frame_id: str) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("Radial guard geometry must be a CompiledGeometry.")
         if (
             geometry.ambient_dimension != 3
             or not geometry.field_certificate.is_signed_distance
@@ -182,6 +182,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
     mark_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: RadialBodyProfile,
@@ -193,8 +194,6 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
             profile, (LayeredTerrestrialProfile, SmoothStellarRadialProfile)
         ):
             raise TypeError("Profiled scattering requires a supported radial profile.")
-        if not isinstance(scattering, ElasticScatteringTable):
-            raise TypeError("scattering must be an ElasticScatteringTable.")
         if profile.target_ids != scattering.target_ids:
             raise ValueError("Profile and scattering target axes must match exactly.")
         mass = np.asarray(projectile_mass_kg, dtype=np.float64)

@@ -30,7 +30,7 @@ from ..combinatorial import (
     LinearCombinatorialProblem,
     solve_restricted_combinatorial,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._branch_and_bound import (
     AbstractBranchAndBoundProblem,
     branch_and_bound,
@@ -89,6 +89,7 @@ class IntegerHullProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         objective: MinimizationProblem,
@@ -99,16 +100,10 @@ class IntegerHullProblem(StrictModule):
         convexity: ConvexObjectiveEvidence,
         problem_id: str = "integer-hull-convex-program",
     ) -> None:
-        if not isinstance(objective, MinimizationProblem):
-            raise TypeError("objective must be a MinimizationProblem.")
         if objective.bounds is not None or objective.constraints:
             raise ValueError(
                 "IntegerHullProblem geometry must be owned entirely by its space."
             )
-        if not isinstance(space, AbstractBoundableCombinatorialSpace):
-            raise TypeError("space must be an AbstractBoundableCombinatorialSpace.")
-        if not isinstance(convexity, ConvexObjectiveEvidence):
-            raise TypeError("convexity must be ConvexObjectiveEvidence.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be nonempty.")
@@ -151,6 +146,7 @@ class IntegerHullPolicy(StrictModule):
     armijo: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         oracle: AbstractBoundableLinearCombinatorialMethod,
@@ -165,10 +161,6 @@ class IntegerHullPolicy(StrictModule):
         maximum_backtracks: int = 20,
         armijo: float = 1e-4,
     ) -> None:
-        if not isinstance(oracle, AbstractBoundableLinearCombinatorialMethod):
-            raise TypeError(
-                "oracle must be an AbstractBoundableLinearCombinatorialMethod."
-            )
         capabilities = oracle.capabilities
         if not (
             capabilities.exact

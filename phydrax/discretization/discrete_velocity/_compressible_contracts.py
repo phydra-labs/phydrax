@@ -14,7 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 CompressibleKineticModelKind: TypeAlias = Literal[
@@ -110,6 +110,7 @@ class CompressibleKineticPopulationState(StrictModule):
     model_id: str = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         populations: tuple[ArrayLike, ...],
@@ -121,8 +122,6 @@ class CompressibleKineticPopulationState(StrictModule):
         model_id: str,
         rule_id: str,
     ) -> None:
-        if not isinstance(layout, KineticPopulationLayout):
-            raise TypeError("layout must be a KineticPopulationLayout.")
         model_identifier = str(model_id).strip()
         rule_identifier = str(rule_id).strip()
         if not model_identifier or not rule_identifier:

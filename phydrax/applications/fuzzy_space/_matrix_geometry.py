@@ -19,7 +19,7 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class FuzzySphereMatrixGeometryPlan(StrictModule):
@@ -196,6 +196,7 @@ class FuzzyScalarMatrixModelPlan(StrictModule):
     burn_in: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: PreparedFuzzySphereMatrixGeometry,
@@ -208,8 +209,6 @@ class FuzzyScalarMatrixModelPlan(StrictModule):
         draws: int = 100,
         burn_in: int = 20,
     ) -> None:
-        if not isinstance(geometry, PreparedFuzzySphereMatrixGeometry):
-            raise TypeError("geometry must be PreparedFuzzySphereMatrixGeometry.")
         mass = float(mass_squared)
         quartic = float(quartic_coupling)
         kinetic = float(kinetic_coupling)

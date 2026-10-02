@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._context import ElectronicEvaluationContext
 from ._model import ElectronicMethodFamily, ElectronicReferenceKind
 from ._result import (
@@ -280,6 +280,7 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
     execution: ElectronicExecutionCapabilities
     capabilities_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         theory: ElectronicTheoryCapabilities,
@@ -290,12 +291,6 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
         embedding: ElectronicEmbeddingCapabilities | None = None,
         execution: ElectronicExecutionCapabilities | None = None,
     ) -> None:
-        if not isinstance(theory, ElectronicTheoryCapabilities):
-            raise TypeError("theory must be ElectronicTheoryCapabilities.")
-        if not isinstance(geometry, ElectronicGeometryCapabilities):
-            raise TypeError("geometry must be ElectronicGeometryCapabilities.")
-        if not isinstance(observables, ElectronicObservableCapabilities):
-            raise TypeError("observables must be ElectronicObservableCapabilities.")
         embedding_ = ElectronicEmbeddingCapabilities() if embedding is None else embedding
         execution_ = ElectronicExecutionCapabilities() if execution is None else execution
         if not isinstance(embedding_, ElectronicEmbeddingCapabilities):
@@ -501,11 +496,10 @@ class AbstractPreparedElectronicCalculation(StrictModule, NonTrainableState):
     ) -> ElectronicEvaluation:
         raise NotImplementedError
 
+    @checked
     def evaluate_context(
         self, context: ElectronicEvaluationContext, /
     ) -> ElectronicEvaluation:
-        if not isinstance(context, ElectronicEvaluationContext):
-            raise TypeError("context must be ElectronicEvaluationContext.")
         expected_shape = (
             self.calculation.system.particle_ids.shape[0],
             3,

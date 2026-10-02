@@ -41,6 +41,7 @@ from ...sparse import (
     route_reduce,
     SparseCoordinateOperator,
 )
+from ...typing import checked
 from .._cochain_hodge import CochainHodge, DiagonalHodge
 from .._transfer import TransferProperties
 from ..fem._topology_transfer import (
@@ -307,9 +308,8 @@ class ForestRefluxRoutes(StrictModule, NonTrainableState):
     relation: EdgeRelation
     signs: Array
 
+    @checked
     def __init__(self, topology: ForestHierarchyTopology, /) -> None:
-        if not isinstance(topology, ForestHierarchyTopology):
-            raise TypeError("Forest reflux routes require a forest topology.")
         workset = topology.workset
         valid = workset.face_valid & workset.face_coarse_fine
         minus = jnp.where(workset.face_valid, workset.face_minus, 0)
@@ -352,6 +352,7 @@ class ForestRefluxRoutes(StrictModule, NonTrainableState):
             refinement_ratio=2,
         )
 
+    @checked
     def apply(
         self,
         register: FluxRegister,
@@ -360,8 +361,6 @@ class ForestRefluxRoutes(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         """Add the register's coarse-leaf corrections to padded leaf state ``(C, *T)``."""
-        if not isinstance(register, FluxRegister):
-            raise TypeError("Forest reflux requires a FluxRegister.")
         values = jnp.asarray(state)
         volumes = jnp.asarray(leaf_volumes)
         if values.ndim == 0 or values.shape[0] != self.relation.source_size:
@@ -439,9 +438,8 @@ class ForestVertexLayout(StrictModule, NonTrainableState):
     vertex_count: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, topology: ForestHierarchyTopology, /) -> None:
-        if not isinstance(topology, ForestHierarchyTopology):
-            raise TypeError("Forest vertex layouts require a forest topology.")
         plan = topology.plan
         dimension = plan.dimension
         depth = plan.maximum_level
@@ -968,6 +966,7 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
     nilpotency_defect: float = eqx.field(static=True)
     complex_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: ForestHierarchyTopology,
@@ -975,8 +974,6 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
         *,
         dtype: DTypeLike = jnp.float64,
     ) -> None:
-        if not isinstance(topology, ForestHierarchyTopology):
-            raise TypeError("Forest cochain complexes require a forest topology.")
         dtype_ = jnp.dtype(dtype)
         if not jnp.issubdtype(dtype_, jnp.inexact):
             raise TypeError("Forest cochain dtype must be inexact.")

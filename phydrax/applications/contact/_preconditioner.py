@@ -15,6 +15,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.contact._kinematics import ContactKinematicsEpoch
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 
 
 class ContactGraphPlan(StrictModule, NonTrainableState):
@@ -24,9 +25,8 @@ class ContactGraphPlan(StrictModule, NonTrainableState):
     graph_id: str = eqx.field(static=True)
 
     @classmethod
+    @checked
     def from_kinematics(cls, kinematics: ContactKinematicsEpoch, /) -> ContactGraphPlan:
-        if not isinstance(kinematics, ContactKinematicsEpoch):
-            raise TypeError("kinematics must be ContactKinematicsEpoch.")
         endpoints = []
         valid_values = []
         for batch in kinematics.batches:

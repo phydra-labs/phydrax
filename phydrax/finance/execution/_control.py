@@ -31,6 +31,7 @@ from ...control.stochastic._impulse_qvi import (
     solve_impulse_qvi_reference,
 )
 from ...stochastic._jump import PoissonClockRealization
+from ...typing import checked
 from ..core import InstrumentReference, PhysicalLaw
 
 
@@ -121,6 +122,7 @@ class JumpExecutionDefinition(StrictModule):
     problem: ControlledJumpProblem
     definition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -130,12 +132,6 @@ class JumpExecutionDefinition(StrictModule):
         *,
         definition_id: str,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(physical_law, PhysicalLaw):
-            raise TypeError("controlled jump execution requires a PhysicalLaw.")
-        if not isinstance(problem, ControlledJumpProblem):
-            raise TypeError("problem must be a ControlledJumpProblem.")
         self.instrument = instrument
         self.physical_law = physical_law
         self.problem = problem
@@ -149,6 +145,7 @@ class JumpExecutionPlan(StrictModule):
     definition_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         control_plan: ControlledJumpPlan,
@@ -157,8 +154,6 @@ class JumpExecutionPlan(StrictModule):
         definition_id: str,
         plan_id: str,
     ) -> None:
-        if not isinstance(control_plan, ControlledJumpPlan):
-            raise TypeError("control_plan must be a ControlledJumpPlan.")
         self.control_plan = control_plan
         self.definition_id = _identifier(definition_id, "definition_id")
         self.plan_id = _identifier(plan_id, "plan_id")
@@ -264,6 +259,7 @@ class HJBExecutionDefinition(StrictModule):
     problem: DiscreteHJBProblem
     definition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -273,12 +269,6 @@ class HJBExecutionDefinition(StrictModule):
         *,
         definition_id: str,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(physical_law, PhysicalLaw):
-            raise TypeError("HJB execution requires a PhysicalLaw.")
-        if not isinstance(problem, DiscreteHJBProblem):
-            raise TypeError("problem must be a DiscreteHJBProblem.")
         self.instrument = instrument
         self.physical_law = physical_law
         self.problem = problem
@@ -363,6 +353,7 @@ class ImpulseExecutionDefinition(StrictModule):
     problem: BoundedImpulseQVIProblem
     definition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -372,12 +363,6 @@ class ImpulseExecutionDefinition(StrictModule):
         *,
         definition_id: str,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(physical_law, PhysicalLaw):
-            raise TypeError("impulse execution requires a PhysicalLaw.")
-        if not isinstance(problem, BoundedImpulseQVIProblem):
-            raise TypeError("problem must be a BoundedImpulseQVIProblem.")
         self.instrument = instrument
         self.physical_law = physical_law
         self.problem = problem

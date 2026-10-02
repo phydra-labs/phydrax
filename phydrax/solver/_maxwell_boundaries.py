@@ -18,7 +18,7 @@ from .._trainable import NonTrainableState
 from ..discretization import NormCompatibleInterpolationPlan, StructuredCochainBridge
 from ..discretization._cell_de_rham import AbstractCellDeRhamComplex
 from ..linalg import AbstractVectorSpace, apply_real_map_componentwise, ArraySpace
-from ..typing import parse
+from ..typing import checked, parse
 
 
 MaxwellBoundaryKind: TypeAlias = Literal["pec", "pmc", "impedance"]
@@ -103,6 +103,7 @@ class PreparedMaxwellBoundary(StrictModule):
     layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MaxwellBoundaryPlan,
@@ -110,8 +111,6 @@ class PreparedMaxwellBoundary(StrictModule):
         layout: Any,
         /,
     ) -> None:
-        if not isinstance(bridge, AbstractCellDeRhamComplex):
-            raise TypeError("bridge must be an AbstractCellDeRhamComplex.")
         electric_boundary = jnp.asarray(
             bridge.boundary_masks[layout.electric_degree],
             dtype=jnp.bool_,
@@ -307,9 +306,8 @@ class MaxwellInterfaceMortar(StrictModule, NonTrainableState):
     interpolation: NormCompatibleInterpolationPlan
     mortar_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, interpolation: NormCompatibleInterpolationPlan, /) -> None:
-        if not isinstance(interpolation, NormCompatibleInterpolationPlan):
-            raise TypeError("interpolation must be NormCompatibleInterpolationPlan.")
         self.interpolation = interpolation
         self.mortar_id = canonical_fingerprint(
             {"kind": "maxwell-interface-mortar", "plan": interpolation.plan_id}

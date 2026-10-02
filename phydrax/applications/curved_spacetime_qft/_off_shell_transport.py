@@ -19,6 +19,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..cosmology._dark_sector_species import DarkSectorSpeciesPlan
 from ..cosmology._quantum_dark_kinetics import QuantumKineticState
 from ..relativistic_scattering._unit_contract import (
@@ -110,6 +111,7 @@ class OffShellTransportPlan(StrictModule, NonTrainableState):
     unit_contract_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quantum_support: QuantumKineticState,
@@ -127,8 +129,6 @@ class OffShellTransportPlan(StrictModule, NonTrainableState):
         maximum_spectral_bytes: int = 512_000_000,
         production_evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(quantum_support, QuantumKineticState):
-            raise TypeError("quantum_support must be a QuantumKineticState.")
         species = tuple(quantum_support.species)
         if not species or any(
             not isinstance(value, DarkSectorSpeciesPlan) for value in species

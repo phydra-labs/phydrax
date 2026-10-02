@@ -28,6 +28,7 @@ from ..enforcement import EnforcementProgram
 from ..fidelity import FidelityPath, FidelityRelation
 from ..nn._keys import EvalKey, split_eval_key
 from ..terms import PreparedFidelityObservation, ResidualPenalty
+from ..typing import checked
 from ._functional_correction import (
     freeze_domain_function,
     FunctionalCorrectionProblem,
@@ -71,9 +72,8 @@ class FidelityFieldTransfer(StrictModule, NonTrainableState):
         self.target_level_id = target
         self.transfer_id = identifier
 
+    @checked
     def __call__(self, field: DomainFunction, /) -> DomainFunction:
-        if not isinstance(field, DomainFunction):
-            raise TypeError("Fidelity field transfer requires a DomainFunction.")
         transferred = field if self.transform is None else self.transform(field)
         if not isinstance(transferred, DomainFunction):
             raise TypeError("Fidelity field transfer must return a DomainFunction.")
@@ -147,6 +147,7 @@ class FidelityPINNResult(StrictModule, NonTrainableState):
     training_run_id: str | None = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: FidelityPath,
@@ -159,10 +160,6 @@ class FidelityPINNResult(StrictModule, NonTrainableState):
         validation_observations: Sequence[PreparedFidelityObservation] = (),
         source_result_id: str | None = None,
     ) -> None:
-        if not isinstance(path, FidelityPath):
-            raise TypeError("path must be a FidelityPath.")
-        if not isinstance(solver, FunctionalSolver):
-            raise TypeError("solver must be a FunctionalSolver.")
         level = str(level_id)
         if level not in path.level_ids:
             raise ValueError("Fidelity PINN result level must lie on its path.")

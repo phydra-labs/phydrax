@@ -23,6 +23,7 @@ from ..._validation import positive_finite_float
 from ...applications.cosmology._force_scalability import CosmologySnapshotProduct
 from ...artifacts import ScientificArtifactEnvelope
 from ...qualification import read_reference_artifact, ReferenceArtifactManifest
+from ...typing import checked
 from .._report import AdapterLoss, AdapterReport, AdapterStatus
 
 
@@ -42,6 +43,7 @@ class ConceptSnapshotImport(StrictModule, NonTrainableState):
     source_length_unit: str = eqx.field(static=True)
     source_mass_unit: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         snapshot: CosmologySnapshotProduct,
@@ -59,12 +61,6 @@ class ConceptSnapshotImport(StrictModule, NonTrainableState):
         source_length_unit: str,
         source_mass_unit: str,
     ) -> None:
-        if not isinstance(snapshot, CosmologySnapshotProduct):
-            raise TypeError("snapshot must be CosmologySnapshotProduct.")
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("source must be ReferenceArtifactManifest.")
-        if not isinstance(report, AdapterReport):
-            raise TypeError("report must be AdapterReport.")
         labels = tuple(
             str(value).strip()
             for value in (

@@ -61,6 +61,7 @@ from ...nonlinear import VectorLocalRootPlan
 from ...typing import (
     as_host_array,
     Bool,
+    checked,
     ConvertibleToArray,
     Dim,
     Float,
@@ -249,6 +250,7 @@ class DispersionRayPlan(StrictModule, NonTrainableState):
     resonance_index: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hamiltonian: AbstractDispersionHamiltonian,
@@ -263,8 +265,6 @@ class DispersionRayPlan(StrictModule, NonTrainableState):
         cutoff_index: float = 1.0e-2,
         resonance_index: float = 1.0e2,
     ) -> None:
-        if not isinstance(hamiltonian, AbstractDispersionHamiltonian):
-            raise TypeError("hamiltonian must be an AbstractDispersionHamiltonian.")
         method_ = parse(method, DispersionRayMethod, "method")
         if method_ == "kick-drift-kick" and not isinstance(
             hamiltonian, AbstractSeparableDispersionHamiltonian
@@ -326,9 +326,8 @@ class PreparedDispersionRay(StrictModule):
     plan: DispersionRayPlan
     root: VectorLocalRootPlan
 
+    @checked
     def __init__(self, plan: DispersionRayPlan, /) -> None:
-        if not isinstance(plan, DispersionRayPlan):
-            raise TypeError("plan must be a DispersionRayPlan.")
         self.plan = plan
         self.root = VectorLocalRootPlan(
             6,
@@ -727,6 +726,7 @@ class ColdPlasmaProfile(StrictModule, NonTrainableState):
     polarization_tolerance: float = eqx.field(static=True)
     profile_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -741,10 +741,6 @@ class ColdPlasmaProfile(StrictModule, NonTrainableState):
         continuation_steps: int = 64,
         polarization_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if (
             coordinate_contract.length_unit.unit_id
             != scale.relativity.dimensional_scale.length_unit.unit_id
@@ -939,6 +935,7 @@ class ColdPlasmaHamiltonian(AbstractDispersionHamiltonian):
     angular_frequency: Float64[Scalar]
     mode: PlasmaWaveMode = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: ColdPlasmaProfile,
@@ -947,8 +944,6 @@ class ColdPlasmaHamiltonian(AbstractDispersionHamiltonian):
         angular_frequency: float,
         mode: PlasmaWaveMode,
     ) -> None:
-        if not isinstance(profile, ColdPlasmaProfile):
-            raise TypeError("profile must be a ColdPlasmaProfile.")
         omega = _positive(angular_frequency, "angular_frequency")
         mode_ = parse(mode, PlasmaWaveMode, "mode")
         self.profile = profile
@@ -1034,6 +1029,7 @@ class ColdPlasmaHamiltonian(AbstractDispersionHamiltonian):
         index = jnp.sqrt(jnp.where(valid, index_squared.real, 1.0))
         return index * unit_direction, valid
 
+    @checked
     def sample_path(
         self, rays: DispersionRayResult, transverse_reference: ConvertibleToArray, /
     ) -> ColdPlasmaRayPath:
@@ -1043,8 +1039,6 @@ class ColdPlasmaHamiltonian(AbstractDispersionHamiltonian):
         ``e₁ ∝ a − (a·k̂)k̂`` at each ray's first segment; the basis is
         parallel-transported along the wave normals thereafter.
         """
-        if not isinstance(rays, DispersionRayResult):
-            raise TypeError("rays must be a DispersionRayResult.")
         if rays.evidence.hamiltonian_id != self.hamiltonian_id:
             raise ValueError("rays were not traced with this ColdPlasmaHamiltonian.")
         reference = as_host_array(

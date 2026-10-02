@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import LocalEliminationPlan, LocalEliminationResult
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from .._cell_mesh import CellMesh
 
@@ -73,14 +74,13 @@ class HDGCondensationPlan(StrictModule, NonTrainableState):
     local_trace_dof_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trace_space: HDGTraceSpace,
         interior_dof_count: int,
         /,
     ) -> None:
-        if not isinstance(trace_space, HDGTraceSpace):
-            raise TypeError("trace_space must be HDGTraceSpace.")
         interior = int(interior_dof_count)
         if interior <= 0:
             raise ValueError("interior_dof_count must be positive.")

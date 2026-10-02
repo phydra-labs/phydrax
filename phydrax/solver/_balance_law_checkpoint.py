@@ -15,6 +15,7 @@ from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._balance_law import (
     BalanceLawAcceptedBudget,
     BalanceLawProcessState,
@@ -29,6 +30,7 @@ class BalanceLawCheckpointPlan(StrictModule, NonTrainableState):
     realization_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedBalanceLawRuntime,
@@ -37,8 +39,6 @@ class BalanceLawCheckpointPlan(StrictModule, NonTrainableState):
         *,
         realization_id: str | None = None,
     ) -> None:
-        if not isinstance(runtime, PreparedBalanceLawRuntime):
-            raise TypeError("runtime must be PreparedBalanceLawRuntime.")
         if not runtime.transport.checkpoint_supported:
             raise TypeError(
                 "Balance-law transport does not support portable checkpoints."

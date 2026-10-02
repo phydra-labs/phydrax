@@ -34,7 +34,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
 from ...linalg import AbstractLinearOperator, AbstractVectorSpace
-from ...typing import parse
+from ...typing import checked, parse
 from ._parameters import RuntimeInput
 
 
@@ -109,6 +109,7 @@ class LinearContribution(AbstractContribution, NonTrainableState):
     law_id: str = eqx.field(static=True)
     imposition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         target: ContributionEndpoint,
@@ -123,8 +124,6 @@ class LinearContribution(AbstractContribution, NonTrainableState):
             source, ContributionEndpoint
         ):
             raise TypeError("target and source must be ContributionEndpoint values.")
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("Contribution operators must be unbatched.")
         law, imposition = _law_identity(law_id, imposition_id)
@@ -157,6 +156,7 @@ class LoadContribution(AbstractContribution, NonTrainableState):
     law_id: str = eqx.field(static=True)
     imposition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         target: ContributionEndpoint,
@@ -166,8 +166,6 @@ class LoadContribution(AbstractContribution, NonTrainableState):
         law_id: str,
         imposition_id: str,
     ) -> None:
-        if not isinstance(target, ContributionEndpoint):
-            raise TypeError("target must be a ContributionEndpoint.")
         array = jnp.asarray(values)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             raise TypeError("Load values must be floating point.")
@@ -225,6 +223,7 @@ class ResidualContribution(AbstractContribution, NonTrainableState):
     law_id: str = eqx.field(static=True)
     imposition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         targets: tuple[ContributionEndpoint, ...],
@@ -243,8 +242,6 @@ class ResidualContribution(AbstractContribution, NonTrainableState):
                 raise TypeError(f"{name} must be a tuple of ContributionEndpoint values.")
         if not targets or not sources:
             raise ValueError("A residual contribution reads and writes at least once.")
-        if not isinstance(residual, AbstractContributionResidual):
-            raise TypeError("residual must be an AbstractContributionResidual.")
         if not isinstance(affine, bool):
             raise TypeError("affine must be a bool.")
         law, imposition = _law_identity(law_id, imposition_id)
@@ -357,10 +354,9 @@ class LawBlock(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     space: AbstractVectorSpace
 
+    @checked
     def __init__(self, name: str, space: AbstractVectorSpace, /) -> None:
         name_ = canonical_identifier(name, "name")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         self.name = name_
         self.space = space
 
@@ -406,10 +402,9 @@ class LawImposition(StrictModule, NonTrainableState):
         self.rows = jnp.asarray(rows_)
         self.imposition_id = canonical_identifier(imposition_id, "imposition_id")
 
+    @checked
     def overlaps(self, other: LawImposition, /) -> bool:
         """Whether both impositions act on a common facet of one field."""
-        if not isinstance(other, LawImposition):
-            raise TypeError("other must be a LawImposition.")
         return bool(
             self.component == other.component
             and self.field_space_id == other.field_space_id

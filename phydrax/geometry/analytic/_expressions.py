@@ -14,7 +14,7 @@ import numpy as np
 from jax import Array
 
 from ..._mass import Mass
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -57,6 +57,7 @@ class Translation(GeometrySource):
     offset: Array
     feature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         child: GeometrySource,
@@ -64,8 +65,6 @@ class Translation(GeometrySource):
         *,
         feature_id: str | None = None,
     ) -> None:
-        if not isinstance(child, GeometrySource):
-            raise TypeError("Translation.child must be a GeometrySource.")
         offset_ = np.asarray(offset, dtype=np.float64)
         if offset_.ndim != 1 or offset_.size == 0:
             raise ValueError("Translation.offset must be a non-empty vector.")

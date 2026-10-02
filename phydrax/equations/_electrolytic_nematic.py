@@ -15,6 +15,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._electrochemistry import (
     AbstractElectrochemicalClosure,
     ElectrolyteTransportParameters,
@@ -34,6 +35,7 @@ class ElectrolyticNematicParameters(StrictModule, NonTrainableState):
     anisotropic_permittivity: Array
     parameters_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         nematic: LandauDeGennesParameters,
@@ -43,10 +45,6 @@ class ElectrolyticNematicParameters(StrictModule, NonTrainableState):
         anisotropic_permittivity: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(nematic, LandauDeGennesParameters):
-            raise TypeError("nematic must be LandauDeGennesParameters.")
-        if not isinstance(electrolyte, ElectrolyteTransportParameters):
-            raise TypeError("electrolyte must be ElectrolyteTransportParameters.")
         coupling = jnp.asarray(ion_nematic_coupling)
         isotropic = jnp.asarray(isotropic_permittivity, dtype=coupling.dtype)
         anisotropic = jnp.asarray(anisotropic_permittivity, dtype=coupling.dtype)
@@ -93,18 +91,13 @@ class ElectrolyticNematicClosure(StrictModule, NonTrainableState):
     electrochemical: AbstractElectrochemicalClosure
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         nematic: LandauDeGennesClosure,
         electrochemical: AbstractElectrochemicalClosure,
         /,
     ) -> None:
-        if not isinstance(nematic, LandauDeGennesClosure):
-            raise TypeError("nematic must be LandauDeGennesClosure.")
-        if not isinstance(electrochemical, AbstractElectrochemicalClosure):
-            raise TypeError(
-                "electrochemical must implement AbstractElectrochemicalClosure."
-            )
         self.nematic = nematic
         self.electrochemical = electrochemical
         self.closure_id = canonical_fingerprint(

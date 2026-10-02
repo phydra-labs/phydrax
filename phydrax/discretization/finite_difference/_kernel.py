@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 PatchExecutionKind: TypeAlias = Literal["vmap", "lax_map"]
@@ -86,9 +86,8 @@ class PreparedPatchKernel(StrictModule, NonTrainableState):
     offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PatchKernelPlan, input_shape: Sequence[int], /) -> None:
-        if not isinstance(plan, PatchKernelPlan):
-            raise TypeError("plan must be a PatchKernelPlan.")
         shape = tuple(input_shape)
         if len(shape) != len(plan.kernel_shape) or any(
             kernel > size

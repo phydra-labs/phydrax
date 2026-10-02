@@ -14,6 +14,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 class BatteryRunStatus(IntEnum):
@@ -244,6 +245,7 @@ class BatteryExperimentResult(StrictModule):
     distribution_id: str | None = eqx.field(static=True)
     validity_envelope_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         native_solution: Any,
@@ -272,10 +274,6 @@ class BatteryExperimentResult(StrictModule):
         status = jnp.asarray(application_status, dtype=jnp.int32)
         if status.shape != ():
             raise ValueError("Battery application status must be one scalar code.")
-        if not isinstance(outputs, BatterySelectedOutputs):
-            raise TypeError("outputs must be BatterySelectedOutputs.")
-        if not isinstance(termination, BatteryTermination):
-            raise TypeError("termination must be BatteryTermination.")
         admission_ids = (
             numerical_admission_id,
             predictive_admission_id,

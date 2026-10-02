@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import intersect_tetrahedra
+from ...typing import checked
 from .._cell_mesh import CellMesh
 
 
@@ -27,9 +28,8 @@ class HydroelasticPressureFieldPlan(StrictModule, NonTrainableState):
     cell_global_ids: Array
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mesh: CellMesh, /) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         if (
             mesh.topological_dimension != 3
             or mesh.ambient_dimension != 3

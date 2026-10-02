@@ -19,7 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._basis import bitmap_axes, wedge_sign
-from ...typing import parse
+from ...typing import checked, parse
 from ._blades import CliffordBladeLayout
 from ._reports import CliffordProductEvidence
 from ._resources import CliffordResourceEvidence
@@ -110,6 +110,7 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
     evidence: CliffordProductEvidence
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: CliffordAlgebraSpec,
@@ -121,8 +122,6 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
         output_layout: CliffordBladeLayout | None = None,
         backend: Literal["auto", "dense", "sparse"] = "auto",
     ) -> None:
-        if not isinstance(algebra, CliffordAlgebraSpec):
-            raise TypeError("algebra must be a CliffordAlgebraSpec.")
         for layout in (left_layout, right_layout):
             if not isinstance(layout, CliffordBladeLayout):
                 raise TypeError("Clifford product layouts must be CliffordBladeLayout.")

@@ -35,6 +35,7 @@ from ..optim import (
 )
 from ..solver._differential import DifferentialProblem
 from ..solver._diffrax_backend import solve_diffrax
+from ..typing import checked
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
@@ -75,6 +76,7 @@ class MultipleShootingDecisionLayout(StrictModule):
     state_slice: tuple[int, int] = eqx.field(static=True)
     control_slice: tuple[int, int] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         num_steps: int,
@@ -84,8 +86,6 @@ class MultipleShootingDecisionLayout(StrictModule):
         /,
     ) -> None:
         steps = int(num_steps)
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         geometry = state_layout.geometry
         if (
             not geometry.supports_exact_inverse

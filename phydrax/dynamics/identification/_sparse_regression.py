@@ -28,7 +28,7 @@ from ...linalg import (
     RankPolicy,
     solve,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._sindy_design import SINDyDesign
 from ._status import (
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -200,9 +200,8 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         self.unbiased_refit = bool(unbiased_refit)
         self.zero_tolerance = resolved_zero
 
+    @checked
     def fit(self, design: SINDyDesign, /) -> SparseRegressionResult:
-        if not isinstance(design, SINDyDesign):
-            raise TypeError("design must be a SINDyDesign.")
         thresholds = jnp.asarray(
             _thresholds(self.thresholds, design.output_size),
             dtype=design.matrix.dtype,
@@ -427,9 +426,8 @@ class DenseBlockRidgeRegression(AbstractSparseRegression):
             }
         )
 
+    @checked
     def fit(self, design: SINDyDesign, /) -> SparseRegressionResult:
-        if not isinstance(design, SINDyDesign):
-            raise TypeError("design must be a SINDyDesign.")
         if sum(self.block_sizes) != design.num_features:
             raise ValueError("block_sizes must exactly partition the SINDy features.")
         normalized = normalize_least_squares_design(

@@ -18,6 +18,7 @@ from ...discretization.particle import (
     RadialShellMeshPlan,
     RadialSpeciesTransportPlan,
 )
+from ...typing import checked
 
 
 class BatteryParticleEvaluation(StrictModule):
@@ -104,9 +105,8 @@ class PreparedBatteryParticle(StrictModule, NonTrainableState):
     transport: PreparedRadialSpeciesTransport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: BatteryParticlePlan, /) -> None:
-        if not isinstance(plan, BatteryParticlePlan):
-            raise TypeError("plan must be a BatteryParticlePlan.")
         mesh = plan.mesh.prepare()
         transport = RadialSpeciesTransportPlan(
             1,

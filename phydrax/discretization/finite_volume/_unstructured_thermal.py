@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -78,6 +78,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
     boundaries: tuple[UnstructuredThermalBoundaryCondition, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -91,8 +92,6 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
         ]
         | None = None,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Thermal diffusion requires unstructured FV geometry.")
         conductivity0 = float(phase0_conductivity)
         conductivity1 = float(phase1_conductivity)
         if (

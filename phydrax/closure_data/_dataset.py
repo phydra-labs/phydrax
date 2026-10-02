@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 DatasetSplit: TypeAlias = Literal["train", "validation", "test"]
@@ -451,11 +451,10 @@ class ClosureSample(StrictModule, NonTrainableState):
     schema_id: str = eqx.field(static=True)
     sample_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, values: ArrayLike, key: ClosureSampleKey, /, *, schema_id: str
     ) -> None:
-        if not isinstance(key, ClosureSampleKey):
-            raise TypeError("key must be a ClosureSampleKey.")
         array = jnp.asarray(values)
         schema = str(schema_id).strip()
         if array.ndim < 1 or not schema or not jnp.issubdtype(array.dtype, jnp.inexact):
@@ -578,14 +577,13 @@ class LeakageSafePartition(StrictModule, NonTrainableState):
     assignments: tuple[PartitionAssignment, ...]
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LeakageSafePartitionPlan,
         assignments: tuple[PartitionAssignment, ...],
         /,
     ) -> None:
-        if not isinstance(plan, LeakageSafePartitionPlan):
-            raise TypeError("plan must be a LeakageSafePartitionPlan.")
         values = tuple(assignments)
         if not values or any(
             not isinstance(value, PartitionAssignment) for value in values
@@ -681,6 +679,7 @@ class TrainOnlyNormalizer(StrictModule, NonTrainableState):
     epsilon: float = eqx.field(static=True)
     normalizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mean: ArrayLike,
@@ -690,8 +689,6 @@ class TrainOnlyNormalizer(StrictModule, NonTrainableState):
         *,
         epsilon: float,
     ) -> None:
-        if not isinstance(provenance, NormalizerProvenance):
-            raise TypeError("provenance must be NormalizerProvenance.")
         mean_ = jnp.asarray(mean)
         scale_ = jnp.asarray(scale)
         epsilon_ = float(epsilon)
@@ -719,6 +716,7 @@ class TrainOnlyNormalizer(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def fit(
         cls,
         samples: tuple[ClosureSample, ...],
@@ -728,8 +726,6 @@ class TrainOnlyNormalizer(StrictModule, NonTrainableState):
         feature_name: str,
         epsilon: float = 1e-8,
     ) -> TrainOnlyNormalizer:
-        if not isinstance(partition, LeakageSafePartition):
-            raise TypeError("partition must be a LeakageSafePartition.")
         sample_values = tuple(samples)
         if not sample_values or any(
             not isinstance(value, ClosureSample) for value in sample_values

@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 
 
 ExternalChannelRole: TypeAlias = Literal["coordinate", "actuator", "sensor"]
@@ -386,6 +386,7 @@ class ExternalModelDescriptor(StrictModule, NonTrainableState):
     force_owner: str = eqx.field(static=True)
     descriptor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -400,8 +401,6 @@ class ExternalModelDescriptor(StrictModule, NonTrainableState):
         sensor_map: tuple[ExternalModelChannelBinding, ...],
         force_owner: str,
     ) -> None:
-        if not isinstance(source, ExternalModelSource):
-            raise TypeError("source must be ExternalModelSource.")
         asset_values = tuple(assets)
         if not asset_values or not all(
             isinstance(value, ExternalModelAsset) for value in asset_values
@@ -417,8 +416,6 @@ class ExternalModelDescriptor(StrictModule, NonTrainableState):
             raise TypeError(
                 "transformations must contain the explicit ordered compile chain."
             )
-        if not isinstance(dimensions, ExternalModelDimensionalContract):
-            raise TypeError("dimensions must be ExternalModelDimensionalContract.")
         versions = _version_pairs(provider_versions, "provider_versions")
         compiled = _sha256(compiled_sha256, "compiled_sha256")
         coordinate = self._mapping(coordinate_map, "coordinate")

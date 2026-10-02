@@ -26,6 +26,7 @@ from ..discretization import (
     ParticleSetPlan,
     PeriodicCell,
 )
+from ..typing import checked
 
 
 class AtomisticSiteDomain(StrEnum):
@@ -336,13 +337,10 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
     pair_right: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: AtomisticCoordinateMapPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, AtomisticCoordinateMapPlan):
-            raise TypeError("plan must be AtomisticCoordinateMapPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         if not np.array_equal(
             np.asarray(plan.dof_particle_ids), np.asarray(particles.particle_ids)
         ):

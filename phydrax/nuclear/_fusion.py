@@ -18,6 +18,7 @@ from phydrax._interpolation import linear_interpolate
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._identity import NuclearSpeciesTable
 from ._reaction import NuclearReactionChannel
 
@@ -38,6 +39,7 @@ class TabulatedMaxwellianReactivity(StrictModule, NonTrainableState):
     data_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermal_energy_j: ArrayLike,
@@ -45,8 +47,6 @@ class TabulatedMaxwellianReactivity(StrictModule, NonTrainableState):
         channel: NuclearReactionChannel,
         /,
     ) -> None:
-        if not isinstance(channel, NuclearReactionChannel):
-            raise TypeError("channel must be NuclearReactionChannel.")
         energy_host = np.asarray(thermal_energy_j, dtype=np.float64)
         reactivity_host = np.asarray(reactivity_m3_s, dtype=np.float64)
         if (
@@ -132,6 +132,7 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
     channel_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         channel: NuclearReactionChannel,
@@ -139,12 +140,6 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
         species: NuclearSpeciesTable,
         /,
     ) -> None:
-        if not isinstance(channel, NuclearReactionChannel):
-            raise TypeError("channel must be NuclearReactionChannel.")
-        if not isinstance(reactivity, TabulatedMaxwellianReactivity):
-            raise TypeError("reactivity must be TabulatedMaxwellianReactivity.")
-        if not isinstance(species, NuclearSpeciesTable):
-            raise TypeError("species must be NuclearSpeciesTable.")
         if reactivity.channel_id != channel.channel_id:
             raise ValueError("Reactivity and reaction channel identities disagree.")
         if channel.mass_table_id != species.table_id:

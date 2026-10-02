@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 class FermionModeOrder(StrictModule):
@@ -42,11 +43,10 @@ class FermionModeOrder(StrictModule):
             raise ValueError(f"Fermion mode {value!r} is absent from the order.")
         return self.labels.index(value)
 
+    @checked
     def permutation(self, target: FermionModeOrder, /) -> tuple[int, ...]:
         """Return source ordinals in target order, rejecting different mode sets."""
 
-        if not isinstance(target, FermionModeOrder):
-            raise TypeError("target must be FermionModeOrder.")
         if set(target.labels) != set(self.labels):
             raise ValueError("Fermion mode orders must contain exactly the same labels.")
         return tuple(self.ordinal(label) for label in target.labels)
@@ -78,9 +78,8 @@ class FermionicFockBasis(StrictModule):
     dimension: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mode_order: FermionModeOrder, /) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         self.mode_order = mode_order
         self.mode_count = mode_order.mode_count
         self.dimension = 1 << mode_order.mode_count
@@ -127,9 +126,8 @@ class FermionLadderOperator(StrictModule):
     mode_index: int = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mode_order: FermionModeOrder, mode: str, action: str, /) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         action_ = str(action)
         if action_ not in ("create", "annihilate"):
             raise ValueError("action must be create or annihilate.")
@@ -171,14 +169,13 @@ class CARMonomial(StrictModule):
     operations: tuple[FermionLadderOperator, ...]
     monomial_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode_order: FermionModeOrder,
         operations: Sequence[FermionLadderOperator | tuple[str, str]] = (),
         /,
     ) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         selected: list[FermionLadderOperator] = []
         for operation in operations:
             if isinstance(operation, FermionLadderOperator):
@@ -237,14 +234,13 @@ class CARPolynomial(StrictModule):
     coefficients: Array
     polynomial_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode_order: FermionModeOrder,
         terms: Sequence[tuple[ArrayLike, CARMonomial | Sequence[tuple[str, str]]]],
         /,
     ) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         values = tuple(terms)
         if not values:
             raise ValueError("A CAR polynomial requires at least one term.")

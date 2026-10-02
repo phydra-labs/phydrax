@@ -13,6 +13,7 @@ from enum import StrEnum
 
 from .._fingerprint import canonical_fingerprint
 from ..lifecycle import ArrayArtifactProvenance
+from ..typing import checked
 from ._registry import ReleaseGateEvidence, SupportTuple
 
 
@@ -72,6 +73,7 @@ class FrontierClosureObligation:
     nonclaims: tuple[str, ...]
     obligation_id: str
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -82,8 +84,6 @@ class FrontierClosureObligation:
         *,
         nonclaims: Sequence[str] = (),
     ) -> None:
-        if not isinstance(support_tuple, SupportTuple):
-            raise TypeError("support_tuple must be SupportTuple.")
         name_ = _identifier(name, "obligation name")
         sources = _identifiers(source_ids, "source ID")
         gates = tuple(sorted(set(required_gates), key=lambda item: item.value))

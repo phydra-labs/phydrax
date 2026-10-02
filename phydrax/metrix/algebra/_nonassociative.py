@@ -26,6 +26,7 @@ from ...linalg import (
     matrix_exponential_action,
     solve,
 )
+from ...typing import checked
 from ._cayley_dickson import OctonionAlgebraSpec
 from ._product import AlgebraProductPlan
 
@@ -45,11 +46,10 @@ class UnitOctonionStateGeometry(StrictModule):
     tolerance: float = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, product: AlgebraProductPlan, /, *, tolerance: float = 1e-8
     ) -> None:
-        if not isinstance(product, AlgebraProductPlan):
-            raise TypeError("Unit octonion geometry requires a prepared algebra product.")
         canonical_octonion = (
             product.algebra.algebra_id == _canonical_octonion_algebra_id()
         )

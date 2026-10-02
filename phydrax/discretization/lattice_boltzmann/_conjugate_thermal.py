@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._thermal import ThermalLatticeBoltzmannPlan
 
 
@@ -104,6 +105,7 @@ class ConjugateThermalPlan(StrictModule, NonTrainableState):
     model_label: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fluid: ThermalLatticeBoltzmannPlan,
@@ -114,8 +116,6 @@ class ConjugateThermalPlan(StrictModule, NonTrainableState):
         contact_resistance: ArrayLike = 0.0,
         model_label: str = "passive-sensible-energy-conjugate-thermal",
     ) -> None:
-        if not isinstance(fluid, ThermalLatticeBoltzmannPlan):
-            raise TypeError("fluid must be a ThermalLatticeBoltzmannPlan.")
         capacity = np.asarray(solid_volumetric_heat_capacity, dtype=np.float64)
         conductivity = np.asarray(solid_thermal_conductivity, dtype=np.float64)
         contact = np.asarray(contact_resistance, dtype=np.float64)
@@ -167,9 +167,8 @@ class ConjugateThermalPlan(StrictModule, NonTrainableState):
         successful = jnp.all(jnp.isfinite(value)) & jnp.all(jnp.isfinite(energy))
         return SolidThermalEnergyState(energy, successful, step_index, self.plan_id)
 
+    @checked
     def solid_temperature(self, state: SolidThermalEnergyState, /) -> Array:
-        if not isinstance(state, SolidThermalEnergyState):
-            raise TypeError("state must be SolidThermalEnergyState.")
         if state.plan_id != self.plan_id:
             raise ValueError("Solid state belongs to a different conjugate-thermal plan.")
         return (
@@ -238,6 +237,7 @@ class PreparedConjugateThermalPlan(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ConjugateThermalPlan,
@@ -246,8 +246,6 @@ class PreparedConjugateThermalPlan(StrictModule, NonTrainableState):
         geometry_id: str,
         /,
     ) -> None:
-        if not isinstance(plan, ConjugateThermalPlan):
-            raise TypeError("plan must be ConjugateThermalPlan.")
         conductance_ = jnp.asarray(conductance)
         measure = jnp.asarray(interface_measure, dtype=conductance_.dtype)
         if conductance_.ndim == 0 or conductance_.shape != measure.shape:
@@ -269,14 +267,13 @@ class PreparedConjugateThermalPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def interface_flux(
         self,
         fluid_sensible_energy: ArrayLike,
         solid_state: SolidThermalEnergyState,
         /,
     ) -> ConjugateThermalInterfaceFlux:
-        if not isinstance(solid_state, SolidThermalEnergyState):
-            raise TypeError("solid_state must be SolidThermalEnergyState.")
         if solid_state.plan_id != self.plan.plan_id:
             raise ValueError("Solid state belongs to a different conjugate-thermal plan.")
         fluid_energy = jnp.asarray(fluid_sensible_energy)

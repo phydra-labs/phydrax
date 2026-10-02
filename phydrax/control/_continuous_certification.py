@@ -21,6 +21,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._direct_collocation import DirectCollocationResult
 
 
@@ -343,6 +344,7 @@ class CertifiedPathConstraint(StrictModule, NonTrainableState):
     envelope: AbstractPathConstraintEnvelope
     constraint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         residual: Callable[[Array, Array, Array, Any], Array],
@@ -353,8 +355,6 @@ class CertifiedPathConstraint(StrictModule, NonTrainableState):
     ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
-        if not isinstance(envelope, AbstractPathConstraintEnvelope):
-            raise TypeError("envelope must be an AbstractPathConstraintEnvelope.")
         self.residual = residual
         self.envelope = envelope
         self.constraint_id = canonical_fingerprint(

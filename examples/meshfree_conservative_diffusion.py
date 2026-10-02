@@ -14,12 +14,12 @@ import scipy.sparse.linalg as spla
 from jax import Array
 
 from benchmarks._runtime import logical_array_bytes
-from phydrax.discretization.meshfree._exterior import MeshfreeExteriorCalculusPlan
-from phydrax.discretization.meshfree._exterior_metric import (
+from phydrax.discretization.meshfree import (
+    MeshfreeAdvection,
+    MeshfreeExteriorCalculusPlan,
     MeshfreeMetricPolicy,
     PreparedMeshfreeMetric,
 )
-from phydrax.discretization.meshfree._exterior_transport import MeshfreeAdvection
 from phydrax.sparse import EdgeRelation, linear_apply
 
 

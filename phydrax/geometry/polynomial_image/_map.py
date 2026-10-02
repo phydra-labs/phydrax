@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...algebraic._exact import ExactSparsePolynomialSystem, QQ
 from ...algebraic._system import SparsePolynomialSystem
+from ...typing import checked
 
 
 class SparsePolynomialMap(StrictModule):
@@ -31,6 +32,7 @@ class SparsePolynomialMap(StrictModule):
     exact_system: ExactSparsePolynomialSystem | None
     map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: SparsePolynomialSystem,
@@ -38,8 +40,6 @@ class SparsePolynomialMap(StrictModule):
         *,
         exact_system: ExactSparsePolynomialSystem | None = None,
     ) -> None:
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be a SparsePolynomialSystem.")
         if exact_system is not None:
             if not isinstance(exact_system, ExactSparsePolynomialSystem):
                 raise TypeError(
@@ -73,6 +73,7 @@ class SparsePolynomialMap(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_exact(
         cls,
         system: ExactSparsePolynomialSystem,
@@ -82,8 +83,6 @@ class SparsePolynomialMap(StrictModule):
     ) -> SparsePolynomialMap:
         """Construct matching numerical evaluation data from one exact QQ system."""
 
-        if not isinstance(system, ExactSparsePolynomialSystem):
-            raise TypeError("system must be an ExactSparsePolynomialSystem.")
         if system.domain.domain_id != QQ.domain_id:
             raise ValueError("SparsePolynomialMap.from_exact requires QQ coefficients.")
         dtype_ = jnp.dtype(dtype)

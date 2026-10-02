@@ -27,6 +27,7 @@ from ..dynamics.analysis import (
     ShadowingSensitivityProblem,
 )
 from ..dynamics.analysis._shadowing import _quadrature_weights
+from ..typing import checked
 from ._shadowing_solve import (
     AbstractShadowingSolvePlan,
     orthonormalize_shadowing_basis,
@@ -160,6 +161,7 @@ class NILSSPlan(AbstractShadowingSolvePlan):
         self.memory_mode = memory
         self.plan_id = shadowing_plan_id("nilss", values, memory)
 
+    @checked
     def prepare(
         self,
         problem: ShadowingSensitivityProblem,
@@ -171,10 +173,6 @@ class NILSSPlan(AbstractShadowingSolvePlan):
         initial_basis: ArrayLike | None = None,
         key: Array | None = None,
     ) -> "PreparedNILSS":
-        if not isinstance(problem, ShadowingSensitivityProblem):
-            raise TypeError("problem must be a ShadowingSensitivityProblem.")
-        if not isinstance(trajectory, EvolutionTrajectory):
-            raise TypeError("trajectory must be an EvolutionTrajectory.")
         if problem.evolution.eventful:
             raise ValueError("NILSS requires event-free evolution segments.")
         if problem.evolution.stochastic:

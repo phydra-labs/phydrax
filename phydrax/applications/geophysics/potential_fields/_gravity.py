@@ -19,6 +19,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellMesh
 from ....interchange import GeospatialContract
+from ....typing import checked
 
 
 GRAVITATIONAL_CONSTANT_M3_KG_S2 = 6.67430e-11
@@ -132,6 +133,7 @@ class FreeSpaceGravityPlan(StrictModule, NonTrainableState):
     coordinates: GeospatialContract
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: GravityQuadratureSource,
@@ -142,10 +144,6 @@ class FreeSpaceGravityPlan(StrictModule, NonTrainableState):
         minimum_separation_m: float,
         block_size: int = 4096,
     ) -> None:
-        if not isinstance(source, GravityQuadratureSource):
-            raise TypeError("Free-space gravity requires GravityQuadratureSource.")
-        if not isinstance(coordinates, GeospatialContract):
-            raise TypeError("Gravity observations require GeospatialContract.")
         coordinates.require_cartesian(dimensions=3)
         observations = np.asarray(observations_m, dtype=np.float64)
         separation, block = float(minimum_separation_m), int(block_size)

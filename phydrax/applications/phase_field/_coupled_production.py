@@ -20,6 +20,7 @@ from ...solver import (
     ProductionRunPlan,
     RobustRetryPolicy,
 )
+from ...typing import checked
 from ._multiphysics import (
     CoupledMultiphysicsPlan,
     CoupledMultiphysicsState,
@@ -136,9 +137,8 @@ class CoupledMultiphysicsFixedStepMethod(AbstractFixedStepMethod, NonTrainableSt
     plan: CoupledMultiphysicsPlan
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CoupledMultiphysicsPlan, /) -> None:
-        if not isinstance(plan, CoupledMultiphysicsPlan):
-            raise TypeError("plan must be CoupledMultiphysicsPlan.")
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {

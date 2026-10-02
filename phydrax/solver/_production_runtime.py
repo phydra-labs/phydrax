@@ -57,7 +57,7 @@ from ..lifecycle._migration import MigrationReport
 from ..lifecycle._repository import ObjectNotFoundError
 from ..lifecycle._resolved_run import ResolvedRunSpec
 from ..logging import emit
-from ..typing import parse
+from ..typing import checked, parse
 from ._fixed_step import (
     _canonical_structured_state,
     _state_dtype,
@@ -532,13 +532,12 @@ class DurableCheckpointStore:
             pointer["archive_sha256"],
         )
 
+    @checked
     def verify_commit(
         self, receipt: CheckpointCommitReceipt, /
     ) -> CheckpointCommitReceipt:
         """Verify a receipt against the currently published durable pointer."""
 
-        if not isinstance(receipt, CheckpointCommitReceipt):
-            raise TypeError("receipt must be CheckpointCommitReceipt.")
         pointer = self._read_pointer()
         expected = self._receipt(pointer)
         if receipt != expected:
@@ -555,11 +554,10 @@ class DurableCheckpointStore:
             raise ValueError("Durable checkpoint archive integrity changed.")
         return expected
 
+    @checked
     def receipt_for(
         self, envelope: RuntimeCheckpointEnvelope, /
     ) -> CheckpointCommitReceipt:
-        if not isinstance(envelope, RuntimeCheckpointEnvelope):
-            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
         receipt = self.verify_commit(self._receipt(self._read_pointer()))
         if (
             receipt.checkpoint_id != envelope.checkpoint_id
@@ -570,11 +568,10 @@ class DurableCheckpointStore:
             raise ValueError("Durable checkpoint does not match the runtime envelope.")
         return receipt
 
+    @checked
     def generation_for_commit(self, envelope: RuntimeCheckpointEnvelope, /) -> int:
         """Select the store sequence without conflating it with accepted steps."""
 
-        if not isinstance(envelope, RuntimeCheckpointEnvelope):
-            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
         if not _entry_exists(self._root_descriptor, "committed.json"):
             return 0
         current = self.verify_commit(self._receipt(self._read_pointer()))
@@ -735,6 +732,7 @@ class ArtifactCheckpointStore:
 
     transactional_outbox = True
 
+    @checked
     def __init__(
         self,
         repository: ArtifactRepository,
@@ -752,10 +750,6 @@ class ArtifactCheckpointStore:
             policy, CheckpointGenerationPolicy
         ):
             raise TypeError("Artifact checkpoint store requires manifest and policy.")
-        if not isinstance(resolved_run_spec, ResolvedRunSpec):
-            raise TypeError("resolved_run_spec must be ResolvedRunSpec.")
-        if not isinstance(resource_request, ResourceRequest):
-            raise TypeError("resource_request must be ResourceRequest.")
         if resource_request.resource_id != resolved_run_spec.resource_policy_id:
             raise ValueError(
                 "Resolved resource policy does not match the checkpoint request."
@@ -1258,13 +1252,12 @@ class ArtifactCheckpointStore:
             hashlib.sha256(durable_payload).hexdigest(),
         )
 
+    @checked
     def verify_commit(
         self, receipt: CheckpointCommitReceipt, /
     ) -> CheckpointCommitReceipt:
         """Verify a receipt against the repository's readable commit target."""
 
-        if not isinstance(receipt, CheckpointCommitReceipt):
-            raise TypeError("receipt must be CheckpointCommitReceipt.")
         committed = self.repository.get_manifest(self.artifact_id)
         self.checkpoint_resources.validate_manifest(committed)
         expected = self._receipt_from_manifest(committed)
@@ -1272,11 +1265,10 @@ class ArtifactCheckpointStore:
             raise ValueError("Checkpoint receipt does not match repository state.")
         return expected
 
+    @checked
     def receipt_for(
         self, envelope: RuntimeCheckpointEnvelope, /
     ) -> CheckpointCommitReceipt:
-        if not isinstance(envelope, RuntimeCheckpointEnvelope):
-            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
         receipt = self.verify_commit(
             self._receipt_from_manifest(self.repository.get_manifest(self.artifact_id))
         )
@@ -1289,11 +1281,10 @@ class ArtifactCheckpointStore:
             raise ValueError("Repository commit does not match the runtime envelope.")
         return receipt
 
+    @checked
     def generation_for_commit(self, envelope: RuntimeCheckpointEnvelope, /) -> int:
         """Select the repository sequence without conflating accepted steps."""
 
-        if not isinstance(envelope, RuntimeCheckpointEnvelope):
-            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
         current = self._last_receipt
         if current is None:
             try:

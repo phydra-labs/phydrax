@@ -33,6 +33,7 @@ from ..measurement import (
     TemporalSamplingKind,
     ValueKind,
 )
+from ..typing import checked
 from ..units import (
     BECQUEREL,
     BECQUEREL_PER_CUBIC_METER,
@@ -461,9 +462,8 @@ class TimeActivityIntegrationPlan:
             self.plan_id,
         )
 
+    @checked
     def integrate(self, series: TimeActivitySeries, /) -> TimeActivityIntegrationResult:
-        if not isinstance(series, TimeActivitySeries):
-            raise TypeError("series must be TimeActivitySeries.")
         if series.time_axis.time_axis_id != self.time_axis.time_axis_id:
             raise ValueError(
                 "Time-activity series and integration plan use different axes."

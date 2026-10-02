@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import checked
 from ._registry import CapabilityProfile, SupportTuple
 
 
@@ -134,6 +135,7 @@ class CoreQualificationObservation:
     metrics: tuple[tuple[str, float], ...]
     observation_id: str
 
+    @checked
     def __init__(
         self,
         profile: CapabilityProfile,
@@ -141,8 +143,6 @@ class CoreQualificationObservation:
         metrics: Mapping[str, float],
         /,
     ) -> None:
-        if not isinstance(profile, CapabilityProfile):
-            raise TypeError("profile must be CapabilityProfile.")
         gates = tuple(
             sorted((str(name), bool(value)) for name, value in gate_results.items())
         )

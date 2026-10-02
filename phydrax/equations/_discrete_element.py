@@ -34,6 +34,7 @@ from ..discretization.particle import (
     VerletParticleNeighborhoodPlan,
 )
 from ..discretization.particle._dem import DEMExternalLoad, DEMRuntimeState
+from ..typing import checked
 from ._dem_material import DEMMaterialTable
 
 
@@ -51,6 +52,7 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
     external_load_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -66,8 +68,6 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
         name_ = str(name)
         if not name_:
             raise ValueError("Discrete-element problem name must be nonempty.")
-        if not isinstance(materials, DEMMaterialTable):
-            raise TypeError("materials must be a DEMMaterialTable.")
         gravity_host = np.asarray(gravity)
         if gravity_host.ndim != 1 or gravity_host.size not in (2, 3):
             raise ValueError("gravity must be a vector of dimension 2 or 3.")
@@ -114,6 +114,7 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: DiscreteElementProblemIR,
@@ -121,12 +122,6 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
         discretization_bundle: DiscretizationBundle,
         /,
     ) -> None:
-        if not isinstance(problem, DiscreteElementProblemIR):
-            raise TypeError("problem must be a DiscreteElementProblemIR.")
-        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
-        if not isinstance(discretization_bundle, DiscretizationBundle):
-            raise TypeError("discretization_bundle must be a DiscretizationBundle.")
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = discretization_bundle

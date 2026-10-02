@@ -46,6 +46,7 @@ from ...equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ...linalg import LinearSolveControl, LinearSolveStatus
 from ...nn.operator.data import FunctionSamples, OperatorBatch
 from ...nn.operator.engine import AbstractOperatorModel
+from ...typing import checked
 
 
 # Domain reason bits of the incompressible learned transitions.
@@ -78,6 +79,7 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractOperatorModel,
@@ -87,8 +89,6 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
         source_name: str,
         target_name: str,
     ) -> None:
-        if not isinstance(operator, AbstractOperatorModel):
-            raise TypeError("operator must be an AbstractOperatorModel.")
         if not isinstance(template, OperatorBatch) or template.case_shape:
             raise ValueError("Fixed-grid operator templates must have no case axes.")
         source = str(source_name)
@@ -194,6 +194,7 @@ class PeriodicLearnedStressRolloutTransition(
     base_rate: Callable = eqx.field(static=True)
     base_rate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared_stress: PreparedPeriodicLearnedStress,
@@ -209,10 +210,6 @@ class PeriodicLearnedStressRolloutTransition(
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(prepared_stress, PreparedPeriodicLearnedStress):
-            raise TypeError("prepared_stress must be PreparedPeriodicLearnedStress.")
-        if not isinstance(coordinates, HermitianSpectralCoordinates):
-            raise TypeError("coordinates must be HermitianSpectralCoordinates.")
         if (
             prepared_stress.projector.discretization.prepared_id
             != coordinates.discretization.prepared_id
@@ -266,9 +263,8 @@ class PeriodicLearnedStressRolloutTransition(
             outputs=(plan.output_contract.value_port(),),
         )
 
+    @checked
     def validate_model(self, model: AbstractArrayModel, /) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("Learned stress transitions require AbstractArrayModel.")
         feature_size = prod(self.prepared_stress.binding.plan.feature_schema.shape)
         output_size = prod(self.prepared_stress.binding.plan.output_contract.shape)
         if model.in_size != feature_size or model.out_size != output_size:
@@ -382,6 +378,7 @@ class MACLearnedRateRolloutTransition(
     port_mapping: PortMapping | None
     coarse_relative_residual: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -394,8 +391,6 @@ class MACLearnedRateRolloutTransition(
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None or dynamics.dynamic_les is not None:
             raise ValueError(
                 "MAC learned-rate training requires base dynamics without another LES closure."
@@ -457,9 +452,8 @@ class MACLearnedRateRolloutTransition(
             outputs=(self.state_layout.value_port(role="tangent"),),
         )
 
+    @checked
     def validate_model(self, model: AbstractArrayModel, /) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("MAC learned rates require AbstractArrayModel.")
         if (
             model.in_size != self.state_layout.size
             or model.out_size != self.state_layout.size

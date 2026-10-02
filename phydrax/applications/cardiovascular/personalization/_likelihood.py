@@ -34,6 +34,7 @@ from ....observation import (
     ObservationRecord,
     PrecisionCovarianceAction,
 )
+from ....typing import checked
 
 
 CovarianceAction = PrecisionCovarianceAction | CholeskyCovarianceAction
@@ -135,9 +136,8 @@ class ModalityObservation(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_record(cls, record: ObservationRecord, /) -> "ModalityObservation":
-        if not isinstance(record, ObservationRecord):
-            raise TypeError("record must be an ObservationRecord.")
         return cls(
             record.record_id,
             record.modality,
@@ -179,14 +179,13 @@ class LinearNuisanceModel(StrictModule, NonTrainableState):
     nuisance_count: int = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, basis: ArrayLike, prior: AbstractProbabilityLaw, /) -> None:
         matrix = jax.lax.stop_gradient(jnp.asarray(basis, dtype=jnp.float64))
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
             raise ValueError("Nuisance basis must be a non-empty matrix.")
         if bool(jnp.any(~jnp.isfinite(matrix))):
             raise ValueError("Nuisance basis must be finite.")
-        if not isinstance(prior, AbstractProbabilityLaw):
-            raise TypeError("prior must implement AbstractProbabilityLaw.")
         count = matrix.shape[1]
         prior_shape = tuple(prior.batch_shape) + tuple(prior.event_shape)
         if prior_shape and prior_shape != (count,):
@@ -326,6 +325,7 @@ class ModalityLikelihoodChannel(StrictModule, NonTrainableState):
     output_size: int = eqx.field(static=True)
     channel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observation: ModalityObservation,
@@ -338,8 +338,6 @@ class ModalityLikelihoodChannel(StrictModule, NonTrainableState):
         discrepancy: GaussianModelDiscrepancy | None = None,
         covariance_includes_discrepancy: bool = False,
     ) -> None:
-        if not isinstance(observation, ModalityObservation):
-            raise TypeError("observation must be a ModalityObservation.")
         if (likelihood is None) == (covariance is None):
             raise ValueError(
                 "Provide exactly one existing likelihood or covariance action."
@@ -441,6 +439,7 @@ class ModalityLikelihoodChannel(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def correlated_gaussian(
         cls,
         observation: ModalityObservation,
@@ -453,8 +452,6 @@ class ModalityLikelihoodChannel(StrictModule, NonTrainableState):
     ) -> "ModalityLikelihoodChannel":
         """Prepare total covariance with the native factorization substrate."""
 
-        if not isinstance(observation, ModalityObservation):
-            raise TypeError("observation must be a ModalityObservation.")
         discrepancy_ = (
             GaussianModelDiscrepancy(
                 jnp.zeros(observation.size, dtype=observation.values.dtype)
@@ -640,9 +637,8 @@ class PreparedMultimodalLikelihood(StrictModule, NonTrainableState):
     plan: MultimodalLikelihoodPlan
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MultimodalLikelihoodPlan, /) -> None:
-        if not isinstance(plan, MultimodalLikelihoodPlan):
-            raise TypeError("plan must be a MultimodalLikelihoodPlan.")
         self.plan = plan
         self.runtime_id = canonical_fingerprint(
             {"kind": "prepared-cardiovascular-likelihood", "plan": plan.plan_id}

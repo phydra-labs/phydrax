@@ -24,6 +24,7 @@ from ...rendering import (
     PhotometricResponse,
     PhotometryResult,
 )
+from ...typing import checked
 from ..imaging import DenseDisplacementField2D, ImagePair2D
 from ._common import PIVScenarioKind, SyntheticEvidence
 
@@ -264,6 +265,7 @@ class PIVSyntheticCase(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     scenario_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         image_pair: ImagePair2D,
@@ -310,8 +312,6 @@ class PIVSyntheticCase(StrictModule, NonTrainableState):
             or second_rasterization.geometry_id != image_pair.geometry.geometry_id
         ):
             raise ValueError("PIV rasterization evidence must share the image geometry.")
-        if not isinstance(evidence, SyntheticEvidence):
-            raise TypeError("evidence must be SyntheticEvidence.")
         identifiers = (str(family_id), str(plan_id), str(scenario_id))
         if any(not value for value in identifiers):
             raise ValueError("PIV case identifiers must be non-empty.")

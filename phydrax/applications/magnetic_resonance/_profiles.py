@@ -9,6 +9,7 @@ from __future__ import annotations
 import equinox as eqx
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._spin_system import (
     HyperfineCoupling,
     MagneticResonanceSpinSystem,
@@ -23,9 +24,8 @@ class ExactSingleCrystalNMRProfile(StrictModule):
     system: MagneticResonanceSpinSystem
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, system: MagneticResonanceSpinSystem, /) -> None:
-        if not isinstance(system, MagneticResonanceSpinSystem):
-            raise TypeError("system must be a MagneticResonanceSpinSystem.")
         if any(site.isotope.particle_kind != "nucleus" for site in system.sites):
             raise ValueError("The NMR profile accepts nuclear spin sites only.")
         self.system = system
@@ -41,9 +41,8 @@ class ExactSingleCrystalEPRProfile(StrictModule):
     system: MagneticResonanceSpinSystem
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, system: MagneticResonanceSpinSystem, /) -> None:
-        if not isinstance(system, MagneticResonanceSpinSystem):
-            raise TypeError("system must be a MagneticResonanceSpinSystem.")
         electron_count = sum(
             site.isotope.particle_kind == "electron" for site in system.sites
         )
@@ -79,9 +78,8 @@ class ExactStaticSiteMuonSpinRotationProfile(StrictModule):
     system: MagneticResonanceSpinSystem
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, system: MagneticResonanceSpinSystem, /) -> None:
-        if not isinstance(system, MagneticResonanceSpinSystem):
-            raise TypeError("system must be a MagneticResonanceSpinSystem.")
         muon_count = sum(
             site.isotope.particle_kind == "positive-muon" for site in system.sites
         )

@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier as _canonical_identifier
+from ...typing import checked
 from .._spaces import DiscreteFieldSpace
 
 
@@ -306,6 +307,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
     quadrature_weights: Array
     quadrature_grid_normal_velocity: Array
 
+    @checked
     def __init__(
         self,
         *,
@@ -317,8 +319,6 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         quadrature_weights: ArrayLike,
         quadrature_grid_normal_velocity: ArrayLike,
     ) -> None:
-        if not isinstance(layout, FiniteVolumeStageFaceLayout):
-            raise TypeError("layout must be FiniteVolumeStageFaceLayout.")
 
         centers = jnp.asarray(face_centers)
         vectors = jnp.asarray(area_vectors)
@@ -736,6 +736,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
     face_blocks: tuple[FiniteVolumeStageFaceBlock, ...]
     evidence: FiniteVolumeStageGeometryEvidence
 
+    @checked
     def __init__(
         self,
         *,
@@ -853,8 +854,6 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
             jnp.any(~active & (volume_rate != 0.0)),
             "Inactive mesh_volume_rate entries must be exactly zero.",
         )
-        if not isinstance(evidence, FiniteVolumeStageGeometryEvidence):
-            raise TypeError("evidence must be FiniteVolumeStageGeometryEvidence.")
         if evidence.cell_count != cell_count:
             raise ValueError("Geometry evidence must have one entry per stage cell.")
 

@@ -31,6 +31,7 @@ from ...control import (
     PiecewiseConstantControlParameterization,
 )
 from ...dynamics import TimeGrid
+from ...typing import checked
 from ._forcing import SolenoidalHermitianFourierBasis
 
 
@@ -208,6 +209,7 @@ class SparseTimeAverageObservationOperator(StrictModule, NonTrainableState):
     observation_count: int = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         windows: TimeAverageWindows,
@@ -216,8 +218,6 @@ class SparseTimeAverageObservationOperator(StrictModule, NonTrainableState):
         source_indices: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(windows, TimeAverageWindows):
-            raise TypeError("windows must be TimeAverageWindows.")
         if isinstance(source_size, bool):
             raise TypeError("source_size must be an integer.")
         source_size_ = index(source_size)
@@ -291,6 +291,7 @@ class SparseTimeAverageObservationData(StrictModule, NonTrainableState):
     holdout_count: int = eqx.field(static=True)
     data_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: SparseTimeAverageObservationOperator,
@@ -299,8 +300,6 @@ class SparseTimeAverageObservationData(StrictModule, NonTrainableState):
         training_mask: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(operator, SparseTimeAverageObservationOperator):
-            raise TypeError("operator must be a SparseTimeAverageObservationOperator.")
         observed = _real_array(values, "Sparse observation values")
         uncertainty = _real_array(
             standard_deviations, "Sparse observation standard deviations"
@@ -433,6 +432,7 @@ class PeriodicModelErrorParameterization(AbstractControlParameterization):
     base_forcing_id: str = eqx.field(static=True)
     model_interpretation: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: SolenoidalHermitianFourierBasis,
@@ -441,10 +441,6 @@ class PeriodicModelErrorParameterization(AbstractControlParameterization):
         *,
         base_forcing_id: str,
     ) -> None:
-        if not isinstance(basis, SolenoidalHermitianFourierBasis):
-            raise TypeError("basis must be a SolenoidalHermitianFourierBasis.")
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         forcing_id = _identifier(base_forcing_id, "base_forcing_id")
         parameterization_id = canonical_fingerprint(
             {
@@ -556,9 +552,8 @@ class ModelErrorAssimilationIdentity(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def require_compatible(self, other: ModelErrorAssimilationIdentity, /) -> None:
-        if not isinstance(other, ModelErrorAssimilationIdentity):
-            raise TypeError("other must be a ModelErrorAssimilationIdentity.")
         expected = (
             self.problem_id,
             self.compiler_id,
@@ -611,6 +606,7 @@ class ModelErrorRolloutEvaluator(StrictModule, NonTrainableState):
     evaluator_id: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         identity: ModelErrorAssimilationIdentity,
@@ -621,8 +617,6 @@ class ModelErrorRolloutEvaluator(StrictModule, NonTrainableState):
         rollout_id: str,
         evaluator_id: str,
     ) -> None:
-        if not isinstance(identity, ModelErrorAssimilationIdentity):
-            raise TypeError("identity must be a ModelErrorAssimilationIdentity.")
         if not callable(rollout) or not callable(evaluator):
             raise TypeError("rollout and evaluator must be callable.")
         rollout_name = _identifier(rollout_id, "rollout_id")
@@ -683,6 +677,7 @@ class ModelErrorAssimilationObjective(StrictModule):
     identity: ModelErrorAssimilationIdentity
     objective_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterization: PeriodicModelErrorParameterization,
@@ -696,18 +691,6 @@ class ModelErrorAssimilationObjective(StrictModule):
         compiler_id: str,
         filter_id: str,
     ) -> None:
-        if not isinstance(parameterization, PeriodicModelErrorParameterization):
-            raise TypeError(
-                "parameterization must be PeriodicModelErrorParameterization."
-            )
-        if not isinstance(operator, SparseTimeAverageObservationOperator):
-            raise TypeError("operator must be SparseTimeAverageObservationOperator.")
-        if not isinstance(observations, SparseTimeAverageObservationData):
-            raise TypeError("observations must be SparseTimeAverageObservationData.")
-        if not isinstance(regularization, QuadraticModelErrorRegularization):
-            raise TypeError("regularization must be QuadraticModelErrorRegularization.")
-        if not isinstance(runtime, ModelErrorRolloutEvaluator):
-            raise TypeError("runtime must be ModelErrorRolloutEvaluator.")
         if observations.operator_id != operator.operator_id:
             raise ValueError(
                 "Sparse observation data and operator identities do not match."

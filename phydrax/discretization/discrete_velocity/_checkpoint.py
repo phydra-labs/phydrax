@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..lattice_boltzmann._checkpoint import (
     KineticCheckpointPlan,
     read_kinetic_checkpoint,
@@ -48,6 +49,7 @@ class SmoothCompressibleD2VCheckpointPlan(StrictModule, NonTrainableState):
     population_floor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics,
@@ -60,10 +62,6 @@ class SmoothCompressibleD2VCheckpointPlan(StrictModule, NonTrainableState):
         boundary_history_names: Sequence[str] = (),
         source_history_names: Sequence[str] = (),
     ) -> None:
-        if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
-            raise TypeError(
-                "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."
-            )
         identities = tuple(
             str(value).strip()
             for value in (

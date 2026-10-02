@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._dealias import (
     AbstractDealiasingPlan,
     NoDealiasingPlan,
@@ -119,6 +120,7 @@ class PreparedPseudospectralMethod(StrictModule, NonTrainableState):
     nonlinear: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PseudospectralMethodPlan,
@@ -128,15 +130,11 @@ class PreparedPseudospectralMethod(StrictModule, NonTrainableState):
         *,
         nonlinear: bool,
     ) -> None:
-        if not isinstance(plan, PseudospectralMethodPlan):
-            raise TypeError("plan must be a PseudospectralMethodPlan.")
         if not isinstance(
             discretization,
             (TensorSpectralDiscretization, SphericalSpectralDiscretization),
         ):
             raise TypeError("discretization must be a prepared spectral space.")
-        if not isinstance(dealiasing, PreparedDealiasingPlan):
-            raise TypeError("dealiasing must be a PreparedDealiasingPlan.")
         self.plan = plan
         self.discretization = discretization
         self.dealiasing = dealiasing
@@ -184,6 +182,7 @@ class SpectralResidualDiagnostics(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -200,8 +199,6 @@ class SpectralResidualDiagnostics(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         method_id: str,
     ) -> None:
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
         identifier = str(method_id)
         if not identifier:
             raise ValueError("method_id must be non-empty.")

@@ -21,6 +21,7 @@ from jax import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import certify_interval_psd, DecimalInterval
+from ...typing import checked
 from ._global_blocks import PreparedGlobalScalarBlocks
 from ._pmp import (
     ConformalPolynomialMatrixProgram,
@@ -47,6 +48,7 @@ class GlobalBlockPMPPlan(StrictModule):
     maximum_fit_error: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         blocks: PreparedGlobalScalarBlocks,
@@ -59,8 +61,6 @@ class GlobalBlockPMPPlan(StrictModule):
         significant_digits: int = 17,
         maximum_fit_error: float = 1e-6,
     ) -> None:
-        if not isinstance(blocks, PreparedGlobalScalarBlocks):
-            raise TypeError("blocks must be PreparedGlobalScalarBlocks.")
         minimum = tuple(float(value) for value in minimum_dimensions)
         maximum = tuple(float(value) for value in maximum_dimensions)
         degree = int(polynomial_degree)

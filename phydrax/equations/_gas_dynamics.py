@@ -19,6 +19,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import inverse
+from ..typing import checked
 from ._chemical_species import ChemicalPhaseKind
 from ._favre_les import FavreLESInputs, FavreLESResult, PreparedFavreLESModel
 from ._homogeneous_thermodynamics import (
@@ -131,6 +132,7 @@ class HomogeneousMixtureEulerSystem(
     pressure_floor: float = eqx.field(static=True)
     maximum_thermal_iterations: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
@@ -141,8 +143,6 @@ class HomogeneousMixtureEulerSystem(
         pressure_floor: float = 1.0e-12,
         maximum_thermal_iterations: int = 80,
     ) -> None:
-        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
-            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if any(
             phase is not ChemicalPhaseKind.GAS for phase in thermodynamics.schema.phases
         ):

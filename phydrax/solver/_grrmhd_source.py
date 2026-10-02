@@ -31,6 +31,7 @@ from ..equations._relativistic_radiation_interaction import (
 from ..metrix._adm_exchange import ADMGridGeometry
 from ..nonlinear import SmallRootKernel
 from ..nonlinear._batched import BatchedRootResult
+from ..typing import checked
 
 
 class GRRMHDSourceStatus(IntEnum):
@@ -324,6 +325,7 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
     caloric_temperature_scale: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: IdealValenciaGRMHDSystem,
@@ -337,10 +339,6 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
         balance_tolerance: float = 1.0e-9,
         caloric_temperature_scale: float | None = None,
     ) -> None:
-        if not isinstance(material, IdealValenciaGRMHDSystem):
-            raise TypeError("material must be IdealValenciaGRMHDSystem.")
-        if not isinstance(interaction, GRGrayRadiationInteractionPlan):
-            raise TypeError("interaction must be GRGrayRadiationInteractionPlan.")
         if (
             material.scale.scale_id != interaction.radiation.scale.scale_id
             or material.convention.convention_id
@@ -421,6 +419,7 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
             minimum_damping=self.minimum_damping,
         )
 
+    @checked
     def advance(
         self,
         material_state: ArrayLike,
@@ -430,8 +429,6 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
         composition: ArrayLike | None = None,
         /,
     ) -> GRRMHDSourceResult:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         material = self.material._state(material_state, "GRRMHD material source state")
         radiation = jnp.asarray(radiation_state, dtype=material.dtype)
         if material.shape[:-1] != geometry.leading_shape or radiation.shape != (

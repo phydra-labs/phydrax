@@ -18,7 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing, LinearSubspace
 from ..ml.decomposition import SubspaceModel
-from ..typing import parse
+from ..typing import checked, parse
 
 
 BasisRole: TypeAlias = Literal["state", "nonlinear-term", "residual", "roq"]
@@ -46,6 +46,7 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
     rank: int = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         subspace: LinearSubspace,
@@ -59,8 +60,6 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
         source_artifact_ids: Sequence[str],
         evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(subspace, LinearSubspace):
-            raise TypeError("subspace must be a LinearSubspace.")
         if subspace.batch_shape:
             raise ValueError("Reduced basis artifacts require one unbatched subspace.")
         role = parse(role, BasisRole, "role")

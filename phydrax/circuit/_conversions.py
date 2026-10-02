@@ -21,6 +21,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import checked
 from ._components import AdmittanceComponent, ImpedanceComponent
 from ._mna import AbstractMNAComponent, MNAStamp
 from ._models import AbstractScatteringComponent, ScatteringResponse
@@ -300,6 +301,7 @@ class ScatteringMNAComponent(AbstractMNAComponent):
     component: AbstractScatteringComponent
     component_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: AbstractScatteringComponent,
@@ -307,8 +309,6 @@ class ScatteringMNAComponent(AbstractMNAComponent):
         *,
         component_id: str = "scattering-to-mna",
     ) -> None:
-        if not isinstance(component, AbstractScatteringComponent):
-            raise TypeError("component must be AbstractScatteringComponent.")
         if not all(
             isinstance(reference, ElectricalWaveReference)
             for port in component.ports

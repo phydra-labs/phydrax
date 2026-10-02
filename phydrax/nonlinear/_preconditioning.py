@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import AbstractVectorSpace
+from ..typing import checked
 from ._types import (
     NonlinearDiagnostics,
     NonlinearProvenance,
@@ -222,6 +223,7 @@ class AbstractNonlinearSystemTransformation(StrictModule):
     ) -> PyTree[Array]:
         raise NotImplementedError
 
+    @checked
     def finalize_result(
         self,
         result: NonlinearResult,
@@ -236,10 +238,6 @@ class AbstractNonlinearSystemTransformation(StrictModule):
         Residual norms are recomputed in physical coordinates. Step, inner-linear,
         precision, and detailed iteration evidence retain their solver coordinates.
         """
-        if not isinstance(result, NonlinearResult):
-            raise TypeError("result must be a NonlinearResult.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         if not isinstance(result.auxiliary, _TransformationEvaluation):
             raise TypeError(
                 "The transformed solver result has invalid auxiliary evidence."
@@ -343,18 +341,13 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
 
     preconditioner: AbstractLeftNonlinearPreconditioner
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
         preconditioner: AbstractLeftNonlinearPreconditioner,
         /,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
-        if not isinstance(preconditioner, AbstractLeftNonlinearPreconditioner):
-            raise TypeError(
-                "preconditioner must be an AbstractLeftNonlinearPreconditioner."
-            )
         _require_compatible_space(
             problem.state_space, preconditioner.state_space, "state_space"
         )
@@ -400,13 +393,12 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
         del args
         return self.problem.validate_state(initial_state)
 
+    @checked
     def solver_termination(
         self,
         termination: NonlinearTermination,
         /,
     ) -> NonlinearTermination:
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         return termination
 
     def reconstruct(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
@@ -422,18 +414,13 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
 
     preconditioner: AbstractRightNonlinearPreconditioner
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
         preconditioner: AbstractRightNonlinearPreconditioner,
         /,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
-        if not isinstance(preconditioner, AbstractRightNonlinearPreconditioner):
-            raise TypeError(
-                "preconditioner must be an AbstractRightNonlinearPreconditioner."
-            )
         _require_compatible_space(
             problem.state_space, preconditioner.target, "state_space"
         )
@@ -482,13 +469,12 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
         del args
         return self.problem.validate_state(initial_state)
 
+    @checked
     def solver_termination(
         self,
         termination: NonlinearTermination,
         /,
     ) -> NonlinearTermination:
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         return termination
 
     def reconstruct(self, latent: PyTree[Any], args: Any = None, /) -> PyTree[Array]:

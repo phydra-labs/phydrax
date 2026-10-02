@@ -29,6 +29,7 @@ from ..metrix import (
     SpecialUnitaryGroup,
     UnitaryGroup,
 )
+from ..typing import checked
 
 
 class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
@@ -47,11 +48,8 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
     local_shape: tuple[int, ...] = eqx.field(static=True)
     link_space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, topology: CellComplexTopology, group: AbstractLieGroup, /) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be CellComplexTopology.")
-        if not isinstance(group, AbstractLieGroup):
-            raise TypeError("group must implement AbstractLieGroup.")
         if topology.dimension < 1:
             raise ValueError("Matrix gauge links require topology degree one.")
         tails, heads = oriented_edge_endpoints(topology)

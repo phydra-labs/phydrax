@@ -22,6 +22,7 @@ from ..._precision import PrecisionEvidenceEnvelope
 from ...linalg import ArraySpace, BlockSpace, ConstraintMap
 from ...linalg._spaces import _coordinate_dtype
 from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -299,6 +300,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: TensorSplineBasisSpec,
@@ -310,10 +312,6 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         qualification_policy: IsogeometricH1QualificationPolicy | None = None,
     ) -> None:
-        if not isinstance(basis, TensorSplineBasisSpec):
-            raise TypeError("basis must be a TensorSplineBasisSpec.")
-        if not isinstance(geometry, NURBSGeometryState):
-            raise TypeError("geometry must be a NURBSGeometryState.")
         if geometry.control_shape != basis.control_shape:
             raise ValueError("IGA geometry and basis control shapes must match exactly.")
         field_values = (
@@ -340,8 +338,6 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             raise ValueError(
                 "Geometry-owned field weights require the geometry tensor layout."
             )
-        if not isinstance(quadrature_policy, IsogeometricQuadraturePolicy):
-            raise TypeError("quadrature_policy must be explicit for S1 IGA.")
         precision = (
             FiniteElementPrecisionPolicy()
             if precision_policy is None
@@ -462,9 +458,8 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
+    @checked
     def __init__(self, plan: IsogeometricPlan, /, *, numeric_version: str = "0") -> None:
-        if not isinstance(plan, IsogeometricPlan):
-            raise TypeError("plan must be an IsogeometricPlan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
@@ -806,6 +801,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             runtime=runtime,
         )
 
+    @checked
     def prepare_local_regions(
         self,
         domain: IntegrationDomain,
@@ -815,8 +811,6 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         maximum_derivative_order: int,
         kernel_mode: str,
     ) -> tuple[PreparedLocalRegion, ...]:
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be an IntegrationDomain.")
         if domain.support_id != self.support.support_id:
             raise ValueError("IGA integration domain belongs to another support.")
         if str(kernel_mode) != "sum_factorized":

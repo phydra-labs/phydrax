@@ -17,6 +17,7 @@ from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
@@ -720,6 +721,7 @@ class FluxPositivityPlan(StrictModule):
             ),
         )
 
+    @checked
     def limit_stage_rate_ledgers(
         self,
         system: Any,
@@ -732,10 +734,6 @@ class FluxPositivityPlan(StrictModule):
     ) -> StageRatePositivityResult:
         """Blend aligned content rates and test the Euler target as cell averages."""
 
-        if not isinstance(high_order_ledger, ConservationStageLedger):
-            raise TypeError("high_order_ledger must be ConservationStageLedger.")
-        if not isinstance(fallback_ledger, ConservationStageLedger):
-            raise TypeError("fallback_ledger must be ConservationStageLedger.")
         high = high_order_ledger
         fallback = fallback_ledger
         if (

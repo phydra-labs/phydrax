@@ -31,6 +31,7 @@ from ..._holomorphic_taylor import (
 )
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import checked
 
 
 def _certificates(
@@ -380,14 +381,13 @@ class HolomorphicProductPotential(StrictModule):
         )
         return HolomorphicJet(values[0], values[1:])
 
+    @checked
     def multi_jet(
         self,
         coordinates: Array,
         index_set: HolomorphicMultiIndexSet,
         /,
     ) -> HolomorphicMultiJet:
-        if not isinstance(index_set, HolomorphicMultiIndexSet):
-            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         if index_set.complex_dimension != self._certificate.complex_input_size:
             raise ValueError("Product potential and multijet dimensions differ.")
         if index_set.maximum_total_order > self._certificate.maximum_derivative_order:

@@ -26,6 +26,7 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import open_reference_artifact, ReferenceArtifactManifest
+from ..typing import checked
 from ..units import (
     conversion_factor,
     derived_unit,
@@ -145,9 +146,8 @@ class DelayAndSumBeamformingPlan(StrictModule, NonTrainableState):
     image_points: Array
     delays: Array
 
+    @checked
     def __init__(self, acquisition: SonarAcquisition, image_points: ArrayLike, /) -> None:
-        if not isinstance(acquisition, SonarAcquisition):
-            raise TypeError("acquisition must be SonarAcquisition.")
         points = np.asarray(image_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3 or not np.all(np.isfinite(points)):
             raise ValueError("image_points must be finite with shape (point_count, 3).")

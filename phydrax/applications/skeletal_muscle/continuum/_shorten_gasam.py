@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..fibers import SkeletalFiberBundleCandidate, SkeletalFiberBundleState
 from ._gasam import (
     GasamMaterialCandidate,
@@ -172,13 +173,12 @@ class HomogenizedShortenGasamCouplingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         calibration: ShortenGasamActivationCalibration,
         /,
     ) -> PreparedHomogenizedShortenGasamCoupling:
-        if not isinstance(calibration, ShortenGasamActivationCalibration):
-            raise TypeError("calibration must be ShortenGasamActivationCalibration.")
         return PreparedHomogenizedShortenGasamCoupling(self, calibration)
 
 
@@ -207,16 +207,13 @@ class PreparedHomogenizedShortenGasamCoupling(StrictModule):
         )
         return activation, weighted
 
+    @checked
     def candidate(
         self,
         source: SkeletalFiberBundleCandidate,
         material: PreparedEngelhardtGasam2025Material,
         /,
     ) -> ShortenGasamCouplingCandidate:
-        if not isinstance(source, SkeletalFiberBundleCandidate):
-            raise TypeError("source must be SkeletalFiberBundleCandidate.")
-        if not isinstance(material, PreparedEngelhardtGasam2025Material):
-            raise TypeError("material must be PreparedEngelhardtGasam2025Material.")
         activation, weighted = self.activation_from_crossbridge(
             source.output.force_bearing_crossbridge_uM
         )

@@ -18,7 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._context import AstrodynamicsContext
 from ._scalable_gravity import EncounterEvaluation
 from ._status import AstrodynamicsStatus
@@ -199,6 +199,7 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
     preparation_status: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CloseEncounterRegularizationPlan,
@@ -209,10 +210,6 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(encounter, EncounterEvaluation):
-            raise TypeError("encounter must be an EncounterEvaluation.")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         mass = np.asarray(masses, dtype=np.float64)
         position = np.asarray(positions, dtype=np.float64)
         velocity = np.asarray(velocities, dtype=np.float64)

@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_execution import IntegerLatticeTransportPlan
 from ._positive_kinetic import PositiveCompressibleKineticPlan
@@ -41,6 +42,7 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
     species_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transport: IntegerLatticeTransportPlan,
@@ -48,8 +50,6 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
         species_charges: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(transport, IntegerLatticeTransportPlan):
-            raise TypeError("transport must be an IntegerLatticeTransportPlan.")
         elements = np.asarray(element_matrix)
         charges = np.asarray(species_charges)
         if elements.ndim != 2 or elements.shape[1] < 1:
@@ -170,9 +170,8 @@ class EquilibratingKineticSourceLiftPlan(StrictModule, NonTrainableState):
     model: PositiveCompressibleKineticPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, model: PositiveCompressibleKineticPlan, /) -> None:
-        if not isinstance(model, PositiveCompressibleKineticPlan):
-            raise TypeError("model must be a PositiveCompressibleKineticPlan.")
         self.model = model
         self.plan_id = canonical_fingerprint(
             {"kind": "equilibrating-kinetic-source-lift", "model": model.model_id}

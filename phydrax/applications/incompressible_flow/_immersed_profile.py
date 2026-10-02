@@ -12,6 +12,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...qualification._evidence import QualificationMatrix
 from ...qualification._registry import CapabilityProfile, SupportTuple
+from ...typing import checked
 from ._immersed_support import (
     DEFORMABLE_CONTACT_SUPPORT_TUPLE,
     FIXED_TOPOLOGY_SHARP_SUPPORT_TUPLE,
@@ -143,9 +144,8 @@ class ImmersedDNSQualificationProfile(StrictModule, NonTrainableState):
             self.resolved_cfd_dem,
         )
 
+    @checked
     def supports(self, support_tuple: SupportTuple, /) -> bool:
-        if not isinstance(support_tuple, SupportTuple):
-            raise TypeError("support_tuple must be SupportTuple.")
         return any(
             support.support_tuple_id == support_tuple.support_tuple_id
             for support in self.support_tuples

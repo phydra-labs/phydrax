@@ -22,7 +22,7 @@ from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 
 
@@ -238,6 +238,7 @@ class SubspaceGaussianDiffusion(StrictModule):
     coefficient_process: AbstractGaussianDiffusion
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: AffineSubspaceLayout,
@@ -246,12 +247,6 @@ class SubspaceGaussianDiffusion(StrictModule):
         *,
         process_id: str | None = None,
     ) -> None:
-        if not isinstance(layout, AffineSubspaceLayout):
-            raise TypeError("layout must be an AffineSubspaceLayout.")
-        if not isinstance(coefficient_process, AbstractGaussianDiffusion):
-            raise TypeError(
-                "coefficient_process must implement AbstractGaussianDiffusion."
-            )
         if coefficient_process.state_shape != (layout.rank,):
             raise ValueError("Coefficient diffusion dimension must equal subspace rank.")
         self.layout = layout

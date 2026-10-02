@@ -36,6 +36,7 @@ from ..discretization.pic import (
     PreparedPICParticleCochainTransfer,
 )
 from ..linalg import LinearSolvePolicy, TolerancePolicy
+from ..typing import checked
 from ._cochain_electrostatic import CochainElectrostaticPlan
 from ._maxwell import (
     CompatibleMaxwellState,
@@ -109,6 +110,7 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     wall_widths: tuple[float, ...] = eqx.field(static=True)
     grounded: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maxwell: PreparedCompatibleMaxwell,
@@ -117,10 +119,6 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         currents: Sequence[ChargeConservingCurrentPlan],
         /,
     ) -> None:
-        if not isinstance(maxwell, PreparedCompatibleMaxwell):
-            raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
-        if not isinstance(electrostatic, CochainElectrostaticPlan):
-            raise TypeError("electrostatic must be CochainElectrostaticPlan.")
         transfer_values = tuple(transfers)
         current_values = tuple(currents)
         if not transfer_values or len(transfer_values) != len(current_values):

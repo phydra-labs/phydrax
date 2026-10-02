@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._state import ClosureSnapshot
 
 
@@ -98,6 +99,7 @@ class PreparedConservativeAlignment(StrictModule, NonTrainableState):
     kind: AlignmentKind = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ConservativeAlignmentPlan,
@@ -108,8 +110,6 @@ class PreparedConservativeAlignment(StrictModule, NonTrainableState):
         source_cell_volumes: ArrayLike | None = None,
         target_cell_volumes: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(plan, ConservativeAlignmentPlan):
-            raise TypeError("plan must be a ConservativeAlignmentPlan.")
         source = tuple(source_shape)
         target = tuple(target_shape)
         if (
@@ -211,11 +211,10 @@ class PreparedConservativeAlignment(StrictModule, NonTrainableState):
             alignment_id=self.prepared_id,
         )
 
+    @checked
     def align_snapshot(
         self, snapshot: ClosureSnapshot, /, *, target_mesh_id: str
     ) -> ClosureSnapshot:
-        if not isinstance(snapshot, ClosureSnapshot):
-            raise TypeError("snapshot must be a ClosureSnapshot.")
         result = self.execute(snapshot.values)
         mesh_id = str(target_mesh_id).strip()
         if not mesh_id:

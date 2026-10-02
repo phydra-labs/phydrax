@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import PreparedRealCoordinateTree
 from ...solver._differential import DifferentialProblem
+from ...typing import checked
 from ._homogeneous import _qed_state_coordinates
 
 
@@ -559,11 +560,10 @@ class PreparedFiniteSpatialSpinorQED(StrictModule, NonTrainableState):
     state_coordinates: PreparedRealCoordinateTree
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def gauss_residual(
         self, state: FiniteSpatialSpinorQEDState, /, *, reference_charge: ArrayLike = 0.0
     ) -> Array:
-        if not isinstance(state, FiniteSpatialSpinorQEDState):
-            raise TypeError("state must be FiniteSpatialSpinorQEDState.")
         density = self.plan.charge * jnp.sum(
             self.plan.mode_weights[:, None]
             * jnp.sum(jnp.abs(state.mode_spinors) ** 2, axis=-1),

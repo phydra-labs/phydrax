@@ -39,6 +39,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractComponentSlot
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 FaceClosureFrame: TypeAlias = Literal["global", "face-normal"]
@@ -434,6 +435,7 @@ class ArbitraryNormalFaceClosurePlan(AbstractFaceClosurePlan):
                 f"{type(system).__name__} declares no normal-frame transforms."
             )
 
+    @checked
     def apply(
         self,
         system: Any,
@@ -445,8 +447,6 @@ class ArbitraryNormalFaceClosurePlan(AbstractFaceClosurePlan):
         /,
     ) -> Array:
         self.admit_system(system)
-        if not isinstance(context, FaceFluxContext):
-            raise TypeError("context must be a FaceFluxContext.")
         if context.frame != "global":
             raise ValueError("Owners supply face closure contexts in the global frame.")
         left_ = jnp.asarray(left)

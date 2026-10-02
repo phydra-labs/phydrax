@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
 from ..core._laws import PricingLaw
@@ -104,6 +105,7 @@ class ValuationResult(StrictModule):
     evidence: ValuationEvidence
     diagnostics: Any
 
+    @checked
     def __init__(
         self,
         value: ArrayLike,
@@ -116,8 +118,6 @@ class ValuationResult(StrictModule):
         currency: Currency | None = None,
         diagnostics: Any = None,
     ) -> None:
-        if not isinstance(evidence, ValuationEvidence):
-            raise TypeError("evidence must be ValuationEvidence.")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be Currency or None.")
         value_ = jnp.asarray(value)

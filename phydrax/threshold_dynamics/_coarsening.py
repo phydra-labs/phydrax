@@ -41,7 +41,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState, parameter_field, ParameterOwner
 from .._validation import finite_real_scalar, positive_integer
-from ..typing import Float64, Scalar
+from ..typing import checked, Float64, Scalar
 from ._contracts import (
     _energy,
     AbstractThresholdHeatKernel,
@@ -110,9 +110,8 @@ class GasDiffusionCoarsening(StrictModule, ParameterOwner):
     permeance: Float64[Scalar] = parameter_field()
     coarsening_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, prepared: PreparedThresholdDynamics, permeance: float, /) -> None:
-        if not isinstance(prepared, PreparedThresholdDynamics):
-            raise TypeError("prepared must be a PreparedThresholdDynamics.")
         constraint = prepared.plan.volume_constraint
         if constraint is None or not constraint.exact:
             raise ValueError("Gas-diffusive coarsening needs exact cell volumes.")

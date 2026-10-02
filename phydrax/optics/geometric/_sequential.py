@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.analytic import RigidFrame
+from ...typing import checked
 from ._interface import evaluate_refractive_interface, OpticalRayState
 
 
@@ -968,9 +969,8 @@ class PreparedSequentialOptics(StrictModule, NonTrainableState):
     source_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SequentialOpticsPlan, /) -> None:
-        if not isinstance(plan, SequentialOpticsPlan):
-            raise TypeError("plan must be a SequentialOpticsPlan.")
         rotations = np.stack([np.asarray(frame.rotation) for frame in plan.frames])
         translations = np.stack([np.asarray(frame.translation) for frame in plan.frames])
         kind_tags = tuple(_KIND_TAGS[kind] for kind in plan.surface_kinds)

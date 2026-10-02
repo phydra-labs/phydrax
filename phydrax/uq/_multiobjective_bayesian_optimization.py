@@ -27,6 +27,7 @@ from phydrax.linalg import HermitianSpectrum
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..optim._pareto import _hypervolume, nondominated_mask
+from ..typing import checked
 from ._bayesian_optimization import (
     _candidate_tuples,
     _encode_tuples,
@@ -71,6 +72,7 @@ class MultiObjectiveBayesianOptimizationProblem(StrictModule):
     reference: Array
     pending: tuple[BayesianOptimizationPoint, ...]
 
+    @checked
     def __init__(
         self,
         objective: Callable[[BayesianOptimizationPoint, Array], ArrayLike],
@@ -100,8 +102,6 @@ class MultiObjectiveBayesianOptimizationProblem(StrictModule):
             value not in ("min", "max") for value in direction_tuple
         ):
             raise ValueError("directions must contain min or max for every objective.")
-        if not isinstance(domain, BayesianOptimizationDomain):
-            raise TypeError("domain must be a BayesianOptimizationDomain.")
         constraint_tuple = tuple(constraints)
         if not callable(objective) or any(
             not callable(value) for value in constraint_tuple
@@ -171,6 +171,7 @@ class GaussianProcessMultiObjectiveBayesianOptimization(StrictModule):
     max_working_bytes: int = eqx.field(static=True)
     max_hypervolume_work: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         max_evaluations: int,
@@ -233,10 +234,6 @@ class GaussianProcessMultiObjectiveBayesianOptimization(StrictModule):
             or self.batch_size > self.max_evaluations
         ):
             raise ValueError("Initial and batch counts cannot exceed max_evaluations.")
-        if not isinstance(objective_surrogate, MultiOutputGaussianProcessLikelihoodState):
-            raise TypeError(
-                "objective_surrogate must be a multi-output GP likelihood state."
-            )
         if objective_surrogate.noise_layout != "output":
             raise ValueError("Objective noise must use the fixed output layout.")
         constraints = tuple(constraint_surrogates)

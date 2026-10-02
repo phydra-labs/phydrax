@@ -29,7 +29,7 @@ from ..integration import (
 )
 from ..integration._api import _requires_random_key
 from ..integration._execution import resolve_integration
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._integrated import checked_estimate_field, validate_condition_source
 from ._randomized_quadratic import event_inner, randomized_squared_mean
 
@@ -90,6 +90,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
     precision: IntegrationPrecisionPolicy
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         condition: AbstractMomentCondition,
@@ -102,14 +103,6 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         label: str | None = None,
         precision: IntegrationPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(condition, AbstractMomentCondition):
-            raise TypeError(
-                "RandomizedMomentPenalty requires an AbstractMomentCondition."
-            )
-        if not isinstance(source, PerStepIntegration):
-            raise TypeError(
-                "RandomizedMomentPenalty requires a PerStepIntegration source."
-            )
         if not _requires_random_key(source.plan):
             raise ValueError(
                 "RandomizedMomentPenalty requires a randomized integration plan; "
@@ -179,6 +172,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             )
         return integrated - target, estimate.diagnostics, estimate.precision_evidence
 
+    @checked
     def _evaluate(
         self,
         functions: Mapping[str, DomainFunction],
@@ -193,8 +187,6 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         tuple[Any, ...],
         tuple[PrecisionEvidenceEnvelope | None, ...],
     ]:
-        if not isinstance(batch, RandomizedMomentBatch):
-            raise TypeError("batch must be a RandomizedMomentBatch.")
         runtime_kwargs = dict(kwargs)
         if iter_ is not None:
             runtime_kwargs["iter_"] = iter_

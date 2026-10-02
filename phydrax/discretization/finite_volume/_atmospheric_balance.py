@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from ...typing import checked
 from ._riemann import RusanovFluxPlan
 from ._structured import FiniteVolumeDiscretization
 
@@ -67,6 +68,7 @@ class PreparedAtmosphericBalance(StrictModule, NonTrainableState):
     order: int = eqx.field(static=True)
     balance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: HomogeneousMixtureEulerSystem,
@@ -79,10 +81,6 @@ class PreparedAtmosphericBalance(StrictModule, NonTrainableState):
         prescribed: tuple[tuple[Array | None, Array | None], ...],
         order: int = 2,
     ) -> None:
-        if not isinstance(system, HomogeneousMixtureEulerSystem):
-            raise TypeError("Atmospheric balance requires HomogeneousMixtureEulerSystem.")
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("Atmospheric balance requires fixed Cartesian FV geometry.")
         if order not in (1, 2):
             raise ValueError("Atmospheric reconstruction order must be one or two.")
         widths = []

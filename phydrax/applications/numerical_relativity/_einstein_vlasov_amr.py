@@ -27,7 +27,7 @@ from ...discretization.particle._relativistic_stress_transfer import (
 from ...lifecycle import CheckpointManifest, ProcessCheckpointPublication
 from ...lifecycle._repository import ArtifactRepository
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
-from ...typing import parse
+from ...typing import checked, parse
 from ._checkpoint import (
     assemble_distributed_numerical_relativity_checkpoint,
     DistributedNumericalRelativityRestart,
@@ -193,6 +193,7 @@ class EinsteinVlasovAMRStressTransferPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def transfer_projection(
         self,
         projection: StressEnergyProjection,
@@ -203,10 +204,6 @@ class EinsteinVlasovAMRStressTransferPlan(StrictModule, NonTrainableState):
         direction: StressTransferDirection,
         target_proper_volume: ArrayLike | None = None,
     ) -> EinsteinVlasovAMRStressTransferResult:
-        if not isinstance(projection, StressEnergyProjection):
-            raise TypeError("projection must be StressEnergyProjection.")
-        if not isinstance(target_geometry, ADMGridGeometry):
-            raise TypeError("target_geometry must be ADMGridGeometry.")
         if len(projection.leading_shape) != 3 or len(target_geometry.leading_shape) != 3:
             raise ValueError("Einstein-Vlasov AMR stress transfer is three-dimensional.")
         direction = parse(direction, StressTransferDirection, "direction")
@@ -333,16 +330,13 @@ class EinsteinVlasovParticleMigrationPlan(StrictModule, NonTrainableState):
     owner_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         distribution: PreparedNumericalRelativityAMRDistribution,
         particle_capacity_per_owner: int,
         /,
     ) -> None:
-        if not isinstance(distribution, PreparedNumericalRelativityAMRDistribution):
-            raise TypeError(
-                "distribution must be PreparedNumericalRelativityAMRDistribution."
-            )
         capacity = int(particle_capacity_per_owner)
         owners = int(distribution.plan.partition.part_count)
         if capacity < 1 or owners < 1:
@@ -362,6 +356,7 @@ class EinsteinVlasovParticleMigrationPlan(StrictModule, NonTrainableState):
     def topology_id(self) -> str:
         return self.distribution.distribution.topology.epoch.epoch_id
 
+    @checked
     def route(
         self,
         particles: RelativisticParticleState,
@@ -371,8 +366,6 @@ class EinsteinVlasovParticleMigrationPlan(StrictModule, NonTrainableState):
         *,
         predecessor: EinsteinVlasovParticleRoute | None = None,
     ) -> EinsteinVlasovParticleMigrationResult:
-        if not isinstance(particles, RelativisticParticleState):
-            raise TypeError("particles must be RelativisticParticleState.")
         levels = jnp.asarray(level, dtype=jnp.int32)
         blocks = jnp.asarray(block_slot, dtype=jnp.int32)
         active = particles.active_mask
@@ -474,13 +467,12 @@ class EinsteinVlasovParticleMigrationPlan(StrictModule, NonTrainableState):
             jnp.asarray(False),
         )
 
+    @checked
     def owner_packed(
         self, route: EinsteinVlasovParticleRoute, values: ArrayLike, /
     ) -> Array:
         """Pack global stable-ID values into fixed owner/local slots exactly once."""
 
-        if not isinstance(route, EinsteinVlasovParticleRoute):
-            raise TypeError("route must be EinsteinVlasovParticleRoute.")
         if route.ownership_id != self.plan_id:
             raise ValueError("Particle route belongs to another migration plan.")
         value = jnp.asarray(values)
@@ -537,6 +529,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
     placement_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         template: EinsteinVlasovMatterState,
@@ -553,12 +546,6 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         placement_id: str,
         restart: NumericalRelativityRestartPolicy | None = None,
     ) -> None:
-        if not isinstance(template, EinsteinVlasovMatterState):
-            raise TypeError("template must be EinsteinVlasovMatterState.")
-        if not isinstance(route_template, EinsteinVlasovParticleRoute):
-            raise TypeError("route_template must be EinsteinVlasovParticleRoute.")
-        if not isinstance(migration, EinsteinVlasovParticleMigrationPlan):
-            raise TypeError("migration must be EinsteinVlasovParticleMigrationPlan.")
         identities = tuple(
             str(value).strip()
             for value in (stress_plan_id, frame_provider_id, placement_id)

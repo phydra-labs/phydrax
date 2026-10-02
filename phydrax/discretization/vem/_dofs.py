@@ -17,6 +17,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._form_type import FormValueSpec
 from ...sparse import RowRelation
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from ._spec import VirtualElementSpec
@@ -40,13 +41,12 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
     default_dof_points: Array
     dof_map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mesh: CellMesh, element: VirtualElementSpec, /) -> None:
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError(
                 "Virtual elements require two-dimensional polygon connectivity."
             )
-        if not isinstance(element, VirtualElementSpec):
-            raise TypeError("element must be VirtualElementSpec.")
         if element.form_type.dimension != mesh.topological_dimension:
             raise ValueError("Virtual-element form dimension must match the mesh.")
         connectivity = mesh.connectivity

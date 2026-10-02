@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
 from ._base import _as_input, _as_inputs, AbstractPositiveDefiniteKernel
 
 
@@ -30,6 +31,7 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
     polynomial_order: int = eqx.field(static=True)
     pair_block_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         static_kernel: AbstractPositiveDefiniteKernel,
@@ -38,8 +40,6 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
         polynomial_order: int = 5,
         pair_block_size: int = 64,
     ) -> None:
-        if not isinstance(static_kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("static_kernel must be a positive-definite kernel.")
         if static_kernel.input_ndim != 1:
             raise ValueError("static_kernel.input_ndim must be 1.")
         if not isinstance(polynomial_order, Integral) or isinstance(

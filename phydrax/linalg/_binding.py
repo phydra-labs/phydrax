@@ -10,6 +10,7 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._plans import LinearSolvePlan
 
 
@@ -30,6 +31,7 @@ class LinearSolveTemplate(StrictModule):
     rejection_reason: str | None = eqx.field(static=True)
     template_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LinearSolvePlan,
@@ -42,8 +44,6 @@ class LinearSolveTemplate(StrictModule):
         batch_shape: tuple[int, ...],
         rejection_reason: str | None = None,
     ) -> None:
-        if not isinstance(plan, LinearSolvePlan):
-            raise TypeError("plan must be a LinearSolvePlan.")
         reason = None if rejection_reason is None else str(rejection_reason)
         if reason == "":
             raise ValueError("rejection_reason must be non-empty or None.")

@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from .._tree_math import tree_add_scaled, tree_allfinite
 from ..linalg import AbstractVectorSpace
-from ..typing import parse
+from ..typing import checked, parse
 from ._types import NonlinearProvenance, NonlinearStatus, NonlinearSystemProblem
 from ._updates import (
     AbstractNonlinearUpdate,
@@ -427,6 +427,7 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
     hierarchy: FASHierarchy
     policy: FASCyclePolicy
 
+    @checked
     def __init__(
         self,
         hierarchy: FASHierarchy,
@@ -434,8 +435,6 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
         *,
         policy: FASCyclePolicy | None = None,
     ) -> None:
-        if not isinstance(hierarchy, FASHierarchy):
-            raise TypeError("hierarchy must be a FASHierarchy.")
         policy_ = FASCyclePolicy() if policy is None else policy
         if not isinstance(policy_, FASCyclePolicy):
             raise TypeError("policy must be FASCyclePolicy or None.")

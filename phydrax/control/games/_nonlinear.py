@@ -29,6 +29,7 @@ from ...dynamics import (
     DiscreteTransitionEvidence,
     TimeGrid,
 )
+from ...typing import checked
 from .._dynamics import DiscreteControlDynamics
 from .._trajectory import (
     CONTROL_DYNAMICS_FAILED,
@@ -130,6 +131,7 @@ class DeterministicFeedbackGameProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     stage_cost_semantics: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: DiscreteControlDynamics,
@@ -143,14 +145,6 @@ class DeterministicFeedbackGameProblem(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> None:
-        if not isinstance(dynamics, DiscreteControlDynamics):
-            raise TypeError(
-                "DeterministicFeedbackGameProblem dynamics must be DiscreteControlDynamics."
-            )
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         if len(dynamics.state_shape) != 1:
             raise ValueError("Deterministic games require a rank-one state_shape.")
         if len(dynamics.control_shape) != 1:
@@ -216,6 +210,7 @@ class BoundGameInputPolicy(AbstractInputPolicy):
     partition_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: Callable[[DiscreteStepContext, Array, Any], ArrayLike],
@@ -226,8 +221,6 @@ class BoundGameInputPolicy(AbstractInputPolicy):
     ) -> None:
         if not callable(policy):
             raise TypeError("policy must be callable.")
-        if not isinstance(problem, DeterministicFeedbackGameProblem):
-            raise TypeError("problem must be a DeterministicFeedbackGameProblem.")
         input_layout = problem.dynamics.system.input_layout
         if input_layout is None:
             raise ValueError("Bound game policy requires input-aware dynamics.")

@@ -26,6 +26,7 @@ from ...equations import (
 )
 from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
 from ...nonlinear import LocalRootPlan
+from ...typing import checked
 
 
 def _validated_frictional_values(
@@ -476,6 +477,7 @@ class DruckerPragerMPMConstitutivePlan(
             diagnostics,
         )
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -487,8 +489,6 @@ class DruckerPragerMPMConstitutivePlan(
         /,
     ) -> MPMConstitutiveResponse:
         del time
-        if not isinstance(parameters, DruckerPragerParameters):
-            raise TypeError("parameters must be DruckerPragerParameters.")
         return self._response(
             jnp.asarray(deformation_gradient),
             jnp.asarray(committed_state),
@@ -600,6 +600,7 @@ class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainabl
             diagnostics,
         )
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -611,8 +612,6 @@ class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainabl
         /,
     ) -> MPMConstitutiveResponse:
         del time
-        if not isinstance(parameters, MohrCoulombParameters):
-            raise TypeError("parameters must be MohrCoulombParameters.")
         return self._response(
             jnp.asarray(deformation_gradient),
             jnp.asarray(committed_state),
@@ -754,6 +753,7 @@ class ModifiedCamClayMPMConstitutivePlan(
             diagnostics,
         )
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -765,8 +765,6 @@ class ModifiedCamClayMPMConstitutivePlan(
         /,
     ) -> MPMConstitutiveResponse:
         del time
-        if not isinstance(parameters, ModifiedCamClayParameters):
-            raise TypeError("parameters must be ModifiedCamClayParameters.")
         return self._response(
             jnp.asarray(deformation_gradient),
             jnp.asarray(committed_state),

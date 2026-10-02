@@ -18,7 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from ._incompressible import FaceVelocity
 from ._mac_marker_transfer import MACMarkerAccumulation
@@ -75,6 +75,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
     condition_limit: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         markers: LagrangianMarkerDiscretization,
@@ -84,8 +85,6 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
         accumulation: MACMarkerAccumulation = "deterministic",
         condition_limit: float = 1.0e10,
     ) -> None:
-        if not isinstance(markers, LagrangianMarkerDiscretization):
-            raise TypeError("markers must be LagrangianMarkerDiscretization.")
         measures = tuple(
             tuple(jnp.asarray(value) for value in level) for level in face_measures
         )
@@ -420,9 +419,8 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def _validate_relation(self, relation: CompositeMACMarkerRelation, /) -> None:
-        if not isinstance(relation, CompositeMACMarkerRelation):
-            raise TypeError("relation must be CompositeMACMarkerRelation.")
         if relation.transfer_id != self.plan_id:
             raise ValueError("Composite marker relation belongs to another transfer.")
 

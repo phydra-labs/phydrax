@@ -58,7 +58,7 @@ from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import KeyGroupPlan
-from ...typing import parse
+from ...typing import checked, parse
 from ..particle import (
     ParticleAllocationRequest,
     ParticlePopulationPlan,
@@ -650,6 +650,7 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binning: PICCellBinningPlan,
@@ -675,10 +676,6 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
         ``minimum_occupancy`` (a QED cascade's merge request), below which the
         species is left unchanged.
         """
-        if not isinstance(binning, PICCellBinningPlan):
-            raise TypeError("binning must be PICCellBinningPlan.")
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         method_ = parse(method, ParticleMergeMethod, "method")
         bins = tuple(int(value) for value in momentum_bins)
         if len(bins) != 3 or any(value <= 0 for value in bins):
@@ -900,6 +897,7 @@ class ParticleSplitPlan(_AbstractResamplingProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binning: PICCellBinningPlan,
@@ -921,10 +919,6 @@ class ParticleSplitPlan(_AbstractResamplingProcess, NonTrainableState):
         application's request; children sit ``±displacement_fraction`` cell
         widths from the parent along each axis.
         """
-        if not isinstance(binning, PICCellBinningPlan):
-            raise TypeError("binning must be PICCellBinningPlan.")
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         threshold = _validated_positive("minimum_per_cell", minimum_per_cell, 1)
         splits = _validated_positive("maximum_splits", maximum_splits, 1)
         fraction = float(displacement_fraction)

@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ..contracts._credit import DefaultEventState
 from ..core import Currency
 
@@ -76,6 +76,7 @@ class NettingSet(StrictModule):
     agreement_scope_id: str = eqx.field(static=True)
     netting_set_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trade_ids: tuple[str, ...],
@@ -97,8 +98,6 @@ class NettingSet(StrictModule):
             )
         if np.any(host < 0) or len(set(int(value) for value in host)) != len(ids):
             raise ValueError("trade_indices must be nonnegative and unique.")
-        if not isinstance(base_currency, Currency):
-            raise TypeError("base_currency must be a Currency.")
         self.trade_indices = indices.astype(jnp.int32)
         self.trade_ids = ids
         self.base_currency = base_currency
@@ -161,6 +160,7 @@ class CollateralAgreement(StrictModule):
     netting_set_id: str = eqx.field(static=True)
     agreement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         collateral_currency: Currency,
@@ -178,8 +178,6 @@ class CollateralAgreement(StrictModule):
         remuneration_rate: ArrayLike = 0.0,
         agreement_id: str,
     ) -> None:
-        if not isinstance(collateral_currency, Currency):
-            raise TypeError("collateral_currency must be a Currency.")
         self.threshold_receivable = _scalar(
             threshold_receivable, "threshold_receivable", nonnegative=True
         )
@@ -219,6 +217,7 @@ class PreparedCollateralAgreement(StrictModule):
     settles_on_grid: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         agreement: CollateralAgreement,
@@ -228,8 +227,6 @@ class PreparedCollateralAgreement(StrictModule):
         prepared_id: str,
         /,
     ) -> None:
-        if not isinstance(agreement, CollateralAgreement):
-            raise TypeError("agreement must be a CollateralAgreement.")
         nodes = _time_grid(times)
         indices = jnp.asarray(settlement_indices)
         settles = jnp.asarray(settles_on_grid)

@@ -68,6 +68,7 @@ from ...linalg import (
     TolerancePolicy,
     transpose,
 )
+from ...typing import checked
 
 
 State = TypeVar("State")
@@ -512,6 +513,7 @@ class CardiovascularExecutionManifest(StrictModule, NonTrainableState):
     route: CardiovascularExecutionRoute
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -537,8 +539,6 @@ class CardiovascularExecutionManifest(StrictModule, NonTrainableState):
                 (backend, "backend"),
             )
         )
-        if not isinstance(capacity, CardiovascularCapacityManifest):
-            raise TypeError("capacity must be CardiovascularCapacityManifest.")
         if not isinstance(
             route,
             (
@@ -709,14 +709,13 @@ class CardiovascularCheckpointRecord(StrictModule, NonTrainableState):
     parent_manifest_id: str | None = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         archive: LifecycleArchive,
         execution_manifest_id: str,
         /,
     ) -> None:
-        if not isinstance(archive, LifecycleArchive):
-            raise TypeError("archive must be LifecycleArchive.")
         manifest = archive.manifest
         if not isinstance(manifest, CheckpointManifest) or not manifest.complete:
             raise ValueError("archive must contain a complete CheckpointManifest.")
@@ -750,9 +749,8 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
     execution: CardiovascularExecutionManifest
     codec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, execution: CardiovascularExecutionManifest, /) -> None:
-        if not isinstance(execution, CardiovascularExecutionManifest):
-            raise TypeError("execution must be CardiovascularExecutionManifest.")
         self.execution = execution
         self.codec_id = canonical_fingerprint(
             {
@@ -954,6 +952,7 @@ class PreparedCardiovascularCohort(StrictModule, NonTrainableState):
     signature: PoolExecutionSignature
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         execution_manifest_id: str,
@@ -969,8 +968,6 @@ class PreparedCardiovascularCohort(StrictModule, NonTrainableState):
             raise ValueError("Cohort case IDs must be non-empty and unique.")
         if lanes > len(cases):
             lanes = len(cases)
-        if not isinstance(signature, PoolExecutionSignature):
-            raise TypeError("signature must be PoolExecutionSignature.")
         self.execution_manifest_id = execution
         self.case_ids = cases
         self.lane_count = lanes
@@ -1334,6 +1331,7 @@ class CardiovascularDistributedContract(StrictModule, NonTrainableState):
     capability: CardiovascularDistributedCapability
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         execution_manifest_id: str,
@@ -1349,10 +1347,6 @@ class CardiovascularDistributedContract(StrictModule, NonTrainableState):
     ) -> None:
         solver_policy = _identifier(solver_policy_id, "solver_policy_id")
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
-        if not isinstance(phase_plan, FiniteElementDistributedPhasePlan):
-            raise TypeError("phase_plan must be FiniteElementDistributedPhasePlan.")
-        if not isinstance(replay_schedule, PreparedReplaySchedule):
-            raise TypeError("replay_schedule must be PreparedReplaySchedule.")
         if not isinstance(
             route,
             (
@@ -1361,8 +1355,6 @@ class CardiovascularDistributedContract(StrictModule, NonTrainableState):
             ),
         ):
             raise TypeError("route must be a distributed cardiovascular route.")
-        if not isinstance(capability, CardiovascularDistributedCapability):
-            raise TypeError("capability must be CardiovascularDistributedCapability.")
         if route.partition_count != phase_plan.partition.part_count:
             raise ValueError("Distributed route and FEM partition counts differ.")
         reference_route = isinstance(route, CardiovascularDistributedReferenceExecution)
@@ -1783,6 +1775,7 @@ class CardiovascularDistributedCollectiveEvidence(StrictModule, NonTrainableStat
     halo_value_count: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         solver_state: CardiovascularDistributedSolverState,
@@ -1800,8 +1793,6 @@ class CardiovascularDistributedCollectiveEvidence(StrictModule, NonTrainableStat
         owned_value_count: int,
         halo_value_count: int,
     ) -> None:
-        if not isinstance(solver_state, CardiovascularDistributedSolverState):
-            raise TypeError("solver_state must be CardiovascularDistributedSolverState.")
         serial = jnp.asarray(serial_operator_action)
         distributed = jnp.asarray(distributed_operator_action)
         serial_transpose = jnp.asarray(serial_transpose_action)
@@ -2724,6 +2715,7 @@ class PreparedCardiovascularScheduler(StrictModule, NonTrainableState):
     state_value_capacity: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         execution_manifest_id: str,
@@ -2737,8 +2729,6 @@ class PreparedCardiovascularScheduler(StrictModule, NonTrainableState):
         /,
     ) -> None:
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
-        if not isinstance(plan, CardiovascularMultiratePlan):
-            raise TypeError("plan must be CardiovascularMultiratePlan.")
         owners = jnp.asarray(owner_indices, dtype=jnp.int32)
         starts = jnp.asarray(start_times_ms, dtype=jnp.float64)
         ends = jnp.asarray(end_times_ms, dtype=jnp.float64)
@@ -2835,6 +2825,7 @@ class CardiovascularScheduleCandidate(StrictModule, Generic[State]):
     evidence: CardiovascularScheduleEvidence
     candidate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_state: State,
@@ -2842,8 +2833,6 @@ class CardiovascularScheduleCandidate(StrictModule, Generic[State]):
         evidence: CardiovascularScheduleEvidence,
         /,
     ) -> None:
-        if not isinstance(evidence, CardiovascularScheduleEvidence):
-            raise TypeError("evidence must be CardiovascularScheduleEvidence.")
         if jax.tree_util.tree_structure(initial_state) != jax.tree_util.tree_structure(
             proposed_state
         ):

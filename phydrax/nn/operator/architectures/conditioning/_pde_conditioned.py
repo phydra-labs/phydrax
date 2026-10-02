@@ -20,6 +20,8 @@ from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import checked
+
 
 class PDEConditionedInput(StrictModule):
     """One operator task paired with its canonical PDE tokens."""
@@ -27,11 +29,8 @@ class PDEConditionedInput(StrictModule):
     batch: OperatorBatch
     tokens: PDETokenBatch
 
+    @checked
     def __init__(self, batch: OperatorBatch, tokens: PDETokenBatch, /) -> None:
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("PDEConditionedInput batch must be an OperatorBatch.")
-        if not isinstance(tokens, PDETokenBatch):
-            raise TypeError("PDEConditionedInput tokens must be a PDETokenBatch.")
         self.batch = batch
         self.tokens = tokens
 
@@ -78,6 +77,7 @@ class PDEConditionedOperator(AbstractOperatorModel):
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
+    @checked
     def __init__(
         self,
         operator: AbstractOperatorModel,
@@ -86,10 +86,6 @@ class PDEConditionedOperator(AbstractOperatorModel):
         *,
         input_name: str = "equation",
     ) -> None:
-        if not isinstance(operator, AbstractOperatorModel):
-            raise TypeError("PDEConditionedOperator requires an operator model.")
-        if not isinstance(encoder, PDEConditionEncoder):
-            raise TypeError("PDEConditionedOperator requires a PDEConditionEncoder.")
         name = str(input_name)
         if not name:
             raise ValueError("PDE condition input_name must be non-empty.")

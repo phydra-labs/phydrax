@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._probability import AbstractProbabilityLaw
 from ..domain._measure import MeasureKind
+from ..typing import checked
 from ._gaussian_factor import GaussianFactor
 
 
@@ -32,6 +33,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
     _rank: int = eqx.field(static=True)
     _measure_kind: MeasureKind = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         location: ArrayLike,
@@ -41,8 +43,6 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
         event_shape: Iterable[int],
         support_tolerance: ArrayLike = 1e-8,
     ) -> None:
-        if not isinstance(factor, GaussianFactor):
-            raise TypeError("factor must be a GaussianFactor.")
         events = tuple(event_shape)
         if not events or any(size <= 0 for size in events):
             raise ValueError("event_shape must contain positive dimensions.")

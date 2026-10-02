@@ -37,7 +37,7 @@ from ...discretization.multiblock import (
     MultiblockGridPlan,
     PreparedMultiblockGrid,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 if TYPE_CHECKING:
@@ -336,6 +336,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
     methods: tuple[Any, ...]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedHydrostaticMosaicGrid,
@@ -344,8 +345,6 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
     ) -> None:
         from ._hydrostatic_step import HydrostaticIMEXMidpointMethod
 
-        if not isinstance(grid, PreparedHydrostaticMosaicGrid):
-            raise TypeError("grid must be a PreparedHydrostaticMosaicGrid.")
         kwargs = dict(plan_kwargs)
         oceans = tuple(grid.prepare_ocean(block.name, **kwargs) for block in grid.blocks)
         if grid.seams and any(
@@ -1035,6 +1034,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
             for block in self.grid.blocks
         }
 
+    @checked
     def _couple(
         self,
         state: HydrostaticMosaicState,
@@ -1042,8 +1042,6 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
         *,
         step_size: Array | None = None,
     ) -> tuple[HydrostaticMosaicState, tuple[Array, ...]]:
-        if not isinstance(state, HydrostaticMosaicState):
-            raise TypeError("state must be a HydrostaticMosaicState.")
         continuations = dict(state.blocks)
         seam_fluxes = []
         for index, seam in enumerate(self.grid.seams):

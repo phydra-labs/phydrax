@@ -54,7 +54,7 @@ from ...operators.path_integral._lattice_fermion import (
     WilsonDiracOperator,
 )
 from ...operators.path_integral._wilson_gauge import WilsonGaugeAction
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ._qcd_ensembles import MeasurementWorkItem
 
 
@@ -536,6 +536,7 @@ class WilsonFlowPlan(StrictModule, NonTrainableState):
     maximum_history_bytes: int = eqx.field(static=True)
     flow_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action: WilsonGaugeAction,
@@ -547,8 +548,6 @@ class WilsonFlowPlan(StrictModule, NonTrainableState):
         descent_tolerance: float = 1.0e-10,
         maximum_history_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if not isinstance(action, WilsonGaugeAction):
-            raise TypeError("action must be WilsonGaugeAction.")
         if not isinstance(action.link_space.group, SpecialUnitaryGroup):
             raise TypeError("Wilson flow currently requires an SU(N) link space.")
         maximum = int(maximum_history_bytes)
@@ -766,6 +765,7 @@ class PropagatorSolvePlan(StrictModule, NonTrainableState):
     source_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLatticeDiracOperator,
@@ -779,8 +779,6 @@ class PropagatorSolvePlan(StrictModule, NonTrainableState):
         maximum_workspace_bytes: int = 256 * 1024 * 1024,
         maximum_source_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if not isinstance(operator, AbstractLatticeDiracOperator):
-            raise TypeError("operator must be AbstractLatticeDiracOperator.")
         if not isinstance(operator.target, ArraySpace):
             raise TypeError("Reference propagators require an ArraySpace Dirac target.")
         source = jnp.asarray(sources)

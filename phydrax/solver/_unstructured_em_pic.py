@@ -32,7 +32,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
-from ..typing import Bool, Dim, Int32
+from ..typing import Bool, checked, Dim, Int32
 from ._maxwell import CompatibleMaxwellState, MaxwellPrimaryState
 from ._maxwell_unstructured import PreparedUnstructuredMaxwell
 from ._pic_field_solver import (
@@ -97,6 +97,7 @@ class UnstructuredMaxwellPICFieldSolver(
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maxwell: PreparedUnstructuredMaxwell,
@@ -106,10 +107,6 @@ class UnstructuredMaxwellPICFieldSolver(
         electrostatic_tolerance: float = 1.0e-12,
         maximum_electrostatic_iterations: int = 1000,
     ) -> None:
-        if not isinstance(maxwell, PreparedUnstructuredMaxwell):
-            raise TypeError("maxwell must be PreparedUnstructuredMaxwell.")
-        if not isinstance(current, UnstructuredWhitneyCurrentPlan):
-            raise TypeError("current must be UnstructuredWhitneyCurrentPlan.")
         if maxwell.plan.boundary != "relative":
             raise ValueError(
                 "Conductor PIC requires an explicitly relative Maxwell plan."

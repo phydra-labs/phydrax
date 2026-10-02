@@ -15,7 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification._registry import SupportTuple
-from ..typing import parse
+from ..typing import checked, parse
 from ._chunk_repository import _digest, _identifier, RepositoryCorruptionError
 
 
@@ -288,6 +288,7 @@ class DirectRestorePlan(StrictModule, NonTrainableState):
     excludes_execution_cache: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: TopologyRestartRelation,
@@ -297,10 +298,6 @@ class DirectRestorePlan(StrictModule, NonTrainableState):
         mappings: Sequence[RestartChunkMapping],
         /,
     ) -> None:
-        if not isinstance(relation, TopologyRestartRelation):
-            raise TypeError("relation must be TopologyRestartRelation.")
-        if not isinstance(admission, RestartAdmission):
-            raise TypeError("admission must be RestartAdmission.")
         if admission.relation_id != relation.relation_id or not admission.admitted:
             raise ValueError("Direct restore requires an admitted matching relation.")
         sources = tuple(

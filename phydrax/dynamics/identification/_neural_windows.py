@@ -15,6 +15,7 @@ from phydrax._strict import StrictModule
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._sampling._addressing import derive_key, SampleAddress
+from ...typing import checked
 from .._trajectory import TrajectoryData
 
 
@@ -47,6 +48,7 @@ class _NeuralWindowBatch(StrictModule):
 class _NeuralWindowSource:
     """Lazy index plan over flattened trajectory parents and start nodes."""
 
+    @checked
     def __init__(
         self,
         trajectory: TrajectoryData,
@@ -57,8 +59,6 @@ class _NeuralWindowSource:
         step_rtol: float,
         step_atol: float,
     ) -> None:
-        if not isinstance(trajectory, TrajectoryData):
-            raise TypeError("trajectory must be a TrajectoryData.")
         horizon = int(max_horizon)
         if horizon < 1:
             raise ValueError("max_horizon must be positive.")

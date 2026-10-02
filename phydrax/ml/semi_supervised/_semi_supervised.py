@@ -27,6 +27,7 @@ from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -252,6 +253,7 @@ class LabelPropagationModel(AbstractFittedModel):
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.blockwise("structured")
 
+    @checked
     def __init__(
         self,
         training_features: Any,
@@ -274,8 +276,6 @@ class LabelPropagationModel(AbstractFittedModel):
             raise ValueError("class_labels must align with the class axis.")
         if jnp.issubdtype(labels.dtype, jnp.complexfloating):
             raise TypeError("class_labels must be real-valued.")
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be an AbstractPositiveDefiniteKernel.")
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("Graph propagation kernels require real-valued features.")
         if jnp.issubdtype(probabilities.dtype, jnp.complexfloating):
@@ -721,11 +721,10 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
     iterations: int = eqx.field(static=True)
     blend: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, recipe: AbstractRecipe, /, *, iterations: int = 5, blend: float = 1.0
     ) -> None:
-        if not isinstance(recipe, AbstractRecipe):
-            raise TypeError("recipe must be an AbstractRecipe.")
         if int(iterations) <= 0 or not 0.0 < float(blend) <= 1.0:
             raise ValueError("iterations must be positive and blend in (0, 1].")
         self.recipe = recipe
@@ -820,6 +819,7 @@ class HardSelfTrainingRecipe(AbstractRecipe):
     iterations: int = eqx.field(static=True)
     confidence_threshold: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         recipe: AbstractRecipe,
@@ -828,8 +828,6 @@ class HardSelfTrainingRecipe(AbstractRecipe):
         iterations: int = 5,
         confidence_threshold: float = 0.0,
     ) -> None:
-        if not isinstance(recipe, AbstractRecipe):
-            raise TypeError("recipe must be an AbstractRecipe.")
         if int(iterations) <= 0 or not 0.0 <= float(confidence_threshold) <= 1.0:
             raise ValueError(
                 "iterations must be positive and confidence_threshold in [0, 1]."

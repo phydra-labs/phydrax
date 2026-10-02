@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
+from ...typing import checked
 from ._schema import DesignState, ParameterBinding, ParameterId, ParameterSchema
 
 
@@ -31,14 +32,13 @@ class DesignParameterization(StrictModule):
     lower_bounds: Array
     upper_bounds: Array
 
+    @checked
     def __init__(
         self,
         reference: DesignState,
         parameter_ids: Sequence[ParameterId] | None = None,
         /,
     ) -> None:
-        if not isinstance(reference, DesignState):
-            raise TypeError("reference must be a DesignState.")
         identifiers = (
             tuple(spec.parameter_id for spec in reference.schema.specs if spec.trainable)
             if parameter_ids is None
@@ -140,9 +140,8 @@ class DesignParameterization(StrictModule):
             )
         return DesignState(self.reference.schema, values)
 
+    @checked
     def _validate_state(self, state: DesignState, /) -> None:
-        if not isinstance(state, DesignState):
-            raise TypeError("state must be a DesignState.")
         if state.schema != self.reference.schema:
             raise ValueError("Design state and parameterization schemas do not match.")
 
@@ -154,14 +153,13 @@ class DesignBindingGraph(StrictModule):
     names: tuple[str, ...] = eqx.field(static=True)
     bindings: tuple[ParameterBinding, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ParameterSchema,
         bindings: Mapping[str, ParameterId | ParameterBinding],
         /,
     ) -> None:
-        if not isinstance(schema, ParameterSchema):
-            raise TypeError("schema must be a ParameterSchema.")
         names = tuple(bindings)
         if not names:
             raise ValueError("A design binding graph requires at least one binding.")
@@ -186,10 +184,9 @@ class DesignBindingGraph(StrictModule):
         self.names = names
         self.bindings = tuple(compiled)
 
+    @checked
     def read(self, state: DesignState, /) -> frozendict[str, Array]:
         """Read every named binding without copying the underlying arrays."""
-        if not isinstance(state, DesignState):
-            raise TypeError("state must be a DesignState.")
         if state.schema != self.schema:
             raise ValueError("Design state and binding graph schemas do not match.")
         return frozendict(
@@ -251,6 +248,7 @@ class ReducedDesignProblem(StrictModule):
         Callable[[DesignState, frozendict[str, Array]], ArrayLike], ...
     ] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterization: DesignParameterization,
@@ -262,10 +260,6 @@ class ReducedDesignProblem(StrictModule):
             Callable[[DesignState, frozendict[str, Array]], ArrayLike]
         ] = (),
     ) -> None:
-        if not isinstance(parameterization, DesignParameterization):
-            raise TypeError("parameterization must be a DesignParameterization.")
-        if not isinstance(binding_graph, DesignBindingGraph):
-            raise TypeError("binding_graph must be a DesignBindingGraph.")
         if binding_graph.schema != parameterization.reference.schema:
             raise ValueError("Parameterization and binding graph schemas do not match.")
         if not callable(objective):

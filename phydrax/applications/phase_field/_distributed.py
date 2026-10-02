@@ -24,6 +24,7 @@ from ...discretization.fem import (
     partition_cells_cost_aware,
 )
 from ...linalg import AbstractLinearOperator
+from ...typing import checked
 
 
 class DistributedPhaseFieldEvidence(StrictModule):
@@ -45,6 +46,7 @@ class DistributedPhaseFieldCheckpointManifest(StrictModule, NonTrainableState):
     active_storage_id: str | None = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -54,8 +56,6 @@ class DistributedPhaseFieldCheckpointManifest(StrictModule, NonTrainableState):
         stochastic_id: str | None = None,
         active_storage_id: str | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         method = str(method_id)
         if not method:
             raise ValueError("Distributed phase-field manifest needs a method_id.")
@@ -97,6 +97,7 @@ class DistributedPhaseFieldPlan(StrictModule, NonTrainableState):
     part_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -107,8 +108,6 @@ class DistributedPhaseFieldPlan(StrictModule, NonTrainableState):
         physics_weight: float = 1.0,
         cut_penalty: float = 0.25,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         parts = int(part_count)
         partition = partition_cells_cost_aware(
             discretization,
@@ -133,11 +132,10 @@ class DistributedPhaseFieldPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def distributed_operator(
         self, local_operator: AbstractLinearOperator, /
     ) -> DistributedFiniteElementOperator:
-        if not isinstance(local_operator, AbstractLinearOperator):
-            raise TypeError("local_operator must be AbstractLinearOperator.")
         return DistributedFiniteElementOperator(local_operator, self.collective)
 
     def reference_owned_sum(

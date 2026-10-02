@@ -24,6 +24,7 @@ from ..linalg import (
     prepare_real_coordinate_tree,
     PreparedRealCoordinateTree,
 )
+from ..typing import checked
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 
@@ -219,6 +220,7 @@ class DeterministicEnsemblePlan(StrictModule, NonTrainableState):
     path_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: DifferentialProblem,
@@ -229,8 +231,6 @@ class DeterministicEnsemblePlan(StrictModule, NonTrainableState):
         maximum_state_elements: int = 2**24,
         maximum_output_bytes: int = 2**31,
     ) -> None:
-        if not isinstance(problem, DifferentialProblem):
-            raise TypeError("problem must be a DifferentialProblem.")
         if problem.stochastic:
             raise ValueError("Deterministic ensemble execution rejects Wiener terms.")
         paths = tuple(initial_conditions)
@@ -313,9 +313,8 @@ class PreparedDeterministicEnsemble(StrictModule, NonTrainableState):
     estimated_output_bytes: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: DeterministicEnsemblePlan, save_times: ArrayLike, /) -> None:
-        if not isinstance(plan, DeterministicEnsemblePlan):
-            raise TypeError("plan must be a DeterministicEnsemblePlan.")
         times = np.asarray(save_times, dtype=np.float64)
         if (
             times.ndim != 1

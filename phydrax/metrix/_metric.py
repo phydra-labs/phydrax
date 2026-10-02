@@ -18,7 +18,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
-from ..typing import parse
+from ..typing import checked, parse
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap, Immersion
 from ._utils import _pointwise_array
@@ -174,6 +174,7 @@ class SemiRiemannianMetric(AbstractSemiRiemannianMetric):
     chart: CoordinateChart
     signature: MetricSignature
 
+    @checked
     def __init__(
         self,
         matrix: Callable[[Array], Array],
@@ -184,10 +185,6 @@ class SemiRiemannianMetric(AbstractSemiRiemannianMetric):
     ) -> None:
         if not callable(matrix):
             raise TypeError("Metric matrix must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Metric chart must be a CoordinateChart.")
-        if not isinstance(signature, MetricSignature):
-            raise TypeError("signature must be a MetricSignature.")
         if signature.dimension != chart.dimension:
             raise ValueError(
                 f"Metric signature dimension {signature.dimension} does not match chart dimension {chart.dimension}."
@@ -212,6 +209,7 @@ class RiemannianMetric(AbstractSemiRiemannianMetric):
     chart: CoordinateChart
     signature: MetricSignature
 
+    @checked
     def __init__(
         self,
         matrix: Callable[[Array], Array],
@@ -221,8 +219,6 @@ class RiemannianMetric(AbstractSemiRiemannianMetric):
     ) -> None:
         if not callable(matrix):
             raise TypeError("Metric matrix must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Metric chart must be a CoordinateChart.")
         self.matrix_function = matrix
         self.chart = chart
         self.signature = MetricSignature(chart.dimension, 0)
@@ -257,6 +253,7 @@ class LorentzianMetric(AbstractSemiRiemannianMetric):
     signature: MetricSignature
     convention: LorentzianConvention = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         matrix: Callable[[Array], Array],
@@ -267,8 +264,6 @@ class LorentzianMetric(AbstractSemiRiemannianMetric):
     ) -> None:
         if not callable(matrix):
             raise TypeError("Metric matrix must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Metric chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("A Lorentzian metric requires dimension at least two.")
         convention = parse(convention, LorentzianConvention, "convention")

@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..fibers import PreparedSkeletalFiberBundle, SkeletalFiberBundleState
 
 
@@ -212,16 +213,13 @@ class PreparedFiberCurrent(StrictModule):
     fiber_prepared_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PereiraBotelho2019FiberCurrentPlan,
         fiber: PreparedSkeletalFiberBundle,
         /,
     ) -> None:
-        if not isinstance(fiber, PreparedSkeletalFiberBundle):
-            raise TypeError(
-                "Requires the fixed-geometry Shorten fiber family, not moving geometry."
-            )
         if (
             plan.fiber_ids != fiber.plan.fiber_ids
             or plan.positions_m.shape[1] != fiber.plan.node_count

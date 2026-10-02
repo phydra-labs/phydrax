@@ -18,6 +18,7 @@ from phydrax import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._multiphysics_ledger import EntropyProductionBalance
 
 
@@ -236,6 +237,7 @@ class NonisothermalSolidificationModel(StrictModule, NonTrainableState):
     barrier_scale: Array
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         catalog: NonisothermalMaterialCatalog,
@@ -243,8 +245,6 @@ class NonisothermalSolidificationModel(StrictModule, NonTrainableState):
         *,
         barrier_scale: ArrayLike,
     ) -> None:
-        if not isinstance(catalog, NonisothermalMaterialCatalog):
-            raise TypeError("catalog must be NonisothermalMaterialCatalog.")
         barrier = np.asarray(barrier_scale)
         if barrier.shape != () or not np.isfinite(barrier) or barrier < 0.0:
             raise ValueError("Solidification barrier scale must be nonnegative.")
@@ -363,6 +363,7 @@ class NonisothermalSolidificationPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: NonisothermalSolidificationModel,
@@ -371,8 +372,6 @@ class NonisothermalSolidificationPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-10,
         maximum_iterations: int = 32,
     ) -> None:
-        if not isinstance(model, NonisothermalSolidificationModel):
-            raise TypeError("model must be NonisothermalSolidificationModel.")
         tolerance = float(absolute_tolerance)
         iterations = int(maximum_iterations)
         if not np.isfinite(tolerance) or tolerance <= 0.0 or iterations < 1:

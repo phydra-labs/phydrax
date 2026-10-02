@@ -21,6 +21,7 @@ from ...equations import (
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
+from ...typing import checked
 from ._models import NeoHookeanParameters
 
 
@@ -34,6 +35,7 @@ class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
     length_scale: Array
     residual_stiffness: Array
 
+    @checked
     def __init__(
         self,
         material: NeoHookeanParameters,
@@ -42,8 +44,6 @@ class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
         residual_stiffness: ArrayLike = 1.0e-6,
         /,
     ) -> None:
-        if not isinstance(material, NeoHookeanParameters):
-            raise TypeError("material must be NeoHookeanParameters.")
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -171,6 +171,7 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
         trial = jnp.asarray((damage, next_history), dtype=deformation.dtype)
         return stress, trial, energy, speed, valid, positive
 
+    @checked
     def evaluate(
         self,
         deformation_gradient: ArrayLike,
@@ -182,8 +183,6 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
         /,
     ) -> MPMConstitutiveResponse:
         del time, step_size
-        if not isinstance(parameters, MPMPhaseFieldParameters):
-            raise TypeError("parameters must be MPMPhaseFieldParameters.")
         deformation = jnp.asarray(deformation_gradient)
         batch_shape = deformation.shape[:-2]
         state = jnp.asarray(committed_state, dtype=deformation.dtype)

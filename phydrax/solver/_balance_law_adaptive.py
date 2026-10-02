@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh
 from ..stochastic._realization import StochasticRealization
+from ..typing import checked
 from ._balance_law import BalanceLawRuntimeState, PreparedBalanceLawRuntime
 
 
@@ -216,6 +217,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
     requested_time_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedBalanceLawRuntime,
@@ -223,10 +225,6 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         policy: BalanceLawAdaptivePolicy,
         /,
     ) -> None:
-        if not isinstance(runtime, PreparedBalanceLawRuntime):
-            raise TypeError("runtime must be PreparedBalanceLawRuntime.")
-        if not isinstance(policy, BalanceLawAdaptivePolicy):
-            raise TypeError("policy must be BalanceLawAdaptivePolicy.")
         target = float(final_time)
         if not isfinite(target):
             raise ValueError("Adaptive balance-law final_time must be finite.")
@@ -246,6 +244,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def rollout(
         self,
         initial_state: BalanceLawRuntimeState,
@@ -253,8 +252,6 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         realization: StochasticRealization | None = None,
         /,
     ) -> AdaptiveBalanceLawRolloutResult:
-        if not isinstance(initial_state, BalanceLawRuntimeState):
-            raise TypeError("initial_state must be BalanceLawRuntimeState.")
         if initial_state.process_ids != self.runtime.process_ids:
             raise ValueError("Balance-law runtime state process order changed.")
 

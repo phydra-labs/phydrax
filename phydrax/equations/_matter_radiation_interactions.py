@@ -28,7 +28,7 @@ from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
-from ..typing import parse
+from ..typing import checked, parse
 
 
 BremsstrahlungSpectrumRoute: TypeAlias = Literal[
@@ -64,6 +64,7 @@ class SeltzerBergerBremsstrahlungTable(StrictModule, NonTrainableState):
     source_url: str = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kinetic_energy_ev: ArrayLike,
@@ -83,8 +84,6 @@ class SeltzerBergerBremsstrahlungTable(StrictModule, NonTrainableState):
         differential = np.asarray(differential_cross_section, dtype=np.float64)
         materials = tuple(str(value).strip() for value in material_ids)
         url = str(source_url).strip()
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("Seltzer--Berger data require a reference manifest.")
         manifest.require_rights(
             commercial_use=commercial_use,
             redistribution=redistribution,

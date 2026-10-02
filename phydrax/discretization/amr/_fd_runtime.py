@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._fd_precision import FDExecutionPrecisionPolicy
 from ._core import (
     BlockHierarchyPlan,
@@ -58,6 +59,7 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     precision: FDExecutionPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         hierarchy: BlockHierarchyPlan,
@@ -71,8 +73,6 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
-        if not isinstance(hierarchy, BlockHierarchyPlan):
-            raise TypeError("FD AMR hierarchy requires BlockHierarchyPlan.")
         dimension = len(hierarchy.grid.shape)
         transfers_ = (
             tuple(
@@ -134,9 +134,8 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
     topology_compiler: BlockTopologyCompiler
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FDAMRHierarchyPlan, /) -> None:
-        if not isinstance(plan, FDAMRHierarchyPlan):
-            raise TypeError("plan must be FDAMRHierarchyPlan.")
         compiler = BlockTopologyCompiler(
             plan.hierarchy,
             tag_buffer=plan.tag_buffer,

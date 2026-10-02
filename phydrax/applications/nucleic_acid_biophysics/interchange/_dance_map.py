@@ -19,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....qualification import read_reference_artifact, ReferenceArtifactManifest
+from ....typing import checked
 from ..observations._mutation_profiles import MutationProfileBatch, MutationProfileCase
 
 
@@ -48,6 +49,7 @@ class DanceMapFile:
     parent_case_ids: tuple[str, ...]
     file_id: str
 
+    @checked
     def __init__(
         self,
         path: str | Path,
@@ -67,8 +69,6 @@ class DanceMapFile:
         reference_sequence_id: str,
         parent_case_ids: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("source must be a ReferenceArtifactManifest.")
         path_ = str(Path(path).expanduser().resolve())
         if not isinstance(nucleotide_ids, tuple) or not nucleotide_ids:
             raise TypeError("nucleotide_ids must be a non-empty tuple.")
@@ -146,6 +146,7 @@ class DanceMapAdmission(StrictModule, NonTrainableState):
     included_mapping_categories: tuple[str, ...] = eqx.field(static=True)
     admission_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         batch: MutationProfileBatch,
@@ -153,8 +154,6 @@ class DanceMapAdmission(StrictModule, NonTrainableState):
         category_counts: tuple[int, ...],
         included_mapping_categories: tuple[str, ...],
     ) -> None:
-        if not isinstance(batch, MutationProfileBatch):
-            raise TypeError("batch must be a MutationProfileBatch.")
         if (
             not isinstance(files, tuple)
             or not files

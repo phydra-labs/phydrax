@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._weight_space_recurrence import (
@@ -34,9 +34,8 @@ class FunctionalStateDecoder(StrictModule):
     subspace: ParameterSubspace
     query_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, subspace: ParameterSubspace, query_size: int, /) -> None:
-        if not isinstance(subspace, ParameterSubspace):
-            raise TypeError("subspace must be a ParameterSubspace.")
         if not callable(subspace.reconstruct(subspace.initial)):
             raise TypeError("ParameterSubspace must reconstruct a callable root model.")
         self.query_size = int(query_size)

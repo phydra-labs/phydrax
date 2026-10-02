@@ -37,7 +37,7 @@ from ..stochastic import (
     WienerRealization,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
-from ..typing import parse
+from ..typing import checked, parse
 from ._differential import DifferentialProblem
 from ._hybrid_event import (
     empty_hybrid_event_tape,
@@ -525,6 +525,7 @@ class JumpSolution(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     algorithm: JumpAlgorithm = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         times: ArrayLike,
@@ -538,10 +539,6 @@ class JumpSolution(StrictModule):
         algorithm: JumpAlgorithm,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(events, JumpEventBatch):
-            raise TypeError("events must be a JumpEventBatch.")
-        if not isinstance(realization, PoissonClockRealization):
-            raise TypeError("realization must be a PoissonClockRealization.")
         algorithm = parse(algorithm, JumpAlgorithm, "algorithm")
         arrays = validate_solution_arrays(
             times,
@@ -913,6 +910,7 @@ class JumpDifferentialProblem(StrictModule):
     jumps: AbstractJumpProcess
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         differential: DifferentialProblem,
@@ -921,10 +919,6 @@ class JumpDifferentialProblem(StrictModule):
         *,
         process_id: str | None = None,
     ) -> None:
-        if not isinstance(differential, DifferentialProblem):
-            raise TypeError("differential must be a DifferentialProblem.")
-        if not isinstance(jumps, AbstractJumpProcess):
-            raise TypeError("jumps must implement AbstractJumpProcess.")
         if tuple(differential.initial_state.shape) != jumps.state_shape:
             raise ValueError("Differential and jump state shapes must match.")
         resolved_id = jumps.process_id if process_id is None else str(process_id)

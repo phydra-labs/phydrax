@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_entities import TensorEntityLayout
 from ._incompressible import PreparedMACOperators
 
@@ -49,6 +50,7 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
     face_points: tuple[Array, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -60,8 +62,6 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         interface_width: float,
         small_cell_fraction: float = 1.0e-2,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         if not callable(signed_distance) or not callable(wall_velocity):
             raise TypeError("solid geometry providers must be callable.")
         width, small = float(interface_width), float(small_cell_fraction)

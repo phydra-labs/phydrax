@@ -31,7 +31,7 @@ from ...._trainable import NonTrainableState
 from ...._validation import positive_finite_float
 from ....imaging import ImageIndexAffine, MedicalImageAsset
 from ....observation import CoordinateLayout, LinearObservationPlan
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -120,6 +120,7 @@ class LGETissueState(StrictModule):
     spatial_affine: ImageIndexAffine = eqx.field(static=True)
     source_asset_ids: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         native_t1_ms: ArrayLike,
@@ -146,8 +147,6 @@ class LGETissueState(StrictModule):
             raise ValueError(
                 "Every LGE continuous tissue field must share one rank-three shape."
             )
-        if not isinstance(spatial_affine, ImageIndexAffine):
-            raise TypeError("spatial_affine must be an ImageIndexAffine.")
         identifiers = tuple(
             _identifier(value, "source asset ID") for value in source_asset_ids
         )

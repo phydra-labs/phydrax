@@ -16,6 +16,7 @@ from .._trainable import NonTrainableState
 from ..discretization.particle import PreparedWeaklyCompressibleSPHDynamics
 from ..discretization.particle._pairwise import particle_pair_geometry
 from ..discretization.particle._stabilization import shepard_renormalized_density
+from ..typing import checked
 from ._fixed_step import AbstractAcceptedStepTransform, AcceptedStepTransformResult
 
 
@@ -28,6 +29,7 @@ class ShepardDensityRenormalizationTransform(
     maximum_relative_correction: float = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedWeaklyCompressibleSPHDynamics,
@@ -37,8 +39,6 @@ class ShepardDensityRenormalizationTransform(
         first_step: int | None = None,
         maximum_relative_correction: float = 0.5,
     ) -> None:
-        if not isinstance(dynamics, PreparedWeaklyCompressibleSPHDynamics):
-            raise TypeError("dynamics must be PreparedWeaklyCompressibleSPHDynamics.")
         if not dynamics.state_layout.density_evolved:
             raise ValueError("Density renormalization requires evolved density.")
         every = int(apply_every_steps)

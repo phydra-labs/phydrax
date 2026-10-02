@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ....discretization.vortex._filament import VortexFilamentState
+from ....typing import checked
 
 
 class FilamentVelocityDiagnostics(StrictModule):
@@ -84,9 +85,8 @@ class PreparedFilamentVelocity3D(StrictModule):
     filament: VortexFilamentState
     evaluator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, filament: VortexFilamentState, /) -> None:
-        if not isinstance(filament, VortexFilamentState):
-            raise TypeError("filament must be VortexFilamentState.")
         self.filament = filament
         self.evaluator_id = canonical_fingerprint(
             {

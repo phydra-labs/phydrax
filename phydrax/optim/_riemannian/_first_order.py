@@ -16,6 +16,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._parameter_geometry import ParameterGeometry
 
 
@@ -181,6 +182,7 @@ class RiemannianSGD(AbstractRiemannianOptimizer):
     max_gradient_norm: float | None = eqx.field(static=True)
     optimizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_geometry: ParameterGeometry,
@@ -189,8 +191,6 @@ class RiemannianSGD(AbstractRiemannianOptimizer):
         learning_rate: LearningRate = 1e-2,
         max_gradient_norm: float | None = None,
     ) -> None:
-        if not isinstance(parameter_geometry, ParameterGeometry):
-            raise TypeError("parameter_geometry must be a ParameterGeometry.")
         if isinstance(learning_rate, (int, float)):
             scalar = float(learning_rate)
             if not isfinite(scalar) or scalar <= 0.0:
@@ -269,6 +269,7 @@ class RiemannianSGD(AbstractRiemannianOptimizer):
             ),
         )
 
+    @checked
     def update(
         self,
         gradients: PyTree[Any],
@@ -276,8 +277,6 @@ class RiemannianSGD(AbstractRiemannianOptimizer):
         parameters: PyTree[Any],
         /,
     ) -> tuple[PyTree[Array], RiemannianSGDState]:
-        if not isinstance(state, RiemannianSGDState):
-            raise TypeError("RiemannianSGD requires RiemannianSGDState.")
         gradient, gradient_norm, clipping_scale = self._gradient_and_scale(
             gradients, parameters
         )
@@ -305,9 +304,8 @@ class RiemannianSGD(AbstractRiemannianOptimizer):
             metrics,
         )
 
+    @checked
     def step_metrics(self, state: RiemannianSGDState, /) -> RiemannianStepMetrics:
-        if not isinstance(state, RiemannianSGDState):
-            raise TypeError("RiemannianSGD requires RiemannianSGDState.")
         return state.metrics
 
 
@@ -320,6 +318,7 @@ class RiemannianMomentum(AbstractRiemannianOptimizer):
     max_gradient_norm: float | None = eqx.field(static=True)
     optimizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_geometry: ParameterGeometry,
@@ -329,8 +328,6 @@ class RiemannianMomentum(AbstractRiemannianOptimizer):
         momentum: float = 0.9,
         max_gradient_norm: float | None = None,
     ) -> None:
-        if not isinstance(parameter_geometry, ParameterGeometry):
-            raise TypeError("parameter_geometry must be a ParameterGeometry.")
         if isinstance(learning_rate, (int, float)):
             scalar = float(learning_rate)
             if not isfinite(scalar) or scalar <= 0.0:
@@ -414,6 +411,7 @@ class RiemannianMomentum(AbstractRiemannianOptimizer):
             ),
         )
 
+    @checked
     def update(
         self,
         gradients: PyTree[Any],
@@ -421,8 +419,6 @@ class RiemannianMomentum(AbstractRiemannianOptimizer):
         parameters: PyTree[Any],
         /,
     ) -> tuple[PyTree[Array], RiemannianMomentumState]:
-        if not isinstance(state, RiemannianMomentumState):
-            raise TypeError("RiemannianMomentum requires RiemannianMomentumState.")
         gradient, gradient_norm, clipping_scale = self._gradient_and_scale(
             gradients, parameters
         )
@@ -476,13 +472,12 @@ class RiemannianMomentum(AbstractRiemannianOptimizer):
             metrics,
         )
 
+    @checked
     def step_metrics(
         self,
         state: RiemannianMomentumState,
         /,
     ) -> RiemannianStepMetrics:
-        if not isinstance(state, RiemannianMomentumState):
-            raise TypeError("RiemannianMomentum requires RiemannianMomentumState.")
         return state.metrics
 
 

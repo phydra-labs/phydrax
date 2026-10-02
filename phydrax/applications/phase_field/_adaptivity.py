@@ -44,6 +44,7 @@ from ...solver import (
     FiniteElementHPTopologyResult,
     FiniteElementTopologyTransaction,
 )
+from ...typing import checked
 from ._binary import (
     AllenCahnAcceptedState,
     CahnHilliardAcceptedState,
@@ -145,6 +146,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
     compatibility: BisectionCompatibility = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -160,8 +162,6 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         )
         if any(not np.isfinite(value) or value < 0.0 for value in values):
             raise ValueError("Phase-field adaptivity thresholds must be nonnegative.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not isinstance(compatibility, BisectionCompatibility):
             raise TypeError("compatibility must be BisectionCompatibility.")
         self.gradient_threshold, self.mass_tolerance, self.energy_tolerance = values

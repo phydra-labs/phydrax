@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._connection import LeviCivitaConnection
 from ._metric import LorentzianMetric
 from ._metric_domain import MetricDomainEvidence
@@ -174,6 +175,7 @@ class OrthonormalTetrad(StrictModule, NonTrainableState):
     derivative_valid: Array
     tetrad_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vectors: ArrayLike,
@@ -201,12 +203,6 @@ class OrthonormalTetrad(StrictModule, NonTrainableState):
             )
         if dual_.shape != vectors_.shape:
             raise ValueError("Tetrad dual covectors must have the same shape as vectors.")
-        if not isinstance(inner_products, MetricInnerProductEvidence):
-            raise TypeError("inner_products must be MetricInnerProductEvidence.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
-        if not isinstance(domain, MetricDomainEvidence):
-            raise TypeError("domain must be MetricDomainEvidence.")
         if not str(tetrad_id):
             raise ValueError("tetrad_id must be nonempty.")
         self.vectors = vectors_
@@ -248,6 +244,7 @@ class PrincipalNullTetrad(StrictModule, NonTrainableState):
     derivative_valid: Array
     tetrad_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vectors: ArrayLike,
@@ -272,12 +269,6 @@ class PrincipalNullTetrad(StrictModule, NonTrainableState):
             )
         if dual_.shape != vectors_.shape:
             raise ValueError("Null-tetrad dual covectors must match the vector shape.")
-        if not isinstance(inner_products, MetricInnerProductEvidence):
-            raise TypeError("inner_products must be MetricInnerProductEvidence.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
-        if not isinstance(domain, MetricDomainEvidence):
-            raise TypeError("domain must be MetricDomainEvidence.")
         if not str(tetrad_id):
             raise ValueError("tetrad_id must be nonempty.")
         self.vectors = vectors_

@@ -21,6 +21,7 @@ import phydrax.ein as ein
 
 from .._dtype_names import inexact_result_type
 from .._trainable import fixed_field
+from ..typing import checked
 from ._operators import (
     _array_value,
     _assemble_operator_diagonal,
@@ -962,6 +963,7 @@ class TwoSidedScaledLinearOperator(AbstractLinearOperator):
     right_scale: Array
     congruence: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -972,8 +974,6 @@ class TwoSidedScaledLinearOperator(AbstractLinearOperator):
         congruence: bool = False,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError(
                 "Two-sided scaling currently requires an unbatched operator."
@@ -1114,6 +1114,7 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
     core: Array
     right_factor: Array
 
+    @checked
     def __init__(
         self,
         base: AbstractLinearOperator,
@@ -1125,8 +1126,6 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(base, AbstractLinearOperator):
-            raise TypeError("base must be an AbstractLinearOperator.")
         if base.batch_shape or not base.source.compatible(base.target):
             raise ValueError(
                 "BasePlusLowRankLinearOperator requires an unbatched endomorphism base."
@@ -1389,6 +1388,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
     source: TensorProductSpace
     target: TensorProductSpace
 
+    @checked
     def __init__(
         self,
         local_operator: AbstractLinearOperator,
@@ -1398,10 +1398,6 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         *,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(local_operator, AbstractLinearOperator):
-            raise TypeError("local_operator must be an AbstractLinearOperator.")
-        if not isinstance(ambient_space, TensorProductSpace):
-            raise TypeError("ambient_space must be a TensorProductSpace.")
         if local_operator.batch_shape:
             raise ValueError("local_operator must be unbatched.")
         axes_ = tuple(axes)
@@ -1783,6 +1779,7 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
     upper_block: AbstractLinearOperator = fixed_field()
     inverse_action: AbstractPreconditioner
 
+    @checked
     def __init__(
         self,
         diagonal_block: AbstractLinearOperator,
@@ -1793,8 +1790,6 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
         *,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(inverse_action, AbstractPreconditioner):
-            raise TypeError("inverse_action must be an AbstractPreconditioner.")
         blocks = (diagonal_block, lower_block, upper_block)
         if any(not isinstance(block, AbstractLinearOperator) for block in blocks):
             raise TypeError("Schur complement blocks must be linear operators.")

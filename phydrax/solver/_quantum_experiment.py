@@ -20,7 +20,7 @@ from .._fingerprint import canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..operators.quantum._operations import QuantumProgram
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._quantum_measurement import (
     apply_dense_quantum_instrument,
     DenseInstrumentBranchResult,
@@ -99,6 +99,7 @@ class QuantumExperimentProgram(StrictModule):
     branch_capacity: int = eqx.field(static=True)
     experiment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prefix: QuantumProgram,
@@ -111,12 +112,6 @@ class QuantumExperimentProgram(StrictModule):
         *,
         branch_capacity: int,
     ) -> None:
-        if not isinstance(prefix, QuantumProgram):
-            raise TypeError("prefix must be a QuantumProgram.")
-        if not isinstance(instrument, QuantumInstrument):
-            raise TypeError("instrument must be a QuantumInstrument.")
-        if not isinstance(classical_layout, ClassicalRegisterLayout):
-            raise TypeError("classical_layout must be ClassicalRegisterLayout.")
         branches = tuple(branch_programs)
         routes = tuple(feed_forward_branch_by_outcome)
         register_table = tuple(tuple(row) for row in register_values_by_outcome)

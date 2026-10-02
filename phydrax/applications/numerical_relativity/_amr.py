@@ -42,6 +42,7 @@ from ...solver._mhd_amr import (
     ElectromotiveForceRegister,
     MagneticAMRTransferDiagnostics,
 )
+from ...typing import checked
 from ._distributed import (
     _formulation,
     formulation_field_names,
@@ -205,6 +206,7 @@ class NumericalRelativityAMRHaloPlan(StrictModule, NonTrainableState):
     component_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: BlockHierarchyTopology,
@@ -214,8 +216,6 @@ class NumericalRelativityAMRHaloPlan(StrictModule, NonTrainableState):
         *,
         transfer: AMREntityTransferPlan | None = None,
     ) -> None:
-        if not isinstance(topology, BlockHierarchyTopology):
-            raise TypeError("NR AMR halo planning requires BlockHierarchyTopology.")
         name = str(field_name)
         if name == "z4c":
             components = (25,)
@@ -411,6 +411,7 @@ class Z4cAMRTransferPlan(StrictModule, NonTrainableState):
     ) -> tuple[Z4cState, Z4cAMRTransferEvidence]:
         return self._apply(state, target_grid_id, prolong=False)
 
+    @checked
     def _apply(
         self,
         state: Z4cState,
@@ -419,8 +420,6 @@ class Z4cAMRTransferPlan(StrictModule, NonTrainableState):
         *,
         prolong: bool,
     ) -> tuple[Z4cState, Z4cAMRTransferEvidence]:
-        if not isinstance(state, Z4cState):
-            raise TypeError("Z4c AMR transfer requires Z4cState.")
         target = str(target_grid_id)
         if not target or target == state.grid_id:
             raise ValueError("Z4c AMR transfer requires a distinct target grid identity.")
@@ -1125,14 +1124,13 @@ class NumericalRelativityAMRState(StrictModule):
     epoch: NumericalRelativityAMRTopologyEpoch
     field_names: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         epoch: NumericalRelativityAMRTopologyEpoch,
         fields: Sequence[ArrayLike],
         /,
     ) -> None:
-        if not isinstance(epoch, NumericalRelativityAMRTopologyEpoch):
-            raise TypeError("NR AMR state requires NumericalRelativityAMRTopologyEpoch.")
         values = tuple(jnp.asarray(value) for value in fields)
         names = formulation_field_names(epoch.formulation)
         capacity = epoch.total_block_capacity
@@ -1672,13 +1670,12 @@ class NumericalRelativityAMRTopologyTransition(StrictModule, NonTrainableState):
             self._binding(source, target, "magnetic_flux", plan.plan_id),
         )
 
+    @checked
     def apply(
         self,
         predecessor: NumericalRelativityAMRState,
         /,
     ) -> NumericalRelativityAMRTransitionResult:
-        if not isinstance(predecessor, NumericalRelativityAMRState):
-            raise TypeError("NR AMR transition requires its predecessor state.")
         if predecessor.epoch.topology_id != self.source.topology_id:
             raise ValueError("NR AMR predecessor is not bound to the source topology.")
         overflow = jnp.asarray(

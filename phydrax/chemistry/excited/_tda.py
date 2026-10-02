@@ -20,6 +20,7 @@ from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...linalg import DenseLinearOperator, OperatorProperties
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ...typing import checked
 from ...units import (
     BOHR,
     conversion_factor,
@@ -101,6 +102,7 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
     transition_dipole_unit: UnitDefinition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         manifold: ExcitedStateManifoldPlan,
@@ -111,8 +113,6 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
         transition_dipole_unit: UnitDefinition,
         /,
     ) -> None:
-        if not isinstance(manifold, ExcitedStateManifoldPlan):
-            raise TypeError("manifold must be ExcitedStateManifoldPlan.")
         matrix = jnp.asarray(response_matrix)
         dipoles = jnp.asarray(basis_transition_dipoles, dtype=matrix.dtype)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
@@ -265,6 +265,7 @@ class NonadiabaticCouplingResult(StrictModule, NonTrainableState):
     energy_weighted_unit: UnitDefinition
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         derivative_couplings: ArrayLike,
@@ -290,8 +291,6 @@ class NonadiabaticCouplingResult(StrictModule, NonTrainableState):
         ).reshape(())
         self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.inverse_length_unit = inverse_length_unit
-        if not isinstance(energy_weighted_unit, UnitDefinition):
-            raise TypeError("energy_weighted_unit must be UnitDefinition.")
         self.energy_weighted_unit = energy_weighted_unit
         self.result_id = canonical_fingerprint(
             {

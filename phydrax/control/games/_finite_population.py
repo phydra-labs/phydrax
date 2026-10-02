@@ -21,7 +21,7 @@ from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
-from ...typing import parse
+from ...typing import checked, parse
 from ._mean_field_fixed_point import (
     MEAN_FIELD_GAME_FIXED_POINT_CANDIDATE,
     MeanFieldGameFixedPointResult,
@@ -251,6 +251,7 @@ class FinitePopulationGameProblem(StrictModule):
     law_distance_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fixed_point_result: MeanFieldGameFixedPointResult,
@@ -271,8 +272,6 @@ class FinitePopulationGameProblem(StrictModule):
         law_distance_id: str,
         problem_id: str,
     ) -> None:
-        if not isinstance(fixed_point_result, MeanFieldGameFixedPointResult):
-            raise TypeError("fixed_point_result must be a MeanFieldGameFixedPointResult.")
         if (
             isinstance(population_size, bool)
             or not isinstance(population_size, int)

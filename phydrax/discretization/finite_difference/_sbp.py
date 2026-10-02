@@ -25,7 +25,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._spaces import DiscreteFieldSpace
 from .._tensor_support import PreparedTensorGrid
 from ._certification import FDStabilityReport
@@ -251,6 +251,7 @@ class SBPDerivativePlan(StrictModule, NonTrainableState):
     family: SBPFamily
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -259,8 +260,6 @@ class SBPDerivativePlan(StrictModule, NonTrainableState):
         *,
         interior_order: SBPInteriorOrder = 2,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         axis_ = str(axis)
         if axis_ not in grid.axis_names:
             raise ValueError("SBP axis must belong to the prepared tensor grid.")
@@ -404,9 +403,8 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
     stability_report: FDStabilityReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SBPDerivativePlan, /) -> None:
-        if not isinstance(plan, SBPDerivativePlan):
-            raise TypeError("plan must be an SBPDerivativePlan.")
         grid = plan.grid
         axis_index = grid.axis_names.index(plan.axis)
         structured_axis = grid.structured_axes[axis_index]
@@ -650,9 +648,8 @@ class SBPClosureEvidence(StrictModule, NonTrainableState):
     minimum_weight: float = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, derivative: PreparedSBPOperator, /) -> None:
-        if not isinstance(derivative, PreparedSBPOperator):
-            raise TypeError("derivative must be a PreparedSBPOperator.")
         family = derivative.family
         norm_kind: SBPNormKind
         if derivative.grid.structured_axes[derivative.axis_index].periodic:
@@ -800,6 +797,7 @@ class SATBoundaryPlan(StrictModule, NonTrainableState):
     stability_report: FDStabilityReport
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sbp: PreparedSBPOperator,
@@ -815,8 +813,6 @@ class SATBoundaryPlan(StrictModule, NonTrainableState):
         upper_penalty: float = 0.0,
         stability_report: FDStabilityReport | None = None,
     ) -> None:
-        if not isinstance(sbp, PreparedSBPOperator):
-            raise TypeError("sbp must be a PreparedSBPOperator.")
         lower_kind = parse(lower_kind, SATConditionKind, "lower_kind")
         upper_kind = parse(upper_kind, SATConditionKind, "upper_kind")
         coefficients = tuple(

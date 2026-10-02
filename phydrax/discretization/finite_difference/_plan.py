@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ...linalg import ArraySpace
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -83,6 +84,7 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
     precision: FDExecutionPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -94,8 +96,6 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
         precision: FDExecutionPrecisionPolicy | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         requests_ = tuple(requests)
         if not requests_ or not all(
             isinstance(request, DerivativeRequest) for request in requests_
@@ -193,6 +193,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
     preparation: PreparationReport
     precision: FDExecutionPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         plan: FiniteDifferencePlan,
@@ -200,8 +201,6 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         *,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(plan, FiniteDifferencePlan):
-            raise TypeError("plan must be a FiniteDifferencePlan.")
         location_by_id: dict[str, GridLocation] = {}
         for request in plan.requests:
             location_by_id[request.source_location.location_id] = request.source_location

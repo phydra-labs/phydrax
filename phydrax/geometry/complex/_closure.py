@@ -25,7 +25,7 @@ from ..._strict import StrictModule
 from ...algebraic import SparsePolynomialSystem
 from ...algebraic._exact_integer import exact_integer_rank
 from ...linalg import FactorizationPolicy, inverse as invert_matrix
-from ...typing import parse
+from ...typing import checked, parse
 
 
 ProjectiveVarietyKind: TypeAlias = Literal[
@@ -925,6 +925,7 @@ class ProjectiveVarietyPlan(StrictModule):
     maximum_monomials: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kind: ProjectiveVarietyKind,
@@ -937,8 +938,6 @@ class ProjectiveVarietyPlan(StrictModule):
         maximum_monomials: int = 100_000,
     ) -> None:
         kind = parse(kind, ProjectiveVarietyKind, "kind")
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be SparsePolynomialSystem.")
         weights = tuple(ambient_weights)
         degrees = tuple(equation_degrees)
         if not weights or any(value <= 0 for value in weights):

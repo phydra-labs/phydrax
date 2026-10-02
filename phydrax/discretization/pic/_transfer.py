@@ -25,7 +25,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._chains import PreparedChainQuery
-from ...typing import parse
+from ...typing import checked, parse
 from .._cubical_whitney import CubicalSplineWhitneyKernel, PICShapeOrder
 from .._structured_cochain import StructuredCochainBridge
 from .._tensor_support import TensorEntityLayout
@@ -55,6 +55,7 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
     budget: ParticleGridSplatBudget
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -65,8 +66,6 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         order = parse(shape_order, PICShapeOrder, "shape_order")
         execution_ = SplatExecutionPolicy() if execution is None else execution
         precision_ = ParticlePrecisionPolicy() if precision is None else precision
@@ -103,13 +102,10 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
     charge: PreparedParticleGridSplat
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: PICParticleCochainTransferPlan, species: PreparedChargedParticles, /
     ) -> None:
-        if not isinstance(plan, PICParticleCochainTransferPlan):
-            raise TypeError("plan must be PICParticleCochainTransferPlan.")
-        if not isinstance(species, PreparedChargedParticles):
-            raise TypeError("species must be PreparedChargedParticles.")
         if species.spatial_dimension != plan.bridge.dimension:
             raise ValueError("Particle and cochain spatial dimensions must match.")
         grid = plan.bridge.grid

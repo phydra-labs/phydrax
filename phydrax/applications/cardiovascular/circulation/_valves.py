@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ....dynamics import DAEComponent, DAEEquationBlock, DAEJet
+from ....typing import checked
 from ._components import (
     _ConservationResidual,
     _incidence,
@@ -455,6 +456,7 @@ class EventValve(PressureFlowComponent):
             self.state.state_id,
         )
 
+    @checked
     def commit_event(
         self,
         candidate: ValveEventCandidate,
@@ -462,8 +464,6 @@ class EventValve(PressureFlowComponent):
         *,
         accept: ArrayLike = True,
     ) -> EventValve:
-        if not isinstance(candidate, ValveEventCandidate):
-            raise TypeError("candidate must be a ValveEventCandidate.")
         if candidate.valve_id != self.valve_id:
             raise ValueError("Valve event candidate belongs to another valve.")
         same_source = (

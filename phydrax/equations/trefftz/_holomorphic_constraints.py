@@ -38,6 +38,7 @@ from ...linalg._constraint_operators import (
     prepare_constraint_operator,
     PreparedConstraintOperator,
 )
+from ...typing import checked
 
 
 HolomorphicConstraintComponent = Literal["real", "imaginary"]
@@ -549,6 +550,7 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
     evidence: HolomorphicConstraintOperatorEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: HolomorphicConstraintOperatorPlan,
@@ -557,12 +559,6 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
         *,
         evidence: HolomorphicConstraintOperatorEvidence,
     ) -> None:
-        if not isinstance(plan, HolomorphicConstraintOperatorPlan):
-            raise TypeError("plan must be HolomorphicConstraintOperatorPlan.")
-        if not isinstance(prepared_operator, PreparedConstraintOperator):
-            raise TypeError("prepared_operator must be PreparedConstraintOperator.")
-        if not isinstance(evidence, HolomorphicConstraintOperatorEvidence):
-            raise TypeError("evidence must be HolomorphicConstraintOperatorEvidence.")
         if not isinstance(prepared_operator.operator, DenseLinearOperator):
             raise TypeError("Holomorphic constraints require a dense prepared operator.")
         matrix = prepared_operator.operator.matrix
@@ -669,14 +665,13 @@ class HolomorphicAffineCoefficientMap(StrictModule, NonTrainableState):
     evidence: HolomorphicConstraintLiftEvidence
     map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: PreparedHolomorphicConstraintOperator,
         target: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(operator, PreparedHolomorphicConstraintOperator):
-            raise TypeError("operator must be PreparedHolomorphicConstraintOperator.")
         target_ = jnp.asarray(target)
         if target_.shape != (operator.target_count,) or jnp.iscomplexobj(target_):
             raise ValueError(
@@ -737,6 +732,7 @@ class ConstrainedHolomorphicPotential(StrictModule, ParameterOwner):
     coefficient_map: HolomorphicAffineCoefficientMap = fixed_field()
     _certificate: HolomorphicMapCertificate = fixed_field()
 
+    @checked
     def __init__(
         self,
         coefficient_map: HolomorphicAffineCoefficientMap,
@@ -744,8 +740,6 @@ class ConstrainedHolomorphicPotential(StrictModule, ParameterOwner):
         *,
         initial_free_coordinates: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(coefficient_map, HolomorphicAffineCoefficientMap):
-            raise TypeError("coefficient_map must be HolomorphicAffineCoefficientMap.")
         free = (
             jnp.zeros(
                 (coefficient_map.nullity,),
@@ -813,14 +807,13 @@ class ConstrainedHolomorphicPotential(StrictModule, ParameterOwner):
         )
         return HolomorphicJet(value, derivatives)
 
+    @checked
     def multi_jet(
         self,
         coordinates: ArrayLike,
         index_set: HolomorphicMultiIndexSet,
         /,
     ) -> HolomorphicMultiJet:
-        if not isinstance(index_set, HolomorphicMultiIndexSet):
-            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         if index_set.complex_dimension != self._certificate.complex_input_size:
             raise ValueError("Multijet and constrained potential dimensions differ.")
         if index_set.maximum_total_order > self._certificate.maximum_derivative_order:
@@ -872,9 +865,8 @@ class HolomorphicConstraintProjector(StrictModule, NonTrainableState):
     operator: PreparedHolomorphicConstraintOperator
     projector_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, operator: PreparedHolomorphicConstraintOperator, /) -> None:
-        if not isinstance(operator, PreparedHolomorphicConstraintOperator):
-            raise TypeError("operator must be PreparedHolomorphicConstraintOperator.")
         if operator.evidence.rank != operator.target_count:
             raise ValueError("Cardinal projection requires full row rank.")
         self.operator = operator
@@ -908,6 +900,7 @@ class ProjectedHolomorphicPotential(StrictModule):
     coefficient_map: HolomorphicAffineCoefficientMap
     _certificate: HolomorphicMapCertificate
 
+    @checked
     def __init__(
         self,
         provider: HolomorphicPotentialProvider,
@@ -917,8 +910,6 @@ class ProjectedHolomorphicPotential(StrictModule):
     ) -> None:
         if not isinstance(provider, HolomorphicPotentialProvider):
             raise TypeError("provider must implement HolomorphicPotentialProvider.")
-        if not isinstance(projector, HolomorphicConstraintProjector):
-            raise TypeError("projector must be HolomorphicConstraintProjector.")
         if coefficient_map.operator.prepared_id != projector.operator.prepared_id:
             raise ValueError("Projection target map and projector are incompatible.")
         child = provider.holomorphic_certificate()
@@ -986,14 +977,13 @@ class ProjectedHolomorphicPotential(StrictModule):
         correction = self.projector.operator.minimum_norm_coefficients(residual)
         return HolomorphicProjectionState(values, correction)
 
+    @checked
     def evaluate_with_state(
         self,
         coordinates: ArrayLike,
         state: HolomorphicProjectionState,
         /,
     ) -> Array:
-        if not isinstance(state, HolomorphicProjectionState):
-            raise TypeError("state must be HolomorphicProjectionState.")
         dimension = self._certificate.complex_input_size
         basis = self.frame.basis_derivative(coordinates, (0,) * dimension)
         return self.provider(coordinates) + basis @ state.correction_coefficients

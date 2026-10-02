@@ -31,7 +31,7 @@ from ..equations._matter_radiation_interactions import (
     BremsstrahlungSpectrumRoute,
     SeltzerBergerBremsstrahlungTable,
 )
-from ..typing import Bool, Dim, Float64, Int32, parse, PRNGKey
+from ..typing import Bool, checked, Dim, Float64, Int32, parse, PRNGKey
 from ._secondary_stack import (
     empty_secondary_stack,
     push_secondary,
@@ -246,6 +246,7 @@ class ChargedParticleTransportPlan(StrictModule, NonTrainableState):
     plasma_energy_ev: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: VoxelRadiationGeometryPlan,
@@ -263,10 +264,6 @@ class ChargedParticleTransportPlan(StrictModule, NonTrainableState):
         lpm_energy_ev: float | None = None,
         plasma_energy_ev: float | None = None,
     ) -> None:
-        if not isinstance(geometry, VoxelRadiationGeometryPlan):
-            raise TypeError("geometry must be VoxelRadiationGeometryPlan.")
-        if not isinstance(materials, ChargedRadiationMaterialLibrary):
-            raise TypeError("materials must be ChargedRadiationMaterialLibrary.")
         if photon_stack is not None and not isinstance(photon_stack, SecondaryStackSpec):
             raise TypeError("photon_stack must be SecondaryStackSpec or None.")
         steps = int(maximum_steps)

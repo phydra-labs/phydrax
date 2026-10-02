@@ -31,7 +31,7 @@ from ..stochastic._state_time import (
     TrajectoryStateTimeSamples,
 )
 from ..stochastic._trajectory import StochasticTrajectory
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._sample_statistics import (
     clustered_standard_error,
     effective_sample_size,
@@ -242,14 +242,13 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             batch_id=self.label or self.policy.policy_id,
         )
 
+    @checked
     def _evaluate_nodes(
         self,
         functions: Mapping[str, DomainFunction],
         batch: ScoreMatchingBatch,
         /,
     ) -> _ScoreNodeEvaluation:
-        if not isinstance(batch, ScoreMatchingBatch):
-            raise TypeError("batch must be a ScoreMatchingBatch.")
         samples = batch.samples
         score = require_score_field(
             functions,

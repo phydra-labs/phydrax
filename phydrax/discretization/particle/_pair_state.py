@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleDiscretization
 from ._pairwise import ParticlePairRelation
 
@@ -45,9 +46,8 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
     pair_count: int = eqx.field(static=True)
     key_space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, particles: ParticleDiscretization, /) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         ids = np.asarray(particles.particle_ids, dtype=np.int64)
         if np.any(ids < 0) or np.unique(ids).size != ids.size:
             raise ValueError("Particle pair identities require unique nonnegative IDs.")
@@ -67,9 +67,8 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def keys(self, pairs: ParticlePairRelation, /) -> ParticlePairKeys:
-        if not isinstance(pairs, ParticlePairRelation):
-            raise TypeError("pairs must be a ParticlePairRelation.")
         if (
             pairs.source_support_id != self.particle_support_id
             or pairs.target_support_id != self.particle_support_id

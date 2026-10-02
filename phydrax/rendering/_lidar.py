@@ -33,6 +33,7 @@ from ..measurement import (
     ValueKind,
     ValueLayout,
 )
+from ..typing import checked
 from ..units import conversion_factor, LENGTH, UnitDefinition
 from ._result import RenderEvidence
 
@@ -57,6 +58,7 @@ class LidarSurfacePlan(StrictModule, NonTrainableState):
     traversal_stack_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         realization: SurfaceRealization,
@@ -68,14 +70,8 @@ class LidarSurfacePlan(StrictModule, NonTrainableState):
         leaf_size: int = 8,
         traversal_stack_capacity: int = 64,
     ) -> None:
-        if not isinstance(realization, SurfaceRealization):
-            raise TypeError("realization must be SurfaceRealization.")
-        if not isinstance(rays, RaySampleSupport):
-            raise TypeError("rays must be RaySampleSupport.")
         if not isinstance(quantity, QuantitySpec) or quantity.unit.dimension != LENGTH:
             raise ValueError("quantity must be a length QuantitySpec.")
-        if not isinstance(sampling, SamplingSemantics):
-            raise TypeError("sampling must be SamplingSemantics.")
         if (
             realization.model.metadata.coordinate_contract.spatial_id
             != rays.coordinate_contract.spatial_id

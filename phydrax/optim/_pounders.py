@@ -27,6 +27,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._certificates import (
     certify_least_squares_physical,
     reconcile_optimization_status,
@@ -190,6 +191,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         return state.metrics
 
+    @checked
     def solve(
         self,
         problem: NonlinearLeastSquaresProblem,
@@ -199,8 +201,6 @@ class POUNDERS(AbstractLeastSquaresMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> LeastSquaresResult:
-        if not isinstance(problem, NonlinearLeastSquaresProblem):
-            raise TypeError("problem must be NonlinearLeastSquaresProblem.")
         self.precision.validate_tolerance(termination.absolute_optimality)
         parameters = self.precision.state(
             validate_real_inexact_tree(

@@ -18,7 +18,7 @@ from .._term import AbstractScalarTerm
 from ..domain import DomainFunction
 from ..integration._api import IntegrationRealization, reduce
 from ..transport import AbstractGroundCost
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class _MongeCostEvaluator(StrictModule):
@@ -55,6 +55,7 @@ class MongeMapTerm(AbstractScalarTerm):
     map_field: str = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         map_field: str,
@@ -69,10 +70,6 @@ class MongeMapTerm(AbstractScalarTerm):
     ) -> None:
         if not isinstance(map_field, str) or not map_field:
             raise ValueError("map_field must be non-empty.")
-        if not isinstance(source_realization, IntegrationRealization):
-            raise TypeError("source_realization must be an IntegrationRealization.")
-        if not isinstance(cost, AbstractGroundCost):
-            raise TypeError("cost must be an AbstractGroundCost.")
         if not callable(discrepancy_provider):
             raise TypeError("discrepancy_provider must be callable.")
         self.map_field = map_field

@@ -39,6 +39,7 @@ from ....discretization.vortex._interfaces import (
 )
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
+from ....typing import checked
 
 
 class PeriodicVortexInCellDiagnostics(StrictModule):
@@ -69,6 +70,7 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -81,14 +83,6 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
         precision: VortexPrecisionPolicy | None = None,
         compatibility_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be PreparedTensorGrid.")
-        if not isinstance(spectral, TensorSpectralDiscretization):
-            raise TypeError("spectral must be TensorSpectralDiscretization.")
-        if not isinstance(assignment, AbstractStructuredSplatAssignment):
-            raise TypeError("assignment must be an AbstractStructuredSplatAssignment.")
         if not np.all(np.asarray(particles.active_mask)):
             raise ValueError(
                 "Periodic VIC binds capacity only; runtime activity belongs to VortexSourceState."

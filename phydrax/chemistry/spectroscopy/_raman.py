@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan
+from ...typing import checked
 from ...units import derived_unit, UnitDefinition
 from .._optimization import _require_structure_matches_system
 from ..electronic_structure._kohn_sham import NativeLDAPlan, StaticPolarizabilityResult
@@ -69,9 +70,8 @@ class NativeLDAPolarizabilityProvider(AbstractPolarizabilityProvider):
     provider_id: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: NativeLDAPlan, /) -> None:
-        if not isinstance(plan, NativeLDAPlan):
-            raise TypeError("plan must be NativeLDAPlan.")
         self.plan = plan
         self.system_id = plan.system.system_id
         self.provider_id = canonical_fingerprint(
@@ -99,6 +99,7 @@ class RamanSpectrumResult(StrictModule, NonTrainableState):
     source_result_ids: tuple[str, ...] = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wavenumbers: ArrayLike,
@@ -140,8 +141,6 @@ class RamanSpectrumResult(StrictModule, NonTrainableState):
         if grid_.ndim != 1 or broadened.shape != grid_.shape:
             raise ValueError("Raman grid and broadened intensity must align.")
         area_residual_ = jnp.asarray(area_residual, dtype=waves.dtype).reshape(())
-        if not isinstance(activity_unit, UnitDefinition):
-            raise TypeError("activity_unit must be UnitDefinition.")
         self.wavenumbers = waves
         self.polarizability_derivatives = derivatives
         (

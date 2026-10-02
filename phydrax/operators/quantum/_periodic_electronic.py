@@ -26,6 +26,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure
 from ...discretization import PeriodicCell
+from ...typing import checked
 from ...units import BOHR, conversion_factor, HARTREE
 from ._amplitude import LogAmplitude
 from ._electronic import ElectronicKineticPolicy
@@ -268,6 +269,7 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
     operator_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         nuclei: AtomicStructure,
@@ -281,12 +283,6 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         resource_plan: ElectronicVMCResourcePlan | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(nuclei, AtomicStructure):
-            raise TypeError("nuclei must be an AtomicStructure.")
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
-        if not isinstance(ewald, PeriodicElectronicEwaldPolicy):
-            raise TypeError("ewald must be a PeriodicElectronicEwaldPolicy.")
         if (
             cell.rank != 3
             or cell.ambient_dimension != 3
@@ -382,9 +378,8 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         self.operator_id = identifier
         self.method_id = f"{policy.method_id}:finite-ewald={ewald.policy_id}"
 
+    @checked
     def _require_amplitude(self, model: AbstractPeriodicElectronicAmplitude, /) -> None:
-        if not isinstance(model, AbstractPeriodicElectronicAmplitude):
-            raise TypeError("model must implement AbstractPeriodicElectronicAmplitude.")
         if model.configuration_shape != self.configuration_shape:
             raise ValueError(
                 "Periodic amplitude and Hamiltonian configuration shapes differ."

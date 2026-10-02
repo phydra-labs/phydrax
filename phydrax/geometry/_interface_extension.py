@@ -19,7 +19,7 @@ from phydrax.linalg import AbstractLinearOperator, RankPolicy, SolveResourcePoli
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._trace_extension import (
     DiscreteTraceCorrectionProvider,
     PreparedTraceExtension,
@@ -134,6 +134,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
     construction_certificate_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trace_operator: AbstractLinearOperator,
@@ -152,8 +153,6 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
             raise TypeError(
                 "Interface trace and candidates must be native linear operators."
             )
-        if not isinstance(support, OrientedInterfaceSupport):
-            raise TypeError("support must be OrientedInterfaceSupport.")
         if not trace_operator.source.compatible(candidate_operator.target):
             raise ValueError(
                 "Interface candidates must map into the complete product field space."

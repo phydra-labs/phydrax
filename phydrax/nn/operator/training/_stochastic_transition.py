@@ -37,7 +37,7 @@ from ....stochastic._realization import (
 )
 from ....stochastic._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ....stochastic._wiener import WienerRealization
-from ....typing import parse, PRNGKey
+from ....typing import checked, parse, PRNGKey
 from ..data import FunctionSamples, OperatorBatch, OperatorOutputSpec
 from ..distribution import (
     AbstractOperatorDistribution,
@@ -250,6 +250,7 @@ class OperatorTransitionSpec(StrictModule):
     query_name: str = eqx.field(static=True)
     output_field: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         output_spec: OperatorOutputSpec,
@@ -262,8 +263,6 @@ class OperatorTransitionSpec(StrictModule):
         query_name: str = "query",
         output_field: str = "output",
     ) -> None:
-        if not isinstance(output_spec, OperatorOutputSpec):
-            raise TypeError("output_spec must be an OperatorOutputSpec.")
         state = _name(state_input, owner="state_input")
         duration = _name(duration_input, owner="duration_input")
         source_time = _name(
@@ -322,6 +321,7 @@ class OperatorTransitionSpec(StrictModule):
             raise ValueError("The configured driver input has no values.")
         return tuple(values.shape[len(batch.case_shape) :])
 
+    @checked
     def validate_batch(
         self,
         batch: OperatorBatch,
@@ -329,8 +329,6 @@ class OperatorTransitionSpec(StrictModule):
         *,
         require_driver: bool = False,
     ) -> OperatorBatch:
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("Transition templates must be OperatorBatch objects.")
         for input_name in (self.state_input, self.duration_input):
             if input_name not in batch.inputs:
                 raise KeyError(f"Transition batch is missing input {input_name!r}.")
@@ -518,16 +516,13 @@ class OperatorTransitionSpec(StrictModule):
             query_name=self.query_name,
         )
 
+    @checked
     def validate_distribution(
         self,
         distribution: AbstractOperatorDistribution,
         batch: OperatorBatch,
         /,
     ) -> AbstractOperatorDistribution:
-        if not isinstance(distribution, AbstractOperatorDistribution):
-            raise TypeError(
-                "Transition model must return an AbstractOperatorDistribution."
-            )
         if distribution.uncertainty_source != "process":
             raise ValueError(
                 "Operator transition distributions require process uncertainty."
@@ -733,9 +728,8 @@ class OperatorProcessDistribution(AbstractProcessDistribution):
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     uncertainty_source: Literal["process"] = eqx.field(static=True)
 
+    @checked
     def __init__(self, distribution: AbstractOperatorDistribution, /) -> None:
-        if not isinstance(distribution, AbstractOperatorDistribution):
-            raise TypeError("distribution must implement AbstractOperatorDistribution.")
         if distribution.uncertainty_source != "process":
             raise ValueError(
                 "Operator process distributions require process uncertainty."
@@ -769,6 +763,7 @@ class OperatorMarginalTransition(AbstractMarginalTransitionLaw):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractProbabilisticOperatorModel,
@@ -778,12 +773,6 @@ class OperatorMarginalTransition(AbstractMarginalTransitionLaw):
         *,
         process_id: str,
     ) -> None:
-        if not isinstance(model, AbstractProbabilisticOperatorModel):
-            raise TypeError(
-                "OperatorMarginalTransition requires an AbstractProbabilisticOperatorModel."
-            )
-        if not isinstance(spec, OperatorTransitionSpec):
-            raise TypeError("spec must be an OperatorTransitionSpec.")
         template = spec.validate_batch(template_batch)
         resolved_id = _name(process_id, owner="process_id")
         self.model = model
@@ -817,6 +806,7 @@ class OperatorPathwiseTransition(AbstractPathwiseTransition):
     driver_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: Callable,
@@ -828,8 +818,6 @@ class OperatorPathwiseTransition(AbstractPathwiseTransition):
     ) -> None:
         if not callable(model):
             raise TypeError("OperatorPathwiseTransition model must be callable.")
-        if not isinstance(spec, OperatorTransitionSpec):
-            raise TypeError("spec must be an OperatorTransitionSpec.")
         template = spec.validate_batch(template_batch, require_driver=True)
         if len(spec.driver_bindings) != 1:
             raise ValueError(
@@ -895,6 +883,7 @@ class OperatorProcessTransition(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: Callable,
@@ -906,8 +895,6 @@ class OperatorProcessTransition(StrictModule):
     ) -> None:
         if not callable(model):
             raise TypeError("OperatorProcessTransition model must be callable.")
-        if not isinstance(spec, OperatorTransitionSpec):
-            raise TypeError("spec must be an OperatorTransitionSpec.")
         template = spec.validate_batch(template_batch, require_driver=True)
         resolved_id = _name(process_id, owner="process_id")
         self.model = model
@@ -945,6 +932,7 @@ class OperatorJumpTransition(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: Callable,
@@ -956,8 +944,6 @@ class OperatorJumpTransition(StrictModule):
     ) -> None:
         if not callable(model):
             raise TypeError("OperatorJumpTransition model must be callable.")
-        if not isinstance(spec, OperatorTransitionSpec):
-            raise TypeError("spec must be an OperatorTransitionSpec.")
         template = spec.validate_batch(template_batch, require_driver=True)
         if any(binding.kind != "jump" for binding in spec.driver_bindings):
             raise ValueError("OperatorJumpTransition accepts only jump bindings.")
@@ -1003,6 +989,7 @@ class StochasticOperatorRollout(StrictModule):
     process_id: str = eqx.field(static=True)
     kind: OperatorTransitionKind = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trajectory: StochasticTrajectory,
@@ -1012,8 +999,6 @@ class StochasticOperatorRollout(StrictModule):
         kind: OperatorTransitionKind,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(trajectory, StochasticTrajectory):
-            raise TypeError("trajectory must be a StochasticTrajectory.")
         kind = parse(kind, OperatorTransitionKind, "kind")
         resolved_id = _name(process_id, owner="process_id")
         self.trajectory = trajectory

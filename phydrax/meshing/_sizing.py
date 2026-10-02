@@ -16,6 +16,7 @@ from .._bvh import bvh_nearest_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._metric import (
     _grade_scalar_sizes,
     _scalar_violation,
@@ -107,6 +108,7 @@ class UniformSizeControl(StrictModule, NonTrainableState):
     priority: int = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: MeshingScope,
@@ -119,8 +121,6 @@ class UniformSizeControl(StrictModule, NonTrainableState):
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         target = _size(target_size, "target_size")
         minimum = None if minimum_size is None else _size(minimum_size, "minimum_size")
         maximum = None if maximum_size is None else _size(maximum_size, "maximum_size")
@@ -164,6 +164,7 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
     priority: int = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: MeshingScope,
@@ -176,8 +177,6 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
         strength: SizeControlStrength = SizeControlStrength.SOFT,
         priority: int = 0,
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         angle = float(normal_angle)
         minimum = None if minimum_size is None else _size(minimum_size, "minimum_size")
         maximum = None if maximum_size is None else _size(maximum_size, "maximum_size")
@@ -365,6 +364,7 @@ class SizeResolutionReport(StrictModule, NonTrainableState):
     field_id: str = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         controls: tuple[SizeControl, ...],
@@ -386,8 +386,6 @@ class SizeResolutionReport(StrictModule, NonTrainableState):
             for control in controls
         ):
             raise TypeError("controls must contain supported size controls.")
-        if not isinstance(field, ResolvedSizeField):
-            raise TypeError("field must be ResolvedSizeField.")
         identifiers = tuple(control.control_id for control in controls)
         winners = tuple(str(identifier) for identifier in winning_control_ids)
         if len(winners) != field.values.shape[0] or any(

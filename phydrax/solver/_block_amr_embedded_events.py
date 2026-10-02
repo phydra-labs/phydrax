@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import TopologyEpoch
 from ..discretization.amr import VariablePatchGeometryState
+from ..typing import checked
 from ._finite_volume_topology_events import (
     FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
@@ -168,6 +169,7 @@ class MovingEmbeddedBoundaryEventPlan(StrictModule, NonTrainableState):
                 result.append(values[mask])
         return tuple(result)
 
+    @checked
     def transact(
         self,
         journal: FiniteVolumeTopologyEventJournal,
@@ -180,8 +182,6 @@ class MovingEmbeddedBoundaryEventPlan(StrictModule, NonTrainableState):
         *,
         args: Any = None,
     ) -> MovingEmbeddedBoundaryEventResult:
-        if not isinstance(journal, FiniteVolumeTopologyEventJournal):
-            raise TypeError("Moving EB transaction requires a topology event journal.")
         if (
             not isinstance(source_geometry, VariablePatchGeometryState)
             or not isinstance(target_geometry, VariablePatchGeometryState)

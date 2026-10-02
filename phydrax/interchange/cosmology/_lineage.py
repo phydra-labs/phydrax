@@ -30,6 +30,7 @@ from ...applications.cosmology._halo_lineage import (
     HaloTrackSnapshot,
 )
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 from .._report import AdapterLoss, AdapterReport, AdapterStatus
 from ._snapshots import _admit_path
 
@@ -160,6 +161,7 @@ class HbtHeronsCatalogImport(StrictModule, NonTrainableState):
     source: ReferenceArtifactManifest
     report: AdapterReport
 
+    @checked
     def __init__(
         self,
         lineage: HaloLineageProduct,
@@ -168,14 +170,6 @@ class HbtHeronsCatalogImport(StrictModule, NonTrainableState):
         report: AdapterReport,
         /,
     ) -> None:
-        if not isinstance(lineage, HaloLineageProduct):
-            raise TypeError("lineage must be HaloLineageProduct.")
-        if not isinstance(sidecar, HbtHeronsSidecar):
-            raise TypeError("sidecar must be HbtHeronsSidecar.")
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("source must be ReferenceArtifactManifest.")
-        if not isinstance(report, AdapterReport):
-            raise TypeError("report must be AdapterReport.")
         self.lineage = lineage
         self.sidecar = sidecar
         self.source = source

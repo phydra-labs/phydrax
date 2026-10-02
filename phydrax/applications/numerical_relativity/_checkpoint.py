@@ -50,7 +50,7 @@ from ...solver._grmhd_ct import GRMHDConstrainedTransportPlan, GRMHDCTState
 from ...solver._grmhd_runtime import GRMHDState
 from ...solver._grrmhd_runtime import GRRMHDState
 from ...solver._relativistic_finite_volume import GRHDFiniteVolumeState
-from ...typing import parse
+from ...typing import checked, parse
 from ._coupled_runtime import CoupledEvolutionState
 from ._distributed import _formulation, NumericalRelativityFormulation
 from ._matter_coupling import CoupledBudget
@@ -234,6 +234,7 @@ class NumericalRelativityRestartState(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_z4c(
         cls,
         state: Z4cRuntimeState,
@@ -242,8 +243,6 @@ class NumericalRelativityRestartState(StrictModule):
         topology_id: str,
         topology_epoch: int,
     ) -> NumericalRelativityRestartState:
-        if not isinstance(state, Z4cRuntimeState):
-            raise TypeError("state must be Z4cRuntimeState.")
         return cls(
             "z4c",
             state.runtime_id,
@@ -256,6 +255,7 @@ class NumericalRelativityRestartState(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_grhd(
         cls,
         state: GRHDFiniteVolumeState,
@@ -263,8 +263,6 @@ class NumericalRelativityRestartState(StrictModule):
         *,
         topology_epoch: int,
     ) -> NumericalRelativityRestartState:
-        if not isinstance(state, GRHDFiniteVolumeState):
-            raise TypeError("state must be GRHDFiniteVolumeState.")
         return cls(
             "grhd",
             state.runtime_id,
@@ -277,6 +275,7 @@ class NumericalRelativityRestartState(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_grmhd(
         cls,
         state: GRMHDState,
@@ -287,8 +286,6 @@ class NumericalRelativityRestartState(StrictModule):
         topology_id: str,
         topology_epoch: int,
     ) -> NumericalRelativityRestartState:
-        if not isinstance(state, GRMHDState):
-            raise TypeError("state must be GRMHDState.")
         return cls(
             "grmhd",
             runtime_id,
@@ -306,6 +303,7 @@ class NumericalRelativityRestartState(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_grrmhd(
         cls,
         state: GRRMHDState,
@@ -316,8 +314,6 @@ class NumericalRelativityRestartState(StrictModule):
         topology_id: str,
         topology_epoch: int,
     ) -> NumericalRelativityRestartState:
-        if not isinstance(state, GRRMHDState):
-            raise TypeError("state must be GRRMHDState.")
         return cls(
             "grrmhd",
             runtime_id,
@@ -336,6 +332,7 @@ class NumericalRelativityRestartState(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_coupled(
         cls,
         formulation: Literal["z4c-grhd", "z4c-grmhd", "z4c-grrmhd"],
@@ -348,8 +345,6 @@ class NumericalRelativityRestartState(StrictModule):
         formulation_ = _formulation(formulation)
         if formulation_ not in ("z4c-grhd", "z4c-grmhd", "z4c-grrmhd"):
             raise ValueError("Coupled restart formulation must include Z4c and matter.")
-        if not isinstance(state, CoupledEvolutionState):
-            raise TypeError("state must be CoupledEvolutionState.")
         return cls(
             formulation_,
             state.runtime_id,
@@ -410,6 +405,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         formulation: NumericalRelativityFormulation,
@@ -444,8 +440,6 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
             raise ValueError("NR checkpoint identities and topology epoch must be valid.")
         if not isinstance(policy, NumericalRelativityRestartPolicy):
             raise TypeError("restart must be a NumericalRelativityRestartPolicy.")
-        if not isinstance(state_template, NumericalRelativityRestartState):
-            raise TypeError("state_template must be NumericalRelativityRestartState.")
         runtime, geometry, topology, analysis, revision, execution = identifiers
         uses_grmhd = formulation_ in (
             "grmhd",
@@ -522,9 +516,8 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
         )
         self.validate_state(state_template)
 
+    @checked
     def validate_state(self, state: NumericalRelativityRestartState, /) -> None:
-        if not isinstance(state, NumericalRelativityRestartState):
-            raise TypeError("Checkpoint state must be NumericalRelativityRestartState.")
         if (
             state.formulation != self.formulation
             or state.runtime_id != self.runtime_id
@@ -700,6 +693,7 @@ class NumericalRelativityCheckpoint(StrictModule):
     checkpoint_id: str = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: NumericalRelativityRestartState,
@@ -708,8 +702,6 @@ class NumericalRelativityCheckpoint(StrictModule):
         checkpoint_id: str,
         /,
     ) -> None:
-        if not isinstance(state, NumericalRelativityRestartState):
-            raise TypeError("NR checkpoint requires a restart state.")
         plan = str(plan_id)
         checkpoint = str(checkpoint_id)
         if not plan or not checkpoint:

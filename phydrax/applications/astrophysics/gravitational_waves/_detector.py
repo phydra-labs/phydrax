@@ -18,7 +18,7 @@ from phydrax.ein import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 from ...astrodynamics import PreparedEarthOrientation, PreparedTimeRoute
 from .._photometry import ObservationDataProvenance
 from ._data import DetectorNetworkData
@@ -51,6 +51,7 @@ class InterferometerGeometry(StrictModule, NonTrainableState):
     frame_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         detector_id: str,
@@ -73,8 +74,6 @@ class InterferometerGeometry(StrictModule, NonTrainableState):
             raise ValueError("Detector vertex must be a finite three-vector.")
         if abs(float(np.dot(x, y))) > 1.0e-8:
             raise ValueError("Interferometer arms must be orthogonal.")
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         tensor = 0.5 * (np.outer(x, x) - np.outer(y, y))
         self.vertex_m = jnp.asarray(vertex)
         self.x_arm = jnp.asarray(x)
@@ -118,6 +117,7 @@ class DetectorResponsePlan(StrictModule, NonTrainableState):
     time_origin_gps: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         network: DetectorNetworkData,
@@ -129,8 +129,6 @@ class DetectorResponsePlan(StrictModule, NonTrainableState):
         gps_to_utc: PreparedTimeRoute | None = None,
         time_origin_gps: float | None = None,
     ) -> None:
-        if not isinstance(network, DetectorNetworkData):
-            raise TypeError("network must be DetectorNetworkData.")
         items = tuple(geometries)
         if tuple(item.detector_id for item in items) != network.detector_ids:
             raise ValueError("Detector geometry order must match network data exactly.")

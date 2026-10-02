@@ -20,6 +20,7 @@ from ..discretization import DiscretizationBundle
 from ..discretization.spectral import HermitianSpectralCoordinates
 from ..linalg import DiagonalLinearOperator
 from ..linalg._matrix_functions import _phi_function_value
+from ..typing import checked
 from ._differential import DifferentialSolution
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._semilinear_drift import SemilinearDrift
@@ -128,6 +129,7 @@ class ETDRKMethod(StrictModule, NonTrainableState):
             )
         return operator.diagonal.reshape(drift.state_shape)
 
+    @checked
     def prepare(
         self,
         drift: SemilinearDrift,
@@ -136,8 +138,6 @@ class ETDRKMethod(StrictModule, NonTrainableState):
         coordinates: HermitianSpectralCoordinates | None = None,
     ) -> PreparedETDRKMethod:
         """Bind the complete drift and optional real-field boundary contract."""
-        if not isinstance(drift, SemilinearDrift):
-            raise TypeError("drift must be a SemilinearDrift.")
         if coordinates is not None:
             if not isinstance(coordinates, HermitianSpectralCoordinates):
                 raise TypeError(
@@ -320,6 +320,7 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
     safety_factor: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_method: ETDRKMethod,
@@ -327,8 +328,6 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
         *,
         safety_factor: float,
     ) -> None:
-        if not isinstance(base_method, ETDRKMethod):
-            raise TypeError("base_method must be an ETDRKMethod.")
         safety = float(safety_factor)
         if not np.isfinite(safety) or not 0.0 < safety <= 1.0:
             raise ValueError("safety_factor must be finite and lie in (0, 1].")
@@ -344,6 +343,7 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         dynamics: Any,
@@ -360,10 +360,6 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
         if dynamics.algebraic_les is None:
             raise ValueError(
                 "LES-stability-guarded ETDRK requires compiled algebraic LES."
-            )
-        if not isinstance(coordinates, HermitianSpectralCoordinates):
-            raise TypeError(
-                "coordinates must be HermitianSpectralCoordinates for LES ETDRK."
             )
         if (
             coordinates.discretization.prepared_id != dynamics.discretization.prepared_id
@@ -414,6 +410,7 @@ class PreparedLESStabilityGuardedETDRKMethod(
     safety_factor: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LESStabilityGuardedETDRKMethod,
@@ -425,10 +422,6 @@ class PreparedLESStabilityGuardedETDRKMethod(
             CompiledIncompressibleSpectralDynamics,
         )
 
-        if not isinstance(plan, LESStabilityGuardedETDRKMethod):
-            raise TypeError("plan must be a LESStabilityGuardedETDRKMethod.")
-        if not isinstance(base_method, PreparedETDRKMethod):
-            raise TypeError("base_method must be a PreparedETDRKMethod.")
         if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
             raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
         if dynamics.algebraic_les is None:

@@ -33,7 +33,7 @@ from ...qualification import (
     SupportTuple,
     validate_qualification_causality,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...uq import experiment_design_objective, ExperimentDesignResult
 from ._calibration import PreparedBatteryCalibration
 from ._protocol import BatteryProtocolValues
@@ -81,6 +81,7 @@ class BatteryOEDModelContract(StrictModule, NonTrainableState):
     admitted_at: int = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model_id: str,
@@ -101,10 +102,6 @@ class BatteryOEDModelContract(StrictModule, NonTrainableState):
         at_time: int,
     ) -> None:
         model = _identifier(model_id, "Battery OED model ID")
-        if not isinstance(release_index, ReleaseIndex):
-            raise TypeError("release_index must be a ReleaseIndex.")
-        if not isinstance(support_tuple, SupportTuple):
-            raise TypeError("support_tuple must be a SupportTuple.")
         timestamp = int(at_time)
         profile = require_profile(
             release_index,
@@ -437,6 +434,7 @@ class PreparedBatteryOED(StrictModule):
     plan_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calibration: PreparedBatteryCalibration,
@@ -450,12 +448,6 @@ class PreparedBatteryOED(StrictModule):
         criterion: BatteryOEDCriterion = "d_optimal",
         regularization: float = 0.0,
     ) -> None:
-        if not isinstance(calibration, PreparedBatteryCalibration):
-            raise TypeError("calibration must be a PreparedBatteryCalibration.")
-        if not isinstance(support, BatteryOEDSupport):
-            raise TypeError("support must be a BatteryOEDSupport.")
-        if not isinstance(model_contract, BatteryOEDModelContract):
-            raise TypeError("model_contract must be a BatteryOEDModelContract.")
         if isinstance(experiment_index, bool) or not isinstance(
             experiment_index, Integral
         ):

@@ -19,6 +19,7 @@ from ._fingerprint import canonical_fingerprint
 from ._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 
 
 _INTERFACE_QUADRATURE_NODES, _INTERFACE_QUADRATURE_WEIGHTS = (
@@ -125,6 +126,7 @@ class BinaryPhaseThermodynamicClosure(AbstractKineticThermodynamicClosure):
             }
         )
 
+    @checked
     def evaluate_local(
         self,
         phase: Array,
@@ -133,8 +135,6 @@ class BinaryPhaseThermodynamicClosure(AbstractKineticThermodynamicClosure):
         parameters: BinaryThermodynamicParameters,
         /,
     ) -> BinaryThermodynamicLocalFields:
-        if not isinstance(parameters, BinaryThermodynamicParameters):
-            raise TypeError("parameters must be BinaryThermodynamicParameters.")
         phi = jnp.asarray(phase)
         grad = jnp.asarray(gradient, dtype=phi.dtype)
         lap = jnp.asarray(laplacian, dtype=phi.dtype)
@@ -158,13 +158,12 @@ class BinaryPhaseThermodynamicClosure(AbstractKineticThermodynamicClosure):
             stress,
         )
 
+    @checked
     def characteristic_interface_width(
         self,
         parameters: BinaryThermodynamicParameters,
         /,
     ) -> Array:
-        if not isinstance(parameters, BinaryThermodynamicParameters):
-            raise TypeError("parameters must be BinaryThermodynamicParameters.")
         dtype = parameters.bulk_scale.dtype
         if isinstance(self.free_energy, DoubleWellFreeEnergy):
             effective_bulk = parameters.bulk_scale * self.free_energy.scale.astype(dtype)
@@ -183,13 +182,12 @@ class BinaryPhaseThermodynamicClosure(AbstractKineticThermodynamicClosure):
             "Binary free energy has no finite positive central interface barrier.",
         )
 
+    @checked
     def planar_surface_tension(
         self,
         parameters: BinaryThermodynamicParameters,
         /,
     ) -> Array:
-        if not isinstance(parameters, BinaryThermodynamicParameters):
-            raise TypeError("parameters must be BinaryThermodynamicParameters.")
         dtype = parameters.bulk_scale.dtype
         if isinstance(self.free_energy, DoubleWellFreeEnergy):
             effective_bulk = parameters.bulk_scale * self.free_energy.scale.astype(dtype)

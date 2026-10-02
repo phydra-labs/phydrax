@@ -39,7 +39,7 @@ from ..linalg import (
     OperatorProperties,
     svd as svd_api,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._linear_representation import (
     AbstractLinearRepresentation,
     CallableLinearRepresentation,
@@ -214,6 +214,7 @@ class FinitePolynomialAction(StrictModule, NonTrainableState):
     evidence: PolynomialActionEvidence
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SparsePolynomialSupport,
@@ -227,8 +228,6 @@ class FinitePolynomialAction(StrictModule, NonTrainableState):
         verification_tolerance: float = 1e-10,
         rejection_tolerance: float = 1e-7,
     ) -> None:
-        if not isinstance(support, SparsePolynomialSupport):
-            raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(variable_actions, "variable_actions", ndim=3)
         count = variable_input.shape[0]
         if variable_input.shape[1:] != (support.variable_count, support.variable_count):
@@ -358,6 +357,7 @@ class DeclaredReductivePolynomialAction(StrictModule, NonTrainableState):
     evidence: PolynomialActionEvidence
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SparsePolynomialSupport,
@@ -370,8 +370,6 @@ class DeclaredReductivePolynomialAction(StrictModule, NonTrainableState):
         verification_tolerance: float = 1e-10,
         rejection_tolerance: float = 1e-7,
     ) -> None:
-        if not isinstance(support, SparsePolynomialSupport):
-            raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(
             variable_generators, "variable_generators", ndim=3
         )
@@ -498,16 +496,13 @@ class PolynomialScalingAction(StrictModule, NonTrainableState):
     evidence: PolynomialActionEvidence
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SparsePolynomialSupport,
         scaling: PolynomialScaling,
         /,
     ) -> None:
-        if not isinstance(support, SparsePolynomialSupport):
-            raise TypeError("support must be a SparsePolynomialSupport.")
-        if not isinstance(scaling, PolynomialScaling):
-            raise TypeError("scaling must be a PolynomialScaling.")
         variable_scale = np.asarray(scaling.variable_scale)
         equation_scale = np.asarray(scaling.equation_scale)
         if variable_scale.shape != (support.variable_count,) or equation_scale.shape != (
@@ -946,6 +941,7 @@ class PolynomialSubspaceBasis(StrictModule, NonTrainableState):
     evidence: PolynomialSubspaceEvidence
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SparsePolynomialSupport,
@@ -954,10 +950,6 @@ class PolynomialSubspaceBasis(StrictModule, NonTrainableState):
         evidence: PolynomialSubspaceEvidence,
         /,
     ) -> None:
-        if not isinstance(support, SparsePolynomialSupport):
-            raise TypeError("support must be a SparsePolynomialSupport.")
-        if not isinstance(evidence, PolynomialSubspaceEvidence):
-            raise TypeError("evidence must be PolynomialSubspaceEvidence.")
         basis_ = jnp.asarray(basis)
         weights = jnp.asarray(metric_weights)
         if basis_.ndim != 2 or basis_.shape[0] != support.term_count:

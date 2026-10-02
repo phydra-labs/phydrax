@@ -23,6 +23,7 @@ from ...atomistic import (
     PolymerChainLayoutPlan,
 )
 from ...discretization import PeriodicCell
+from ...typing import checked
 
 
 class PolymerChainSpec(StrictModule, NonTrainableState):
@@ -119,6 +120,7 @@ class PolymerMaterialRecipePlan(StrictModule, NonTrainableState):
     bonded_lennard_jones_scale: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material_id: str,
@@ -149,8 +151,6 @@ class PolymerMaterialRecipePlan(StrictModule, NonTrainableState):
         capacity = active_count if maximum_particles is None else int(maximum_particles)
         start = int(particle_id_start)
         bonded_scale = float(bonded_lennard_jones_scale)
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         if cell is not None and not isinstance(cell, PeriodicCell):
             raise TypeError("cell must be PeriodicCell or None.")
         if (

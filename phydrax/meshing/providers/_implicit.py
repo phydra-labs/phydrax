@@ -27,6 +27,7 @@ from ...geometry.implicit import (
     ImplicitSurfaceStatus,
 )
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...typing import checked
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._audit import audit_cell_mesh
 from .._contracts import (
@@ -277,6 +278,7 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CompiledGeometry,
@@ -288,16 +290,6 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
         source_revision: str,
         /,
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be CompiledGeometry.")
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be PreparedTensorGrid.")
-        if not isinstance(specification, SurfaceMeshingSpec):
-            raise TypeError("specification must be SurfaceMeshingSpec.")
-        if not isinstance(surface_plan, ImplicitSurfacePlan):
-            raise TypeError("surface_plan must be ImplicitSurfacePlan.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         source = str(source_id).strip()
         revision = str(source_revision).strip()
         if not source or not revision:
@@ -543,6 +535,7 @@ class NativeImplicitProvider:
             execution_modes=(MeshingExecutionMode.IN_PROCESS,),
         )
 
+    @checked
     def plan(
         self,
         geometry: CompiledGeometry,
@@ -555,8 +548,6 @@ class NativeImplicitProvider:
         coordinate_contract: SpatialCoordinateContract,
         policy: ImplicitSurfacePolicy | None = None,
     ) -> ImplicitMeshingPlan:
-        if not isinstance(specification, SurfaceMeshingSpec):
-            raise TypeError("specification must be SurfaceMeshingSpec.")
         if specification.target.topological_dimension != 2 or set(
             (
                 *specification.target.cell_families.required,

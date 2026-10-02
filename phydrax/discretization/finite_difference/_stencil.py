@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._tensor_support import GridLocation
 from ._coefficients import StencilCoefficientPlan
 from ._request import BoundaryClosureKind, DerivativeRequest
@@ -125,6 +125,7 @@ class LinearStencil(StrictModule, NonTrainableState):
     footprint: StencilFootprint
     stencil_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         request: DerivativeRequest,
@@ -139,8 +140,6 @@ class LinearStencil(StrictModule, NonTrainableState):
         row_kinds: Sequence[StencilRowKind] | None = None,
         stencil_id: str | None = None,
     ) -> None:
-        if not isinstance(request, DerivativeRequest):
-            raise TypeError("request must be a DerivativeRequest.")
         axis = int(axis_index)
         if axis < 0 or axis >= len(request.source_location.axis_names):
             raise ValueError("axis_index is out of range.")
@@ -190,8 +189,6 @@ class LinearStencil(StrictModule, NonTrainableState):
         kind_codes = np.asarray(
             [kind_values.index(kind) for kind in kinds], dtype=np.int8
         )
-        if not isinstance(footprint, StencilFootprint):
-            raise TypeError("footprint must be a StencilFootprint.")
         identifier = (
             canonical_fingerprint(
                 {
@@ -237,6 +234,7 @@ class BoundaryStencilSet(StrictModule, NonTrainableState):
     minimum_accuracy_order: int = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stencil: LinearStencil,
@@ -246,8 +244,6 @@ class BoundaryStencilSet(StrictModule, NonTrainableState):
         interior_accuracy_order: int | None = None,
         closure_accuracy_order: int | None = None,
     ) -> None:
-        if not isinstance(stencil, LinearStencil):
-            raise TypeError("stencil must be a LinearStencil.")
         kind = parse(kind, BoundaryClosureKind, "kind")
         interior_rows = [
             report.achieved_accuracy_order

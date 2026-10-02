@@ -17,6 +17,7 @@ from .._admissibility import AdmissibilityHeader, AdmissibilityReason
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._contracts import CompiledGeometry
 
 
@@ -63,6 +64,7 @@ class FiniteRadiusErosionPlan(AbstractFiniteRadiusWallPlan, NonTrainableState):
     require_exact_physical: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CompiledGeometry,
@@ -72,8 +74,6 @@ class FiniteRadiusErosionPlan(AbstractFiniteRadiusWallPlan, NonTrainableState):
         geometry_id: str,
         require_exact_physical: bool = True,
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("Finite-radius erosion requires CompiledGeometry.")
         identity = str(geometry_id)
         if fluid_side not in ("inside", "outside") or not identity:
             raise ValueError("Finite-radius fluid side and geometry_id are required.")

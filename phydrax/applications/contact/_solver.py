@@ -39,6 +39,7 @@ from ...optim import (
     SteihaugToint,
     TrustRegionQuadraticProblem,
 )
+from ...typing import checked
 from ..solid_mechanics._fem_dynamics import (
     FiniteElementDynamicsState,
     ImplicitNewmarkMethod,
@@ -176,6 +177,7 @@ class ContactDynamicsState(StrictModule, NonTrainableState):
     state_version: Array
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanics: FiniteElementDynamicsState,
@@ -185,8 +187,6 @@ class ContactDynamicsState(StrictModule, NonTrainableState):
         friction_state: ContactFrictionState | None = None,
         state_version: ArrayLike = 0,
     ) -> None:
-        if not isinstance(mechanics, FiniteElementDynamicsState):
-            raise TypeError("mechanics must be FiniteElementDynamicsState.")
         if replay_epoch is not None and not isinstance(
             replay_epoch, ContactCandidateEpoch
         ):

@@ -26,6 +26,7 @@ from ....operators.quantum.gaussian import (
     nuclear_repulsion_energy,
     PreparedGaussianBasis,
 )
+from ....typing import checked
 from .._mean_field import RestrictedMeanFieldState
 
 
@@ -97,6 +98,7 @@ class CorrelatedOrbitalPartition(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_restricted_state(
         cls,
         state: RestrictedMeanFieldState,
@@ -106,8 +108,6 @@ class CorrelatedOrbitalPartition(StrictModule, NonTrainableState):
         active: Sequence[int] = (),
         frozen_virtual: Sequence[int] = (),
     ) -> CorrelatedOrbitalPartition:
-        if not isinstance(state, RestrictedMeanFieldState):
-            raise TypeError("state must be RestrictedMeanFieldState.")
         occupied = tuple(
             int(index) for index in np.flatnonzero(np.asarray(state.occupations) > 1.0)
         )

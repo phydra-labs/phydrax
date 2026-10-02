@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 def _symmetric(value: np.ndarray, /) -> np.ndarray:
@@ -225,9 +226,8 @@ class DeluxeScalingPlan(StrictModule, NonTrainableState):
     multiplicity: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, system: SubstructuredSPDSystem, /) -> None:
-        if not isinstance(system, SubstructuredSPDSystem):
-            raise TypeError("system must be SubstructuredSPDSystem.")
         maps = tuple(np.asarray(value) for value in system.local_to_global)
         matrices = tuple(np.asarray(value) for value in system.local_matrices)
         multiplicity = np.zeros((system.global_dof_count,), dtype=np.int32)
@@ -621,9 +621,8 @@ class SPDSubstructuringPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(self, system: SubstructuredSPDSystem, /) -> PreparedSPDSubstructuring:
-        if not isinstance(system, SubstructuredSPDSystem):
-            raise TypeError("system must be SubstructuredSPDSystem.")
         primal_ids = np.asarray(self.primal.global_dof_ids)
         if np.any(primal_ids >= system.global_dof_count):
             raise ValueError("Primal constraint references an absent global DOF.")
@@ -661,6 +660,7 @@ class InexactNewtonTangentPreconditioner(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     preconditioner_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedSPDSubstructuring,
@@ -671,8 +671,6 @@ class InexactNewtonTangentPreconditioner(StrictModule, NonTrainableState):
         forcing_power: float = 1.5,
         maximum_iterations: int = 32,
     ) -> None:
-        if not isinstance(prepared, PreparedSPDSubstructuring):
-            raise TypeError("prepared must be PreparedSPDSubstructuring.")
         minimum = float(minimum_forcing)
         maximum = float(maximum_forcing)
         power = float(forcing_power)

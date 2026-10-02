@@ -19,6 +19,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
 from ._forces import AbstractAstrodynamicsForce, AstrodynamicsForceEvaluation
@@ -138,6 +139,7 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
     force_id: str = eqx.field(static=True)
     source_parameters_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atmosphere: ExponentialAtmosphere,
@@ -148,10 +150,6 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
         area_to_mass: npt.ArrayLike,
         angular_velocity: npt.ArrayLike = (0.0, 0.0, 7.292115146706979e-5),
     ) -> None:
-        if not isinstance(atmosphere, ExponentialAtmosphere):
-            raise TypeError("atmosphere must be an ExponentialAtmosphere.")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         coefficient = np.asarray(drag_coefficient, dtype=np.float64)
         area = np.asarray(area_to_mass, dtype=np.float64)
         angular = np.asarray(angular_velocity, dtype=np.float64)
@@ -280,6 +278,7 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
     source_provider_id: str = eqx.field(static=True)
     occulting_provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_position: _PositionProvider,
@@ -298,10 +297,6 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
     ) -> None:
         if not callable(source_position) or not callable(occulting_position):
             raise TypeError("Radiation ephemeris providers must be callable.")
-        if not isinstance(eclipse, EclipseGeometry):
-            raise TypeError("eclipse must be an EclipseGeometry.")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         source_id = str(source_provider_id).strip()
         occulting_id = str(occulting_provider_id).strip()
         declared_id = str(force_id).strip()
@@ -401,6 +396,7 @@ class ThermalRadiationPressure(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         radiation: SolarRadiationPressure,
@@ -408,8 +404,6 @@ class ThermalRadiationPressure(AbstractAstrodynamicsForce):
         *,
         force_id: str = "thermal-radiation-pressure",
     ) -> None:
-        if not isinstance(radiation, SolarRadiationPressure):
-            raise TypeError("radiation must be a SolarRadiationPressure.")
         self.radiation = radiation
         self.context = radiation.context
         self.force_id = str(force_id)

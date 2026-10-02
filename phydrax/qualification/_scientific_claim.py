@@ -16,7 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
-from ..typing import parse
+from ..typing import checked, parse
 from ._evidence import QualificationEvidence, QualificationMatrix
 from ._registry import SupportTuple
 
@@ -181,6 +181,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
     invalidation_triggers: tuple[str, ...] = eqx.field(static=True)
     claim_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capability_name: str,
@@ -197,8 +198,6 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
         frozen_criteria_ids: Sequence[str],
     ) -> None:
         capability = canonical_identifier(capability_name, "capability_name")
-        if not isinstance(support, SupportTuple):
-            raise TypeError("support must be a SupportTuple.")
         if support.capability != capability:
             raise ValueError("Claim capability_name must match support.capability.")
         observables = _identifiers(observable_ids, "observable_ids")

@@ -44,6 +44,7 @@ from ...linalg import (
     prepare_local_block_factorization,
     solve_local_blocks_detailed,
 )
+from ...typing import checked
 from ._capillarity import CurvatureEvidence, CurvatureStatus
 from ._structured_plic import StructuredPLICPlan, StructuredPLICReconstruction
 
@@ -100,6 +101,7 @@ class HeightFunctionCurvaturePlan(StrictModule, NonTrainableState):
     fallback_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plic: StructuredPLICPlan,
@@ -112,8 +114,6 @@ class HeightFunctionCurvaturePlan(StrictModule, NonTrainableState):
         fallback_normal_alignment: float = 0.5,
         fallback_residual_limit: float = 0.35,
     ) -> None:
-        if not isinstance(plic, StructuredPLICPlan):
-            raise TypeError("plic must be StructuredPLICPlan.")
         width = int(half_width)
         bound = float(curvature_bound)
         radius = int(fallback_radius)
@@ -528,6 +528,7 @@ class HeightFunctionCurvaturePlan(StrictModule, NonTrainableState):
             fit_offset,
         )
 
+    @checked
     def evaluate(
         self,
         alpha: ArrayLike,
@@ -540,8 +541,6 @@ class HeightFunctionCurvaturePlan(StrictModule, NonTrainableState):
         discretization = self.plic.discretization
         if value.shape != discretization.cell_shape:
             raise ValueError("Height-function alpha must match the cell shape.")
-        if not isinstance(reconstruction, StructuredPLICReconstruction):
-            raise TypeError("reconstruction must be StructuredPLICReconstruction.")
         if reconstruction.plan_id != self.plic.plan_id:
             raise ValueError("PLIC reconstruction belongs to another PLIC plan.")
         band = self.interface_band(value)

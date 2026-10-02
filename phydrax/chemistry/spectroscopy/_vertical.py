@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import UnitDefinition
 from ..excited import ElectronicManifoldResult
 from ._profile import (
@@ -171,13 +172,12 @@ class UVVisibleSpectrumPlan(StrictModule, NonTrainableState):
     def _line_positions(self, energies: Array, energy_unit: UnitDefinition, /) -> Array:
         return transition_energy_axis(energies, energy_unit, self.axis)
 
+    @checked
     def evaluate(
         self,
         manifold: ElectronicManifoldResult,
         /,
     ) -> UVVisibleSpectrumResult:
-        if not isinstance(manifold, ElectronicManifoldResult):
-            raise TypeError("manifold must be ElectronicManifoldResult.")
         if not bool(manifold.successful):
             raise ValueError(
                 "UV-visible spectra require a successful excited-state manifold."

@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chart import CoordinateChart
 
 
@@ -42,6 +43,7 @@ class MetricDomainEvidence(StrictModule, NonTrainableState):
     margin: Array
     status: Array
 
+    @checked
     def __init__(
         self,
         valid: ArrayLike,
@@ -53,8 +55,6 @@ class MetricDomainEvidence(StrictModule, NonTrainableState):
         chart: CoordinateChart,
         domain_id: str,
     ) -> None:
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if (
             not isinstance(domain_id, str)
             or not domain_id

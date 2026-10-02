@@ -25,7 +25,7 @@ from ....qualification import (
     ScientificCase,
     ScientificClaimProfile,
 )
-from ....typing import parse
+from ....typing import checked, parse
 from ._conditional_mapping import ConditionalMappingFit, ConditionalMutationLaw
 from ._ensemble_inference import (
     EnsembleDiagnostics,
@@ -269,6 +269,7 @@ class EnsemblePosteriorUncertainty(StrictModule, NonTrainableState):
     approximation_id: str = eqx.field(static=True)
     uncertainty_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: ConditionalMutationLaw | FiniteStructuralEnsembleModel,
@@ -276,8 +277,6 @@ class EnsemblePosteriorUncertainty(StrictModule, NonTrainableState):
         campaign: ScientificCampaign,
         /,
     ) -> None:
-        if not isinstance(campaign, ScientificCampaign):
-            raise TypeError("campaign must be a ScientificCampaign.")
         cases, fitted, _, fit_id = _fit_identity(model, fit, campaign)
         if not bool(fit.optimization.converged):
             raise ValueError(
@@ -1104,6 +1103,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             assessment_id,
         )
 
+    @checked
     def stage_evidence(
         self,
         stage_id: str,
@@ -1125,8 +1125,6 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
         expires_at: int,
     ) -> QualificationEvidence:
         """Derive stage outcomes from the frozen assessment and exact score gate."""
-        if not isinstance(assessment, EnsembleWorkflowAssessment):
-            raise TypeError("assessment must be an EnsembleWorkflowAssessment.")
         if (
             assessment.campaign_id != self.campaign.campaign_id
             or assessment.workflow_id != self.workflow_id
@@ -1375,6 +1373,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             campaign_observation_record_ids=(),
         )
 
+    @checked
     def evaluate_claim(
         self,
         profile: ScientificClaimProfile,
@@ -1396,8 +1395,6 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
         issued_at: int,
         expires_at: int,
     ) -> QualificationEvidence:
-        if not isinstance(assessment, EnsembleWorkflowAssessment):
-            raise TypeError("assessment must be an EnsembleWorkflowAssessment.")
         if (
             assessment.campaign_id != self.campaign.campaign_id
             or assessment.workflow_id != self.workflow_id

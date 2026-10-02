@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._sharp_clipping import (
     clip_positive_polygon,
     open_positive_segment,
@@ -172,14 +173,13 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         geometry: VariablePatchGeometryState,
         args: Any = None,
         /,
     ) -> VariablePatchEmbeddedBoundaryMetrics:
-        if not isinstance(geometry, VariablePatchGeometryState):
-            raise TypeError("Variable patch EB realization requires geometry state.")
         if geometry.plan.plan_id != self.geometry_plan_id:
             raise ValueError(
                 "Embedded-boundary plan is bound to another patch geometry plan."

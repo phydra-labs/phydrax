@@ -15,6 +15,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._evidence import SupportDependency
 
 
@@ -309,9 +310,8 @@ class CapabilityProfile(StrictModule, NonTrainableState):
     def capability(self) -> str:
         return self.support_tuples[0].capability
 
+    @checked
     def supports(self, support_tuple: SupportTuple, /) -> bool:
-        if not isinstance(support_tuple, SupportTuple):
-            raise TypeError("support_tuple must be a SupportTuple.")
         return any(
             item.support_tuple_id == support_tuple.support_tuple_id
             for item in self.support_tuples
@@ -469,9 +469,8 @@ class HMACSHA256TrustPolicy:
         self._maximum_index_age = maximum_index_age_
         self._maximum_evidence_age = maximum_evidence_age_
 
+    @checked
     def verify_index(self, index: ReleaseIndex, at_time: int, /) -> bool:
-        if not isinstance(index, ReleaseIndex):
-            raise TypeError("index must be a ReleaseIndex.")
         timestamp = _timestamp(at_time, "at_time")
         if (
             index.signature_algorithm != "hmac-sha256"
@@ -492,9 +491,8 @@ class HMACSHA256TrustPolicy:
         ).hexdigest()
         return hmac.compare_digest(expected, signature)
 
+    @checked
     def accepts_evidence(self, evidence: ReleaseGateEvidence, at_time: int, /) -> bool:
-        if not isinstance(evidence, ReleaseGateEvidence):
-            raise TypeError("evidence must be ReleaseGateEvidence.")
         timestamp = _timestamp(at_time, "at_time")
         return (
             evidence.accepted

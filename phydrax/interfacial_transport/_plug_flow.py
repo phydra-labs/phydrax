@@ -66,7 +66,7 @@ from ..nonlinear import NonlinearStatus
 from ..rheology import boussinesq_scriven_stress
 from ..solver import ConservationIMEXMethod, ImplicitConservationStageResult
 from ..solver.advanced import AdditiveIMEXTableau
-from ..typing import ConvertibleToArray, parse
+from ..typing import checked, ConvertibleToArray, parse
 from ._core import AdsorptionKinetics, LangmuirSurfactantLaw
 from ._film_contracts import PreparedFilmSurface
 from ._film_evidence import FilmStepStatus, resolve_film_status, SurfaceFilmEvidence
@@ -194,6 +194,7 @@ class PlugFlowEvidence(StrictModule):
     tangential_momentum_admissible: Array
     boundary: PlugFlowBoundaryEvidence
 
+    @checked
     def __init__(
         self,
         *,
@@ -217,8 +218,6 @@ class PlugFlowEvidence(StrictModule):
         tangential_momentum_admissible: Array,
         boundary: PlugFlowBoundaryEvidence,
     ) -> None:
-        if not isinstance(boundary, PlugFlowBoundaryEvidence):
-            raise TypeError("boundary must be PlugFlowBoundaryEvidence.")
         self.momentum_change_n_s = jnp.asarray(momentum_change_n_s)
         self.external_impulse_n_s = jnp.asarray(external_impulse_n_s)
         self.boundary_impulse_n_s = jnp.asarray(boundary_impulse_n_s)
@@ -317,6 +316,7 @@ class SurfacePlugFlowPlan(StrictModule, ParameterOwner):
     transport_scheme: FilmTransportScheme = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedFilmSurface,
@@ -338,10 +338,6 @@ class SurfacePlugFlowPlan(StrictModule, ParameterOwner):
         maximum_iterations: int = 30,
         transport_scheme: FilmTransportScheme = "donor-cell",
     ) -> None:
-        if not isinstance(surface, PreparedFilmSurface):
-            raise TypeError("surface must be a PreparedFilmSurface.")
-        if not isinstance(law, LangmuirSurfactantLaw):
-            raise TypeError("law must be a LangmuirSurfactantLaw.")
         if kinetics is not None and not isinstance(kinetics, AdsorptionKinetics):
             raise TypeError("kinetics must be AdsorptionKinetics or None.")
         density = _scalar(density_kg_m3, "density_kg_m3", positive=True)
@@ -496,9 +492,8 @@ class PreparedSurfacePlugFlow(StrictModule):
     method: ConservationIMEXMethod = fixed_field()
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SurfacePlugFlowPlan, /) -> None:
-        if not isinstance(plan, SurfacePlugFlowPlan):
-            raise TypeError("plan must be a SurfacePlugFlowPlan.")
         surface = plan.surface
         count = surface.topology.num_vertices
         capacity = plan.law.maximum_surface_concentration_mol_m2

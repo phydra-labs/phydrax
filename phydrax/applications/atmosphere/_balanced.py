@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._global import GlobalAtmosphereContinuation, PreparedGlobalAtmosphere
 
 
@@ -235,12 +236,11 @@ class DryGradientWindReference(StrictModule, NonTrainableState):
             self.gas_constant / self.radius * dlat_t - thermal,
         )
 
+    @checked
     def initialize(
         self, model: PreparedGlobalAtmosphere, *, time: ArrayLike = 0.0
     ) -> GlobalAtmosphereContinuation:
         """Project continuous fields onto the native owner, not a discrete fixer."""
-        if not isinstance(model, PreparedGlobalAtmosphere):
-            raise TypeError("Balanced initialization requires PreparedGlobalAtmosphere.")
         if model.plan.space.layout.bandlimit < 3:
             raise ValueError(
                 "Balanced family requires bandlimit >= 3 for its degree-two thermal field."

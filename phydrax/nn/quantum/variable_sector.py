@@ -22,6 +22,7 @@ from ...operators.quantum.variable_sector import (
     VariableParticleConfiguration,
     VariableSectorSpace,
 )
+from ...typing import checked
 
 
 def _configuration_arrays(
@@ -82,6 +83,7 @@ class BosonicJastrowAmplitude(StrictModule, ParameterOwner):
     sector_log_weights: Array
     amplitude_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -95,8 +97,6 @@ class BosonicJastrowAmplitude(StrictModule, ParameterOwner):
         sector_log_weights: ArrayLike | None = None,
         amplitude_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         center = (
             np.zeros((space.species_count, space.dimension), dtype=np.float64)
             if centers is None
@@ -232,6 +232,7 @@ class FermionicDeterminantJastrowAmplitude(StrictModule, ParameterOwner):
     sector_log_weights: Array
     amplitude_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: VariableSectorSpace,
@@ -246,8 +247,6 @@ class FermionicDeterminantJastrowAmplitude(StrictModule, ParameterOwner):
         sector_log_weights: ArrayLike | None = None,
         amplitude_id: str | None = None,
     ) -> None:
-        if not isinstance(space, VariableSectorSpace):
-            raise TypeError("space must be VariableSectorSpace.")
         bias = np.asarray(orbital_bias)
         weights = np.asarray(orbital_weights)
         orbital_shape = (space.species_count, space.capacity)

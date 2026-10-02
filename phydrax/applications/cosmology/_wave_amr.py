@@ -62,6 +62,7 @@ from ...solver._distributed_wave_amr import (
     PreparedDistributedWaveAMR,
     PreparedDistributedWaveAMRTopologyTransition,
 )
+from ...typing import checked
 from ._background import FLRWBackground
 from ._cosmological_amr import (
     BlockAMRGravityPlan,
@@ -86,6 +87,7 @@ class WaveAMRPhysicsPlan(StrictModule, NonTrainableState):
     dtype: np.dtype = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boson_mass: float,
@@ -104,8 +106,6 @@ class WaveAMRPhysicsPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Wave AMR physical coefficients must be finite and positive."
             )
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be CosmologyScaleContract.")
         if scale.length_coordinate_kind != "comoving":
             raise ValueError("Wave AMR requires comoving Cartesian length coordinates.")
         if not np.issubdtype(dtype_, np.complexfloating):
@@ -235,6 +235,7 @@ class WaveAMRDiscretizationPlan(StrictModule, NonTrainableState):
     maximum_phase_radians: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: PreparedFDAMRHierarchy,
@@ -249,8 +250,6 @@ class WaveAMRDiscretizationPlan(StrictModule, NonTrainableState):
         self_adjoint_tolerance: float = 1.0e-10,
         maximum_phase_radians: float = 0.75,
     ) -> None:
-        if not isinstance(hierarchy, PreparedFDAMRHierarchy):
-            raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         boundary_ = PeriodicWaveBoundaryDescriptor() if boundary is None else boundary
         if not isinstance(
             boundary_, (PeriodicWaveBoundaryDescriptor, IsolatedWaveBoundaryDescriptor)
@@ -483,6 +482,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
     time_level_convention: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: WaveAMRDiscretizationPlan,
@@ -492,20 +492,10 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         background: FLRWBackground,
         /,
     ) -> None:
-        if not isinstance(plan, WaveAMRDiscretizationPlan):
-            raise TypeError("plan must be WaveAMRDiscretizationPlan.")
-        if not isinstance(physics, WaveAMRPhysicsPlan):
-            raise TypeError("physics must be WaveAMRPhysicsPlan.")
-        if not isinstance(fd_hierarchy, PreparedFDAMRHierarchy):
-            raise TypeError("fd_hierarchy must be PreparedFDAMRHierarchy.")
         if fd_hierarchy.prepared_id != plan.hierarchy.prepared_id:
             raise ValueError(
                 "Prepared Wave AMR hierarchy does not match its discretization plan."
             )
-        if not isinstance(topology, BlockHierarchyTopology):
-            raise TypeError("topology must be BlockHierarchyTopology.")
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         if topology.plan.plan_id != plan.hierarchy.plan.hierarchy.plan_id:
             raise ValueError("Wave AMR topology does not match its hierarchy plan.")
         if not all(topology.plan.periodic_axes):
@@ -600,9 +590,8 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def _validate_state(self, state: WaveAMRState, /) -> WaveAMRState:
-        if not isinstance(state, WaveAMRState):
-            raise TypeError("state must be WaveAMRState.")
         values = self.layout.bind_state(state.psi)
         scale = jnp.asarray(state.scale_factor, dtype=self.real_dtype)
         accepted_boundary = jnp.asarray(state.accepted_boundary, dtype=jnp.bool_)
@@ -1258,6 +1247,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             result.append(bounds[:, 0] + (global_index + 0.5) * spacing)
         return np.asarray(result)
 
+    @checked
     def transition(
         self,
         state: WaveAMRState,
@@ -1266,8 +1256,6 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
     ) -> WaveAMRTransitionResult:
         """Phase-aware probability transfer with current/winding rejection."""
         checked = self._validate_state(state)
-        if not isinstance(proposal, WaveAMRTopologyProposal):
-            raise TypeError("proposal must be WaveAMRTopologyProposal.")
         if not bool(np.asarray(checked.accepted_boundary)):
             raise ValueError("Wave AMR regrid requires an accepted-boundary state.")
         if (
@@ -2064,6 +2052,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             proposal.proposal_id,
         )
 
+    @checked
     def prepare_distributed(
         self,
         partition: BlockAMRPartitionPlan,
@@ -2075,8 +2064,6 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         costs: Sequence[ArrayLike | None] | None = None,
     ) -> WaveAMRDistributedPreparation:
         """Bind one owner-computes execution and reject unsupported resources early."""
-        if not isinstance(partition, BlockAMRPartitionPlan):
-            raise TypeError("partition must be BlockAMRPartitionPlan.")
         if partition.hierarchy.plan_id != self.topology.plan.plan_id:
             raise ValueError("Distributed partition and Wave AMR topology differ.")
         if execution_group is not None and not isinstance(
@@ -2246,6 +2233,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             preparation_id,
         )
 
+    @checked
     def distributed_step(
         self,
         prepared: WaveAMRDistributedPreparation,
@@ -2253,8 +2241,6 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         end_scale_factor: ArrayLike,
         /,
     ) -> WaveAMRResult | DistributedWaveAMRResult:
-        if not isinstance(prepared, WaveAMRDistributedPreparation):
-            raise TypeError("prepared must be WaveAMRDistributedPreparation.")
         if (
             prepared.source_prepared_id != self.prepared_id
             or prepared.topology_id != self.topology.topology_id

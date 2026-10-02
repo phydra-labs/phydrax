@@ -16,7 +16,7 @@ from jax import Array
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...backends._types import BackendUnavailableError
-from ...typing import parse
+from ...typing import checked, parse
 
 
 RoboticsOperation: TypeAlias = Literal[
@@ -144,12 +144,11 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
         self.contact_features = contact_features_
         self.reason = reason_
 
+    @checked
     def rejection_reason(
         self, requirement: RoboticsOperationRequirement, /
     ) -> str | None:
         """Return the first unmet condition, or ``None`` when accepted."""
-        if not isinstance(requirement, RoboticsOperationRequirement):
-            raise TypeError("requirement must be RoboticsOperationRequirement.")
         if requirement.operation != self.operation:
             raise ValueError("Capability and requirement operations must match.")
         if not self.supported:
@@ -230,9 +229,8 @@ class RoboticsRequirementRejection(StrictModule, NonTrainableState):
     requirement: RoboticsOperationRequirement
     reason: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, requirement: RoboticsOperationRequirement, reason: str, /) -> None:
-        if not isinstance(requirement, RoboticsOperationRequirement):
-            raise TypeError("requirement must be RoboticsOperationRequirement.")
         self.requirement = requirement
         self.reason = _identifier(reason, "reason")
 
@@ -447,6 +445,7 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
     entries: tuple[RoboticsIndexEntry, ...]
     provenance: RoboticsProjectionProvenance
 
+    @checked
     def __init__(
         self,
         kind: RoboticsProjectionKind,
@@ -473,8 +472,6 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
             cursor = entry.stop
         if cursor != size_:
             raise ValueError("Projection entries must cover the complete projection.")
-        if not isinstance(provenance, RoboticsProjectionProvenance):
-            raise TypeError("provenance must be RoboticsProjectionProvenance.")
         self.kind = kind
         self.size = size_
         self.entries = entries_
@@ -521,6 +518,7 @@ class RoboticsProjection(StrictModule, NonTrainableState):
     state_epoch: Array | None
     sample_epoch: Array | None
 
+    @checked
     def __init__(
         self,
         values: Any,
@@ -530,8 +528,6 @@ class RoboticsProjection(StrictModule, NonTrainableState):
         state_epoch: Any | None = None,
         sample_epoch: Any | None = None,
     ) -> None:
-        if not isinstance(index_map, RoboticsProjectionMap):
-            raise TypeError("index_map must be RoboticsProjectionMap.")
         shape = jnp.shape(values)
         if not shape or shape[-1] != index_map.size:
             raise ValueError(

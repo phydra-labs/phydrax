@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 _MM3_PER_DL = 100_000.0
@@ -609,6 +610,7 @@ class MembraneOxygenatorModel(StrictModule, NonTrainableState):
     maximum_flow_mm3_per_ms: float = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         blood_model: BloodOxygenModel,
@@ -619,8 +621,6 @@ class MembraneOxygenatorModel(StrictModule, NonTrainableState):
         minimum_flow_mm3_per_ms: float,
         maximum_flow_mm3_per_ms: float,
     ) -> None:
-        if not isinstance(blood_model, BloodOxygenModel):
-            raise TypeError("blood_model must be a BloodOxygenModel.")
         pressure = float(gas_partial_pressure_kPa)
         capacity = float(transfer_capacity_mm3_per_ms)
         minimum = float(minimum_flow_mm3_per_ms)

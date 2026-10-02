@@ -19,6 +19,7 @@ from ...discretization.contact._kinematics import (
     ContactKinematicsBatch,
     ContactKinematicsEpoch,
 )
+from ...typing import checked
 from ._materials import ContactMaterialPairTable, ContactPairParameters
 from ._route_state import ContactRouteMode, ContactRouteState
 
@@ -297,6 +298,7 @@ class ContactClosurePlan(StrictModule, NonTrainableState):
     capabilities: ContactClosureCapability = eqx.field(static=True)
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         normal: AbstractNormalContactLaw,
@@ -307,10 +309,6 @@ class ContactClosurePlan(StrictModule, NonTrainableState):
         evolution: AbstractInterfaceEvolutionLaw | None = None,
         transport: AbstractContactTransportLaw | None = None,
     ) -> None:
-        if not isinstance(normal, AbstractNormalContactLaw):
-            raise TypeError("normal must be a contact normal law.")
-        if not isinstance(material_table, ContactMaterialPairTable):
-            raise TypeError("material_table must be ContactMaterialPairTable.")
         tangential_ = FrictionlessTangentialLaw() if tangential is None else tangential
         evolution_ = IdentityInterfaceEvolution() if evolution is None else evolution
         transport_ = NoContactTransport() if transport is None else transport

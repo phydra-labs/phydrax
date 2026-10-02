@@ -24,6 +24,7 @@ from ...linalg import (
     OperatorProperties,
     solve,
 )
+from ...typing import checked
 from ._diffusion_boundary import HybridDiffusionBoundary
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -84,6 +85,7 @@ class HybridMimeticDiffusion(StrictModule):
     component_count: int = eqx.field(static=True)
     stabilization: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -91,8 +93,6 @@ class HybridMimeticDiffusion(StrictModule):
         *,
         stabilization: float = 1.0,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Hybrid diffusion requires native prepared unstructured FV.")
         if discretization.cell_dimension != 3:
             raise ValueError("Hybrid mimetic diffusion requires three-dimensional cells.")
         if not np.isfinite(stabilization) or stabilization <= 0:

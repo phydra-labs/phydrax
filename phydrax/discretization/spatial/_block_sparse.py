@@ -24,7 +24,7 @@ from ...sparse import (
     KeyGroupState,
     KeyGroupTransition,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._morton import morton_decode_integer, morton_encode_integer
 
 
@@ -322,6 +322,7 @@ class SparseBlockTopologyPlan(StrictModule, NonTrainableState):
             evidence=evidence,
         )
 
+    @checked
     def refresh(
         self,
         previous: SparseBlockTopologyState,
@@ -332,8 +333,6 @@ class SparseBlockTopologyPlan(StrictModule, NonTrainableState):
         stable_site_ids: ArrayLike | None = None,
     ) -> SparseBlockTransition:
         """Build and align a candidate without committing it."""
-        if not isinstance(previous, SparseBlockTopologyState):
-            raise TypeError("previous must be SparseBlockTopologyState.")
         if previous.plan.plan_id != self.plan_id:
             raise ValueError("previous topology belongs to another plan.")
         candidate = self.build(

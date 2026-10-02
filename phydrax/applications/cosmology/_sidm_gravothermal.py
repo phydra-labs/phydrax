@@ -19,6 +19,7 @@ from ..._trainable import NonTrainableState
 from ...artifacts import ScientificArtifactEnvelope
 from ...linalg import DenseLinearOperator, LinearSystem, solve
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 
 
 _HydrostaticFields: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
@@ -207,6 +208,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
     export: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         radial_faces: ArrayLike,
@@ -291,10 +293,6 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         calibration_identity = str(calibration_id).strip()
         if not calibration_identity:
             raise ValueError("calibration_id must be non-empty.")
-        if not isinstance(calibration_manifest, ReferenceArtifactManifest):
-            raise TypeError("calibration_manifest must be ReferenceArtifactManifest.")
-        if not isinstance(calibration_artifact, ScientificArtifactEnvelope):
-            raise TypeError("calibration_artifact must be ScientificArtifactEnvelope.")
         calibration_manifest.require_rights(
             commercial_use=commercial_use,
             redistribution=redistribution,
@@ -648,9 +646,8 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         )
         return eqx.tree_at(lambda value: value.mass_density, candidate, accepted_density)
 
+    @checked
     def _require_shape(self, state: GravothermalSIDMState) -> None:
-        if not isinstance(state, GravothermalSIDMState):
-            raise TypeError("state must be GravothermalSIDMState.")
         expected = (self.shell_count,)
         if (
             state.mass_density.shape != expected

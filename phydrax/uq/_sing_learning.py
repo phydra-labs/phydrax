@@ -28,7 +28,7 @@ from .._training_kernel import (
 )
 from .._training_objective import _ObjectiveContribution
 from ..nn.parameters import ParameterSubspace
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._sing import sing_smoother, SINGResult, SINGState
 from ._sing_transition import sing_objective, SINGTransitionPlan
 
@@ -43,6 +43,7 @@ class SINGLearningPolicy(StrictModule):
     max_outer_iterations: int = eqx.field(static=True)
     full_audit_every: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         posterior_steps: int,
@@ -64,8 +65,6 @@ class SINGLearningPolicy(StrictModule):
         )
         if any(value <= 0 for value in counts):
             raise ValueError("all SING learning iteration counts must be positive.")
-        if not isinstance(transition_plan, SINGTransitionPlan):
-            raise TypeError("transition_plan must be a SINGTransitionPlan.")
         if factor_source is not None and not callable(factor_source):
             raise TypeError("factor_source must be callable or None.")
         (

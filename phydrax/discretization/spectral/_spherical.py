@@ -30,7 +30,7 @@ from ...linalg import (
     OperatorProperties,
 )
 from ...linalg._spaces import _coordinate_dtype
-from ...typing import parse
+from ...typing import checked, parse
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -263,6 +263,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
     _points: Array
     _quadrature_weights: Array
 
+    @checked
     def __init__(
         self,
         plan: SphericalSpectralPlan,
@@ -272,10 +273,6 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         radius: float,
         numeric_version: str,
     ) -> None:
-        if not isinstance(plan, SphericalSpectralPlan):
-            raise TypeError("plan must be a SphericalSpectralPlan.")
-        if not isinstance(transform, SphericalHarmonicPlan):
-            raise TypeError("transform must be a SphericalHarmonicPlan.")
         layout = SphericalModeLayout(
             transform.bandlimit,
             spin=transform.spin,

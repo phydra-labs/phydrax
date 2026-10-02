@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._context import AstrodynamicsContext
 
 
@@ -26,6 +27,7 @@ class CelestialBodyCatalog(StrictModule, NonTrainableState):
     body_ids: tuple[str, ...] = eqx.field(static=True)
     catalog_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         body_ids: tuple[str, ...],
@@ -41,8 +43,6 @@ class CelestialBodyCatalog(StrictModule, NonTrainableState):
             raise ValueError("body_ids must be non-empty identifiers.")
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("body_ids must be unique.")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         coupling = np.asarray(gravitational_parameters, dtype=np.float64)
         radii = np.asarray(reference_radii, dtype=np.float64)
         count = len(identifiers)

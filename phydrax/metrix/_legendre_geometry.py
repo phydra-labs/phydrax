@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..typing import checked
 from ._atlas_cover import ChartSupport
 from ._chart import ChartTransition, CoordinateChart
 from ._hessian_geometry import HessianGeometry
@@ -70,6 +71,7 @@ class LegendreGeometry(StrictModule):
     dual_support: ChartSupport
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hessian_geometry: HessianGeometry,
@@ -80,14 +82,8 @@ class LegendreGeometry(StrictModule):
         dual_support: ChartSupport,
         geometry_id: str,
     ) -> None:
-        if not isinstance(hessian_geometry, HessianGeometry):
-            raise TypeError("hessian_geometry must be a HessianGeometry.")
         if not callable(inverse_dual_coordinates):
             raise TypeError("inverse_dual_coordinates must be callable.")
-        if not isinstance(primal_support, ChartSupport):
-            raise TypeError("primal_support must be a ChartSupport.")
-        if not isinstance(dual_support, ChartSupport):
-            raise TypeError("dual_support must be a ChartSupport.")
         if not primal_support.chart.compatible_with(hessian_geometry.chart):
             raise ValueError(
                 "Legendre primal support must use the Hessian geometry chart."
@@ -279,6 +275,7 @@ class LegendreValidationReport(StrictModule):
     maximum_bregman_diagonal_error: Array
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         *,
@@ -294,10 +291,6 @@ class LegendreValidationReport(StrictModule):
         maximum_bregman_diagonal_error: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
     ) -> None:
-        if not isinstance(metric_validation, MetricValidationReport):
-            raise TypeError("metric_validation must be a MetricValidationReport.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.metric_validation = metric_validation

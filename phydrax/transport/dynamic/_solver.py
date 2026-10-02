@@ -15,7 +15,7 @@ from jax import Array
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import StateSpaceStepContext
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._status import TransportStatus
 from ._problem import SchrodingerBridgeProblem
 
@@ -142,9 +142,8 @@ class SchrodingerBridgeSolver(StrictModule):
         self.max_iterations = iterations
         self.tolerance = tolerance
 
+    @checked
     def solve(self, problem: SchrodingerBridgeProblem, /) -> SchrodingerBridgeResult:
-        if not isinstance(problem, SchrodingerBridgeProblem):
-            raise TypeError("problem must be a SchrodingerBridgeProblem.")
         log_transitions, reference_row_residual = _reference_log_transitions(problem)
         return _solve_bridge(
             problem,

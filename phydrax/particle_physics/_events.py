@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import ENERGY, LENGTH, TIME, UnitDefinition
 from ._identity import ParticleCatalogReference, ParticleRole
 from ._weights import EventWeightSet
@@ -43,6 +44,7 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
     momentum_order: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -56,8 +58,6 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
         provider_status_namespace: str,
         momentum_order: str = "E,px,py,pz",
     ) -> None:
-        if not isinstance(catalog, ParticleCatalogReference):
-            raise TypeError("catalog must be ParticleCatalogReference.")
         if (
             not isinstance(momentum_unit, UnitDefinition)
             or momentum_unit.dimension != ENERGY
@@ -144,9 +144,8 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
     plan: ParticleEventPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ParticleEventPlan, /) -> None:
-        if not isinstance(plan, ParticleEventPlan):
-            raise TypeError("plan must be ParticleEventPlan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-particle-events", "plan": plan.plan_id}

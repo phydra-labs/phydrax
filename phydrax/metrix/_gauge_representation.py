@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 from ._lie_group import AbstractLieGroup
 
@@ -187,6 +188,7 @@ class AdjointGaugeRepresentation(AbstractGaugeRepresentation):
     color_axis: int = eqx.field(static=True)
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         group: SpecialUnitaryGroup,
@@ -194,8 +196,6 @@ class AdjointGaugeRepresentation(AbstractGaugeRepresentation):
         *,
         color_axis: int = -1,
     ) -> None:
-        if not isinstance(group, SpecialUnitaryGroup):
-            raise TypeError("AdjointGaugeRepresentation requires SU(N).")
         axis = _color_axis(color_axis)
         self.group = group
         self.dimension = group.algebra_shape[0]

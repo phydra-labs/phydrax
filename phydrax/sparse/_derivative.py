@@ -33,7 +33,7 @@ from ..linalg._spaces import (
     _has_diagonal_pairing,
     _has_euclidean_pairing,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._coloring import (
     native_coloring,
     SparseColoring,
@@ -163,6 +163,7 @@ class SparseDerivativePlan(StrictModule):
     chunk_size: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         function: Callable[[Array, Any], Array],
@@ -186,12 +187,6 @@ class SparseDerivativePlan(StrictModule):
             target, AbstractVectorSpace
         ):
             raise TypeError("source and target must be AbstractVectorSpace values.")
-        if not isinstance(coloring, SparseColoring):
-            raise TypeError("coloring must be a SparseColoring.")
-        if not isinstance(properties, OperatorProperties):
-            raise TypeError("properties must be OperatorProperties.")
-        if not isinstance(precision, SparseDerivativePrecisionPolicy):
-            raise TypeError("precision must be a SparseDerivativePrecisionPolicy.")
         derivative_kind = parse(derivative_kind, SparseDerivativeKind, "derivative_kind")
         if derivative_kind == "hessian":
             if not isinstance(hessian_contract, SparseHessianContract):

@@ -19,7 +19,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D
 
@@ -89,6 +89,7 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
     _discretization: LayerDiscretizationReport
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: SurfacePanelization3D,
@@ -98,8 +99,6 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(panelization, SurfacePanelization3D):
-            raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
             raise ValueError("3D Helmholtz layer kind must be 'single' or 'double'.")
         density_ = (
@@ -209,6 +208,7 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
     _discretization: LayerDiscretizationReport
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: SurfacePanelization3D,
@@ -218,8 +218,6 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
         *,
         eta: float,
     ) -> None:
-        if not isinstance(panelization, SurfacePanelization3D):
-            raise TypeError("panelization must be SurfacePanelization3D.")
         coupling = float(eta)
         if not jnp.isfinite(coupling) or coupling <= 0.0:
             raise ValueError("eta must be finite and positive.")

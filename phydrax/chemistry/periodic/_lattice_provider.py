@@ -18,6 +18,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._lattice_force_constants import SecondOrderForceConstants, ThirdOrderForceConstants
 
 
@@ -321,6 +322,7 @@ class AbstractLatticeDynamicsProvider(abc.ABC):
 class CallableLatticeDynamicsProvider(AbstractLatticeDynamicsProvider):
     """Explicit adapter for a pinned host provider implementation."""
 
+    @checked
     def __init__(
         self,
         provider_id: str,
@@ -330,8 +332,6 @@ class CallableLatticeDynamicsProvider(AbstractLatticeDynamicsProvider):
         evaluator: Callable[[LatticeDynamicsRequest], LatticeDynamicsArtifactSet],
         /,
     ) -> None:
-        if not isinstance(capabilities, LatticeDynamicsProviderCapabilities):
-            raise TypeError("capabilities must be LatticeDynamicsProviderCapabilities.")
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         self.provider_id = _identifier(provider_id, "provider_id")
@@ -340,9 +340,8 @@ class CallableLatticeDynamicsProvider(AbstractLatticeDynamicsProvider):
         self.capabilities = capabilities
         self._evaluator = evaluator
 
+    @checked
     def evaluate(self, request: LatticeDynamicsRequest, /) -> LatticeDynamicsArtifactSet:
-        if not isinstance(request, LatticeDynamicsRequest):
-            raise TypeError("request must be LatticeDynamicsRequest.")
         artifact = self._evaluator(request)
         if not isinstance(artifact, LatticeDynamicsArtifactSet):
             raise TypeError("Lattice provider returned a non-normalized artifact.")

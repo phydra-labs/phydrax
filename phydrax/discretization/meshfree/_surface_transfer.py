@@ -14,7 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
-from ...typing import Dim, Float64, parse
+from ...typing import checked, Dim, Float64, parse
 from .._gram import diagonal_gram_space
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
@@ -147,6 +147,7 @@ class SurfaceTransferPlan(StrictModule):
         self.source_id, self.target_id = source_id, target_id
 
     @classmethod
+    @checked
     def from_stencils(
         cls,
         stencils: PreparedLocalStencils,
@@ -158,8 +159,6 @@ class SurfaceTransferPlan(StrictModule):
         mode: SurfaceTransferMode = "high-order",
         tolerance: float = 1e-10,
     ) -> SurfaceTransferPlan:
-        if not isinstance(stencils, PreparedLocalStencils):
-            raise TypeError("Cross-target preparation requires PreparedLocalStencils.")
         if stencils.report.refused_rows or not 0 <= functional_index < len(
             stencils.weights
         ):

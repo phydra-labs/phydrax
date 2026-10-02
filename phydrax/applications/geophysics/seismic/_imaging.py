@@ -26,7 +26,7 @@ from ....observation import (
     KroneckerCholeskyCovarianceAction,
     LinearNuisancePlan,
 )
-from ....typing import parse
+from ....typing import checked, parse
 from ._acquisition import SeismicAcquisition
 from ._constant_density import ConstantDensityAcousticPlan
 
@@ -39,6 +39,7 @@ class AcousticShot(StrictModule, NonTrainableState):
     trace_weights: Array
     shot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         acquisition: SeismicAcquisition,
@@ -49,8 +50,6 @@ class AcousticShot(StrictModule, NonTrainableState):
         *,
         trace_weights: ArrayLike = 1.0,
     ) -> None:
-        if not isinstance(acquisition, SeismicAcquisition):
-            raise TypeError("Acoustic shot requires SeismicAcquisition.")
         source = jnp.asarray(source_rates)
         observed = jnp.asarray(observed_pressure_Pa)
         expected = (acquisition.receivers.count, source.shape[0] + 1)
@@ -112,6 +111,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
     block_size: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         forward: ConstantDensityAcousticPlan,
@@ -121,8 +121,6 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
         replay: CheckpointedScanMode = "block",
         block_size: int | None = None,
     ) -> None:
-        if not isinstance(forward, ConstantDensityAcousticPlan):
-            raise TypeError("Waveform inversion requires ConstantDensityAcousticPlan.")
         shots_ = tuple(shots)
         if not shots_ or any(not isinstance(shot, AcousticShot) for shot in shots_):
             raise TypeError("Waveform inversion requires nonempty AcousticShot values.")
@@ -240,6 +238,7 @@ class AcousticSourceProjectionPlan(StrictModule, NonTrainableState):
     basis_source_rates: Array
     nuisance: LinearNuisancePlan
 
+    @checked
     def __init__(
         self,
         inversion: AcousticWaveformInversionPlan,
@@ -248,8 +247,6 @@ class AcousticSourceProjectionPlan(StrictModule, NonTrainableState):
         reference_wavespeed_m_s: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(inversion, AcousticWaveformInversionPlan):
-            raise TypeError("Source projection requires waveform inversion plan.")
         index = int(shot_index)
         if not 0 <= index < len(inversion.shots):
             raise ValueError("Source projection shot index is invalid.")

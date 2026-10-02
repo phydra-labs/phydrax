@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticPrecisionPolicy, AtomisticSystemPlan
+from ..typing import checked
 from ..units import ONE
 from ._model import ElectronicModelChemistryPlan, ElectronicReferenceKind
 from ._numerical import ElectronicNumericalPlan
@@ -73,6 +74,7 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
     precision: AtomisticPrecisionPolicy
     calculation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -84,8 +86,6 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
         numerical: ElectronicNumericalPlan | None = None,
         precision: AtomisticPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         if isinstance(
             state, (MolecularElectronicSectorPlan, PeriodicElectronicSectorPlan)
         ):
@@ -100,8 +100,6 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
             )
         if prepared_state.system_id != system.system_id:
             raise ValueError("Prepared electronic sector belongs to another system.")
-        if not isinstance(model_chemistry, ElectronicModelChemistryPlan):
-            raise TypeError("model_chemistry must be ElectronicModelChemistryPlan.")
         if not isinstance(task, ElectronicTaskPlan):
             raise TypeError("task must be a typed electronic task plan.")
         reference = model_chemistry.method.reference

@@ -50,7 +50,7 @@ from ..linalg import (
     prepare_linearization,
     PreparedLinearization,
 )
-from ..typing import ConvertibleToArray, parse
+from ..typing import checked, ConvertibleToArray, parse
 from ._integration_domain import IntegrationDomain
 from ._reference_cell import (
     _NamedFacetShape,
@@ -300,6 +300,7 @@ class SideActionDescriptor(StrictModule, NonTrainableState):
     quadrature_exact_degree: int | None = eqx.field(static=True)
     descriptor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -324,8 +325,6 @@ class SideActionDescriptor(StrictModule, NonTrainableState):
         orientation = parse(orientation, SideOrientation, "orientation")
         approximation = parse(approximation, SideApproximation, "approximation")
         side = parse(side, FieldTraceSide, "side")
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be an IntegrationDomain.")
         match domain.kind:
             case "exterior_facet" | "interior_facet":
                 pass
@@ -597,6 +596,7 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
     support_rows: Array
     form: FormValueSpec | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         descriptor: SideActionDescriptor,
@@ -610,8 +610,6 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
         support_rows: ConvertibleToArray,
         form: FormValueSpec | None = None,
     ) -> None:
-        if not isinstance(descriptor, SideActionDescriptor):
-            raise TypeError("descriptor must be a SideActionDescriptor.")
         if descriptor.quantity == "conormal-flux":
             raise ValueError(
                 "Conormal fluxes are published by compiled physics owners as "
@@ -627,10 +625,6 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
                 )
             case _:
                 assert_never(descriptor.representation)
-        if not isinstance(route, AbstractSideRoute):
-            raise TypeError("route must be an AbstractSideRoute.")
-        if not isinstance(coefficient_space, ArraySpace):
-            raise TypeError("coefficient_space must be an ArraySpace.")
         if route.coefficient_shape != coefficient_space.shape:
             raise ValueError("The side route acts on another coefficient shape.")
         sites_ = np.asarray(sites)
@@ -786,12 +780,11 @@ class PreparedTraceAction(StrictModule, NonTrainableState):
         """Coordinate transpose from trace covectors to owner residual rows."""
         return DualTransposeLinearOperator(self.as_linear_operator())
 
+    @checked
     def hilbert_adjoint(
         self, coefficient_pairing: AbstractPairing, /
     ) -> AdjointLinearOperator:
         """Hilbert adjoint relative to a declared coefficient Riesz pairing."""
-        if not isinstance(coefficient_pairing, AbstractPairing):
-            raise TypeError("coefficient_pairing must be an AbstractPairing.")
         return AdjointLinearOperator(
             self.as_linear_operator(coefficient_pairing=coefficient_pairing)
         )
@@ -827,6 +820,7 @@ class PreparedFluxAction(StrictModule, NonTrainableState):
     trace: PreparedTraceAction
     evaluator: AbstractSideFluxEvaluator
 
+    @checked
     def __init__(
         self,
         descriptor: SideActionDescriptor,
@@ -834,12 +828,6 @@ class PreparedFluxAction(StrictModule, NonTrainableState):
         evaluator: AbstractSideFluxEvaluator,
         /,
     ) -> None:
-        if not isinstance(descriptor, SideActionDescriptor):
-            raise TypeError("descriptor must be a SideActionDescriptor.")
-        if not isinstance(trace, PreparedTraceAction):
-            raise TypeError("trace must be a PreparedTraceAction.")
-        if not isinstance(evaluator, AbstractSideFluxEvaluator):
-            raise TypeError("evaluator must be an AbstractSideFluxEvaluator.")
         if descriptor.quantity != "conormal-flux":
             raise ValueError("A flux action must declare the conormal-flux quantity.")
         if descriptor.field_space_id != trace.descriptor.field_space_id or not bool(
@@ -998,10 +986,9 @@ class BoundaryImposition(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def overlaps(self, action: PreparedTraceAction, /) -> bool:
         """Whether this imposition already acts on the facets or rows of `action`."""
-        if not isinstance(action, PreparedTraceAction):
-            raise TypeError("action must be a PreparedTraceAction.")
         if action.descriptor.field_space_id != self.field_space_id:
             return False
         if (

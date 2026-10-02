@@ -42,7 +42,7 @@ from ...stochastic import (
     StateSpaceProblem,
     StateSpaceStepContext,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...uq import (
     kalman_filter,
     kalman_innovation_diagnostics,
@@ -350,6 +350,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
     branch_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ecm_plan: ThermalEquivalentCircuitPlan,
@@ -361,8 +362,6 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
         capacity_fade: bool = False,
         parameter_estimation: bool = False,
     ) -> None:
-        if not isinstance(ecm_plan, ThermalEquivalentCircuitPlan):
-            raise TypeError("ecm_plan must be a ThermalEquivalentCircuitPlan.")
         interval = _real_array(state_of_charge_interval, "state_of_charge_interval")
         if interval.shape != (2,):
             raise ValueError("state_of_charge_interval must contain two bounds.")
@@ -408,6 +407,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         parameters: ThermalEquivalentCircuitParameters,
@@ -428,8 +428,6 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
         ECM drift is formed separately for every observation interval.
         """
 
-        if not isinstance(parameters, ThermalEquivalentCircuitParameters):
-            raise TypeError("parameters must be ThermalEquivalentCircuitParameters.")
         if parameters.branch_resistances_ohm.shape != (self.branch_count,):
             raise ValueError("ECM parameters do not match the estimation branch count.")
         ocv_coefficients = _qualify_global_extension(
@@ -768,6 +766,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
             input_signal=input_signal,
         )
 
+    @checked
     def problem_from_record(
         self,
         record: BatteryTimeSeriesRecord,
@@ -778,8 +777,6 @@ class PreparedExactAffineECMEstimation(StrictModule):
     ) -> StateSpaceProblem:
         """Build a problem from one canonical SI protocol record without sign guesses."""
 
-        if not isinstance(record, BatteryTimeSeriesRecord):
-            raise TypeError("record must be a BatteryTimeSeriesRecord.")
         if record.role is not BatteryRecordRole.PROTOCOL:
             raise ValueError(
                 "Exact ECM estimation requires a protocol time-series record."

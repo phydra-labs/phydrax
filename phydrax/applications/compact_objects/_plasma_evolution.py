@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._plasma_closures import (
     TwoTemperatureElectronIonClosure,
     TwoTemperaturePlasmaState,
@@ -282,6 +283,7 @@ class RelativisticTwoTemperaturePlan(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -295,12 +297,6 @@ class RelativisticTwoTemperaturePlan(StrictModule, NonTrainableState):
         ion_adiabatic_index: float = 5.0 / 3.0,
         energy_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(heating, AbstractElectronHeatingPlan):
-            raise TypeError("heating must implement AbstractElectronHeatingPlan.")
-        if not isinstance(coulomb, TwoTemperatureElectronIonClosure):
-            raise TypeError("coulomb must be TwoTemperatureElectronIonClosure.")
         if coulomb.scale.scale_id != scale.scale_id:
             raise ValueError("Two-temperature scale identities differ.")
         values = tuple(
@@ -364,6 +360,7 @@ class RelativisticTwoTemperaturePlan(StrictModule, NonTrainableState):
             electron_energy, ion_energy, electron, ion, density
         )
 
+    @checked
     def advance(
         self,
         state: RelativisticTwoTemperatureState,
@@ -376,8 +373,6 @@ class RelativisticTwoTemperaturePlan(StrictModule, NonTrainableState):
         magnetic_pressure: ArrayLike,
         radiation_exchange: ArrayLike = 0.0,
     ) -> RelativisticTwoTemperatureResult:
-        if not isinstance(state, RelativisticTwoTemperatureState):
-            raise TypeError("state must be RelativisticTwoTemperatureState.")
         density, total, step, gas, magnetic, radiation = jnp.broadcast_arrays(
             jnp.asarray(rest_mass_density),
             jnp.asarray(total_internal_energy),
@@ -579,6 +574,7 @@ class PairCreationAnnihilationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def advance(
         self,
         state: RelativisticPairState,
@@ -586,8 +582,6 @@ class PairCreationAnnihilationPlan(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         /,
     ) -> PairReactionResult:
-        if not isinstance(state, RelativisticPairState):
-            raise TypeError("state must be RelativisticPairState.")
         electron, positron, photons, material, radiation, temperature, step = (
             jnp.broadcast_arrays(
                 jnp.asarray(state.electron_number_density),
@@ -753,6 +747,7 @@ class GyrotropicPlasmaClosurePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         state: GyrotropicPlasmaState,
@@ -762,8 +757,6 @@ class GyrotropicPlasmaClosurePlan(StrictModule, NonTrainableState):
         inverse_spatial_metric: ArrayLike,
         /,
     ) -> GyrotropicPlasmaEvaluation:
-        if not isinstance(state, GyrotropicPlasmaState):
-            raise TypeError("state must be GyrotropicPlasmaState.")
         magnetic = jnp.asarray(magnetic_field)
         gradient = jnp.asarray(temperature_gradient_covector)
         metric = jnp.asarray(spatial_metric)

@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._lattice import LatticeBoltzmannVelocitySet
 from ._precision import LatticeBoltzmannPrecisionPolicy
 
@@ -175,16 +176,13 @@ class MomentBasisPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         velocity_set: LatticeBoltzmannVelocitySet,
         precision: LatticeBoltzmannPrecisionPolicy,
         /,
     ) -> PreparedMomentBasis:
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be LatticeBoltzmannVelocitySet.")
-        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
-            raise TypeError("precision must be LatticeBoltzmannPrecisionPolicy.")
         exponents = (
             _default_exponents(velocity_set) if self.exponents is None else self.exponents
         )
@@ -359,9 +357,8 @@ class RelaxationSpectrumPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(self, basis: PreparedMomentBasis, /) -> PreparedRelaxationSpectrum:
-        if not isinstance(basis, PreparedMomentBasis):
-            raise TypeError("basis must be PreparedMomentBasis.")
         q = basis.population_count
         conserved = set(basis.conserved_indices)
         shear = set(

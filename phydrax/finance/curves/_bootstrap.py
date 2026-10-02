@@ -24,6 +24,7 @@ from ...optim import (
     LevenbergMarquardt,
     OptimizationTermination,
 )
+from ...typing import checked
 from ._core import (
     CurveDefinition,
     CurveRepresentation,
@@ -926,14 +927,13 @@ class CurveBootstrapReplay(StrictModule):
     topology_key: tuple[Any, ...] = eqx.field(static=True)
     quote_ids: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: AbstractCurveBootstrapPlan,
         initial_raw_parameters: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, AbstractCurveBootstrapPlan):
-            raise TypeError("plan must be an AbstractCurveBootstrapPlan.")
         initial = jnp.asarray(initial_raw_parameters)
         if initial.shape != (sum(_raw_sizes(plan.definitions)),):
             raise ValueError("initial_raw_parameters do not match the plan topology.")
@@ -945,14 +945,13 @@ class CurveBootstrapReplay(StrictModule):
     def replay(self, quotes: ArrayLike, /) -> CurveBootstrapResult:
         return self.plan._solve_from_raw(quotes, self.initial_raw_parameters)
 
+    @checked
     def refresh(
         self,
         plan: AbstractCurveBootstrapPlan,
         quotes: ArrayLike,
         /,
     ) -> CurveBootstrapResult:
-        if not isinstance(plan, AbstractCurveBootstrapPlan):
-            raise TypeError("plan must be an AbstractCurveBootstrapPlan.")
         if plan.topology_key != self.topology_key:
             raise ValueError("Numeric replay must preserve bootstrap topology.")
         if plan.quote_ids != self.quote_ids:

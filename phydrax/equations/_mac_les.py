@@ -19,6 +19,7 @@ from ..discretization.finite_volume import (
     PreparedMACMomentumOperators,
     PreparedMACVariationalViscosityAction,
 )
+from ..typing import checked
 from ._les_closures import (
     AlgebraicLESInputs,
     AlgebraicLESResult,
@@ -158,9 +159,8 @@ class MACAlgebraicLESPlan(StrictModule, NonTrainableState):
     prepared_model: PreparedAlgebraicLESModel
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, prepared_model: PreparedAlgebraicLESModel, /) -> None:
-        if not isinstance(prepared_model, PreparedAlgebraicLESModel):
-            raise TypeError("prepared_model must be PreparedAlgebraicLESModel.")
         self.prepared_model = prepared_model
         self.plan_id = canonical_fingerprint(
             {
@@ -188,16 +188,13 @@ class PreparedMACAlgebraicLES(StrictModule, NonTrainableState):
     viscosity_action: PreparedMACVariationalViscosityAction
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MACAlgebraicLESPlan,
         momentum: PreparedMACMomentumOperators,
         /,
     ) -> None:
-        if not isinstance(plan, MACAlgebraicLESPlan):
-            raise TypeError("plan must be MACAlgebraicLESPlan.")
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         if momentum.dimension != 3:
             raise ValueError("MAC algebraic LES requires a three-dimensional grid.")
         grid = momentum.operators.discretization.grid

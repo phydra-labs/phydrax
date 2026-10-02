@@ -28,6 +28,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..logging import emit
 from ..qualification._registry import SupportTuple
+from ..typing import checked
 from ._chunk_repository import (
     _identifier,
     _object_key,
@@ -126,6 +127,7 @@ class POSIXRepositoryPolicy(StrictModule, NonTrainableState):
     maximum_metadata_bytes: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         filesystem_profile: HPCFilesystemProfile,
@@ -134,8 +136,6 @@ class POSIXRepositoryPolicy(StrictModule, NonTrainableState):
         maximum_chunk_bytes: int = _DEFAULT_CHUNK_LIMIT,
         maximum_metadata_bytes: int = _METADATA_LIMIT,
     ) -> None:
-        if not isinstance(filesystem_profile, HPCFilesystemProfile):
-            raise TypeError("filesystem_profile must be HPCFilesystemProfile.")
         filesystem_profile.require_transactional_support()
         chunk_limit = _positive(maximum_chunk_bytes, "maximum_chunk_bytes")
         metadata_limit = _positive(maximum_metadata_bytes, "maximum_metadata_bytes")
@@ -419,6 +419,7 @@ class InMemoryConditionalObjectClient:
 class POSIXArtifactRepository:
     """Crash-consistent POSIX repository with attempt-private immutable roots."""
 
+    @checked
     def __init__(
         self,
         root: str | os.PathLike[str],
@@ -427,8 +428,6 @@ class POSIXArtifactRepository:
         *,
         failure_injector: FailureInjector | None = None,
     ) -> None:
-        if not isinstance(policy, POSIXRepositoryPolicy):
-            raise TypeError("policy must be POSIXRepositoryPolicy.")
         policy.filesystem_profile.require_transactional_support()
         self.root = _admit_repository_root(root)
         self.policy = policy
@@ -1050,9 +1049,8 @@ class POSIXArtifactRepository:
                 self._remove_repository_tree(staging / name)
         self._fsync_repository_directory(staging)
 
+    @checked
     def _validate_transaction(self, transaction: RepositoryTransaction, /) -> None:
-        if not isinstance(transaction, RepositoryTransaction):
-            raise TypeError("transaction must be RepositoryTransaction.")
         if transaction.provider_id != self.provider_id:
             raise RepositoryConflictError(
                 "Transaction provider does not match repository."
@@ -1596,6 +1594,7 @@ class POSIXArtifactRepository:
 class S3ArtifactRepository:
     """Transactional S3-compatible repository over conditional whole objects."""
 
+    @checked
     def __init__(
         self,
         client: ConditionalObjectClient,
@@ -1606,8 +1605,6 @@ class S3ArtifactRepository:
         maximum_chunk_bytes: int = _DEFAULT_CHUNK_LIMIT,
         failure_injector: FailureInjector | None = None,
     ) -> None:
-        if not isinstance(profile, ObjectStoreProfile):
-            raise TypeError("profile must be ObjectStoreProfile.")
         profile.require_transactional_support()
         maximum = _positive(maximum_chunk_bytes, "maximum_chunk_bytes")
         if maximum > profile.maximum_object_bytes:
@@ -1934,10 +1931,9 @@ class S3ArtifactRepository:
             raise RepositoryConflictError("Legal-hold release record does not match.")
         self.client.delete_object(key, expected_etag=value.metadata.etag)
 
+    @checked
     def set_retention(self, artifact_id: str, policy: RetentionPolicy, /) -> None:
         artifact = _identifier(artifact_id, "artifact_id")
-        if not isinstance(policy, RetentionPolicy):
-            raise TypeError("policy must be RetentionPolicy.")
         guard = self._acquire_artifact_guard(artifact)
         try:
             self.get_manifest(artifact)
@@ -2109,9 +2105,8 @@ class S3ArtifactRepository:
         )
         return report
 
+    @checked
     def _validate_transaction(self, transaction: RepositoryTransaction, /) -> None:
-        if not isinstance(transaction, RepositoryTransaction):
-            raise TypeError("transaction must be RepositoryTransaction.")
         if transaction.provider_id != self.provider_id:
             raise RepositoryConflictError(
                 "Transaction provider does not match repository."
@@ -2199,13 +2194,12 @@ class S3ArtifactRepository:
             raise RepositoryCorruptionError("Artifact metadata guard is invalid.")
         return value.metadata
 
+    @checked
     def recover_artifact_guard(
         self, authorization: ArtifactGuardRecoveryAuthorization, /
     ) -> None:
         """Release an abandoned guard only after an external worker fence."""
 
-        if not isinstance(authorization, ArtifactGuardRecoveryAuthorization):
-            raise TypeError("authorization must be ArtifactGuardRecoveryAuthorization.")
         if authorization.provider_id != self.provider_id:
             raise RepositoryConflictError(
                 "Artifact guard authorization targets another provider."

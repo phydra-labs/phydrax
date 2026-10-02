@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations._linear_boltzmann import MultigroupSlabTransportProblem
+from ..typing import checked
 
 
 class DiscreteOrdinatesEvidence(StrictModule):
@@ -65,6 +66,7 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
     negative_angles: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: MultigroupSlabTransportProblem,
@@ -75,8 +77,6 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
         dsa: bool = False,
         dsa_relaxation: float = 0.5,
     ) -> None:
-        if not isinstance(problem, MultigroupSlabTransportProblem):
-            raise TypeError("problem must be MultigroupSlabTransportProblem.")
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         relaxation = float(dsa_relaxation)

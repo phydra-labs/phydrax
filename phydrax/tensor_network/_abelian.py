@@ -19,6 +19,7 @@ from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..operators.quantum._abelian_charge import AbelianCharge, AbelianGroup
+from ..typing import checked
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -32,6 +33,7 @@ class AbelianLeg(StrictModule):
     basis_id: str = eqx.field(static=True)
     allocation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         group: AbelianGroup,
@@ -42,8 +44,6 @@ class AbelianLeg(StrictModule):
         orientation: int,
         active_degeneracies: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(group, AbelianGroup):
-            raise TypeError("group must be AbelianGroup.")
         charges_ = tuple(group.normalize(charge) for charge in charges)
         capacities_ = tuple(capacities)
         if not charges_ or len(charges_) != len(capacities_):
@@ -198,6 +198,7 @@ class AbelianTensor(StrictModule):
     allocation_id: str = eqx.field(static=True)
     tensor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: AbelianTensorLayout,
@@ -206,8 +207,6 @@ class AbelianTensor(StrictModule):
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(layout, AbelianTensorLayout):
-            raise TypeError("layout must be AbelianTensorLayout.")
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")

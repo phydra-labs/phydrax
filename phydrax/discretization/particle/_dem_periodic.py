@@ -18,7 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
-from ...typing import parse
+from ...typing import checked, parse
 from .._periodic_cell import PeriodicCell
 from ._pairwise import particle_pair_geometry
 
@@ -441,6 +441,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
             cell.vectors.astype(dtype), zero, zero, jnp.asarray(True)
         )
 
+    @checked
     def update(
         self,
         cell: PeriodicCell,
@@ -452,10 +453,6 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         maximum_interaction_radius: float,
         /,
     ) -> DEMPeriodicCellUpdate:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
-        if not isinstance(state, DEMPeriodicCellState):
-            raise TypeError("state must be DEMPeriodicCellState.")
         position_ = jnp.asarray(position)
         velocity_ = jnp.asarray(velocity, dtype=position_.dtype)
         observed = jnp.asarray(observed_stress, dtype=position_.dtype)

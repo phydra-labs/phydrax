@@ -22,6 +22,7 @@ from ..equations._relativistic_hydrodynamics import ValenciaGeometrySource
 from ..equations._relativistic_mhd import IdealValenciaGRMHDSystem
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._metric import _metric_inverse
+from ..typing import checked
 from ._grmhd_boundary import GRMHDBoundaryPair
 from ._grmhd_ct import (
     GRMHDConstrainedTransportPlan,
@@ -181,6 +182,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
     balance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: IdealValenciaGRMHDSystem,
@@ -194,12 +196,6 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         divergence_tolerance: float = 1.0e-10,
         balance_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(system, IdealValenciaGRMHDSystem):
-            raise TypeError("system must be IdealValenciaGRMHDSystem.")
-        if not isinstance(constrained_transport, GRMHDConstrainedTransportPlan):
-            raise TypeError(
-                "constrained_transport must be GRMHDConstrainedTransportPlan."
-            )
         dimension = constrained_transport.layout.dimension
         boundary_values = (
             tuple(None for _ in range(dimension))
@@ -265,9 +261,8 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
     def cell_shape(self) -> tuple[int, ...]:
         return self.constrained_transport.cell_shape
 
+    @checked
     def _geometry(self, geometry: ADMGridGeometry, /) -> ADMGridGeometry:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if geometry.leading_shape != self.cell_shape:
             raise ValueError("ADM geometry shape does not match the GRMHD grid.")
         if (
@@ -1107,6 +1102,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             plan_id=attempted.plan_id,
         )
 
+    @checked
     def advance(
         self,
         state: GRMHDState,
@@ -1118,8 +1114,6 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         *,
         source_geometry: ValenciaGeometrySource | None = None,
     ) -> GRMHDStepResult:
-        if not isinstance(state, GRMHDState):
-            raise TypeError("state must be GRMHDState.")
         geometry_ = self._geometry(geometry)
         start = jnp.asarray(start_time, dtype=state.time.dtype).reshape(())
         end = jnp.asarray(end_time, dtype=state.time.dtype).reshape(())

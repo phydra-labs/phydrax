@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ....typing import checked
 from ....units import conversion_factor, UnitDefinition
 from ....uq import (
     bennett_acceptance_ratio,
@@ -429,6 +430,7 @@ class ProteinFreeEnergyWorkflow:
     ) -> FreeEnergySelectionPlan | FreeEnergySelectionEvidence:
         return self.selection_plan if selection is None else selection
 
+    @checked
     def fep(
         self,
         dataset: ReducedWorkDataset,
@@ -437,13 +439,12 @@ class ProteinFreeEnergyWorkflow:
         *,
         key: ArrayLike | None = None,
     ) -> ProteinFreeEnergyEstimate:
-        if not isinstance(dataset, ReducedWorkDataset):
-            raise TypeError("dataset must be ReducedWorkDataset.")
         self._verify(dataset)
         return self._wrap(
             free_energy_perturbation(dataset, self._selection(selection), key=key)
         )
 
+    @checked
     def bar(
         self,
         dataset: ReducedWorkDataset,
@@ -453,8 +454,6 @@ class ProteinFreeEnergyWorkflow:
         key: ArrayLike | None = None,
         **solver_options: Unpack[_BARSolverOptions],
     ) -> ProteinFreeEnergyEstimate:
-        if not isinstance(dataset, ReducedWorkDataset):
-            raise TypeError("dataset must be ReducedWorkDataset.")
         self._verify(dataset)
         return self._wrap(
             bennett_acceptance_ratio(
@@ -465,6 +464,7 @@ class ProteinFreeEnergyWorkflow:
             )
         )
 
+    @checked
     def ti(
         self,
         dataset: ThermodynamicDerivativeDataset,
@@ -473,13 +473,12 @@ class ProteinFreeEnergyWorkflow:
         *,
         key: ArrayLike | None = None,
     ) -> ProteinFreeEnergyEstimate:
-        if not isinstance(dataset, ThermodynamicDerivativeDataset):
-            raise TypeError("dataset must be ThermodynamicDerivativeDataset.")
         self._verify(dataset)
         return self._wrap(
             thermodynamic_integration(dataset, self._selection(selection), key=key)
         )
 
+    @checked
     def mbar(
         self,
         dataset: ReducedPotentialDataset,
@@ -489,8 +488,6 @@ class ProteinFreeEnergyWorkflow:
         key: ArrayLike | None = None,
         **solver_options: Unpack[_MBARSolverOptions],
     ) -> ProteinFreeEnergyEstimate:
-        if not isinstance(dataset, ReducedPotentialDataset):
-            raise TypeError("dataset must be ReducedPotentialDataset.")
         self._verify(dataset)
         return self._wrap(
             multistate_bennett_acceptance_ratio(

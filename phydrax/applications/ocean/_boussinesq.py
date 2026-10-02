@@ -41,6 +41,7 @@ from ...equations import (
 from ...equations._ksgs import AbstractKSGSPlan, KSGSState
 from ...equations._mac_les import MACAlgebraicLESPlan
 from ...solver import MACPressureProjectionPlan
+from ...typing import checked
 from ._reference import LinearSeawaterReference, OceanAxisConvention
 
 
@@ -84,6 +85,7 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
     salinity_surface_flux: MACScalarBoundaryCondition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         axes: OceanAxisConvention,
@@ -104,10 +106,6 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         temperature_surface_flux: MACScalarBoundaryCondition | None = None,
         salinity_surface_flux: MACScalarBoundaryCondition | None = None,
     ) -> None:
-        if not isinstance(axes, OceanAxisConvention):
-            raise TypeError("axes must be OceanAxisConvention.")
-        if not isinstance(reference, LinearSeawaterReference):
-            raise TypeError("reference must be LinearSeawaterReference.")
         viscosity_ = float(viscosity)
         f = float(coriolis_parameter)
         if not np.isfinite(viscosity_) or viscosity_ < 0.0 or not np.isfinite(f):
@@ -229,6 +227,7 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         discretization: FiniteVolumeDiscretization,
@@ -238,8 +237,6 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         projection_tolerance: float = 1.0e-9,
         projection_iterations: int = 500,
     ) -> "PreparedCartesianBoussinesqOcean":
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
         self.axes.validate_discretization(discretization)
         operators = MACOperatorPlan(discretization).prepare()
         prepared_boundaries = (

@@ -51,7 +51,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._validation import canonical_identifier, positive_integer
 from ...linalg import AbstractLinearOperator, AbstractVectorSpace, BlockLinearOperator
-from ...typing import parse
+from ...typing import checked, parse
 from ._components import AbstractSpatialComponent
 
 
@@ -130,13 +130,10 @@ class InterfaceLaneSubject(StrictModule):
     operator: AbstractLinearOperator
     identified: AbstractVectorSpace
 
+    @checked
     def __init__(
         self, operator: AbstractLinearOperator, identified: AbstractVectorSpace, /
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
-        if not isinstance(identified, AbstractVectorSpace):
-            raise TypeError("identified must be an AbstractVectorSpace.")
         self.operator = operator
         self.identified = identified
 

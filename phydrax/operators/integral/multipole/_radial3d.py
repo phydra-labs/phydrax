@@ -26,6 +26,7 @@ from ....special._spherical_bessel import (
     _spherical_j_sequence,
     _spherical_k_sequence,
 )
+from ....typing import checked
 from ._laplace3d import (
     _flatten_payload,
     _mode_basis,
@@ -297,9 +298,8 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
     projection_harmonics: Array
     equivalent_radius: float = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: _AbstractRadialMultipolePlan3D, /) -> None:
-        if not isinstance(plan, _AbstractRadialMultipolePlan3D):
-            raise TypeError("plan must be a radial multipole plan.")
         super().__init__(plan.substrate)
         quadrature_limit = 3 * self.layout.bandlimit + 2
         directions_, weights_ = _translation_quadrature(quadrature_limit)
@@ -626,18 +626,16 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
 class PreparedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
     """Prepared complete outgoing-Helmholtz multipole pipeline."""
 
+    @checked
     def __init__(self, plan: HelmholtzMultipolePlan3D, /) -> None:
-        if not isinstance(plan, HelmholtzMultipolePlan3D):
-            raise TypeError("plan must be HelmholtzMultipolePlan3D.")
         super().__init__(plan)
 
 
 class PreparedModifiedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
     """Prepared complete screened modified-Helmholtz multipole pipeline."""
 
+    @checked
     def __init__(self, plan: ModifiedHelmholtzMultipolePlan3D, /) -> None:
-        if not isinstance(plan, ModifiedHelmholtzMultipolePlan3D):
-            raise TypeError("plan must be ModifiedHelmholtzMultipolePlan3D.")
         super().__init__(plan)
 
 

@@ -18,6 +18,7 @@ from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 
 
 if TYPE_CHECKING:
@@ -154,6 +155,7 @@ class HolomorphicMultiJet(StrictModule):
     derivatives: tuple[Array, ...]
     index_set: HolomorphicMultiIndexSet
 
+    @checked
     def __init__(
         self,
         value: ArrayLike,
@@ -161,8 +163,6 @@ class HolomorphicMultiJet(StrictModule):
         index_set: HolomorphicMultiIndexSet,
         /,
     ) -> None:
-        if not isinstance(index_set, HolomorphicMultiIndexSet):
-            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         value_ = jnp.asarray(value)
         derivatives_ = tuple(jnp.asarray(item) for item in derivatives)
         if len(derivatives_) != len(index_set.nonzero_indices):

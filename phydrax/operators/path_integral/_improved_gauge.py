@@ -27,6 +27,7 @@ from ...discretization._oriented_path import (
 )
 from ...graph._matrix_gauge import MatrixGaugeLinkSpace
 from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
+from ...typing import checked
 from ._lattice_action import (
     AbstractLatticeEuclideanAction,
     lattice_action_local_gradient,
@@ -97,6 +98,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
     loop_count: int = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         link_space: MatrixGaugeLinkSpace,
@@ -105,8 +107,6 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
         *,
         maximum_loops_per_link: int = 128,
     ) -> None:
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("Improved gauge actions require U(N) or SU(N).")
         terms_ = tuple(terms)

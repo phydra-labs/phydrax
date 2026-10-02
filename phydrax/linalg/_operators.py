@@ -19,6 +19,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._costs import _array_tree_storage_bytes, OperatorActionCostEstimate
 from ._linearizations import PreparedLinearization
 from ._pairings import DiagonalPairing, EuclideanPairing
@@ -677,11 +678,10 @@ class DiagonalLinearOperator(AbstractLinearOperator):
 class IdentityLinearOperator(AbstractLinearOperator):
     """Identity map on one declared vector space."""
 
+    @checked
     def __init__(
         self, space: AbstractVectorSpace, /, *, operator_id: str | None = None
     ) -> None:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         self.source = space
         self.target = space
         self.properties = OperatorProperties(
@@ -820,6 +820,7 @@ class JacobianLinearOperator(AbstractLinearOperator):
 
     linearization: PreparedLinearization
 
+    @checked
     def __init__(
         self,
         linearization: PreparedLinearization,
@@ -828,8 +829,6 @@ class JacobianLinearOperator(AbstractLinearOperator):
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(linearization, PreparedLinearization):
-            raise TypeError("linearization must be a PreparedLinearization.")
         self.source = linearization.source
         self.target = linearization.target
         self.linearization = linearization
@@ -873,9 +872,8 @@ class ScaledLinearOperator(AbstractLinearOperator):
     operator: AbstractLinearOperator
     scalar: Array
 
+    @checked
     def __init__(self, operator: AbstractLinearOperator, scalar: Any, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         scalar_ = jnp.asarray(scalar)
         if scalar_.shape != () or not jnp.issubdtype(scalar_.dtype, jnp.inexact):
             raise TypeError("scalar must be one real or complex inexact scalar.")
@@ -1048,9 +1046,8 @@ class TransposeLinearOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
+    @checked
     def __init__(self, operator: AbstractLinearOperator, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         self.source = operator.target
         self.target = operator.source
         self.operator = operator
@@ -1091,9 +1088,8 @@ class DualTransposeLinearOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
+    @checked
     def __init__(self, operator: AbstractLinearOperator, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         self.source = DualSpace(operator.target)
         self.target = DualSpace(operator.source)
         self.operator = operator
@@ -1139,9 +1135,8 @@ class AdjointLinearOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
+    @checked
     def __init__(self, operator: AbstractLinearOperator, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         self.source = operator.target
         self.target = operator.source
         self.operator = operator

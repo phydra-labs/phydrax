@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
@@ -35,6 +36,7 @@ class NearlyKeplerianState(StrictModule):
     velocity: Array
     context: AstrodynamicsContext
 
+    @checked
     def __init__(
         self,
         position: ArrayLike,
@@ -42,8 +44,6 @@ class NearlyKeplerianState(StrictModule):
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         position_ = jnp.asarray(position)
         velocity_ = jnp.asarray(velocity, dtype=position_.dtype)
         if (
@@ -79,6 +79,7 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
     close_approach_distance: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         central_mass: ArrayLike,
@@ -91,8 +92,6 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         close_approach_distance: ArrayLike = 0.0,
         kepler_policy: UniversalKeplerPolicy | None = None,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         central = jnp.asarray(central_mass).reshape(())
         masses = jnp.asarray(planet_masses)
         if masses.ndim != 1 or masses.size == 0:
@@ -228,9 +227,8 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         )
         return position, velocity, valid_first & valid_second
 
+    @checked
     def rollout(self, initial_state: NearlyKeplerianState, /) -> NearlyKeplerianResult:
-        if not isinstance(initial_state, NearlyKeplerianState):
-            raise TypeError("initial_state must be a NearlyKeplerianState.")
         self.context.require_compatible(initial_state.context)
         expected = (self.planet_masses.size, 3)
         if initial_state.position.shape != expected:

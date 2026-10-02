@@ -24,7 +24,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -254,6 +254,7 @@ class Broyden(AbstractNonlinearMethod):
             implicit_differentiation=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -267,10 +268,6 @@ class Broyden(AbstractNonlinearMethod):
         ]
         | None = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
         if (
             _initial_evaluation is None
@@ -607,6 +604,7 @@ class Chord(AbstractNonlinearMethod):
             implicit_differentiation=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -616,10 +614,6 @@ class Chord(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
         if (
             termination.maximum_evaluations is not None

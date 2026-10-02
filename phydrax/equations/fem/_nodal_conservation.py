@@ -51,6 +51,7 @@ from ...discretization.fem._reference_operator import _map_edge_rule, _map_face_
 from ...discretization.finite_volume._riemann import (
     AbstractArbitraryNormalNumericalFluxPlan,
 )
+from ...typing import checked
 from .._entropy_pair import ConvexEntropyPair
 from .._finite_element_variational import (
     CellResidualAction,
@@ -113,6 +114,7 @@ class NodalDGConservationMethodPlan(StrictModule):
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interface_flux: AbstractArbitraryNormalNumericalFluxPlan,
@@ -129,8 +131,6 @@ class NodalDGConservationMethodPlan(StrictModule):
             BranchDifferentiationPolicy.BRANCHWISE
         ),
     ) -> None:
-        if not isinstance(interface_flux, AbstractArbitraryNormalNumericalFluxPlan):
-            raise TypeError("Nodal DG requires an arbitrary-normal interface flux.")
         volume = (
             QuadratureAccuracyPolicy("overintegrated")
             if volume_quadrature is None
@@ -1064,6 +1064,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     report: NodalDGPreparationReport
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Any,
@@ -1075,12 +1076,6 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         source: SourceFunction | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("Nodal DG requires FiniteElementDiscretization.")
-        if not isinstance(method, NodalDGConservationMethodPlan):
-            raise TypeError("method must be NodalDGConservationMethodPlan.")
-        if not isinstance(boundaries, FiniteElementBoundarySet):
-            raise TypeError("Nodal DG requires exhaustive FiniteElementBoundarySet.")
         if source is not None and not callable(source):
             raise TypeError("Nodal DG source must be callable or None.")
         if entropy_pair is not None and not isinstance(entropy_pair, ConvexEntropyPair):

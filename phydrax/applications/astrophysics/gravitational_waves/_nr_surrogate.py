@@ -26,6 +26,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization.spectral import SphericalSpectralDiscretization
 from ....interchange._report import AdapterLoss, AdapterReport, AdapterStatus
+from ....typing import checked
 from .._photometry import ObservationDataProvenance
 from ._status import GravitationalWaveStatus
 
@@ -587,6 +588,7 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
     array_bytes: int = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometric_time: ArrayLike,
@@ -683,8 +685,6 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
         label = str(artifact_id).strip()
         ratio_limit = float(maximum_mass_ratio)
         spin_limit = float(maximum_spin_magnitude)
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         if (
             np.any(~np.isfinite(time_host))
             or np.any(np.diff(time_host) <= 0.0)
@@ -904,6 +904,7 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
     symmetry_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         artifact: AlignedNRSurrogateArtifact,
@@ -913,10 +914,6 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
         *,
         symmetry_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(artifact, AlignedNRSurrogateArtifact):
-            raise TypeError("artifact must be AlignedNRSurrogateArtifact.")
-        if not isinstance(angular, SphericalSpectralDiscretization):
-            raise TypeError("angular must be SphericalSpectralDiscretization.")
         if angular.layout.spin != -2 or angular.layout.reality:
             raise ValueError(
                 "NR waveform synthesis requires a complex spin-minus-two basis."
@@ -943,8 +940,6 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
             != artifact.normalized_content_sha256
         ):
             raise ValueError("Surrogate normalization binding is invalid.")
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
         if scale.scale_id != RelativityScaleContract.si().scale_id:
             raise ValueError(
                 "Physical NR surrogate evaluation currently requires the exact SI relativity scale."

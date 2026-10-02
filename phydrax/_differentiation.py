@@ -15,6 +15,7 @@ import equinox as eqx
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 
 
 type RegularityPieces = Literal["none", "polynomial", "smooth"]
@@ -617,6 +618,7 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
     reasons: tuple[str, ...] = eqx.field(static=True)
     nondifferentiable_outputs: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         request: DifferentiationRequest,
@@ -628,8 +630,6 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         reasons: Iterable[str] = (),
         nondifferentiable_outputs: Iterable[str] = (),
     ) -> None:
-        if not isinstance(request, DifferentiationRequest):
-            raise TypeError("request must be a DifferentiationRequest.")
         levels_ = tuple(_require_level(level) for level in levels)
         if len(levels_) != len(request.surfaces):
             raise ValueError("Admission levels must align with the requested surfaces.")
@@ -983,6 +983,7 @@ class DerivativeContract(StrictModule, NonTrainableState):
                 return entry.level
         return GradientLevel.NONE
 
+    @checked
     def admit(
         self,
         request: DifferentiationRequest,
@@ -1000,8 +1001,6 @@ class DerivativeContract(StrictModule, NonTrainableState):
         request with the reason `"route-stopped"`. Conditions collect the
         contract, requested-surface, and regularity conditions.
         """
-        if not isinstance(request, DifferentiationRequest):
-            raise TypeError("request must be a DifferentiationRequest.")
         bound = admit_regularity(
             self.regularity, request, route=self.route, policy=_require_policy(policy)
         )
@@ -1087,6 +1086,7 @@ class DerivativeContract(StrictModule, NonTrainableState):
             contracts, _met_surfaces(contracts), regularity, composition_route
         )
 
+    @checked
     def compose(
         self,
         downstream: DerivativeContract,
@@ -1110,8 +1110,6 @@ class DerivativeContract(StrictModule, NonTrainableState):
         is undeclared if either stage's is. Routes, conditions, and
         nondifferentiable outputs combine as in `meet`.
         """
-        if not isinstance(downstream, DerivativeContract):
-            raise TypeError("compose requires a DerivativeContract.")
         regularity = (
             None
             if self.regularity is None or downstream.regularity is None

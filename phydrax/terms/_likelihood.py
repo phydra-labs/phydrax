@@ -20,7 +20,7 @@ from .._doc import DOC_KEY0
 from .._dtype_names import inexact_result_type
 from .._likelihoods import AbstractLikelihood
 from .._term import AbstractSamplingTerm
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._data_metrics import (
     case_sample_count,
     configured_case_indices,
@@ -254,6 +254,7 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
     scale_var: str | None
     likelihood: AbstractLikelihood
 
+    @checked
     def __init__(
         self,
         location_var: str,
@@ -273,8 +274,6 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
         indices: ArrayLike | None = None,
         label: str | None = None,
     ) -> None:
-        if not isinstance(likelihood, AbstractLikelihood):
-            raise TypeError("likelihood must implement AbstractLikelihood.")
         scale_name = None if scale_var is None else str(scale_var)
         super().__init__(
             location_var,

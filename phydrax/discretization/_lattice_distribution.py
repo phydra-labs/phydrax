@@ -22,7 +22,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._distributed_field import DistributedHaloPlan
 
 
@@ -205,6 +205,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
     projected_message_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         distributed: DistributedHaloPlan,
@@ -213,8 +214,6 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         neighbor_valid: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(distributed, DistributedHaloPlan):
-            raise TypeError("distributed must be a DistributedHaloPlan.")
         parity = np.asarray(global_site_parity)
         neighbors = np.asarray(neighbor_ids)
         neighbor_mask = np.asarray(neighbor_valid)
@@ -1086,6 +1085,7 @@ class LatticeStencilExecutionPlan(StrictModule, NonTrainableState):
     payload_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decomposition: LatticeDecompositionPlan,
@@ -1096,8 +1096,6 @@ class LatticeStencilExecutionPlan(StrictModule, NonTrainableState):
         parity: LatticeParity | None = None,
         maximum_payload_bytes: int = 1_073_741_824,
     ) -> None:
-        if not isinstance(decomposition, LatticeDecompositionPlan):
-            raise TypeError("decomposition must be LatticeDecompositionPlan.")
         value_shape = tuple(site_value_shape)
         if any(value <= 0 for value in value_shape):
             raise ValueError("site_value_shape extents must be positive.")
@@ -1141,6 +1139,7 @@ class PreparedLatticeStencilExecution(StrictModule, NonTrainableState):
     boundary_action_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LatticeStencilExecutionPlan,
@@ -1151,8 +1150,6 @@ class PreparedLatticeStencilExecution(StrictModule, NonTrainableState):
         interior_action_id: str,
         boundary_action_id: str,
     ) -> None:
-        if not isinstance(plan, LatticeStencilExecutionPlan):
-            raise TypeError("plan must be LatticeStencilExecutionPlan.")
         if not callable(interior_action) or not callable(boundary_action):
             raise TypeError("Both interior and boundary actions must be callable.")
         interior_id = str(interior_action_id).strip()

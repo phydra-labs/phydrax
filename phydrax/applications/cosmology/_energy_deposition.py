@@ -22,7 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ...qualification import ReferenceArtifactManifest
-from ...typing import parse
+from ...typing import checked, parse
 from ._closure import CosmologyRealizationSignature
 from ._products import (
     _validate_common,
@@ -416,11 +416,10 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def apply(self, injection: InjectionSpectrum, /) -> EnergyDepositionLedger:
         """Apply the native table action with no interpolation, extrapolation, or clamp."""
 
-        if not isinstance(injection, InjectionSpectrum):
-            raise TypeError("injection must be an InjectionSpectrum.")
         if injection.species != self.species:
             raise ValueError("Injection and cascade species axes differ.")
         if (
@@ -725,6 +724,7 @@ class ExternalEnergyDepositionProviderResult(StrictModule, NonTrainableState):
     standard_error: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         history: SpeciesResolvedThermodynamicsHistory,
@@ -749,8 +749,6 @@ class ExternalEnergyDepositionProviderResult(StrictModule, NonTrainableState):
             raise TypeError(
                 "Provider result requires the detailed history and energy ledger."
             )
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("Provider result requires a ReferenceArtifactManifest.")
         provider_ = str(provider).strip()
         version_ = str(provider_version).strip()
         if not provider_ or not version_:

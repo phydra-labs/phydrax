@@ -20,6 +20,7 @@ from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
 from ...ein import contract
 from ...execution import HostTaskExecutor, InlineTaskExecutor
+from ...typing import checked
 from ...units import derived_unit, INVERSE_CENTIMETER, UnitDefinition
 from .._optimization import _require_structure_matches_system
 from .._provider import AbstractPreparedElectronicCalculation
@@ -45,6 +46,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wavenumbers: ArrayLike,
@@ -72,10 +74,6 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
             raise ValueError("IR grid and broadened intensity must align.")
         if derivative.ndim != 3 or derivative.shape[0] != 3 or derivative.shape[2] != 3:
             raise ValueError("dipole_derivative must have shape (3, atom_capacity, 3).")
-        if not isinstance(line_strength_unit, UnitDefinition):
-            raise TypeError("line_strength_unit must be UnitDefinition.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         sources = tuple(str(value).strip() for value in source_result_ids)
         if not sources or any(not value for value in sources):
             raise ValueError("IR source result IDs must be non-empty.")
@@ -130,6 +128,7 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
     fwhm: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -143,10 +142,6 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         fwhm: float = 10.0,
         line_shape: SpectralLineShape = SpectralLineShape.GAUSSIAN,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
-        if not isinstance(calculation, AbstractPreparedElectronicCalculation):
-            raise TypeError("calculation must be a prepared electronic calculation.")
         if not isinstance(line_shape, SpectralLineShape):
             raise TypeError("line_shape must be SpectralLineShape.")
         if calculation.calculation.system.system_id != system.system_id:
@@ -185,6 +180,7 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         structure: AtomicStructure,
@@ -193,10 +189,6 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         *,
         executor: HostTaskExecutor | None = None,
     ) -> IRSpectrumResult:
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be AtomicStructure.")
-        if not isinstance(vibration, VibrationalAnalysisResult):
-            raise TypeError("vibration must be VibrationalAnalysisResult.")
         _require_structure_matches_system(structure, self.system)
         if not bool(vibration.successful):
             raise ValueError("IR spectroscopy requires successful vibrational analysis.")

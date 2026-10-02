@@ -21,7 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._checkpointed_scan import checkpointed_scan
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ..materials._refractive_index import (
     AbstractRefractiveIndexLaw,
     evaluate_refractive_index,
@@ -109,6 +109,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
     maximum_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -128,10 +129,6 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         maximum_backward_wave_estimate: float = 1.0e-3,
         maximum_workspace_bytes: int = 1 << 30,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
-        if not isinstance(time_space, PulseTimeSpace):
-            raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
             raise ValueError(
                 "Unidirectional propagation requires periodic-cell pulse time."

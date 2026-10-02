@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spatial import morton_decode_integer, SparseVoxelField
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...typing import checked
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
 from .._contracts import (
@@ -217,6 +218,7 @@ class OpenVDBProvider:
             execution_modes=(MeshingExecutionMode.IN_PROCESS,),
         )
 
+    @checked
     def execute(
         self,
         field: SparseVoxelField,
@@ -228,18 +230,12 @@ class OpenVDBProvider:
         source_revision: str,
         audit_policy: CellMeshAuditPolicy | None = None,
     ) -> CellMeshingResult:
-        if not isinstance(field, SparseVoxelField):
-            raise TypeError("field must be SparseVoxelField.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if isinstance(specification, SurfaceMeshingSpec):
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
                 "OpenVDB does not enforce physical edge size, protected-feature, "
                 "periodic, or deterministic contracts; use OpenVDBMeshingSpec.",
             )
-        if not isinstance(specification, OpenVDBMeshingSpec):
-            raise TypeError("specification must be OpenVDBMeshingSpec.")
         grid = field.grid
         address = grid.address_plan
         if (

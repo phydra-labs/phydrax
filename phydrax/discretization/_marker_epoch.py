@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 MarkerTopologyDifferentiationPolicy: TypeAlias = Literal["frozen-schedule", "event-map"]
@@ -263,6 +263,7 @@ class MarkerMechanicsMigrationPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: MarkerEpochTransferPlan,
@@ -271,8 +272,6 @@ class MarkerMechanicsMigrationPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(transfer, MarkerEpochTransferPlan):
-            raise TypeError("transfer must be MarkerEpochTransferPlan.")
         dimension = int(ambient_dimension)
         tolerance_ = float(tolerance)
         if dimension not in (2, 3) or tolerance_ <= 0.0:

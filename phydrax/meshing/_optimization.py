@@ -49,6 +49,7 @@ from ..optim import (
     ProjectedLBFGS,
 )
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import checked
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy
 from ._canonical import certify_cell_mesh
 from ._metric import interpolate_mesh_metric, MeshMetricField
@@ -426,6 +427,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
     accept_valid_nonconverged: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -443,8 +445,6 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         audit_policy: CellMeshAuditPolicy | None = None,
         accept_valid_nonconverged: bool = False,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
         if not isinstance(objective, MeshQualityObjective):
             raise TypeError("objective must be MeshQualityObjective.")
         if untangling is not None and not isinstance(untangling, MeshUntanglingPolicy):
@@ -1009,9 +1009,8 @@ class CellGeometryOptimizationResult(StrictModule):
     minimization: MinimizationResult
     optimizer_status: OptimizationStatus = eqx.field(static=True)
 
+    @checked
     def __init__(self, coordinates: Array, minimization: MinimizationResult, /) -> None:
-        if not isinstance(minimization, MinimizationResult):
-            raise TypeError("minimization must be MinimizationResult.")
         self.coordinates = coordinates
         self.minimization = minimization
         self.optimizer_status = OptimizationStatus(int(np.asarray(minimization.status)))

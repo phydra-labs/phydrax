@@ -58,6 +58,7 @@ from ...special import ellipeinc, ellipkinc
 from ...typing import (
     AnyShape,
     Bool,
+    checked,
     ConvertibleToArray,
     Dim,
     Float64,
@@ -1650,9 +1651,8 @@ class CSRPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _bind(self, bunch: AcceleratorBunch, /) -> _Constants:
-        if not isinstance(bunch, AcceleratorBunch):
-            raise TypeError("bunch must be an AcceleratorBunch.")
         if bunch.capacity != self.capacity:
             raise ValueError("bunch capacity must match the CSR plan capacity.")
         convention = bunch.convention
@@ -2128,6 +2128,7 @@ class CSRPlan(StrictModule, NonTrainableState):
             vector,
         )
 
+    @checked
     def kick(
         self,
         bunch: AcceleratorBunch,
@@ -2139,8 +2140,6 @@ class CSRPlan(StrictModule, NonTrainableState):
     ) -> CSRKickResult:
         """Kick ``bunch`` with CSR over ``length`` centred at path ``position``."""
         constants = self._bind(bunch)
-        if not isinstance(state, CSRState):
-            raise TypeError("state must be a CSRState.")
         if state.capacity != self.history_capacity or state.potential.shape != (
             self.capacity,
         ):
@@ -2401,9 +2400,8 @@ class CSRTrackingPlan(StrictModule, NonTrainableState):
     step_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CSRPlan, /, *, substeps: int | Iterable[int]) -> None:
-        if not isinstance(plan, CSRPlan):
-            raise TypeError("plan must be a CSRPlan.")
         lattice = plan.lattice
         count = lattice.element_count
         splits = (

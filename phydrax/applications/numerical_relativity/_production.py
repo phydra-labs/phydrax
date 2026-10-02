@@ -54,7 +54,7 @@ from ...solver._runtime_lifecycle import (
     ByteBoundedAsyncPublisher,
     RuntimeRestartRelation,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._status import NumericalRelativityStatus
 from ._temporal import FixedGridZ4cRuntime, Z4cRuntimeState
 
@@ -154,9 +154,8 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod, NonTrainableState):
     runtime: FixedGridZ4cRuntime
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, runtime: FixedGridZ4cRuntime, /) -> None:
-        if not isinstance(runtime, FixedGridZ4cRuntime):
-            raise TypeError("runtime must be FixedGridZ4cRuntime.")
         self.runtime = runtime
         self.method_id = canonical_fingerprint(
             {
@@ -307,6 +306,7 @@ class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState
     fixed_step_size: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: FixedGridGRRMHDIMEXPlan,
@@ -314,8 +314,6 @@ class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState
         *,
         fixed_step_size: float,
     ) -> None:
-        if not isinstance(runtime, FixedGridGRRMHDIMEXPlan):
-            raise TypeError("runtime must be FixedGridGRRMHDIMEXPlan.")
         step = float(fixed_step_size)
         if not math.isfinite(step) or step <= 0.0:
             raise ValueError("GRRMHD production step size must be finite and positive.")
@@ -337,9 +335,8 @@ class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState
     def allows_step_reduction(self) -> bool:
         return False
 
+    @checked
     def initialize(self, state: GRRMHDState, /) -> GRRMHDProductionState:
-        if not isinstance(state, GRRMHDState):
-            raise TypeError("Initial state must be GRRMHDState.")
         finite = jnp.all(
             jnp.stack(
                 tuple(
@@ -360,6 +357,7 @@ class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState
             unavailable,
         )
 
+    @checked
     def step(
         self,
         step_index: Array,
@@ -369,8 +367,6 @@ class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState
         args: Any,
         /,
     ) -> FixedStepResult:
-        if not isinstance(state, GRRMHDProductionState):
-            raise TypeError("Production state must be GRRMHDProductionState.")
         if not isinstance(args, GRRMHDProductionArguments):
             raise TypeError("GRRMHD production requires GRRMHDProductionArguments.")
         source = state.runtime_state
@@ -451,6 +447,7 @@ class NumericalRelativitySupportBinding(StrictModule, NonTrainableState):
     dependency: SupportDependency
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: SupportScope,
@@ -460,8 +457,6 @@ class NumericalRelativitySupportBinding(StrictModule, NonTrainableState):
     ) -> None:
         scope = parse(scope, SupportScope, "scope")
         profile = _identifier(profile_id, "Support profile ID")
-        if not isinstance(support, SupportTuple):
-            raise TypeError("support must be a SupportTuple.")
         dependency = SupportDependency(profile, support.support_tuple_id)
         self.scope = scope
         self.profile_id = profile
@@ -674,6 +669,7 @@ class NumericalRelativityOutputCommitter:
         "writer_id",
     )
 
+    @checked
     def __init__(
         self,
         production: NumericalRelativityProductionPlan,
@@ -683,8 +679,6 @@ class NumericalRelativityOutputCommitter:
         writer_id: str,
         /,
     ) -> None:
-        if not isinstance(production, NumericalRelativityProductionPlan):
-            raise TypeError("production must be NumericalRelativityProductionPlan.")
         if not callable(writer):
             raise TypeError("Output writer must be callable.")
         self._production = production
@@ -832,6 +826,7 @@ class NumericalRelativityProductionLimits(StrictModule, NonTrainableState):
     output_policy_id: str = eqx.field(static=True)
     limits_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         execution_policy: ExecutionPolicy,
@@ -844,8 +839,6 @@ class NumericalRelativityProductionLimits(StrictModule, NonTrainableState):
         maximum_output_bytes: int,
         maximum_cancellation_detail_bytes: int,
     ) -> None:
-        if not isinstance(execution_policy, ExecutionPolicy):
-            raise TypeError("execution_policy must be ExecutionPolicy.")
         resource_request = execution_policy.resources
         if not isinstance(resource_request, ResourceRequest):
             raise ValueError("Execution policy must bind a ResourceRequest.")
@@ -1050,6 +1043,7 @@ class NumericalRelativityOutputManifest(StrictModule, NonTrainableState):
     derivative_valid: bool = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         production: NumericalRelativityProductionPlan,
@@ -1060,10 +1054,6 @@ class NumericalRelativityOutputManifest(StrictModule, NonTrainableState):
         /,
     ) -> None:
         production._require_prepared(prepared)
-        if not isinstance(committer, NumericalRelativityOutputCommitter):
-            raise TypeError(
-                "Output manifest requires NumericalRelativityOutputCommitter."
-            )
         committer.require_receipt(receipt, result)
         if receipt.output_cursor >= production.limits.maximum_output_manifests:
             raise ValueError("Output cursor exceeds the configured manifest bound.")
@@ -1139,6 +1129,7 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
     derivative_valid: bool = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         production: NumericalRelativityProductionPlan,
@@ -1150,8 +1141,6 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         terminal_checkpoint_id: str,
     ) -> None:
         production._require_prepared(prepared)
-        if not isinstance(failure, ProductionFailureRecord):
-            raise TypeError("failure must be a ProductionFailureRecord.")
         if not isinstance(state, (Z4cProductionState, GRRMHDProductionState)):
             raise TypeError("Failure result has an unsupported scientific state.")
         if type(terminal_checkpoint_id) is not str:
@@ -1228,6 +1217,7 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
     checkpoint_durable_sha256: str = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         production: NumericalRelativityProductionPlan,
@@ -1242,8 +1232,6 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cancellation manifests require a canceled production state."
             )
-        if not isinstance(receipt, CheckpointCommitReceipt):
-            raise TypeError("Cancellation requires a checkpoint commit receipt.")
         verified = prepared.checkpoint_store.verify_commit(receipt)
         checkpoint = _identifier(
             state.last_checkpoint_id, "Cancellation preserved checkpoint ID"
@@ -1380,6 +1368,7 @@ class NumericalRelativityProductionPlan(StrictModule):
     limits: NumericalRelativityProductionLimits
     production_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain: NumericalRelativityDomainBinding,
@@ -1392,8 +1381,6 @@ class NumericalRelativityProductionPlan(StrictModule):
         limits: NumericalRelativityProductionLimits,
         /,
     ) -> None:
-        if not isinstance(domain, NumericalRelativityDomainBinding):
-            raise TypeError("domain must be NumericalRelativityDomainBinding.")
         bindings = tuple(support_bindings)
         if not bindings or any(
             not isinstance(value, NumericalRelativitySupportBinding) for value in bindings
@@ -1402,18 +1389,6 @@ class NumericalRelativityProductionPlan(StrictModule):
         bindings = tuple(sorted(bindings, key=lambda value: value.binding_id))
         if len({value.binding_id for value in bindings}) != len(bindings):
             raise ValueError("Production support bindings must be unique.")
-        if not isinstance(execution_plan, ExecutionPlan):
-            raise TypeError("execution_plan must be ExecutionPlan.")
-        if not isinstance(resolved_run_spec, ResolvedRunSpec):
-            raise TypeError("resolved_run_spec must be ResolvedRunSpec.")
-        if not isinstance(case_manifest, ProductionCaseManifest):
-            raise TypeError("case_manifest must be ProductionCaseManifest.")
-        if not isinstance(run_plan, ProductionRunPlan):
-            raise TypeError("run_plan must be ProductionRunPlan.")
-        if not isinstance(checkpoint_policy, CheckpointGenerationPolicy):
-            raise TypeError("checkpoint_policy must be CheckpointGenerationPolicy.")
-        if not isinstance(limits, NumericalRelativityProductionLimits):
-            raise TypeError("limits must be NumericalRelativityProductionLimits.")
         coordinates: dict[str, set[object]] = {
             name: set() for name in _DOMAIN_COORDINATES
         }
@@ -1648,9 +1623,8 @@ class NumericalRelativityProductionPlan(StrictModule):
         committer._bind(prepared, publisher)
         return prepared, committer
 
+    @checked
     def _require_prepared(self, prepared: PreparedProductionRun, /) -> None:
-        if not isinstance(prepared, PreparedProductionRun):
-            raise TypeError("prepared must be PreparedProductionRun.")
         if (
             prepared.manifest.manifest_id != self.case_manifest.manifest_id
             or prepared.plan.plan_id != self.run_plan.plan_id
@@ -1663,16 +1637,16 @@ class NumericalRelativityProductionPlan(StrictModule):
                 "Prepared runtime does not exactly bind this production plan."
             )
 
+    @checked
     def restart_manifest(
         self, prepared: PreparedProductionRun, state: ProductionRunState, /
     ) -> NumericalRelativityRestartManifest:
         self._require_prepared(prepared)
-        if not isinstance(state, ProductionRunState):
-            raise TypeError("state must be ProductionRunState.")
         return NumericalRelativityRestartManifest(
             self, prepared, _identifier(state.last_checkpoint_id, "Restart checkpoint ID")
         )
 
+    @checked
     def admit_restart(
         self,
         prepared: PreparedProductionRun,
@@ -1680,8 +1654,6 @@ class NumericalRelativityProductionPlan(StrictModule):
         /,
     ) -> None:
         self._require_prepared(prepared)
-        if not isinstance(restart, NumericalRelativityRestartManifest):
-            raise TypeError("restart must be NumericalRelativityRestartManifest.")
         expected = (
             self.production_id,
             prepared.run_id,

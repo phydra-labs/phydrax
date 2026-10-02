@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._execution import lower_stencil_operator, PreparedStencilExecutionOperator
 from ._plan import PreparedFiniteDifferenceDiscretization
 
@@ -109,6 +110,7 @@ class StencilProgramPlan(StrictModule, NonTrainableState):
     written_fields: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: PreparedFiniteDifferenceDiscretization,
@@ -118,10 +120,6 @@ class StencilProgramPlan(StrictModule, NonTrainableState):
         *,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(discretization, PreparedFiniteDifferenceDiscretization):
-            raise TypeError(
-                "discretization must be PreparedFiniteDifferenceDiscretization."
-            )
         fields = tuple(str(name) for name in field_names)
         if (
             not fields
@@ -178,9 +176,8 @@ class PreparedStencilProgram(StrictModule, NonTrainableState):
     report: FDPipelineReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: StencilProgramPlan, /) -> None:
-        if not isinstance(plan, StencilProgramPlan):
-            raise TypeError("plan must be a StencilProgramPlan.")
         operator_names = tuple(
             dict.fromkeys(value.operator for value in plan.assignments)
         )

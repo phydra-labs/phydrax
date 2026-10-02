@@ -22,6 +22,7 @@ from ..._thermodynamics import (
     ThermodynamicForceRepresentation,
 )
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._boundary import PreparedLatticeBoltzmannBoundary
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._discretization import LatticeBoltzmannDiscretization
@@ -61,6 +62,7 @@ class FreeEnergyLBMRuntimeParameters(StrictModule):
     wall_normal: Array
     wetting_mask: Array
 
+    @checked
     def __init__(
         self,
         kinematic_viscosity: ArrayLike,
@@ -86,8 +88,6 @@ class FreeEnergyLBMRuntimeParameters(StrictModule):
             raise ValueError(
                 "kinematic_viscosity, phase_mobility, and wetting_strength must be finite inexact scalars."
             )
-        if not isinstance(thermodynamics, BinaryThermodynamicParameters):
-            raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
         if (wall_normal is None) != (wetting_mask is None):
             raise ValueError("wall_normal and wetting_mask must be supplied together.")
         self.kinematic_viscosity = viscosity
@@ -127,6 +127,7 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
     maximum_cells: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hydrodynamic_method: LatticeBoltzmannMethodPlan,
@@ -143,14 +144,8 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
         relative_energy_tolerance: float = 1.0e-8,
         maximum_cells: int = 1_000_000,
     ) -> None:
-        if not isinstance(hydrodynamic_method, LatticeBoltzmannMethodPlan):
-            raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
         if hydrodynamic_method.forcing is None:
             raise ValueError("Free-energy chemical forcing requires a forced LBM method.")
-        if not isinstance(thermodynamic_closure, AbstractKineticThermodynamicClosure):
-            raise TypeError(
-                "thermodynamic_closure must implement AbstractKineticThermodynamicClosure."
-            )
         if not isinstance(force_representation, ThermodynamicForceRepresentation):
             raise TypeError(
                 "force_representation must be ThermodynamicForceRepresentation."
@@ -351,6 +346,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
     boundary: PreparedLatticeBoltzmannBoundary
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -359,14 +355,6 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         boundary: PreparedLatticeBoltzmannBoundary,
         /,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be an LBM discretization.")
-        if not isinstance(scaling, LatticeBoltzmannScaling):
-            raise TypeError("scaling must be LatticeBoltzmannScaling.")
-        if not isinstance(method, FreeEnergyLBMMethod):
-            raise TypeError("method must be FreeEnergyLBMMethod.")
-        if not isinstance(boundary, PreparedLatticeBoltzmannBoundary):
-            raise TypeError("boundary must be a prepared LBM boundary.")
         if boundary.discretization.prepared_id != discretization.prepared_id:
             raise ValueError("Boundary and free-energy discretizations do not match.")
         if not np.isclose(
@@ -426,9 +414,8 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             )
         return args
 
+    @checked
     def _validate_state(self, state: FreeEnergyLBMState, /) -> FreeEnergyLBMState:
-        if not isinstance(state, FreeEnergyLBMState):
-            raise TypeError("state must be FreeEnergyLBMState.")
         return FreeEnergyLBMState(
             self.discretization.validate_populations(state.hydrodynamic_populations),
             self.discretization.validate_populations(state.phase_populations),

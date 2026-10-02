@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._orbital import MolecularOrbitalIntegralStore
 
 
@@ -133,9 +134,8 @@ class MP2Plan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(self, integrals: MolecularOrbitalIntegralStore, /) -> MP2Result:
-        if not isinstance(integrals, MolecularOrbitalIntegralStore):
-            raise TypeError("integrals must be MolecularOrbitalIntegralStore.")
         occupied = integrals.partition.correlated_occupied
         occupied_set = set(occupied)
         virtual = tuple(

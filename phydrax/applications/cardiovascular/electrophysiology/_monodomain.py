@@ -45,6 +45,7 @@ from ....metrix import (
     ProductStateGeometryBlock,
 )
 from ....sparse import SparseLinearMap
+from ....typing import checked
 from ._aliev_panfilov import (
     AlievPanfilovEvidence,
     AlievPanfilovParameters,
@@ -213,6 +214,7 @@ class PhenomenologicalMonodomainPlan(StrictModule, NonTrainableState):
     field_index: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -223,14 +225,6 @@ class PhenomenologicalMonodomainPlan(StrictModule, NonTrainableState):
         pulses: Sequence[CellStimulusPulse] = (),
         field_name: str = "activation",
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError(
-                "discretization must be a prepared FiniteElementDiscretization."
-            )
-        if not isinstance(diffusivity, CellwiseDiffusivity):
-            raise TypeError("diffusivity must be CellwiseDiffusivity.")
-        if not isinstance(reaction, AlievPanfilovParameters):
-            raise TypeError("reaction must be AlievPanfilovParameters.")
         pulse_tuple = tuple(pulses)
         if not all(isinstance(pulse, CellStimulusPulse) for pulse in pulse_tuple):
             raise TypeError("pulses must contain CellStimulusPulse values.")
@@ -399,9 +393,8 @@ class PreparedPhenomenologicalMonodomain(StrictModule, NonTrainableState):
             step_index=step_index,
         )
 
+    @checked
     def split(self, state: MonodomainState, /) -> tuple[Array, Array]:
-        if not isinstance(state, MonodomainState):
-            raise TypeError("state must be a MonodomainState.")
         if state.runtime_id != self.runtime_id:
             raise ValueError("Monodomain state does not match this prepared runtime.")
         activation, recovery = self.geometry.split_point(state.values)
@@ -410,13 +403,10 @@ class PreparedPhenomenologicalMonodomain(StrictModule, NonTrainableState):
     def evaluate(self, state: MonodomainState, /) -> MonodomainCandidate:
         return evaluate_monodomain_step(self, state)
 
+    @checked
     def commit(
         self, candidate: MonodomainCandidate, current: MonodomainState, /
     ) -> MonodomainState:
-        if not isinstance(candidate, MonodomainCandidate):
-            raise TypeError("candidate must be a MonodomainCandidate.")
-        if not isinstance(current, MonodomainState):
-            raise TypeError("current must be a MonodomainState.")
         if (
             candidate.source.runtime_id != self.runtime_id
             or candidate.proposed.runtime_id != self.runtime_id

@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from .._layout import InputLayout, StateLayout
 from ._features import AbstractFeatureLibrary, FeatureEvaluation
 
@@ -27,6 +28,7 @@ class LinearTransformedFeatureLibrary(AbstractFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractFeatureLibrary,
@@ -36,8 +38,6 @@ class LinearTransformedFeatureLibrary(AbstractFeatureLibrary):
         feature_names: Sequence[str],
         transform_id: str,
     ) -> None:
-        if not isinstance(base, AbstractFeatureLibrary):
-            raise TypeError("base must be an AbstractFeatureLibrary.")
         matrix = jnp.asarray(transform)
         names = tuple(str(name) for name in feature_names)
         if matrix.ndim != 2 or matrix.shape != (base.num_features, len(names)):
@@ -90,6 +90,7 @@ class SymmetryAveragedFeatureLibrary(AbstractFeatureLibrary):
     symmetry_id: str = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractFeatureLibrary,
@@ -100,8 +101,6 @@ class SymmetryAveragedFeatureLibrary(AbstractFeatureLibrary):
         weights: Sequence[float] | None = None,
         symmetry_id: str,
     ) -> None:
-        if not isinstance(base, AbstractFeatureLibrary):
-            raise TypeError("base must be an AbstractFeatureLibrary.")
         actions = tuple(state_actions)
         if not actions or any(not callable(action) for action in actions):
             raise TypeError("state_actions must contain at least one callable.")

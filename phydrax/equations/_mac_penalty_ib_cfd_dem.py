@@ -27,6 +27,7 @@ from ..discretization.particle import (
     sphere_lever_torque,
     sphere_spin_velocity,
 )
+from ..typing import checked
 from ._mac_incompressible import CompiledMACIncompressibleDynamics
 
 
@@ -88,6 +89,7 @@ class MACPenaltyIBCFDEMCouplingPlan(StrictModule, NonTrainableState):
     transfer: PreparedMACMarkerTransfer
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fluid: CompiledMACIncompressibleDynamics,
@@ -97,18 +99,10 @@ class MACPenaltyIBCFDEMCouplingPlan(StrictModule, NonTrainableState):
         transfer: PreparedMACMarkerTransfer,
         /,
     ) -> None:
-        if not isinstance(fluid, CompiledMACIncompressibleDynamics):
-            raise TypeError("fluid must be CompiledMACIncompressibleDynamics.")
         if fluid.algebraic_les is not None:
             raise ValueError(
                 "MAC penalty immersed coupling does not support active algebraic LES."
             )
-        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
-        if not isinstance(penalty, IBPenaltyPlan):
-            raise TypeError("penalty must be IBPenaltyPlan.")
-        if not isinstance(transfer, PreparedMACMarkerTransfer):
-            raise TypeError("transfer must be PreparedMACMarkerTransfer.")
         owner = np.asarray(marker_owner)
         if owner.shape != (transfer.markers.capacity,) or not np.issubdtype(
             owner.dtype, np.integer

@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._method import (
     AbstractLinearCombinatorialMethod,
     CombinatorialPlan,
@@ -196,9 +197,8 @@ class ExplicitDecisionSpace(AbstractCombinatorialSpace):
         in_range = (index >= 0) & (index < self.candidate_count)
         return jnp.clip(index, 0, self.candidate_count - 1), in_range
 
+    @checked
     def canonicalize(self, decision: ExplicitDecision, /) -> ExplicitDecision:
-        if not isinstance(decision, ExplicitDecision):
-            raise TypeError("explicit decisions must be ExplicitDecision values.")
         index = jnp.asarray(decision.index, dtype=jnp.int32)
         safe, in_range = self._safe_index(index)
         values = jax.tree_util.tree_map(lambda catalog: catalog[safe], self.decisions)

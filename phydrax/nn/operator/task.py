@@ -15,7 +15,7 @@ from ..._strict import StrictModule
 from ...equations._ir import PDEExpression, PDEProblemIR
 from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
 from ...graph._operator_topology import OperatorTopologySite
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import DimensionSignature
 from .capabilities import (
     _native_cochain_pairing_admission,
@@ -494,10 +494,9 @@ class OperatorTask(StrictModule):
             return "point_cloud"
         return "abstract"
 
+    @checked
     def validate_batch(self, batch: OperatorBatch, /) -> None:
         """Validate task semantics that are independent of model capabilities."""
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("OperatorTask.validate_batch requires an OperatorBatch.")
         declared_sources = {
             field.source_name
             for field in self.source_fields
@@ -576,12 +575,9 @@ class OperatorTask(StrictModule):
                     f"Query {query_spec.name!r} requires geometry shared by every case."
                 )
 
+    @checked
     def validate_prediction(self, prediction: OperatorPrediction, /) -> None:
         """Validate named physical outputs against this task contract."""
-        if not isinstance(prediction, OperatorPrediction):
-            raise TypeError(
-                "OperatorTask.validate_prediction requires an OperatorPrediction."
-            )
         expected_queries = tuple(query.name for query in self.queries)
         if set(prediction.queries) != set(expected_queries):
             raise ValueError(

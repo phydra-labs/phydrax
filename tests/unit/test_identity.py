@@ -14,6 +14,7 @@ import pytest
 from equinox._ad import _ClosureConvert
 from jax import Array
 
+import phydrax.typing as pt
 from phydrax._execution_pool import PoolExecutionSignature
 from phydrax._identity import (
     ArtifactBindingIdentity,
@@ -248,6 +249,14 @@ def test_opaque_callable_requires_explicit_semantic_and_numeric_ids() -> None:
     assert payload["numeric_content_id"] == "translation-offset-two"
 
 
+def test_checked_function_is_opaque_rather_than_its_wrapped_source() -> None:
+    checked_square = pt.checked(_square)
+
+    assert callable_payload(_square)["semantic_payload"] is not None
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        callable_payload(checked_square)
+
+
 def test_static_held_weights_are_part_of_the_executable_signature() -> None:
     def signature(**callables: Any) -> Any:
         return ExecutableSignature(
@@ -287,6 +296,22 @@ def test_compiler_identity_tracks_program_semantics_not_variable_addresses() -> 
     first = lambda x: jax.lax.cond(x[0] > 0, lambda y: y + 2, lambda y: y * 2, x)
     second = lambda x: jax.lax.cond(x[0] > 0, lambda y: y + 2, lambda y: y * 3, x)
     assert _program_identity(first, value) != _program_identity(second, value)
+
+
+def test_compiler_identity_refuses_checker_state_in_a_host_callback() -> None:
+    def host(value: Any) -> Any:
+        return 2 * value
+
+    def program(callback: Any) -> Any:
+        return jax.make_jaxpr(
+            lambda x: jax.pure_callback(
+                callback, jax.ShapeDtypeStruct((2,), jnp.float32), x
+            )
+        )(jnp.ones((2,), dtype=jnp.float32))
+
+    execution_metadata_payload(program(host))
+    with pytest.raises(TypeError, match="unsupported type"):
+        execution_metadata_payload(program(pt.checked(host)))
 
 
 def test_compiler_identity_separates_dynamic_captures_from_static_constants() -> None:

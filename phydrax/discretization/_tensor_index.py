@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._axis import AxisDiscretization, TensorGridPlan
 from ._measure import DiscreteMeasure
 from ._tensor_entities import AxisEntityKind, StructuredAxis
@@ -231,9 +231,8 @@ class TensorIndexMeasure(StrictModule, NonTrainableState):
     support_id: str = eqx.field(static=True)
     measure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, layout: TensorIndexLayout, support_id: str, /) -> None:
-        if not isinstance(layout, TensorIndexLayout):
-            raise TypeError("layout must be a TensorIndexLayout.")
         support = str(support_id)
         if not support:
             raise ValueError("support_id must be non-empty.")
@@ -375,14 +374,13 @@ class PreparedTensorIndexSpace(StrictModule, NonTrainableState):
         self.prepared_id = prepared_id
 
     @classmethod
+    @checked
     def from_plan(
         cls,
         plan: TensorGridPlan,
         bounds: ArrayLike,
         /,
     ) -> PreparedTensorIndexSpace:
-        if not isinstance(plan, TensorGridPlan):
-            raise TypeError("plan must be a TensorGridPlan.")
         limits = jnp.asarray(bounds, dtype=jnp.float64)
         if limits.shape != (2, len(plan.axes)):
             raise ValueError(

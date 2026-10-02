@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..fidelity import FidelityPath
+from ..typing import checked
 from ._gp_fidelity import FidelityGaussianProcess
 from ._gp_multioutput import (
     MultiOutputDesign,
@@ -34,6 +35,7 @@ class TargetVarianceAcquisitionPolicy(StrictModule, NonTrainableState):
     cost_unit: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path: FidelityPath,
@@ -46,8 +48,6 @@ class TargetVarianceAcquisitionPolicy(StrictModule, NonTrainableState):
         cost_unit: str = "relative-cost",
         policy_id: str | None = None,
     ) -> None:
-        if not isinstance(path, FidelityPath):
-            raise TypeError("path must be a FidelityPath.")
         points = _as_points(target_points)
         weights = (
             jnp.ones((points.shape[0],), dtype=points.dtype)

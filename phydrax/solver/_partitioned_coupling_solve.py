@@ -17,7 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._fixed_step import FixedStepReplayPolicy
 from ._partitioned_coupling_graph import (
     CouplingGraph,
@@ -79,6 +79,7 @@ class CouplingProblem(StrictModule, NonTrainableState):
     window_count: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         graph: CouplingGraph,
@@ -95,10 +96,6 @@ class CouplingProblem(StrictModule, NonTrainableState):
         resources: CouplingResourcePolicy | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(graph, CouplingGraph):
-            raise TypeError("graph must be CouplingGraph.")
-        if not isinstance(policy, AbstractCouplingPolicy):
-            raise TypeError("policy must be AbstractCouplingPolicy.")
         differentiation_ = (
             CouplingDifferentiationPolicy()
             if differentiation is None
@@ -223,6 +220,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def rollout(
         self,
         prepared: PreparedCoupling,
@@ -232,8 +230,6 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         window_size: float,
         args: Any = None,
     ) -> CouplingSolution:
-        if not isinstance(prepared, PreparedCoupling):
-            raise TypeError("prepared must be PreparedCoupling.")
         count = int(window_count)
         if count <= 0:
             raise ValueError("window_count must be positive.")

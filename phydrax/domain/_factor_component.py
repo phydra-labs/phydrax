@@ -8,6 +8,7 @@ from collections.abc import Mapping
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import checked
 from ._domain import JointFactor
 from ._measure import BaseMeasure
 from ._selection import Selection
@@ -20,6 +21,7 @@ class FactorComponent(StrictModule):
     selections: frozendict[str, Selection]
     measure: BaseMeasure
 
+    @checked
     def __init__(
         self,
         *,
@@ -27,8 +29,6 @@ class FactorComponent(StrictModule):
         selections: Mapping[str, Selection],
         measure: BaseMeasure,
     ) -> None:
-        if not isinstance(factor, JointFactor):
-            raise TypeError("FactorComponent.factor must be a JointFactor.")
         resolved = dict(selections)
         if tuple(resolved) != factor.labels:
             raise ValueError(
@@ -37,8 +37,6 @@ class FactorComponent(StrictModule):
             )
         if any(not isinstance(selection, Selection) for selection in resolved.values()):
             raise TypeError("FactorComponent selections must be Selection values.")
-        if not isinstance(measure, BaseMeasure):
-            raise TypeError("FactorComponent.measure must be a BaseMeasure.")
         self.factor = factor
         self.selections = frozendict(resolved)
         self.measure = measure

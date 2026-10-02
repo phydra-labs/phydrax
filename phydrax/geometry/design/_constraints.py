@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from ..._mass import require_exact_mass
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._capabilities import (
     GeometryCapability,
     SeamDiagnosticsProvider,
@@ -63,6 +63,7 @@ class ParameterTarget(AbstractDesignConstraint):
     target: Array
     scale: Array
 
+    @checked
     def __init__(
         self,
         parameter_id: ParameterId,
@@ -72,8 +73,6 @@ class ParameterTarget(AbstractDesignConstraint):
         weight: float = 1.0,
     ) -> None:
         super().__init__(weight)
-        if not isinstance(parameter_id, ParameterId):
-            raise TypeError("parameter_id must be a ParameterId.")
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
         self.parameter_id = parameter_id
@@ -357,13 +356,12 @@ class DesignConstraintSystem(StrictModule):
     lower_bounds: Array
     upper_bounds: Array
 
+    @checked
     def __init__(
         self,
         geometry: CompiledGeometry,
         constraints: Sequence[AbstractDesignConstraint],
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be a CompiledGeometry.")
         constraints_ = tuple(constraints)
         if not constraints_:
             raise ValueError("At least one design constraint is required.")

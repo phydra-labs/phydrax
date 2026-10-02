@@ -16,6 +16,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import BoreholeTrajectory
+from ....typing import checked
 from ._point_electrode import PointElectrodeSurvey
 
 
@@ -25,11 +26,10 @@ class BoreholeElectrodeArray(StrictModule, NonTrainableState):
     positions_m: Array
     array_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, trajectory: BoreholeTrajectory, measured_depth_m: ArrayLike, /
     ) -> None:
-        if not isinstance(trajectory, BoreholeTrajectory):
-            raise TypeError("Borehole electrodes require BoreholeTrajectory.")
         depths = np.asarray(measured_depth_m, dtype=np.float64)
         if depths.ndim != 1 or depths.size == 0 or np.any(~np.isfinite(depths)):
             raise ValueError("Borehole electrode depths must be a finite vector.")

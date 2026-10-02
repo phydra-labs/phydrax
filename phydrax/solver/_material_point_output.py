@@ -23,6 +23,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.mpm import MPMRuntimeState
 from ..equations import CompiledMaterialPointProblem
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -47,14 +48,13 @@ class MPMOutputPlan(StrictModule):
     xdmf_path: str = eqx.field(static=True)
     output_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         compiled: CompiledMaterialPointProblem,
         target: str | Path,
         /,
     ) -> None:
-        if not isinstance(compiled, CompiledMaterialPointProblem):
-            raise TypeError("compiled must be CompiledMaterialPointProblem.")
         path = Path(target)
         hdf5 = path if path.suffix == ".h5" else path.with_suffix(".h5")
         self.compiled = compiled
@@ -86,9 +86,8 @@ class MPMOutputPlan(StrictModule):
         ):
             raise ValueError("MPM output archive identity is incompatible.")
 
+    @checked
     def append(self, state: MPMRuntimeState, /) -> str:
-        if not isinstance(state, MPMRuntimeState):
-            raise TypeError("state must be MPMRuntimeState.")
         h5py = _h5py()
         path = Path(self.hdf5_path)
         if not path.exists():

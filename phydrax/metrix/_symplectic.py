@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ..exterior._basis import exterior_indices
 from ..linalg import inverse as matrix_inverse
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._forms import DifferentialForm, exterior_derivative, wedge
 from ._map import DifferentiableMap
@@ -49,9 +50,8 @@ class SymplecticForm(StrictModule):
     form: DifferentialForm
     chart: CoordinateChart
 
+    @checked
     def __init__(self, form: DifferentialForm, /) -> None:
-        if not isinstance(form, DifferentialForm):
-            raise TypeError("SymplecticForm requires a DifferentialForm.")
         if form.degree != 2:
             raise ValueError("A symplectic form must have degree two.")
         if form.form_type.twist != "untwisted" or form.form_type.fiber_shape:
@@ -87,6 +87,7 @@ class PoissonStructure(StrictModule):
     bivector_function: Callable[[Array], Array]
     chart: CoordinateChart
 
+    @checked
     def __init__(
         self,
         bivector: Callable[[Array], Array],
@@ -96,8 +97,6 @@ class PoissonStructure(StrictModule):
     ) -> None:
         if not callable(bivector):
             raise TypeError("Poisson bivector must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Poisson chart must be a CoordinateChart.")
         self.bivector_function = bivector
         self.chart = chart
 

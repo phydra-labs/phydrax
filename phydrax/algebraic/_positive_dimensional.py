@@ -27,6 +27,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._grading import PolynomialVariableGroup
 
 
@@ -604,6 +605,7 @@ class MonodromyEvidence(StrictModule, NonTrainableState):
     paths: PathInventory
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         witness_set_id: str,
@@ -621,8 +623,6 @@ class MonodromyEvidence(StrictModule, NonTrainableState):
         completed_ = tuple(completed)
         if len(set(attempted)) != len(attempted):
             raise ValueError("Attempted monodromy loop IDs must be unique.")
-        if not isinstance(paths, PathInventory):
-            raise TypeError("paths must be a PathInventory.")
         completed_ids: list[str] = []
         permutations: list[tuple[int, ...]] = []
         for loop_id, permutation in completed_:
@@ -719,6 +719,7 @@ class TraceTestEvidence(StrictModule, NonTrainableState):
     paths: PathInventory
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         witness_set_id: str,
@@ -746,8 +747,6 @@ class TraceTestEvidence(StrictModule, NonTrainableState):
             raise ValueError("affine_fit_residual must be finite and nonnegative.")
         if not isfinite(tolerance_) or tolerance_ < 0.0:
             raise ValueError("tolerance must be finite and nonnegative.")
-        if not isinstance(paths, PathInventory):
-            raise TypeError("paths must be a PathInventory.")
         batches: defaultdict[str, list[int]] = defaultdict(list)
         for record in paths.records:
             batches[record.batch_id].append(record.source_index)
@@ -792,6 +791,7 @@ class NumericalComponent(StrictModule, NonTrainableState):
     trace_evidence_id: str = eqx.field(static=True)
     component_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         witness_set: WitnessSet,
@@ -800,12 +800,6 @@ class NumericalComponent(StrictModule, NonTrainableState):
         trace_test: TraceTestEvidence,
         /,
     ) -> None:
-        if not isinstance(witness_set, WitnessSet):
-            raise TypeError("witness_set must be a WitnessSet.")
-        if not isinstance(monodromy, MonodromyEvidence):
-            raise TypeError("monodromy must be MonodromyEvidence.")
-        if not isinstance(trace_test, TraceTestEvidence):
-            raise TypeError("trace_test must be TraceTestEvidence.")
         points = _canonical_indices(
             point_indices, witness_set.degree, "component point indices"
         )
@@ -1029,6 +1023,7 @@ class NumericalDecompositionResult(StrictModule, NonTrainableState):
     status: DecompositionStatus = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         witness_collection: MultigradedWitnessCollection,
@@ -1038,8 +1033,6 @@ class NumericalDecompositionResult(StrictModule, NonTrainableState):
         path_inventories: Sequence[PathInventory] = (),
         /,
     ) -> None:
-        if not isinstance(witness_collection, MultigradedWitnessCollection):
-            raise TypeError("witness_collection must be MultigradedWitnessCollection.")
         components_ = tuple(components)
         monodromy_ = tuple(monodromy)
         traces_ = tuple(trace_tests)

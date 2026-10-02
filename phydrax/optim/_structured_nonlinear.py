@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..sparse import SparseCoordinateOperator, SparseDerivativePlan
+from ..typing import checked
 from ._iterative import ConstrainedOptimalityCertificate, MinimizationResult
 
 
@@ -295,6 +296,7 @@ class StructuredNonlinearProgram(StrictModule):
     program_id: str = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         objective: Callable[[Array, Any], ArrayLike],
@@ -315,8 +317,6 @@ class StructuredNonlinearProgram(StrictModule):
             raise TypeError(
                 "Structured nonlinear objective and constraints must be callable."
             )
-        if not isinstance(jacobian_plan, SparseDerivativePlan):
-            raise TypeError("jacobian_plan must be a SparseDerivativePlan.")
         if hessian_plan is not None and not isinstance(
             hessian_plan, SparseDerivativePlan
         ):
@@ -689,14 +689,13 @@ class StructuredNonlinearTemplate(StrictModule):
     argument_signature: str = eqx.field(static=True)
     template_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         program: StructuredNonlinearProgram,
         sample_args: Any = None,
         /,
     ) -> None:
-        if not isinstance(program, StructuredNonlinearProgram):
-            raise TypeError("program must be a StructuredNonlinearProgram.")
         roles = _bound_roles(
             program.variable_lower,
             program.variable_upper,
@@ -749,6 +748,7 @@ class PreparedStructuredNonlinearProgram(StrictModule):
     numeric_version: Array
     numeric_binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         template: StructuredNonlinearTemplate,
@@ -763,8 +763,6 @@ class PreparedStructuredNonlinearProgram(StrictModule):
         constraint_scale: ArrayLike | None = None,
         numeric_version: Any = 0,
     ) -> None:
-        if not isinstance(template, StructuredNonlinearTemplate):
-            raise TypeError("template must be a StructuredNonlinearTemplate.")
         program = template.program
         if _argument_signature(args) != template.argument_signature:
             raise ValueError("Structured nonlinear argument structure changed.")
@@ -960,6 +958,7 @@ class StructuredNonlinearResult(StrictModule):
     method_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         optimization: MinimizationResult,
@@ -972,12 +971,6 @@ class StructuredNonlinearResult(StrictModule):
         numeric_binding_id: str,
         method_id: str,
     ) -> None:
-        if not isinstance(optimization, MinimizationResult):
-            raise TypeError("optimization must be a MinimizationResult.")
-        if not isinstance(warm_start, StructuredNonlinearWarmStart):
-            raise TypeError("warm_start must be a StructuredNonlinearWarmStart.")
-        if not isinstance(work, StructuredOptimizationWork):
-            raise TypeError("work must be StructuredOptimizationWork.")
         structure = _identifier(structure_id, "structure_id")
         numeric_binding = _identifier(numeric_binding_id, "numeric_binding_id")
         method = _identifier(method_id, "method_id")

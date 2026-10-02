@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._distributed import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
@@ -268,9 +268,8 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
     preparation: DistributedPeriodicLESPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: DistributedPeriodicLESPlan, /) -> None:
-        if not isinstance(plan, DistributedPeriodicLESPlan):
-            raise TypeError("plan must be a DistributedPeriodicLESPlan.")
         plan.topology.require_available()
         scientific = plan.scientific
         discretization = scientific.grid_filter.discretization
@@ -739,10 +738,9 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             restart_id=restart_id,
         )
 
+    @checked
     def restore(self, evidence: DistributedPeriodicLESRestartEvidence, /) -> Array:
         """Restore only restart evidence produced for this exact backend identity."""
-        if not isinstance(evidence, DistributedPeriodicLESRestartEvidence):
-            raise TypeError("evidence must be DistributedPeriodicLESRestartEvidence.")
         if (
             evidence.backend_id != self.prepared_id
             or evidence.topology_id != self.execution.topology.topology_id

@@ -31,6 +31,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._numerics import solve_weighted_least_squares
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 class PhysicalRelativeForceCalibrationStatus(IntFlag):
@@ -231,6 +232,7 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
             self.plan.asset_id,
         )
 
+    @checked
     def evaluate(
         self,
         state: PhysicalRelativeForceCalibrationState,
@@ -243,8 +245,6 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
     ) -> PhysicalRelativeForceCalibrationCandidate:
         """Fit scale plus named nuisances with Phydrax's diagnosed SVD solve."""
 
-        if not isinstance(state, PhysicalRelativeForceCalibrationState):
-            raise TypeError("state must be PhysicalRelativeForceCalibrationState.")
         if state.plan_id != self.plan.plan_id:
             raise ValueError("state does not belong to this prepared calibration.")
         dtype = self.plan.nuisance_design.dtype
@@ -442,6 +442,7 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
         )
         return PhysicalRelativeForceCalibrationCandidate(state, proposed, evidence)
 
+    @checked
     def observe(
         self,
         state: PhysicalRelativeForceCalibrationState,
@@ -450,8 +451,6 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
     ) -> PhysicalForceObservation:
         """Map relative force to newtons with the committed physical scale only."""
 
-        if not isinstance(state, PhysicalRelativeForceCalibrationState):
-            raise TypeError("state must be PhysicalRelativeForceCalibrationState.")
         if state.plan_id != self.plan.plan_id:
             raise ValueError("state does not belong to this prepared calibration.")
         relative = jnp.asarray(

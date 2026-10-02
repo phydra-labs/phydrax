@@ -20,7 +20,7 @@ from ..discretization.finite_volume._uct import (
     AbstractUCTElectromotivePlan,
     HLLUCTElectromotivePlan,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 VectorPotentialGaugeKind: TypeAlias = Literal[
@@ -190,6 +190,7 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -200,8 +201,6 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
         divergence_tolerance: float = 1.0e-10,
         compatibility_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         gauge_ = GRMHDVectorPotentialGauge() if gauge is None else gauge
         electromotive = (
             HLLUCTElectromotivePlan()
@@ -509,6 +508,7 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
             dissipation = result.maximum_dissipation
         return self.bridge.pack_electromotive(components), defect, dissipation
 
+    @checked
     def rate(
         self,
         state: GRMHDCTState,
@@ -518,8 +518,6 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
         uct_consistency_defect: ArrayLike = 0.0,
         uct_maximum_dissipation: ArrayLike = 0.0,
     ) -> GRMHDCTRate:
-        if not isinstance(state, GRMHDCTState):
-            raise TypeError("state must be GRMHDCTState.")
         magnetic = self.validate_magnetic_flux(state.magnetic_flux)
         if self.layout.dimension == 1:
             electromotive = jnp.asarray(edge_electromotive_circulation)

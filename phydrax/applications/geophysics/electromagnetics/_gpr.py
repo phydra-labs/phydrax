@@ -21,6 +21,7 @@ from ....solver.maxwell import (
     PreparedMaxwellSource,
     solve_compatible_maxwell,
 )
+from ....typing import checked
 
 
 class GaussianDerivativeWaveform(StrictModule, NonTrainableState):
@@ -73,6 +74,7 @@ class DispersiveFullWaveGPRPlan(StrictModule, NonTrainableState):
     step_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedCompatibleMaxwell,
@@ -80,8 +82,6 @@ class DispersiveFullWaveGPRPlan(StrictModule, NonTrainableState):
         step_count: int,
         /,
     ) -> None:
-        if not isinstance(runtime, PreparedCompatibleMaxwell):
-            raise TypeError("GPR requires a prepared compatible Maxwell runtime.")
         if not runtime.capabilities.dispersive or not runtime.capabilities.passive:
             raise ValueError("Full-wave GPR requires passive dispersive ADE material.")
         if runtime.pml is None or not runtime.capabilities.pml:

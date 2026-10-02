@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import normalized_identifier
+from ...typing import checked
 from ..core import Currency, FinancialTimestamp, FXPair
 from ._lineage import DataLineage
 from ._status import MarketStatus
@@ -136,6 +137,7 @@ class QuoteObservation(StrictModule, NonTrainableState):
     lineage: DataLineage
     observation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         key: QuoteKey,
@@ -144,15 +146,9 @@ class QuoteObservation(StrictModule, NonTrainableState):
         lineage: DataLineage,
         /,
     ) -> None:
-        if not isinstance(key, QuoteKey):
-            raise TypeError("key must be a QuoteKey.")
         scalar = np.asarray(value)
         if scalar.shape != () or scalar.dtype.kind not in "fiu":
             raise ValueError("A quote observation value must be one real scalar.")
-        if not isinstance(timestamp, FinancialTimestamp):
-            raise TypeError("timestamp must be a FinancialTimestamp.")
-        if not isinstance(lineage, DataLineage):
-            raise TypeError("lineage must be a DataLineage.")
         self.key = key
         self.value = jnp.asarray(scalar)
         self.timestamp = timestamp
@@ -236,11 +232,10 @@ class FixingSeries(StrictModule, NonTrainableState):
     observations: tuple[QuoteObservation, ...]
     series_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, key: QuoteKey, observations: Sequence[QuoteObservation], /
     ) -> None:
-        if not isinstance(key, QuoteKey):
-            raise TypeError("key must be a QuoteKey.")
         values = tuple(observations)
         if not values:
             raise ValueError("A fixing series requires at least one observation.")
@@ -275,6 +270,7 @@ class FixingSeries(StrictModule, NonTrainableState):
     def vintage_count(self) -> int:
         return len(self.observations)
 
+    @checked
     def at(
         self,
         event_time: FinancialTimestamp,
@@ -284,8 +280,6 @@ class FixingSeries(StrictModule, NonTrainableState):
         tie_policy: QuoteTiePolicy = QuoteTiePolicy.REJECT,
     ) -> QuoteSelection:
         event_ns = _event_ns(event_time, "event_time")
-        if not isinstance(decision_time, FinancialTimestamp):
-            raise TypeError("decision_time must be a FinancialTimestamp.")
         decision_ns = int(decision_time.available_ns)
         if not isinstance(tie_policy, QuoteTiePolicy):
             raise TypeError("tie_policy must be a QuoteTiePolicy.")

@@ -34,7 +34,7 @@ from ..linalg._low_rank_approximation import (
     pivoted_cholesky_factor,
     randomized_nystrom_factor,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 def _point_value_basis_metadata(
@@ -690,6 +690,7 @@ class SpatialNoiseBasis(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_kernel_covariance(
         cls,
         kernel: Callable[[Array, Array], ArrayLike],
@@ -708,10 +709,6 @@ class SpatialNoiseBasis(StrictModule):
         """
         if not callable(kernel):
             raise TypeError("kernel must be callable.")
-        if not isinstance(discretization, AbstractStrongFormDiscretization):
-            raise TypeError(
-                "discretization must implement AbstractStrongFormDiscretization."
-            )
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
@@ -831,6 +828,7 @@ class SpatialNoiseBasis(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_covariance_operator(
         cls,
         covariance_operator: Callable[[Array], ArrayLike],
@@ -853,10 +851,6 @@ class SpatialNoiseBasis(StrictModule):
         """
         if not callable(covariance_operator):
             raise TypeError("covariance_operator must be callable.")
-        if not isinstance(discretization, AbstractStrongFormDiscretization):
-            raise TypeError(
-                "discretization must implement AbstractStrongFormDiscretization."
-            )
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")

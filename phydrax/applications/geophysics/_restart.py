@@ -23,6 +23,7 @@ from ..._array_archive import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._evidence import GeophysicalResourceEstimate
 
 
@@ -65,6 +66,7 @@ class GeophysicalResourcePolicy(StrictModule, NonTrainableState):
             {"kind": "geophysical-resource-policy", "limits": values}
         )
 
+    @checked
     def admit(
         self,
         estimate: GeophysicalResourceEstimate,
@@ -74,8 +76,6 @@ class GeophysicalResourcePolicy(StrictModule, NonTrainableState):
         observation_count: int,
         step_count: int,
     ) -> None:
-        if not isinstance(estimate, GeophysicalResourceEstimate):
-            raise TypeError("Resource admission requires GeophysicalResourceEstimate.")
         if estimate.total_bytes > self.maximum_device_bytes:
             raise MemoryError("Estimated device allocation exceeds geophysical policy.")
         if estimate.checkpoint_bytes > self.maximum_checkpoint_bytes:
@@ -180,9 +180,8 @@ class GeophysicalCheckpointPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def write(self, path: str | Path, state: GeophysicalContinuationState, /) -> Path:
-        if not isinstance(state, GeophysicalContinuationState):
-            raise TypeError("Checkpoint state must be GeophysicalContinuationState.")
         arrays: dict[str, object] = {}
         state_specification = pack_array_tree("continuation", state, arrays)
         estimated_bytes = sum(np.asarray(value).nbytes for value in arrays.values())

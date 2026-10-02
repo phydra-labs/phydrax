@@ -11,6 +11,8 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
+from ..typing import checked
+
 
 Exponent: TypeAlias = int | Fraction
 DimensionTerms: TypeAlias = Mapping[str, Exponent] | Iterable[tuple[str, Exponent]]
@@ -57,14 +59,12 @@ class DimensionSignature(StrictModule, NonTrainableState):
                 return Fraction(numerator, denominator)
         return Fraction(0)
 
+    @checked
     def multiply(self, other: DimensionSignature) -> DimensionSignature:
-        if not isinstance(other, DimensionSignature):
-            raise TypeError("dimension multiplication requires a DimensionSignature")
         return DimensionSignature((*self._fraction_terms(), *other._fraction_terms()))
 
+    @checked
     def divide(self, other: DimensionSignature) -> DimensionSignature:
-        if not isinstance(other, DimensionSignature):
-            raise TypeError("dimension division requires a DimensionSignature")
         return DimensionSignature(
             (
                 *self._fraction_terms(),

@@ -26,6 +26,7 @@ from ..discretization.finite_volume import (
     UnstructuredAMRHierarchyPlan,
     UnstructuredAMRSelection,
 )
+from ..typing import checked
 from ._finite_volume import FiniteVolumeStageStateProvider
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_runtime import (
@@ -50,6 +51,7 @@ class UnstructuredAMRRuntimeState(StrictModule):
     fine_state: FiniteVolumeRuntimeState
     selection: UnstructuredAMRSelection
 
+    @checked
     def __init__(
         self,
         coarse_state: FiniteVolumeRuntimeState,
@@ -57,12 +59,6 @@ class UnstructuredAMRRuntimeState(StrictModule):
         selection: UnstructuredAMRSelection,
         /,
     ) -> None:
-        if not isinstance(coarse_state, FiniteVolumeRuntimeState):
-            raise TypeError("coarse_state must be FiniteVolumeRuntimeState.")
-        if not isinstance(fine_state, FiniteVolumeRuntimeState):
-            raise TypeError("fine_state must be FiniteVolumeRuntimeState.")
-        if not isinstance(selection, UnstructuredAMRSelection):
-            raise TypeError("selection must be UnstructuredAMRSelection.")
         if (
             coarse_state.content_state.time.shape != ()
             or fine_state.content_state.time.shape != ()
@@ -240,6 +236,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
     policy: FiniteVolumeStepPolicy
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: UnstructuredAMRHierarchyPlan,
@@ -250,12 +247,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
         refinement_ratio: int = 2,
         policy: FiniteVolumeStepPolicy | None = None,
     ) -> None:
-        if not isinstance(hierarchy, UnstructuredAMRHierarchyPlan):
-            raise TypeError("hierarchy must be UnstructuredAMRHierarchyPlan.")
-        if not isinstance(coarse_runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("coarse_runtime must be PreparedFiniteVolumeRuntime.")
-        if not isinstance(fine_runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("fine_runtime must be PreparedFiniteVolumeRuntime.")
         if not isinstance(
             coarse_runtime.dynamics, PreparedUnstructuredFiniteVolumeDynamics
         ) or not isinstance(
@@ -363,9 +354,8 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
         )
         return self.hierarchy.select(values, threshold)
 
+    @checked
     def _validate_selection(self, selection: UnstructuredAMRSelection, /) -> None:
-        if not isinstance(selection, UnstructuredAMRSelection):
-            raise TypeError("selection must be UnstructuredAMRSelection.")
         if selection.coarse_refined.shape != (self.hierarchy.coarse.cell_count,):
             raise ValueError("Selection coarse mask does not match the hierarchy.")
         if selection.fine_active.shape != (self.hierarchy.fine.cell_count,):
@@ -690,6 +680,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
         scale = np.maximum(1.0, np.maximum(np.abs(left), np.abs(right)))
         return bool(np.all(np.abs(left - right) <= 128.0 * eps * scale))
 
+    @checked
     def _validate_ledger_interval(
         self,
         ledger: AcceptedConservationIntegralLedger,
@@ -697,8 +688,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
         end: FiniteVolumeRuntimeState,
         /,
     ) -> None:
-        if not isinstance(ledger, AcceptedConservationIntegralLedger):
-            raise TypeError("Accepted level output must contain an accepted ledger.")
         if ledger.units != "content":
             raise ValueError("AMR synchronization requires content-unit ledgers.")
         if ledger.start_topology_epoch_id != ledger.end_topology_epoch_id:

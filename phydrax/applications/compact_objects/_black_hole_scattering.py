@@ -26,6 +26,7 @@ from ...linalg import (
     LinearSystem,
     solve as solve_linear,
 )
+from ...typing import checked
 from ._perturbation import SeparatedMode
 from ._radial_perturbation import (
     _integrate_schwarzschild_horizon_riccati,
@@ -66,6 +67,7 @@ class ScatteringQualificationEvidence(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -75,8 +77,6 @@ class ScatteringQualificationEvidence(StrictModule, NonTrainableState):
         radial_source_id: str,
         source_id: str,
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         radial = str(radial_source_id)
         source = str(source_id)
         if not radial or not source:
@@ -114,6 +114,7 @@ class BlackHoleScatteringPlan(StrictModule, NonTrainableState):
     flux_normalization: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -124,8 +125,6 @@ class BlackHoleScatteringPlan(StrictModule, NonTrainableState):
         *,
         flux_normalization: str = "scalar-killing-energy-unit-incoming-at-infinity",
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         if mode.family != "scattering":
             raise ValueError(
                 "BlackHoleScatteringPlan requires a mode with family='scattering'."
@@ -454,6 +453,7 @@ class SchwarzschildScatteringSolvePlan(StrictModule, NonTrainableState):
     low_frequency_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         radial_plan: SchwarzschildRadialPlan,
@@ -471,12 +471,6 @@ class SchwarzschildScatteringSolvePlan(StrictModule, NonTrainableState):
         low_frequency_maximum: float,
         low_frequency_relative_tolerance: float,
     ) -> None:
-        if not isinstance(radial_plan, SchwarzschildRadialPlan):
-            raise TypeError("radial_plan must be a SchwarzschildRadialPlan.")
-        if not isinstance(flux_plan, BlackHoleScatteringPlan):
-            raise TypeError("flux_plan must be a BlackHoleScatteringPlan.")
-        if not isinstance(decomposition_policy, LinearSolvePolicy):
-            raise TypeError("decomposition_policy must be a LinearSolvePolicy.")
         mode = radial_plan.mode
         if (
             mode.family != "scattering"

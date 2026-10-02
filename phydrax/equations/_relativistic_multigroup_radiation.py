@@ -20,6 +20,7 @@ from ..metrix._adm_exchange import (
     StressEnergyProjection,
 )
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 from ._relativistic_radiation import (
     GRGrayM1ClosureEvaluation,
     GRGrayM1RadiationSystem,
@@ -50,6 +51,7 @@ class GRMultigroupM1RadiationSystem(StrictModule, NonTrainableState):
     component_names: tuple[str, ...] = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -61,10 +63,6 @@ class GRMultigroupM1RadiationSystem(StrictModule, NonTrainableState):
         energy_floor: float = 1.0e-12,
         metric_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
         edges = np.asarray(frequency_edges, dtype=np.float64)
         if (
             edges.ndim != 1
@@ -217,14 +215,13 @@ class GRMultigroupRadiationInteractionPlan(StrictModule, NonTrainableState):
     group_interactions: tuple[GRGrayRadiationInteractionPlan, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         radiation: GRMultigroupM1RadiationSystem,
         group_interactions: tuple[GRGrayRadiationInteractionPlan, ...],
         /,
     ) -> None:
-        if not isinstance(radiation, GRMultigroupM1RadiationSystem):
-            raise TypeError("radiation must be GRMultigroupM1RadiationSystem.")
         interactions = tuple(group_interactions)
         if len(interactions) != radiation.group_count or any(
             not isinstance(value, GRGrayRadiationInteractionPlan)

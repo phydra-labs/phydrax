@@ -16,6 +16,7 @@ import phydrax.ein as ein
 from ..._bounds import Bounds
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._cones import NonnegativeCone, ProductCone, ZeroCone
 from ._policy import (
     ClarabelInteriorPoint,
@@ -140,13 +141,12 @@ class ConvexProgramPlan(StrictModule):
     problem_signature: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, program: CanonicalProgram, policy: ConvexSolvePolicy, /) -> None:
         if not isinstance(program, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError(
                 "program must be a LinearProgram, QuadraticProgram, or ConicProgram."
             )
-        if not isinstance(policy, ConvexSolvePolicy):
-            raise TypeError("policy must be a ConvexSolvePolicy.")
         kind = _program_kind(program)
         capabilities = policy.method.capabilities
         if kind == "linear-program" and not capabilities.linear_program:
@@ -207,9 +207,8 @@ class ConvexProgramTemplate(StrictModule):
     symbolic_state: Any
     template_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ConvexProgramPlan, symbolic_state: Any = None, /) -> None:
-        if not isinstance(plan, ConvexProgramPlan):
-            raise TypeError("plan must be a ConvexProgramPlan.")
         self.plan = plan
         self.symbolic_state = symbolic_state
         self.template_id = canonical_fingerprint(
@@ -226,6 +225,7 @@ class PreparedConvexProgram(StrictModule):
     numeric_version: Array
     numeric_binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         program: CanonicalProgram,
@@ -238,8 +238,6 @@ class PreparedConvexProgram(StrictModule):
     ) -> None:
         if not isinstance(program, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError("program must be a canonical convex program.")
-        if not isinstance(template, ConvexProgramTemplate):
-            raise TypeError("template must be a ConvexProgramTemplate.")
         if _program_signature(program) != template.plan.problem_signature:
             raise ValueError("Program structure does not match the prepared template.")
         raw_version = jnp.asarray(numeric_version)
@@ -285,6 +283,7 @@ class ConvexProgramExecution(StrictModule):
     plan_id: str = eqx.field(static=True)
     numeric_binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         result: ConvexProgramResult,
@@ -294,8 +293,6 @@ class ConvexProgramExecution(StrictModule):
         plan_id: str,
         numeric_binding_id: str,
     ) -> None:
-        if not isinstance(result, ConvexProgramResult):
-            raise TypeError("result must be a ConvexProgramResult.")
         identifier = str(plan_id)
         if not identifier:
             raise ValueError("plan_id must be non-empty.")

@@ -17,7 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
-from ...typing import parse
+from ...typing import checked, parse
 from ._matter_coupling import (
     CoupledBudget,
     CoupledStageAddress,
@@ -127,6 +127,7 @@ class CoupledEvolutionState(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         z4c: Any,
@@ -143,8 +144,6 @@ class CoupledEvolutionState(StrictModule, NonTrainableState):
         topology_id: str,
         runtime_id: str,
     ) -> None:
-        if not isinstance(budget, CoupledBudget):
-            raise TypeError("budget must be CoupledBudget.")
         if not isinstance(topology_id, str) or not topology_id:
             raise ValueError("topology_id must be non-empty.")
         if not isinstance(runtime_id, str) or not runtime_id:
@@ -243,6 +242,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
     stage_time_fractions: tuple[float, float, float] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry_at_stage: Callable,
@@ -265,8 +265,6 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         )
         if any(not callable(callback) for callback in callbacks):
             raise TypeError("Every coupled stage adapter must be callable.")
-        if not isinstance(policy, MatterCouplingPolicy):
-            raise TypeError("policy must be MatterCouplingPolicy.")
         if not isinstance(topology_id, str) or not topology_id:
             raise ValueError("topology_id must be non-empty.")
         matter_kind = parse(matter_kind, RelativisticMatterKind, "matter_kind")
@@ -485,6 +483,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             successful,
         )
 
+    @checked
     def advance(
         self,
         state: CoupledEvolutionState,
@@ -492,8 +491,6 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> CoupledStepResult:
-        if not isinstance(state, CoupledEvolutionState):
-            raise TypeError("state must be CoupledEvolutionState.")
         if state.runtime_id != self.operator_id or state.topology_id != self.topology_id:
             raise ValueError("Coupled state runtime/topology identity does not match.")
         step = _scalar(step_size, "coupled step_size", dtype=state.time.dtype)

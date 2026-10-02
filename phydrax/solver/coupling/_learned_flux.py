@@ -17,6 +17,7 @@ from jax import Array
 from ..._model import AbstractArrayModel
 from ..._trainable import NonTrainableState
 from ..._validation import finite_real_scalar, positive_integer
+from ...typing import checked
 from ._laws import AbstractInterfaceFlux
 from ._parameters import RuntimeInput
 
@@ -49,6 +50,7 @@ class MonotoneInterfaceConductance(AbstractInterfaceFlux, NonTrainableState):
     baseline: Array
     quadrature_degree: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         response: RuntimeInput,
@@ -57,8 +59,6 @@ class MonotoneInterfaceConductance(AbstractInterfaceFlux, NonTrainableState):
         baseline: float = 0.0,
         quadrature_degree: int = 4,
     ) -> None:
-        if not isinstance(response, RuntimeInput):
-            raise TypeError("response must be a RuntimeInput.")
         value = finite_real_scalar(baseline, "baseline")
         if value < 0.0:
             raise ValueError("baseline must be a nonnegative conductance.")

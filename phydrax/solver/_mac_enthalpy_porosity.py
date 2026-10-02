@@ -22,6 +22,7 @@ from ..equations._mac_enthalpy_porosity import (
     MACEnthalpyPorosityStage,
 )
 from ..linalg import FunctionLinearOperator, LinearSolvePolicy
+from ..typing import checked
 from ._mac_composite_projection import (
     CompositeMACProjectionPlan,
     CompositeMACProjectionResult,
@@ -148,6 +149,7 @@ class MACEnthalpyPorosityIMEXEulerMethod(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACEnthalpyPorosityDynamics,
@@ -158,8 +160,6 @@ class MACEnthalpyPorosityIMEXEulerMethod(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACEnthalpyPorosityDynamics):
-            raise TypeError("dynamics must be CompiledMACEnthalpyPorosityDynamics.")
         fixed = None if fixed_step_size is None else float(fixed_step_size)
         tolerance_ = float(tolerance)
         if fixed is not None and (not np.isfinite(fixed) or fixed <= 0.0):
@@ -463,6 +463,7 @@ class MACEnthalpyPorositySBDF2Method(StrictModule, NonTrainableState):
             self.method_id,
         )
 
+    @checked
     def step(
         self,
         state: MACEnthalpyPorositySBDF2State,
@@ -470,8 +471,6 @@ class MACEnthalpyPorositySBDF2Method(StrictModule, NonTrainableState):
         *,
         args: Any = None,
     ) -> MACEnthalpyPorositySBDF2Result:
-        if not isinstance(state, MACEnthalpyPorositySBDF2State):
-            raise TypeError("state must be MACEnthalpyPorositySBDF2State.")
         if state.method_id != self.method_id:
             raise ValueError("SBDF2 state belongs to another method.")
         step = state.step_size

@@ -22,6 +22,7 @@ from ...linalg import (
     factorize,
     LinearSolveResult,
 )
+from ...typing import checked
 from ._space import TensorSpectralDiscretization
 
 
@@ -120,16 +121,13 @@ class PreparedSpectralGalerkin(StrictModule, NonTrainableState):
     load_matrices: tuple[Array, ...]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SpectralGalerkinMethodPlan,
         discretization: TensorSpectralDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, SpectralGalerkinMethodPlan):
-            raise TypeError("plan must be a SpectralGalerkinMethodPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         masses = []
         stiffnesses = []
         loads = []

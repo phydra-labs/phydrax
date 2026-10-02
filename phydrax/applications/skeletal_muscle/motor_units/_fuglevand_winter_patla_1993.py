@@ -29,6 +29,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 _SOURCE_DOI = "10.1152/jn.1993.70.6.2470"
@@ -338,6 +339,7 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
             self.plan.model_id,
         )
 
+    @checked
     def evaluate(
         self,
         state: FuglevandWinterPatla1993State,
@@ -353,12 +355,8 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         fixed realized event schedule remain local derivatives only.
         """
 
-        if not isinstance(state, FuglevandWinterPatla1993State):
-            raise TypeError("state must be FuglevandWinterPatla1993State.")
         if state.model_id != self.plan.model_id:
             raise ValueError("state does not belong to this prepared model.")
-        if not isinstance(random_input, FuglevandWinterPatla1993RandomInput):
-            raise TypeError("random_input must be FuglevandWinterPatla1993RandomInput.")
         if random_input.stream_id != self.plan.random_stream_id:
             raise ValueError("random_input stream_id does not match the plan.")
         n = self.plan.unit_count
@@ -577,13 +575,12 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         )
         return FuglevandWinterPatla1993Candidate(state, proposed, evidence)
 
+    @checked
     def force(
         self, state: FuglevandWinterPatla1993State, /
     ) -> FuglevandWinterPatla1993Force:
         """Read this route's terminal isometric force without rescaling."""
 
-        if not isinstance(state, FuglevandWinterPatla1993State):
-            raise TypeError("state must be FuglevandWinterPatla1993State.")
         if state.model_id != self.plan.model_id:
             raise ValueError("state does not belong to this prepared model.")
         return FuglevandWinterPatla1993Force(

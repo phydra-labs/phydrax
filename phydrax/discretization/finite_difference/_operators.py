@@ -20,6 +20,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ...typing import checked
 from .._spaces import DiscreteFieldSpace
 from .._tensor_support import PreparedTensorGrid
 from ._certification import (
@@ -232,6 +233,7 @@ class PreparedStencilOperator(AbstractLinearOperator):
     conservation_report: FDConservationReport
     precision: FDExecutionPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         stencil_set: BoundaryStencilSet,
@@ -241,8 +243,6 @@ class PreparedStencilOperator(AbstractLinearOperator):
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(stencil_set, BoundaryStencilSet):
-            raise TypeError("stencil_set must be a BoundaryStencilSet.")
         if not isinstance(source, DiscreteFieldSpace) or not isinstance(
             target, DiscreteFieldSpace
         ):

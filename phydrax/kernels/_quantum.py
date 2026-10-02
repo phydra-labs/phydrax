@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._model import AbstractArrayModel
+from ..typing import checked
 from ._base import AbstractPositiveDefiniteKernel
 
 
@@ -30,6 +31,7 @@ class ExactQuantumStateFidelityKernel(AbstractPositiveDefiniteKernel):
     normalization_tolerance: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_model: AbstractArrayModel,
@@ -38,8 +40,6 @@ class ExactQuantumStateFidelityKernel(AbstractPositiveDefiniteKernel):
         *,
         normalization_tolerance: float = 1e-6,
     ) -> None:
-        if not isinstance(state_model, AbstractArrayModel):
-            raise TypeError("state_model must be an AbstractArrayModel.")
         if not isinstance(state_model.in_size, int) or not isinstance(
             state_model.out_size, int
         ):

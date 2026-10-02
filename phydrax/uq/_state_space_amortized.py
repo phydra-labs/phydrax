@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from .._trainable import fixed_field, ParameterOwner
 from ..stochastic import StateSpaceProblem
+from ..typing import checked
 from ._posterior import ParameterSpace, PosteriorProblem
 from ._state_space_path_density import state_space_path_log_density
 from ._state_space_variational import GaussianMarkovVariationalFamily
@@ -189,6 +190,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     scale_floor: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         encoder: AmortizedGaussianMarkovEncoder,
@@ -198,10 +200,6 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         scale_floor: float = 1e-6,
         context_mask: Array | None = None,
     ) -> None:
-        if not isinstance(encoder, AmortizedGaussianMarkovEncoder):
-            raise TypeError("encoder must be AmortizedGaussianMarkovEncoder.")
-        if not isinstance(problem, StateSpaceProblem):
-            raise TypeError("problem must be StateSpaceProblem.")
         floor = float(scale_floor)
         if not isfinite(floor) or floor <= 0.0:
             raise ValueError("scale_floor must be positive and finite.")

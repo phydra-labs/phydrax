@@ -31,6 +31,7 @@ from ...linalg import (
     RHSLayout,
     solve,
 )
+from ...typing import checked
 from .._lqr import (
     finite_horizon_lqr,
     FiniteHorizonLQRResult,
@@ -148,6 +149,7 @@ class CentralizedLQGProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     covariance_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics_matrices: ArrayLike,
@@ -195,8 +197,6 @@ class CentralizedLQGProblem(StrictModule):
                 "CentralizedLQGProblem requires independent process and measurement "
                 "noise; cross covariances are unsupported."
             )
-        if not isinstance(initial_belief, GaussianBelief):
-            raise TypeError("initial_belief must be a GaussianBelief.")
 
         dynamics = jnp.asarray(dynamics_matrices)
         if dynamics.ndim < 3 or dynamics.shape[-2] != dynamics.shape[-1]:
@@ -486,6 +486,7 @@ class BeliefFeedbackPolicy(StrictModule):
     belief_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         feedback_gain: ArrayLike,
@@ -500,8 +501,6 @@ class BeliefFeedbackPolicy(StrictModule):
         belief_id: str,
         policy_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         if observation_timing != _PRE_ACTION_TIMING:
             raise ValueError("BeliefFeedbackPolicy requires pre-action beliefs.")
         gain = jnp.asarray(feedback_gain)
@@ -527,6 +526,7 @@ class BeliefFeedbackPolicy(StrictModule):
         self.belief_id = _identifier(belief_id, "belief_id")
         self.policy_id = _identifier(policy_id, "policy_id")
 
+    @checked
     def action(
         self,
         context: DiscreteStepContext,
@@ -536,10 +536,6 @@ class BeliefFeedbackPolicy(StrictModule):
     ) -> Array:
         """Act on the posterior mean; no latent state can enter this interface."""
         del args
-        if not isinstance(context, DiscreteStepContext):
-            raise TypeError("context must be a DiscreteStepContext.")
-        if not isinstance(belief, GaussianBelief):
-            raise TypeError("belief must be a GaussianBelief, not a latent state.")
         if belief.dimension != self.state_size:
             raise ValueError("belief dimension must match the policy state size.")
         if belief.belief_id != self.belief_id:

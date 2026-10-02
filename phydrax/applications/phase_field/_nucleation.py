@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...stochastic import PoissonClockRealization
+from ...typing import checked
 
 
 class ClassicalNucleationEvaluation(StrictModule):
@@ -176,6 +177,7 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
     radius_overshoot: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         realization: PoissonClockRealization,
@@ -187,10 +189,6 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
         energy_cost_density: ArrayLike,
         radius_overshoot: float = 0.05,
     ) -> None:
-        if not isinstance(realization, PoissonClockRealization):
-            raise TypeError("realization must be PoissonClockRealization.")
-        if not isinstance(rate_law, ClassicalNucleationRateLaw):
-            raise TypeError("rate_law must be ClassicalNucleationRateLaw.")
         measures = np.asarray(channel_measures)
         component_cost = np.asarray(component_cost_density)
         energy_cost = np.asarray(energy_cost_density)
@@ -337,6 +335,7 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
         )
         return candidate_state, proposal
 
+    @checked
     def transact(
         self,
         state: NucleationClockState,
@@ -353,8 +352,6 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "state and candidate_state must be NucleationClockState values."
             )
-        if not isinstance(proposal, NucleationProposal):
-            raise TypeError("proposal must be a NucleationProposal.")
         if (
             state.state_id != self.plan_id
             or candidate_state.state_id != self.plan_id

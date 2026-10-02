@@ -37,6 +37,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._cochain_pic_field import _structured_pic_bridge
 from ._maxwell import (
     CompatibleMaxwellState,
@@ -102,6 +103,7 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maxwell: PreparedCompatibleMaxwell,
@@ -113,10 +115,6 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
     ) -> None:
-        if not isinstance(maxwell, PreparedCompatibleMaxwell):
-            raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
-        if not isinstance(transfer, PreparedPICParticleCochainTransfer):
-            raise TypeError("transfer must be a prepared PIC transfer.")
         if transfer.bridge.bridge_id != _structured_pic_bridge(maxwell).bridge_id:
             raise ValueError("Semi-implicit PIC transfer and Maxwell bridge differ.")
         theta_ = float(theta)

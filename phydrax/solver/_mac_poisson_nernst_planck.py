@@ -33,6 +33,7 @@ from ..equations._electrochemistry import (
     ElectrolyteTransportParameters,
     FARADAY_CONSTANT,
 )
+from ..typing import checked
 from ._mac_electrostatic import MACElectrostaticPlan, MACElectrostaticResult
 
 
@@ -78,6 +79,7 @@ class MACPoissonNernstPlanckPlan(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         electrostatic: MACElectrostaticPlan,
@@ -88,12 +90,6 @@ class MACPoissonNernstPlanckPlan(StrictModule, NonTrainableState):
         fixed_charge: ArrayLike = 0.0,
         energy_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(electrostatic, MACElectrostaticPlan):
-            raise TypeError("electrostatic must be MACElectrostaticPlan.")
-        if not isinstance(closure, AbstractElectrochemicalClosure):
-            raise TypeError("closure must implement AbstractElectrochemicalClosure.")
-        if not isinstance(parameters, ElectrolyteTransportParameters):
-            raise TypeError("parameters must be ElectrolyteTransportParameters.")
         if closure.schema.schema_id != parameters.schema.schema_id:
             raise ValueError("Electrochemical closure and parameters schemas differ.")
         fixed = jnp.broadcast_to(

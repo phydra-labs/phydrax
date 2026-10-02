@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleDiscretization
 
 
@@ -129,9 +130,8 @@ class PreparedRadialShellMesh(AbstractPreparedParticleInternalMesh):
     geometry_exponent: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: RadialShellMeshPlan, /) -> None:
-        if not isinstance(plan, RadialShellMeshPlan):
-            raise TypeError("plan must be a RadialShellMeshPlan.")
         exponent = {
             ParticleInternalGeometry.SLAB: 0,
             ParticleInternalGeometry.CYLINDER: 1,
@@ -199,6 +199,7 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
     front_count: int = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         owner_indices: ArrayLike,
@@ -220,8 +221,6 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
             or len(set(int(value) for value in owners)) != owners.size
         ):
             raise ValueError("owner_indices must be unique nonnegative integers.")
-        if not isinstance(mesh, AbstractParticleInternalMeshPlan):
-            raise TypeError("mesh must be an AbstractParticleInternalMeshPlan.")
         if species <= 0 or fronts < 0:
             raise ValueError(
                 "species_count must be positive and front_count nonnegative."
@@ -257,13 +256,10 @@ class PreparedParticleInternalBatch(StrictModule, NonTrainableState):
     active: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: ParticleInternalBatchPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, ParticleInternalBatchPlan):
-            raise TypeError("plan must be a ParticleInternalBatchPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if np.any(np.asarray(plan.owner_indices) >= particles.capacity):
             raise ValueError("Particle-internal owner index exceeds particle capacity.")
         self.plan = plan

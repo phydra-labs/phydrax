@@ -25,6 +25,7 @@ from ..equations._chemical_mechanism import (
 from ..equations._chemical_rates import ChemicalRateKind, ChemicalRateRuntime
 from ..equations._chemical_species import ChemicalPhaseKind
 from ..equations._electrochemistry import FARADAY_CONSTANT
+from ..typing import checked
 
 
 class ReactiveElectrodeState(StrictModule):
@@ -65,6 +66,7 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
     boundary_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -74,8 +76,6 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
         capacitance_per_area: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         indices = np.asarray(boundary_node_indices)
         measures = np.asarray(face_measures, dtype=np.float64)
         electrons = np.asarray(electron_transfer)

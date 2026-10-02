@@ -24,6 +24,7 @@ from ...equations._peng_robinson import (
     peng_robinson_roots,
     PengRobinsonResidualHelmholtzTerm,
 )
+from ...typing import checked
 
 
 class GasStation(StrictModule):
@@ -183,16 +184,13 @@ class CompressorPlan(StrictModule):
     performance_map: CompressorMapPlan
     compressor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
         performance_map: CompressorMapPlan,
         /,
     ) -> None:
-        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
-            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
-        if not isinstance(performance_map, CompressorMapPlan):
-            raise TypeError("performance_map must be CompressorMapPlan.")
         self.thermodynamics = thermodynamics
         self.performance_map = performance_map
         self.compressor_id = canonical_fingerprint(

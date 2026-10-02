@@ -46,7 +46,7 @@ from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient2d, orient3d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import Bool, Dim, Float, Identifier, Int32, Int64, Size
+from ..typing import Bool, checked, Dim, Float, Identifier, Int32, Int64, Size
 
 
 MaskedSimplexCellKind: TypeAlias = Literal["triangle", "tetrahedron"]
@@ -531,6 +531,7 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
     clocks: Array
     counters: Array
 
+    @checked
     def __init__(
         self,
         mesh: MaskedSimplexMesh,
@@ -558,8 +559,6 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
         clocks: ArrayLike,
         counters: ArrayLike,
     ) -> None:
-        if not isinstance(mesh, MaskedSimplexMesh):
-            raise TypeError("mesh must be MaskedSimplexMesh.")
         cells, vertices = mesh.cell_capacity, mesh.vertex_capacity
         width = mesh.dimension + 1
         specification = {

@@ -48,7 +48,7 @@ from ..discretization.spectral._dealias import (
 )
 from ..discretization.spectral._incompressible import PeriodicLerayProjector
 from ..equations._les_closures import LESParameterProvenance, ResolvedLESFilter
-from ..typing import parse
+from ..typing import checked, parse
 from ._dataset import TrainOnlyNormalizer
 from ._les import LESStressConvention
 from ._state import _declared_dimension, FlowStateSchema
@@ -215,9 +215,8 @@ class _AbstractLearnedClosureBinding(StrictModule):
             evidence_tolerance=evidence_tolerance,
         )
 
+    @checked
     def _validate_schema(self, schema: FlowStateSchema) -> None:
-        if not isinstance(schema, FlowStateSchema):
-            raise TypeError("schema must be a FlowStateSchema.")
         if schema.schema_id != self.schema_id:
             raise ValueError(
                 "Learned closure binding schema identity does not match deployment."
@@ -348,9 +347,8 @@ class TrainableLearnedClosureBinding(_AbstractLearnedClosureBinding):
 
     predictor: Callable = parameter_field()
 
+    @checked
     def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /) -> None:
-        if not isinstance(source, LearnedClosureBindingPlan):
-            raise TypeError("source must be a LearnedClosureBindingPlan.")
         self.predictor = trainable_provider(predictor)
         self.deployment_kind = source.deployment_kind
         self.schema_id = source.schema_id
@@ -587,6 +585,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
     differentiation_semantics: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         feature_schema: LearnedStressFeatureSchema,
@@ -600,14 +599,6 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         energy_policy: StressEnergyPolicy = "signed",
         maximum_backscatter_fraction: float | None = None,
     ) -> None:
-        if not isinstance(feature_schema, LearnedStressFeatureSchema):
-            raise TypeError("feature_schema must be a LearnedStressFeatureSchema.")
-        if not isinstance(output_contract, LearnedStressOutputContract):
-            raise TypeError("output_contract must be a LearnedStressOutputContract.")
-        if not isinstance(resolved_filter, ResolvedLESFilter):
-            raise TypeError("resolved_filter must be a ResolvedLESFilter.")
-        if not isinstance(parameter_provenance, LESParameterProvenance):
-            raise TypeError("parameter_provenance must be LESParameterProvenance.")
         artifact = str(model_artifact_id).strip()
         normalizer = str(normalizer_id).strip()
         policy = str(energy_policy).strip()
@@ -672,6 +663,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         predictor: Callable,
@@ -691,8 +683,6 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
 
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
-        if not isinstance(normalizer, TrainOnlyNormalizer):
-            raise TypeError("normalizer must be a TrainOnlyNormalizer.")
         artifact = str(model_artifact_id).strip()
         target = str(target_id).strip()
         units = str(output_units).strip()
@@ -751,6 +741,7 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
     differentiation_semantics: BranchDifferentiationPolicy = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -770,8 +761,6 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
         valid: ArrayLike,
         plan: LearnedStressBindingPlan,
     ) -> None:
-        if not isinstance(plan, LearnedStressBindingPlan):
-            raise TypeError("plan must be a LearnedStressBindingPlan.")
         self.raw_local_transfer = jnp.asarray(raw_local_transfer)
         self.selected_local_transfer = jnp.asarray(selected_local_transfer)
         self.raw_forward_transfer = jnp.asarray(raw_forward_transfer)
@@ -830,6 +819,7 @@ class LearnedStressResult(StrictModule, NonTrainableState):
     derivative_contract: DerivativeContract
     derivative_valid: Array
 
+    @checked
     def __init__(
         self,
         stress: ArrayLike,
@@ -840,12 +830,6 @@ class LearnedStressResult(StrictModule, NonTrainableState):
         derivative_valid: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(evidence, LearnedStressEvidence):
-            raise TypeError("evidence must be LearnedStressEvidence.")
-        if not isinstance(header, AdmissibilityHeader):
-            raise TypeError("header must be an AdmissibilityHeader.")
-        if not isinstance(derivative_contract, DerivativeContract):
-            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.stress = jnp.asarray(stress)
         self.local_transfer = jnp.asarray(local_transfer)
         self.evidence = evidence
@@ -875,6 +859,7 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
     port_binding: PortBindingEvidence | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         predictor: Callable,
@@ -886,10 +871,6 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
     ) -> None:
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
-        if not isinstance(normalizer, TrainOnlyNormalizer):
-            raise TypeError("normalizer must be a TrainOnlyNormalizer.")
-        if not isinstance(plan, LearnedStressBindingPlan):
-            raise TypeError("plan must be a LearnedStressBindingPlan.")
         site = "PreparedLearnedStressBinding"
         feature_port = plan.feature_schema.value_port()
         stress_port = plan.output_contract.value_port()
@@ -1227,6 +1208,7 @@ class SpectralDriftResult(StrictModule, NonTrainableState):
     evidence: SpectralDriftEvidence
     fallback: SpectralFallbackArtifact
 
+    @checked
     def __init__(
         self,
         drift: ArrayLike,
@@ -1234,10 +1216,6 @@ class SpectralDriftResult(StrictModule, NonTrainableState):
         fallback: SpectralFallbackArtifact,
         /,
     ) -> None:
-        if not isinstance(evidence, SpectralDriftEvidence):
-            raise TypeError("evidence must be SpectralDriftEvidence.")
-        if not isinstance(fallback, SpectralFallbackArtifact):
-            raise TypeError("fallback must be SpectralFallbackArtifact.")
         self.drift = jnp.asarray(drift)
         self.evidence = evidence
         self.fallback = fallback
@@ -1260,6 +1238,7 @@ class PreparedSpectralDriftHook(StrictModule):
     evidence_tolerance: float = eqx.field(static=True)
     hook_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binding: _AbstractLearnedClosureBinding,
@@ -1271,17 +1250,6 @@ class PreparedSpectralDriftHook(StrictModule):
         energy_policy: SpectralEnergyPolicy,
         evidence_tolerance: float,
     ) -> None:
-        if not isinstance(binding, _AbstractLearnedClosureBinding):
-            raise TypeError(
-                "binding must be a LearnedClosureBindingPlan or "
-                "TrainableLearnedClosureBinding."
-            )
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be a PeriodicLerayProjector.")
-        if not isinstance(hermitian_coordinates, HermitianSpectralCoordinates):
-            raise TypeError("hermitian_coordinates must be HermitianSpectralCoordinates.")
-        if not isinstance(dealiasing, PreparedDealiasingPlan):
-            raise TypeError("dealiasing must be a PreparedDealiasingPlan.")
         if isinstance(dealiasing.plan, OversamplingDealiasingPlan):
             raise ValueError(
                 "Oversampling dealiasing cannot serve as a learned spectral drift "

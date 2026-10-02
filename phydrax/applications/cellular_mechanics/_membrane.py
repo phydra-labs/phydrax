@@ -51,6 +51,7 @@ from ...geometry.multiregion_surface import (
     SurfaceEventPolicy,
 )
 from ...sparse import EdgeRelation, route_reduce
+from ...typing import checked
 
 
 class BiomembraneState(StrictModule):
@@ -769,6 +770,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
     rng_tag: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: BiomembranePlan,
@@ -778,8 +780,6 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         reference_face_area: ArrayLike | None = None,
         remesh_topology: MultiRegionSurfaceTopology | None = None,
     ) -> None:
-        if not isinstance(plan, BiomembranePlan):
-            raise TypeError("plan must be BiomembranePlan.")
         raw = np.asarray(reference_positions)
         if raw.shape != (plan.vertex_count, 3):
             raise ValueError("reference_positions must have shape (vertex_count, 3).")
@@ -916,9 +916,8 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                 )
         return BiomembraneState(coordinates, mass, self.prepared_id)
 
+    @checked
     def _validate_state(self, state: BiomembraneState, /) -> BiomembraneState:
-        if not isinstance(state, BiomembraneState):
-            raise TypeError("state must be BiomembraneState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("state belongs to a different membrane preparation.")
         if state.positions.shape != (self.plan.vertex_count, 3):
@@ -1434,6 +1433,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def couple_immersed_boundary(
         self,
         state: BiomembraneState,
@@ -1447,8 +1447,6 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         fluid_mask: ArrayLike | None = None,
     ) -> BiomembraneFluidCouplingResult:
         values = self._validate_state(state)
-        if not isinstance(forcing, ImmersedBoundaryForcingPlan):
-            raise TypeError("forcing must be ImmersedBoundaryForcingPlan.")
         velocity = jnp.asarray(marker_velocity, dtype=values.positions.dtype)
         if velocity.shape != values.positions.shape:
             raise ValueError("marker_velocity must match membrane positions.")
@@ -1724,6 +1722,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             proposal_id,
         )
 
+    @checked
     def evaluate_remesh(
         self,
         proposal: BiomembraneRemeshProposal,
@@ -1734,8 +1733,6 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         maximum_relative_energy_jump: float = 0.25,
         conservation_tolerance: float = 1.0e-10,
     ) -> BiomembraneRemeshEvidence:
-        if not isinstance(proposal, BiomembraneRemeshProposal):
-            raise TypeError("proposal must be BiomembraneRemeshProposal.")
         if proposal.source.prepared_id != self.prepared_id:
             raise ValueError("proposal source does not match this preparation.")
         limits = tuple(
@@ -1857,16 +1854,13 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             proposal.proposal_id,
         )
 
+    @checked
     def commit_remesh(
         self,
         proposal: BiomembraneRemeshProposal,
         evidence: BiomembraneRemeshEvidence,
         /,
     ) -> BiomembraneRemeshResult:
-        if not isinstance(proposal, BiomembraneRemeshProposal):
-            raise TypeError("proposal must be BiomembraneRemeshProposal.")
-        if not isinstance(evidence, BiomembraneRemeshEvidence):
-            raise TypeError("evidence must be BiomembraneRemeshEvidence.")
         if (
             proposal.source.prepared_id != self.prepared_id
             or evidence.proposal_id != proposal.proposal_id

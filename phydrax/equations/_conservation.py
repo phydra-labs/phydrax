@@ -72,6 +72,7 @@ from ..discretization.spectral import (
     SpectralConservationMethodPlan,
     TensorSpectralDiscretization,
 )
+from ..typing import checked
 from ._entropy_pair import ConvexEntropyPair
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
@@ -147,6 +148,7 @@ class ConservationProblemIR(StrictModule):
     field_name: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -169,8 +171,6 @@ class ConservationProblemIR(StrictModule):
         field = str(field_name)
         if not name_ or not field:
             raise ValueError("Conservation problem and field names must be non-empty.")
-        if not isinstance(system, AbstractConservationSystem):
-            raise TypeError("system must be an AbstractConservationSystem.")
         if boundaries is not None and not isinstance(
             boundaries,
             (

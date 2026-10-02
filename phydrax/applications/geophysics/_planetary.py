@@ -15,6 +15,7 @@ import phydrax.linalg as la
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...interchange import ReferenceBodyContract
+from ...typing import checked
 
 
 class RadialBodyModel(StrictModule, NonTrainableState):
@@ -27,6 +28,7 @@ class RadialBodyModel(StrictModule, NonTrainableState):
     thermal_conductivity_W_m_K: Array
     body: ReferenceBodyContract
 
+    @checked
     def __init__(
         self,
         radius_m: ArrayLike,
@@ -51,8 +53,6 @@ class RadialBodyModel(StrictModule, NonTrainableState):
                 thermal_conductivity_W_m_K,
             )
         )
-        if not isinstance(body, ReferenceBodyContract):
-            raise TypeError("Radial model requires ReferenceBodyContract.")
         if (
             radius.ndim != 1
             or radius.size < 3
@@ -197,9 +197,8 @@ class RadialThermalConductionPlan(StrictModule, NonTrainableState):
     cell_volume_m3: Array
     interface_area_m2: Array
 
+    @checked
     def __init__(self, model: RadialBodyModel, /) -> None:
-        if not isinstance(model, RadialBodyModel):
-            raise TypeError("Radial thermal conduction requires RadialBodyModel.")
         radius = np.asarray(model.radius_m)
         boundaries = np.empty(radius.size + 1)
         boundaries[1:-1] = 0.5 * (radius[:-1] + radius[1:])

@@ -32,6 +32,7 @@ from ..algebraic._exact import (
     PreparedExactSymbolic,
 )
 from ..algebraic._system import SparsePolynomialSupport
+from ..typing import checked
 from ._types import (
     AbstractExternalBackend,
     BackendAvailability,
@@ -70,6 +71,7 @@ class Macaulay2Environment(StrictModule):
     worker_sha256: str = eqx.field(static=True)
     environment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         executable: PinnedExecutable,
@@ -78,8 +80,6 @@ class Macaulay2Environment(StrictModule):
         installation_root: str | Path | None = None,
         installation_inventory: Sequence[tuple[str, str]] = (),
     ) -> None:
-        if not isinstance(executable, PinnedExecutable):
-            raise TypeError("executable must be a PinnedExecutable.")
         inventory = tuple(
             (_safe_inventory_path(path), _sha256_text(digest, "installation digest"))
             for path, digest in installation_inventory
@@ -139,9 +139,8 @@ class Macaulay2Provider(AbstractExternalBackend):
     environment: Macaulay2Environment = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, environment: Macaulay2Environment, /) -> None:
-        if not isinstance(environment, Macaulay2Environment):
-            raise TypeError("environment must be Macaulay2Environment.")
         self.environment = environment
         self.provider_id = canonical_fingerprint(
             {

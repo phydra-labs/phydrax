@@ -29,6 +29,7 @@ from ...linalg import (
     PreconditionerCostEstimate,
     PreconditionerProperties,
 )
+from ...typing import checked
 from ._generic import FiniteElementDiscretization
 
 
@@ -160,6 +161,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
     local_solvers: tuple[AbstractPreconditioner, ...]
     builder_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FiniteElementPatchPlan,
@@ -169,10 +171,6 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
         *,
         builder_id: str | None = None,
     ) -> None:
-        if not isinstance(plan, FiniteElementPatchPlan):
-            raise TypeError("plan must be FiniteElementPatchPlan.")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         width = plan.gathers.shape[1]
         if isinstance(local_action, tuple):
             solvers = tuple(local_action)
@@ -348,6 +346,7 @@ class FiniteElementPatchPreconditionerBuilder(AbstractPreconditionerBuilder):
     properties: PreconditionerProperties | None
     _builder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FiniteElementPatchPlan,
@@ -356,8 +355,6 @@ class FiniteElementPatchPreconditionerBuilder(AbstractPreconditionerBuilder):
         local_solver: AbstractPreconditionerBuilder | None = None,
         properties: PreconditionerProperties | None = None,
     ) -> None:
-        if not isinstance(plan, FiniteElementPatchPlan):
-            raise TypeError("plan must be a FiniteElementPatchPlan.")
         solver = (
             DenseInversePreconditionerBuilder() if local_solver is None else local_solver
         )

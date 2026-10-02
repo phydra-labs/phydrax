@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
+from ...typing import checked
 from ._core import ParticleDiscretization
 from ._dem_contact import (
     DEMContactBatch,
@@ -69,6 +70,7 @@ class SuperquadricDEMPlan(StrictModule, NonTrainableState):
     wall_geometry: SuperquadricTriangleContactPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         shapes: SuperquadricSetPlan,
@@ -80,12 +82,6 @@ class SuperquadricDEMPlan(StrictModule, NonTrainableState):
         wall_geometry: SuperquadricTriangleContactPlan | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(shapes, SuperquadricSetPlan):
-            raise TypeError("shapes must be a SuperquadricSetPlan.")
-        if not isinstance(geometry, SuperquadricContactPlan):
-            raise TypeError("geometry must be a SuperquadricContactPlan.")
-        if not isinstance(contact, DEMContactModelPlan):
-            raise TypeError("contact must be a DEMContactModelPlan.")
         walls_ = tuple(walls)
         if any(not isinstance(value, TriangleWallPlan) for value in walls_):
             raise TypeError("walls must contain TriangleWallPlan values.")
@@ -115,6 +111,7 @@ class SuperquadricDEMPlan(StrictModule, NonTrainableState):
         if not self.plan_id:
             raise ValueError("plan_id must be nonempty.")
 
+    @checked
     def prepare(
         self,
         particles: ParticleDiscretization,
@@ -125,10 +122,6 @@ class SuperquadricDEMPlan(StrictModule, NonTrainableState):
         execution: ParticleExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
     ) -> PreparedSuperquadricDEMDynamics:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(neighborhood, AbstractParticleNeighborhoodPlan):
-            raise TypeError("neighborhood must be an AbstractParticleNeighborhoodPlan.")
         shapes = self.shapes.prepare(particles)
         bodies = self.shapes.rigid_body_plan(particles).prepare(particles)
         prepared_neighborhood = neighborhood.prepare(particles)
@@ -209,6 +202,7 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
     precision: ParticlePrecisionPolicy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bodies: PreparedRigidBodySet,
@@ -234,8 +228,6 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
         wall_values = tuple(walls)
         if any(not isinstance(value, PreparedTriangleWall) for value in wall_values):
             raise TypeError("walls must contain PreparedTriangleWall values.")
-        if not isinstance(wall_geometry_plan, SuperquadricTriangleContactPlan):
-            raise TypeError("wall_geometry_plan must be SuperquadricTriangleContactPlan.")
         self.geometry_plan = geometry_plan
         self.walls = wall_values
         self.wall_geometry_plan = wall_geometry_plan
@@ -285,6 +277,7 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def evaluate(
         self,
         state: SuperquadricDEMState,
@@ -293,8 +286,6 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
         *,
         step_index: Array = _DEFAULT_STEP_INDEX,
     ) -> SuperquadricDEMEvaluation:
-        if not isinstance(state, SuperquadricDEMState):
-            raise TypeError("state must be a SuperquadricDEMState.")
         kinematics = state.kinematics
         neighborhood = self.neighborhood.build(kinematics.position)
         pairs = neighborhood.pair_relation

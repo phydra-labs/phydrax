@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._model import AbstractComponentSlot
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class TransportProperties(StrictModule):
@@ -203,6 +204,7 @@ class PrandtlTransport(AbstractTransportClosure):
     specific_heat_cp: float = eqx.field(static=True)
     prandtl_number: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         viscosity: AbstractTransportClosure,
@@ -212,8 +214,6 @@ class PrandtlTransport(AbstractTransportClosure):
     ) -> None:
         cp = float(specific_heat_cp)
         prandtl = float(prandtl_number)
-        if not isinstance(viscosity, AbstractTransportClosure):
-            raise TypeError("viscosity must be an AbstractTransportClosure.")
         if not np.isfinite(cp) or not np.isfinite(prandtl) or cp <= 0.0 or prandtl <= 0.0:
             raise ValueError("Prandtl transport requires positive finite cp and Pr.")
         self.viscosity = viscosity

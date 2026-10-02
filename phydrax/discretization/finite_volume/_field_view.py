@@ -36,6 +36,7 @@ from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import linear_apply, linear_transpose_apply
+from ...typing import checked
 from .._simplicial_locator import (
     AbstractCellLocator,
     CellLocationStatus,
@@ -382,6 +383,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
     _cell_count: int = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         locator: AbstractCellLocator,
@@ -391,8 +393,6 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         *,
         field_space_id: str,
     ) -> None:
-        if not isinstance(locator, AbstractCellLocator):
-            raise TypeError("locator must be an AbstractCellLocator.")
         if not isinstance(
             discretization,
             (UnstructuredFiniteVolumeDiscretization, TriangleFiniteVolumeDiscretization),

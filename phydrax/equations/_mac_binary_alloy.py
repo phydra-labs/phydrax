@@ -24,6 +24,7 @@ from ..discretization.finite_volume._mac_scalar import (
     MACScalarStepRestriction,
     PreparedMACScalarTransport,
 )
+from ..typing import checked
 from ._mac_enthalpy_porosity import CompiledMACEnthalpyPorosityDynamics
 from ._solid_liquid_phase_change import (
     BinaryAlloyEnthalpyState,
@@ -82,6 +83,7 @@ class CompiledMACBinaryAlloyDynamics(StrictModule, NonTrainableState):
     cell_size: int = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: CompiledMACEnthalpyPorosityDynamics,
@@ -89,12 +91,6 @@ class CompiledMACBinaryAlloyDynamics(StrictModule, NonTrainableState):
         solute_transport: PreparedMACScalarTransport,
         /,
     ) -> None:
-        if not isinstance(base, CompiledMACEnthalpyPorosityDynamics):
-            raise TypeError("base must be CompiledMACEnthalpyPorosityDynamics.")
-        if not isinstance(phase_diagram, BinaryAlloyPhaseDiagramPlan):
-            raise TypeError("phase_diagram must be BinaryAlloyPhaseDiagramPlan.")
-        if not isinstance(solute_transport, PreparedMACScalarTransport):
-            raise TypeError("solute_transport must be PreparedMACScalarTransport.")
         if (
             solute_transport.layout.operators.prepared_id
             != base.momentum.operators.prepared_id

@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 
+from ...typing import checked
 from ._first_order import (
     AbstractRiemannianOptimizer,
     RiemannianStepMetrics,
@@ -61,6 +62,7 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
     descent_tolerance: float = eqx.field(static=True)
     optimizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_geometry: ParameterGeometry,
@@ -69,8 +71,6 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
         line_search: ArmijoLineSearch | None = None,
         descent_tolerance: float = 1e-12,
     ) -> None:
-        if not isinstance(parameter_geometry, ParameterGeometry):
-            raise TypeError("parameter_geometry must be a ParameterGeometry.")
         tolerance = float(descent_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("descent_tolerance must be finite and non-negative.")
@@ -98,6 +98,7 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
             metrics=RiemannianStepMetrics(zero, zero, jnp.asarray(1.0), zero, zero),
         )
 
+    @checked
     def update(
         self,
         gradients: PyTree[Any],
@@ -108,8 +109,6 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
         value: Array | None = None,
         value_fn: Callable[[PyTree[Any]], Array] | None = None,
     ) -> tuple[PyTree[Array], RiemannianConjugateGradientState]:
-        if not isinstance(state, RiemannianConjugateGradientState):
-            raise TypeError("RiemannianConjugateGradient requires its matching state.")
         if value is None or value_fn is None:
             raise TypeError(
                 "RiemannianConjugateGradient.update requires value and value_fn."
@@ -231,11 +230,10 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
             metrics=metrics,
         )
 
+    @checked
     def step_metrics(
         self, state: RiemannianConjugateGradientState, /
     ) -> RiemannianStepMetrics:
-        if not isinstance(state, RiemannianConjugateGradientState):
-            raise TypeError("RiemannianConjugateGradient requires its matching state.")
         return state.metrics
 
 
@@ -272,6 +270,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
     descent_tolerance: float = eqx.field(static=True)
     optimizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_geometry: ParameterGeometry,
@@ -282,8 +281,6 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
         curvature_tolerance: float = 1e-10,
         descent_tolerance: float = 1e-12,
     ) -> None:
-        if not isinstance(parameter_geometry, ParameterGeometry):
-            raise TypeError("parameter_geometry must be a ParameterGeometry.")
         size = int(history_size)
         curvature = float(curvature_tolerance)
         descent = float(descent_tolerance)
@@ -449,6 +446,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
         )
         return _stack_history(s_slots), _stack_history(y_slots)
 
+    @checked
     def update(
         self,
         gradients: PyTree[Any],
@@ -459,8 +457,6 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
         value: Array | None = None,
         value_fn: Callable[[PyTree[Any]], Array] | None = None,
     ) -> tuple[PyTree[Array], RiemannianLBFGSState]:
-        if not isinstance(state, RiemannianLBFGSState):
-            raise TypeError("RiemannianLBFGS requires RiemannianLBFGSState.")
         if value is None or value_fn is None:
             raise TypeError("RiemannianLBFGS.update requires value and value_fn.")
         gradient = self.parameter_geometry.egrad_to_rgrad(parameters, gradients)
@@ -640,9 +636,8 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
             metrics=metrics,
         )
 
+    @checked
     def step_metrics(self, state: RiemannianLBFGSState, /) -> RiemannianStepMetrics:
-        if not isinstance(state, RiemannianLBFGSState):
-            raise TypeError("RiemannianLBFGS requires RiemannianLBFGSState.")
         return state.metrics
 
 

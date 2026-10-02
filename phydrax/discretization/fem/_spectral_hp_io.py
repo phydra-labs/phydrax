@@ -26,6 +26,7 @@ from ..._mesh_file_profiles import resolve_mesh_file_profile
 from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._cell_complex import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
@@ -472,6 +473,7 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
     report: FiniteElementMeshImportReport
     import_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -482,14 +484,8 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
         *,
         volume_groups: Mapping[str, Sequence[int]] | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
-        if not isinstance(coordinate_spec, CellGeometrySpec):
-            raise TypeError("coordinate_spec must be CellGeometrySpec.")
         volumes = _group_values({} if volume_groups is None else volume_groups)
         boundaries = _group_values(boundary_groups)
-        if not isinstance(report, FiniteElementMeshImportReport):
-            raise TypeError("report must be FiniteElementMeshImportReport.")
         if (
             report.block_names != tuple(block.name for block in mesh.blocks)
             or report.cell_kinds != tuple(block.cell_kind for block in mesh.blocks)

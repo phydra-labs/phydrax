@@ -19,7 +19,7 @@ from jaxtyping import PyTree
 import phydrax.linalg as la
 
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -479,9 +479,8 @@ class LocalRetraction(StrictModule):
     retraction_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, geometry: AbstractStateGeometry, base_point: ArrayLike, /) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("LocalRetraction geometry must be an AbstractStateGeometry.")
         base = jnp.asarray(base_point)
         membership = jnp.asarray(geometry.contains(base), dtype=jnp.bool_)
         if membership.shape != ():
@@ -1001,6 +1000,7 @@ class PointwiseStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: AbstractStateGeometry,
@@ -1011,8 +1011,6 @@ class PointwiseStateGeometry(AbstractStateGeometry):
         tangent_shape: Sequence[int] | None = None,
         geometry_id: str | None = None,
     ) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("Pointwise geometry must wrap an AbstractStateGeometry.")
         point = _role_shape(point_shape, "point_shape")
         local = point if local_shape is None else _role_shape(local_shape, "local_shape")
         tangent = (

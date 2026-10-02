@@ -25,6 +25,7 @@ from ..optim import (
     BranchCandidate,
     BranchNodeEvaluation,
 )
+from ..typing import checked
 from ._continuous_certification import ContinuousPathConstraintCertificate
 
 
@@ -167,6 +168,7 @@ class BoundedControlCertificatePlan(StrictModule, NonTrainableState):
     minimum_box_width: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         objective: Callable[[Array], Array],
@@ -198,10 +200,6 @@ class BoundedControlCertificatePlan(StrictModule, NonTrainableState):
             )
         if not callable(objective) or not callable(continuous_feasibility):
             raise TypeError("objective and continuous_feasibility must be callable.")
-        if not isinstance(relaxation, AbstractControlRelaxation):
-            raise TypeError("relaxation must be an AbstractControlRelaxation.")
-        if not isinstance(branch_policy, BranchAndBoundPolicy):
-            raise TypeError("branch_policy must be a BranchAndBoundPolicy.")
         width = float(minimum_box_width)
         if not np.isfinite(width) or width <= 0:
             raise ValueError("minimum_box_width must be positive and finite.")

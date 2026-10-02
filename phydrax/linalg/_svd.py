@@ -18,7 +18,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import AbstractLinearOperator, adjoint
 from ._policies import FailurePolicy, RankPolicy
@@ -40,6 +40,7 @@ class SVDProblem(StrictModule):
     operator: AbstractLinearOperator
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -47,8 +48,6 @@ class SVDProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("SVDProblem requires an unbatched operator.")
         source_dtype = _coordinate_dtype(operator.source)
@@ -321,6 +320,7 @@ class PreparedSVDSolve(StrictModule):
     state: DenseSVDState
     numeric_version: Array
 
+    @checked
     def __init__(
         self,
         problem: SVDProblem,
@@ -330,12 +330,6 @@ class PreparedSVDSolve(StrictModule):
         *,
         numeric_version: Any = 0,
     ) -> None:
-        if not isinstance(problem, SVDProblem):
-            raise TypeError("problem must be an SVDProblem.")
-        if not isinstance(plan, SVDSolvePlan):
-            raise TypeError("plan must be an SVDSolvePlan.")
-        if not isinstance(state, DenseSVDState):
-            raise TypeError("state must be a DenseSVDState.")
         if problem.problem_id != plan.problem_id:
             raise ValueError("Prepared SVD problem and plan IDs must match.")
         version = jnp.asarray(numeric_version, dtype=jnp.int32)

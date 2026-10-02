@@ -29,7 +29,7 @@ from ...stochastic import (
     MeanFieldBSDEControlAdapter,
     MeanFieldBSDEProblem,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 FROZEN_LAW_BEST_RESPONSE = "FROZEN_LAW_BEST_RESPONSE"
@@ -69,6 +69,7 @@ class FrozenLawBestResponseProblem(StrictModule):
     mean_field_control_optimum_claimed: bool = eqx.field(static=True)
     finite_population_game_claimed: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_problem: MeanFieldBSDEProblem,
@@ -78,10 +79,6 @@ class FrozenLawBestResponseProblem(StrictModule):
         supplied_law_id: str,
         problem_id: str,
     ) -> None:
-        if not isinstance(base_problem, MeanFieldBSDEProblem):
-            raise TypeError("base_problem must be a MeanFieldBSDEProblem.")
-        if not isinstance(adapter, MeanFieldBSDEControlAdapter):
-            raise TypeError("adapter must be a MeanFieldBSDEControlAdapter.")
         if base_problem.control_adapter is not adapter:
             raise ValueError(
                 "base_problem must carry the supplied control adapter by identity."

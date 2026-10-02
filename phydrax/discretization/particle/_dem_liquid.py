@@ -16,7 +16,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
     BagheriCapillaryBridgePlan,
@@ -234,6 +234,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         total = jnp.sum(film) + jnp.sum(reservoirs)
         return DEMLiquidState(film, reservoirs, zero, total, zero, jnp.asarray(True))
 
+    @checked
     def allocate(
         self,
         state: DEMLiquidState,
@@ -245,8 +246,6 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         particle_capacity: int,
         /,
     ) -> DEMLiquidAllocation:
-        if not isinstance(state, DEMLiquidState):
-            raise TypeError("state must be DEMLiquidState.")
         request = jnp.where(birth_candidates, requested_volume, 0.0)
         half_request = 0.5 * request
         requested_by_particle = (
@@ -283,6 +282,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         )
         return DEMLiquidAllocation(allocated, jnp.maximum(film, 0.0), successful)
 
+    @checked
     def advance(
         self,
         state: DEMLiquidState,
@@ -299,8 +299,6 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         *,
         additional_bridge_volume: ArrayLike = 0.0,
     ) -> tuple[DEMCohesionComponentHistory, DEMLiquidEvaluation]:
-        if not isinstance(component, DEMCohesionComponentHistory):
-            raise TypeError("component must be DEMCohesionComponentHistory.")
         release = jnp.where(released_volume > 0.0, released_volume, 0.0)
         returned = (
             jnp.zeros((particle_capacity,), dtype=release.dtype)
@@ -370,6 +368,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         )
         return next_component, evaluation
 
+    @checked
     def allocate_barriers(
         self,
         state: DEMLiquidState,
@@ -383,8 +382,6 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
     ) -> DEMBarrierLiquidAllocation:
         """Allocate simultaneous particle-wall births without ordering bias."""
 
-        if not isinstance(state, DEMLiquidState):
-            raise TypeError("state must be DEMLiquidState.")
         width = requested_volume.shape[0]
         expected = (width,)
         if (
@@ -476,6 +473,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
             successful,
         )
 
+    @checked
     def advance_barriers(
         self,
         state: DEMLiquidState,
@@ -494,8 +492,6 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
     ) -> DEMBarrierLiquidEvaluation:
         """Commit returns/evaporation and certify the full liquid inventory."""
 
-        if not isinstance(allocation, DEMBarrierLiquidAllocation):
-            raise TypeError("allocation must be DEMBarrierLiquidAllocation.")
         width = bridge_volume.shape[0]
         expected = (width,)
         if (

@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 class ActivationObservationStatus(IntFlag):
@@ -336,6 +337,7 @@ class ChordConductionVelocityPlan(StrictModule, NonTrainableState):
     activation_plan_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         activation_plan: ActivationObservationPlan,
@@ -344,8 +346,6 @@ class ChordConductionVelocityPlan(StrictModule, NonTrainableState):
         distance_mm: float,
         /,
     ) -> None:
-        if not isinstance(activation_plan, ActivationObservationPlan):
-            raise TypeError("activation_plan must be an ActivationObservationPlan.")
         source = int(source_node_id)
         target = int(target_node_id)
         if source == target:

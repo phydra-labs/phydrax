@@ -21,6 +21,7 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import checked
 from .._conservation_boundary import (
     AbstractConservationBoundary,
     ALEBoundaryContext,
@@ -128,6 +129,7 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule):
     closure: AbstractFaceClosurePlan | None
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: PiecewiseConstantReconstruction
@@ -147,10 +149,6 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule):
         ):
             raise TypeError(
                 "Unstructured FV reconstruction must be piecewise constant or prepared cell-polynomial."
-            )
-        if not isinstance(interface_solver, AbstractArbitraryNormalNumericalFluxPlan):
-            raise TypeError(
-                "Unstructured FV requires an arbitrary-normal numerical flux."
             )
         if closure is not None and not isinstance(closure, AbstractFaceClosurePlan):
             raise TypeError("closure must be an AbstractFaceClosurePlan or None.")
@@ -218,6 +216,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     source_id: str | None = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Any,
@@ -240,10 +239,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             raise TypeError(
                 "discretization must be explicit-face finite-volume geometry."
             )
-        if not isinstance(method, UnstructuredFiniteVolumeMethodPlan):
-            raise TypeError("method must be UnstructuredFiniteVolumeMethodPlan.")
-        if not isinstance(boundaries, UnstructuredFiniteVolumeBoundarySet):
-            raise TypeError("boundaries must be UnstructuredFiniteVolumeBoundarySet.")
         if boundaries.patch_names != discretization.boundary_patch_names:
             raise ValueError("Boundary patch names must match prepared mesh patches.")
         if (
@@ -710,6 +705,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             templates.append(template)
         return tuple(templates)
 
+    @checked
     def _validated_stage_average(
         self,
         content_state: Any,
@@ -722,8 +718,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 
         if not isinstance(content_state, FiniteVolumeConservativeContentState):
             raise TypeError("content_state must be FiniteVolumeConservativeContentState.")
-        if not isinstance(metrics, FiniteVolumeStageMetrics):
-            raise TypeError("metrics must be FiniteVolumeStageMetrics.")
         if content_state.precision.policy_id != self.precision.policy_id:
             raise ValueError("Stage content precision does not match the dynamics.")
         if content_state.topology_epoch_id != metrics.topology_epoch_id:
@@ -1344,6 +1338,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             topology_epoch_id=ledger.topology_epoch_id,
         )
 
+    @checked
     def zero_stage_ledger(
         self,
         metrics: FiniteVolumeStageMetrics,
@@ -1353,8 +1348,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     ) -> ConservationStageLedger:
         """Create a routed zero rate without invoking reconstruction or physics."""
 
-        if not isinstance(metrics, FiniteVolumeStageMetrics):
-            raise TypeError("metrics must be FiniteVolumeStageMetrics.")
         blocks = self._stage_rate_templates(metrics)
         ledger = ConservationStageLedger(
             blocks,

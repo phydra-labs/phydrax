@@ -18,6 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry
+from ..typing import checked
 from ._relativistic_radiation import GRGrayM1RadiationSystem
 
 
@@ -279,6 +280,7 @@ class GRGrayRadiationInteractionPlan(StrictModule, NonTrainableState):
     radiation_constant: float = eqx.field(static=True)
     interaction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         radiation: GRGrayM1RadiationSystem,
@@ -287,10 +289,6 @@ class GRGrayRadiationInteractionPlan(StrictModule, NonTrainableState):
         *,
         radiation_constant: float = 1.0,
     ) -> None:
-        if not isinstance(radiation, GRGrayM1RadiationSystem):
-            raise TypeError("radiation must be GRGrayM1RadiationSystem.")
-        if not isinstance(opacity, AbstractGRGrayOpacityPlan):
-            raise TypeError("opacity must implement AbstractGRGrayOpacityPlan.")
         constant = float(radiation_constant)
         if not np.isfinite(constant) or constant <= 0.0:
             raise ValueError("radiation_constant must be finite and positive.")
@@ -306,6 +304,7 @@ class GRGrayRadiationInteractionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def matter_exchange(
         self,
         energy_density: ArrayLike,
@@ -319,8 +318,6 @@ class GRGrayRadiationInteractionPlan(StrictModule, NonTrainableState):
         magnetic_squared: ArrayLike = 0.0,
         composition: ArrayLike | None = None,
     ) -> GRRadiationMatterExchange:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         energy = jnp.asarray(energy_density)
         flux_covector_ = jnp.asarray(flux_covector, dtype=energy.dtype)
         density = jnp.asarray(rest_mass_density, dtype=energy.dtype)

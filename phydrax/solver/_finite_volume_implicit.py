@@ -34,6 +34,7 @@ from ..nonlinear import (
     refresh_nonlinear,
     solve_prepared_nonlinear,
 )
+from ..typing import checked
 
 
 ImplicitFVDynamics = (
@@ -85,9 +86,8 @@ class _FiniteVolumeBackwardEulerResidual(StrictModule):
     def __init__(self, dynamics: ImplicitFVDynamics, /) -> None:
         self.dynamics = dynamics
 
+    @checked
     def __call__(self, candidate: Array, stage: FiniteVolumeImplicitStage, /) -> Array:
-        if not isinstance(stage, FiniteVolumeImplicitStage):
-            raise TypeError("Backward-Euler residual requires FiniteVolumeImplicitStage.")
         precision = self.dynamics.precision
         value = precision.storage(candidate)
         difference = precision.reduction(value) - precision.reduction(
@@ -288,6 +288,7 @@ class PreparedFiniteVolumeBackwardEulerStep(StrictModule):
     stage: FiniteVolumeImplicitStage
     nonlinear: PreparedNonlinearSolve = fixed_field()
 
+    @checked
     def __init__(
         self,
         plan: FiniteVolumeBackwardEulerPlan,
@@ -295,12 +296,6 @@ class PreparedFiniteVolumeBackwardEulerStep(StrictModule):
         nonlinear: PreparedNonlinearSolve,
         /,
     ) -> None:
-        if not isinstance(plan, FiniteVolumeBackwardEulerPlan):
-            raise TypeError("plan must be FiniteVolumeBackwardEulerPlan.")
-        if not isinstance(stage, FiniteVolumeImplicitStage):
-            raise TypeError("stage must be FiniteVolumeImplicitStage.")
-        if not isinstance(nonlinear, PreparedNonlinearSolve):
-            raise TypeError("nonlinear must be PreparedNonlinearSolve.")
         self.plan = plan
         self.stage = stage
         self.nonlinear = nonlinear

@@ -24,6 +24,7 @@ from ...dynamics import (
     DAEPort,
     DAEVariableBlock,
 )
+from ...typing import checked
 
 
 def _residual_numeric_id(semantic_id: str, parameters: object, /) -> str:
@@ -177,6 +178,7 @@ class ThermofluidComponent(StrictModule):
     ports: tuple[ThermofluidTypedPort, ...]
     component_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dae_component: DAEComponent,
@@ -185,8 +187,6 @@ class ThermofluidComponent(StrictModule):
         *,
         model_parameters: tuple[tuple[str, float | str], ...] = (),
     ) -> None:
-        if not isinstance(dae_component, DAEComponent):
-            raise TypeError("dae_component must be DAEComponent.")
         values = tuple(ports)
         if any(
             not isinstance(value, (ThermofluidPortSpec, HydraulicPortSpec))

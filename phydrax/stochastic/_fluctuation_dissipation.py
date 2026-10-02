@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._euler_maruyama import (
     _euler_maruyama_log_prob,
     _euler_maruyama_mean,
@@ -264,6 +264,7 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
     approximation_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: IsothermalPortHamiltonianDynamics,
@@ -271,8 +272,6 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
         *,
         approximation_id: str = "euler-maruyama",
     ) -> None:
-        if not isinstance(dynamics, IsothermalPortHamiltonianDynamics):
-            raise TypeError("dynamics must be IsothermalPortHamiltonianDynamics.")
         self.dynamics = dynamics
         self.state_shape = (dynamics.state_size,)
         self.noise_shape = (dynamics.state_size,)

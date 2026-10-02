@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
 from ...artifacts import ArtifactManifest
+from ...typing import checked
 from ._observations import (
     _host_vector,
     _identifiers,
@@ -585,6 +586,7 @@ class BatteryGroupSplit:
     model_selection_id: str
     split_id: str
 
+    @checked
     def __init__(
         self,
         records: Sequence[BatteryObservationRecord],
@@ -605,8 +607,6 @@ class BatteryGroupSplit:
             raise TypeError(
                 "Battery group splits accept battery observation records only."
             )
-        if not isinstance(pipeline_ids, BatteryPipelineIDs):
-            raise TypeError("pipeline_ids must be BatteryPipelineIDs.")
         record_ids = tuple(record.record_id for record in observations)
         if len(set(record_ids)) != len(record_ids):
             raise ValueError(
@@ -904,11 +904,10 @@ class BatteryChannelTransformation(StrictModule, NonTrainableState):
             training_record_ids=tuple(record.record_id for record in training),
         )
 
+    @checked
     def apply(self, record: BatteryTimeSeriesRecord, /) -> TransformedBatteryTimeSeries:
         """Apply fixed train statistics while preserving masks and canonical fills."""
 
-        if not isinstance(record, BatteryTimeSeriesRecord):
-            raise TypeError("record must be a BatteryTimeSeriesRecord.")
         if record.preprocessing_id != self.preprocessing_id:
             raise ValueError(
                 "Record preprocessing does not match the fitted transformation."

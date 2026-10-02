@@ -13,7 +13,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import fixed_field
-from ..typing import parse
+from ..typing import checked, parse
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import (
@@ -347,6 +347,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
     space: BlockSpace = fixed_field()
     __hash__ = object.__hash__
 
+    @checked
     def __init__(
         self,
         schur_operator: SchurComplementLinearOperator,
@@ -358,10 +359,6 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         space: BlockSpace | None = None,
         preconditioner_id: str | None = None,
     ) -> None:
-        if not isinstance(schur_operator, SchurComplementLinearOperator):
-            raise TypeError("schur_operator must be a SchurComplementLinearOperator.")
-        if not isinstance(schur_action, AbstractPreconditioner):
-            raise TypeError("schur_action must be an AbstractPreconditioner.")
         form = parse(form, BlockFactorizationForm, "form")
         pivot_action = schur_operator.inverse_action
         _validate_fixed_action(pivot_action, schur_operator.upper_block.target, "pivot")

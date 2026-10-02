@@ -30,7 +30,7 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.topology import gather_operator_graph_entities
 
-from .....typing import parse
+from .....typing import checked, parse
 from ._deeponet import (
     AbstractBasisTrunk,
     AbstractBranchEncoder,
@@ -328,6 +328,7 @@ class TopologyFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
     feature_name: str = eqx.field(static=True)
     evaluator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -336,8 +337,6 @@ class TopologyFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
         feature_name: str,
         evaluator_id: str,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be AbstractArrayModel.")
         if not feature_name or not evaluator_id:
             raise ValueError("Topology evaluator names must be nonempty.")
         self.model = model
@@ -835,6 +834,7 @@ class ProjectionBranchEncoder(AbstractBranchEncoder):
     coefficient_map: AbstractArrayModel | None
     latent_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frame: LearnedFunctionFrame,
@@ -844,8 +844,6 @@ class ProjectionBranchEncoder(AbstractBranchEncoder):
         coefficient_map: AbstractArrayModel | None = None,
         latent_size: int | None = None,
     ) -> None:
-        if not isinstance(frame, LearnedFunctionFrame):
-            raise TypeError("frame must be a LearnedFunctionFrame.")
         resolved_policy = FunctionProjectionPolicy() if policy is None else policy
         if not isinstance(resolved_policy, FunctionProjectionPolicy):
             raise TypeError("policy must be a FunctionProjectionPolicy or None.")
@@ -933,6 +931,7 @@ class FunctionFrameSource(StrictModule):
     projection_policy: FunctionProjectionPolicy
     coefficient_map: AbstractArrayModel | None
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -944,8 +943,6 @@ class FunctionFrameSource(StrictModule):
     ) -> None:
         if not name:
             raise ValueError("FunctionFrameSource name must be nonempty.")
-        if not isinstance(frame, LearnedFunctionFrame):
-            raise TypeError("frame must be LearnedFunctionFrame.")
         policy = (
             FunctionProjectionPolicy() if projection_policy is None else projection_policy
         )
@@ -1025,6 +1022,7 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
     coord_dim: int = eqx.field(static=True)
     latent_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -1043,8 +1041,6 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
         names = tuple(source.name for source in source_values)
         if len(set(names)) != len(names):
             raise ValueError("Function-frame source names must be unique.")
-        if not isinstance(target_frame, LearnedFunctionFrame):
-            raise TypeError("target_frame must be LearnedFunctionFrame.")
         branches = {
             source.name: ProjectionBranchEncoder(
                 source.frame,

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_index import PreparedTensorIndexSpace, TensorIndexLayout
 from ..spatial import SparseBlockTopologyPlan, SparseBlockTopologyState
 from ._collision import (
@@ -96,6 +97,7 @@ class SparseLatticeBoltzmannPlan(StrictModule, NonTrainableState):
     block_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         index_space: PreparedTensorIndexSpace,
@@ -107,10 +109,6 @@ class SparseLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         collision: LatticeBoltzmannCollisionPlan | None = None,
         precision: LatticeBoltzmannPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(index_space, PreparedTensorIndexSpace):
-            raise TypeError("index_space must be PreparedTensorIndexSpace.")
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be LatticeBoltzmannVelocitySet.")
         if velocity_set.dimension != len(index_space.axis_names):
             raise ValueError("Velocity-set and tensor-index dimensions must match.")
         collision_ = BGKCollisionPlan() if collision is None else collision
@@ -161,14 +159,13 @@ class PreparedSparseLatticeBoltzmann(StrictModule, NonTrainableState):
     coordinates: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SparseLatticeBoltzmannPlan,
         fluid_cell_ids: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, SparseLatticeBoltzmannPlan):
-            raise TypeError("plan must be SparseLatticeBoltzmannPlan.")
         cells = np.asarray(fluid_cell_ids)
         if cells.ndim != 1 or not np.issubdtype(cells.dtype, np.integer):
             raise TypeError("fluid_cell_ids must be a rank-1 integer array.")
@@ -526,9 +523,8 @@ class PreparedSparseLatticeBoltzmann(StrictModule, NonTrainableState):
             evidence=evidence,
         )
 
+    @checked
     def _validate_state(self, state: SparseLatticeBoltzmannState, /) -> None:
-        if not isinstance(state, SparseLatticeBoltzmannState):
-            raise TypeError("state must be SparseLatticeBoltzmannState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("Sparse LBM state belongs to another prepared plan.")
         if state.populations.shape != self.population_shape:

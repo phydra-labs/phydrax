@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._evidence import QualificationEvidence
 from ._reference import ReferenceArtifactManifest
 
@@ -186,6 +186,7 @@ class GeophysicalReferenceRecipe(StrictModule, NonTrainableState):
     maximum_samples: int = eqx.field(static=True)
     recipe_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference_kind: GeophysicalReferenceKind,
@@ -205,8 +206,6 @@ class GeophysicalReferenceRecipe(StrictModule, NonTrainableState):
         minimum_valid_samples: int = 1,
     ) -> None:
         reference_kind = parse(reference_kind, GeophysicalReferenceKind, "reference_kind")
-        if not isinstance(artifact, ReferenceArtifactManifest):
-            raise TypeError("Geophysical reference recipe requires an artifact manifest.")
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         standardized = (

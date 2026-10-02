@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.contact._kinematics import ContactKinematicsEpoch
+from ...typing import checked
 from ._materials import ContactMaterialPairTable
 
 
@@ -264,6 +265,7 @@ class ContactConeResult(StrictModule):
     contact_law_velocity: Array
     candidate_contact_law_velocity: Array
 
+    @checked
     def __init__(
         self,
         impulse: ArrayLike,
@@ -278,8 +280,6 @@ class ContactConeResult(StrictModule):
     ) -> None:
         accepted = jnp.asarray(impulse)
         post = jnp.asarray(post_relative_velocity, dtype=accepted.dtype)
-        if not isinstance(evidence, ContactConeEvidence):
-            raise TypeError("evidence must be ContactConeEvidence.")
         candidate = (
             accepted
             if candidate_impulse is None

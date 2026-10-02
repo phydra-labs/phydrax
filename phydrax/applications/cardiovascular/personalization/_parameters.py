@@ -20,6 +20,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
+from ....typing import checked
 from ....uq import AbstractBijector, ParameterSpace
 from .._quantities import CardiovascularQuantitySpec
 
@@ -145,6 +146,7 @@ class CardiacParameterSpec(StrictModule):
     shape: tuple[int, ...] = eqx.field(static=True)
     parameter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -158,14 +160,6 @@ class CardiacParameterSpec(StrictModule):
         identifiability: ParameterIdentifiability = ParameterIdentifiability.PRIMARY,
     ) -> None:
         name_ = _identifier(name, "parameter name")
-        if not isinstance(quantity, CardiovascularQuantitySpec):
-            raise TypeError("quantity must be a CardiovascularQuantitySpec.")
-        if not isinstance(transform, AbstractBijector):
-            raise TypeError("transform must implement AbstractBijector.")
-        if not isinstance(support, CardiacParameterSupport):
-            raise TypeError("support must be a CardiacParameterSupport.")
-        if not isinstance(prior, AbstractProbabilityLaw):
-            raise TypeError("prior must implement AbstractProbabilityLaw.")
         if not isinstance(subsystem, CardiacSubsystem):
             raise TypeError("subsystem must be a CardiacSubsystem.")
         if not isinstance(identifiability, ParameterIdentifiability):

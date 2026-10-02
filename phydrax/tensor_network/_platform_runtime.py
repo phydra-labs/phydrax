@@ -18,6 +18,7 @@ import numpy as np
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._platform_support import (
     _identifier,
     _nonnegative_integer,
@@ -161,6 +162,7 @@ class TensorNetworkCheckpointPublication(StrictModule, NonTrainableState):
 class TensorNetworkAcceptedCheckpointBoundary(NonTrainableState):
     """Host boundary that atomically publishes accepted runtime checkpoints only."""
 
+    @checked
     def __init__(
         self,
         root: str | Path,
@@ -175,8 +177,6 @@ class TensorNetworkAcceptedCheckpointBoundary(NonTrainableState):
             ProductionCaseManifest,
         )
 
-        if not isinstance(execution, TensorNetworkExecutionManifest):
-            raise TypeError("execution must be TensorNetworkExecutionManifest.")
         self.execution = execution
         self.case_manifest = ProductionCaseManifest(
             problem_id=execution.support.support_tuple_id,
@@ -308,6 +308,7 @@ class TensorNetworkReplayRecord(StrictModule, NonTrainableState):
     output_digest: str = eqx.field(static=True)
     replay_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         execution: TensorNetworkExecutionManifest,
@@ -318,8 +319,6 @@ class TensorNetworkReplayRecord(StrictModule, NonTrainableState):
         route_id: str,
         accepted_steps: int,
     ) -> None:
-        if not isinstance(execution, TensorNetworkExecutionManifest):
-            raise TypeError("execution must be TensorNetworkExecutionManifest.")
         checkpoint = _identifier(checkpoint_id, "checkpoint_id")
         route = _identifier(route_id, "route_id")
         steps = _nonnegative_integer(accepted_steps, "accepted_steps")
@@ -544,9 +543,8 @@ class TensorNetworkSupervisorState(StrictModule, NonTrainableState):
 class TensorNetworkRunSupervisor(NonTrainableState):
     """Finite host lifecycle; numerical operations remain caller-owned and never retry."""
 
+    @checked
     def __init__(self, execution: TensorNetworkExecutionManifest, /) -> None:
-        if not isinstance(execution, TensorNetworkExecutionManifest):
-            raise TypeError("execution must be TensorNetworkExecutionManifest.")
         self.execution = execution
         self._lock = threading.Lock()
         self._cancel = threading.Event()
@@ -624,11 +622,10 @@ class TensorNetworkRunSupervisor(NonTrainableState):
                 self.execution.manifest_id, self.state.detail
             )
 
+    @checked
     def record_checkpoint(
         self, publication: TensorNetworkCheckpointPublication, /
     ) -> TensorNetworkSupervisorState:
-        if not isinstance(publication, TensorNetworkCheckpointPublication):
-            raise TypeError("publication must be TensorNetworkCheckpointPublication.")
         if not publication.published or publication.record is None:
             raise TensorNetworkCheckpointError(
                 TensorNetworkFailure.CHECKPOINT_NOT_ACCEPTED,
@@ -649,11 +646,10 @@ class TensorNetworkRunSupervisor(NonTrainableState):
                 checkpoint_id=publication.record.checkpoint_id,
             )
 
+    @checked
     def complete(
         self, replay: TensorNetworkReplayRecord, /
     ) -> TensorNetworkSupervisorState:
-        if not isinstance(replay, TensorNetworkReplayRecord):
-            raise TypeError("replay must be TensorNetworkReplayRecord.")
         with self._lock:
             if self._state.status != TensorNetworkRunStatus.RUNNING:
                 raise RuntimeError("Only a running workflow can complete.")

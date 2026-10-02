@@ -18,6 +18,7 @@ from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import checked
 
 
 _DEFAULT_MAXIMUM_CONNECTIONS = 5_000_000
@@ -144,9 +145,8 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
     plan: ConicDensityFilterPlan
     operator: SparseLinearMap
 
+    @checked
     def __init__(self, plan: ConicDensityFilterPlan, /) -> None:
-        if not isinstance(plan, ConicDensityFilterPlan):
-            raise TypeError("plan must be a ConicDensityFilterPlan.")
         points = np.asarray(plan.coordinates, dtype=np.float64)
         measures = np.asarray(plan.measures, dtype=np.float64)
         sample_count = points.shape[0]
@@ -287,16 +287,13 @@ class DensityTransformPlan(StrictModule, NonTrainableState):
     filter: ConicDensityFilterPlan
     projection: TanhDensityProjectionPlan
 
+    @checked
     def __init__(
         self,
         filter: ConicDensityFilterPlan,
         projection: TanhDensityProjectionPlan,
         /,
     ) -> None:
-        if not isinstance(filter, ConicDensityFilterPlan):
-            raise TypeError("filter must be a ConicDensityFilterPlan.")
-        if not isinstance(projection, TanhDensityProjectionPlan):
-            raise TypeError("projection must be a TanhDensityProjectionPlan.")
         self.filter = filter
         self.projection = projection
 
@@ -311,16 +308,13 @@ class PreparedDensityTransform(StrictModule, NonTrainableState):
     plan: DensityTransformPlan
     filter: PreparedConicDensityFilter
 
+    @checked
     def __init__(
         self,
         plan: DensityTransformPlan,
         filter: PreparedConicDensityFilter,
         /,
     ) -> None:
-        if not isinstance(plan, DensityTransformPlan):
-            raise TypeError("plan must be a DensityTransformPlan.")
-        if not isinstance(filter, PreparedConicDensityFilter):
-            raise TypeError("filter must be a PreparedConicDensityFilter.")
         if filter.plan is not plan.filter:
             raise ValueError("Prepared filter and density-transform plan must match.")
         self.plan = plan

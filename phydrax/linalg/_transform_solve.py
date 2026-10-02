@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._matrix_functions import TransformDiagonalRepresentation
 from ._spaces import ArraySpace
 
@@ -35,6 +35,7 @@ class TransformDiagonalSolvePlan(StrictModule, NonTrainableState):
     zero_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         representation: TransformDiagonalRepresentation,
@@ -46,8 +47,6 @@ class TransformDiagonalSolvePlan(StrictModule, NonTrainableState):
         zero_tolerance: float = 1e-10,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(representation, TransformDiagonalRepresentation):
-            raise TypeError("representation must be TransformDiagonalRepresentation.")
         if not isinstance(representation.operator.source, ArraySpace) or not isinstance(
             representation.operator.target, ArraySpace
         ):
@@ -112,9 +111,8 @@ class PreparedTransformDiagonalSolve(StrictModule, NonTrainableState):
     nullspace_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TransformDiagonalSolvePlan, /) -> None:
-        if not isinstance(plan, TransformDiagonalSolvePlan):
-            raise TypeError("plan must be a TransformDiagonalSolvePlan.")
         diagonal = (plan.representation.modal_values + plan.diagonal_shift).reshape((-1,))
         nullspace = jnp.abs(diagonal) <= plan.zero_tolerance
         null_indices = np.flatnonzero(np.asarray(nullspace))

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..operators.quantum._abelian_charge import AbelianGroup
+from ..typing import checked
 from ._abelian import (
     AbelianLeg,
     AbelianTensor,
@@ -32,9 +33,8 @@ class FermionGrading(StrictModule):
     generator_parities: tuple[int, ...] = eqx.field(static=True)
     grading_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, group: AbelianGroup, generator_parities: Sequence[int], /) -> None:
-        if not isinstance(group, AbelianGroup):
-            raise TypeError("group must be AbelianGroup.")
         parities = tuple(generator_parities)
         if len(parities) != len(group.components) or any(
             value not in (0, 1) for value in parities
@@ -120,9 +120,8 @@ class GradedTensor(StrictModule):
     grading_id: str = eqx.field(static=True)
     graded_tensor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, tensor: AbelianTensor, legs: Sequence[GradedLeg], /) -> None:
-        if not isinstance(tensor, AbelianTensor):
-            raise TypeError("tensor must be AbelianTensor.")
         values = tuple(legs)
         if len(values) != len(tensor.layout.legs) or any(
             not isinstance(leg, GradedLeg) for leg in values

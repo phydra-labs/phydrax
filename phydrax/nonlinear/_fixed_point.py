@@ -34,6 +34,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     FixedPointProblem,
@@ -336,6 +337,7 @@ class FixedPointIteration(StrictModule):
             fixed_point=True,
         )
 
+    @checked
     def solve(
         self,
         problem: FixedPointProblem,
@@ -346,8 +348,6 @@ class FixedPointIteration(StrictModule):
         args: Any = None,
         iteration: IterationPlan | None = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, FixedPointProblem):
-            raise TypeError("problem must be a FixedPointProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
@@ -793,6 +793,7 @@ class SteffensenIteration(StrictModule):
             fixed_point=True,
         )
 
+    @checked
     def solve(
         self,
         problem: FixedPointProblem,
@@ -803,8 +804,6 @@ class SteffensenIteration(StrictModule):
         args: Any = None,
         iteration: IterationPlan | None = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, FixedPointProblem):
-            raise TypeError("problem must be FixedPointProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
@@ -1274,6 +1273,7 @@ class PicardIteration(StrictModule):
     def method_id(self) -> str:
         return self._method_id(None)
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -1284,8 +1284,6 @@ class PicardIteration(StrictModule):
         args: Any = None,
         iteration: IterationPlan | None = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")

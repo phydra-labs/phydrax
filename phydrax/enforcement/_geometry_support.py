@@ -24,6 +24,7 @@ from phydrax.geometry._capabilities import ClosestPointProvider
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class BoundarySide(str, Enum):
@@ -68,6 +69,7 @@ class BoundaryPatch(StrictModule, NonTrainableState):
     exact_to_physical: bool = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: DomainComponent,
@@ -84,8 +86,6 @@ class BoundaryPatch(StrictModule, NonTrainableState):
         physical_geometry_id: str | None = None,
         exact_to_physical: bool = False,
     ) -> None:
-        if not isinstance(component, DomainComponent):
-            raise TypeError("BoundaryPatch.component must be a DomainComponent.")
         variable_ = str(variable)
         if variable_ not in component.domain.labels:
             raise KeyError(f"Boundary variable {variable_!r} is outside the component.")
@@ -327,6 +327,7 @@ class BoundaryCover(StrictModule, NonTrainableState):
     evidence: BoundarySupportEvidence = eqx.field(static=True)
     cover_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         patches: Sequence[BoundaryPatch],
@@ -385,8 +386,6 @@ class BoundaryCover(StrictModule, NonTrainableState):
         }
         if junction_pairs | disjoint_pair_set != required_pairs:
             raise ValueError("BoundaryCover requires evidence for every patch pair.")
-        if not isinstance(evidence, BoundarySupportEvidence):
-            raise TypeError("BoundaryCover.evidence must be BoundarySupportEvidence.")
         expected_topology = tuple(
             patch.topology_certificate_id for patch in patches_
         ) + tuple(junction.topology_certificate_id for junction in junctions_)

@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.analytic import RigidFrame
+from ...typing import checked
 from ._sequential import PreparedSequentialOptics, SequentialOpticsPlan
 
 
@@ -273,6 +274,7 @@ class ParaxialOpticsPlan(StrictModule, NonTrainableState):
     maximum_angular_perturbation: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sequential_plan: SequentialOpticsPlan,
@@ -285,8 +287,6 @@ class ParaxialOpticsPlan(StrictModule, NonTrainableState):
         maximum_transverse_perturbation: float,
         maximum_angular_perturbation: float,
     ) -> None:
-        if not isinstance(sequential_plan, SequentialOpticsPlan):
-            raise TypeError("sequential_plan must be a SequentialOpticsPlan.")
         _validate_frame(input_frame, "input_frame")
         _validate_frame(output_frame, "output_frame")
         chief = _host_coordinates(chief_ray_coordinates, "chief_ray_coordinates")
@@ -377,13 +377,10 @@ class PreparedParaxialOptics(StrictModule, NonTrainableState):
     source_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: ParaxialOpticsPlan, differential_map: DifferentialRayMap, /
     ) -> None:
-        if not isinstance(plan, ParaxialOpticsPlan):
-            raise TypeError("plan must be a ParaxialOpticsPlan.")
-        if not isinstance(differential_map, DifferentialRayMap):
-            raise TypeError("differential_map must be a DifferentialRayMap.")
         if differential_map.source_prepared_id == "":
             raise ValueError("The differential map must identify its exact prescription.")
         if differential_map.input_frame_id != _frame_id(

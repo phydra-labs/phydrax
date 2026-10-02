@@ -52,6 +52,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 def _euclidean_norm(values: FaceVelocity, /) -> Array:
@@ -169,6 +170,7 @@ class MACVariationalViscosityPlan(StrictModule, NonTrainableState):
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         momentum: PreparedMACMomentumOperators,
@@ -177,8 +179,6 @@ class MACVariationalViscosityPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
     ) -> None:
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0 or iterations <= 0:

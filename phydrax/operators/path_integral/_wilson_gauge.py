@@ -23,6 +23,7 @@ from ...discretization._oriented_path import (
 )
 from ...graph import MatrixGaugeLinkSpace
 from ...metrix import SpecialUnitaryGroup, UnitaryGroup
+from ...typing import checked
 from ._lattice_action import AbstractIncrementalLatticeAction, LatticeActionEvidence
 
 
@@ -59,6 +60,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
     num_plaquettes: int = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         link_space: MatrixGaugeLinkSpace,
@@ -67,10 +69,6 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
         *,
         plaquette_couplings: ArrayLike,
     ) -> None:
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be MatrixGaugeLinkSpace.")
-        if not isinstance(boundaries, CellBoundaryPathPlan):
-            raise TypeError("boundaries must be CellBoundaryPathPlan.")
         if boundaries.paths.topology_id != link_space.topology.topology_id:
             raise ValueError("Wilson boundaries and link space must share one topology.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):

@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -43,6 +43,7 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
     kind: OrbitMeasurementKind = eqx.field(static=True)
     measurement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kind: OrbitMeasurementKind,
@@ -56,8 +57,6 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
         measurement_id: str,
     ) -> None:
         kind = parse(kind, OrbitMeasurementKind, "kind")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         times_host = np.asarray(times, dtype=np.float64)
         position_host = np.asarray(observer_position, dtype=np.float64)
         velocity_host = np.asarray(observer_velocity, dtype=np.float64)

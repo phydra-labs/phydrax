@@ -32,7 +32,7 @@ from ..linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 _DA_MOMENTUM = SampleAddress(
@@ -491,6 +491,7 @@ class DelayedAcceptanceHMCPlan(StrictModule, NonTrainableState):
     maximum_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: LearnedSupportTuple,
@@ -501,8 +502,6 @@ class DelayedAcceptanceHMCPlan(StrictModule, NonTrainableState):
         divergence_threshold: float = 1000.0,
         maximum_dimension: int = 4096,
     ) -> None:
-        if not isinstance(support, LearnedSupportTuple):
-            raise TypeError("support must be LearnedSupportTuple.")
         size = float(step_size)
         steps = int(leapfrog_steps)
         threshold = float(divergence_threshold)
@@ -989,6 +988,7 @@ class ScalarGaugeEquivariantFlow(AbstractGaugeEquivariantFlow):
     support_id: str = eqx.field(static=True)
     configuration_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: LearnedSupportTuple,
@@ -996,8 +996,6 @@ class ScalarGaugeEquivariantFlow(AbstractGaugeEquivariantFlow):
         *,
         scale: float,
     ) -> None:
-        if not isinstance(support, LearnedSupportTuple):
-            raise TypeError("support must be LearnedSupportTuple.")
         scale_ = float(scale)
         if not np.isfinite(scale_) or scale_ <= 0.0:
             raise ValueError("Gauge-equivariant scalar flow scale must be positive.")
@@ -1048,6 +1046,7 @@ class GaugeFlowProposalPlan(StrictModule, NonTrainableState):
     equivariance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: LearnedSupportTuple,
@@ -1056,8 +1055,6 @@ class GaugeFlowProposalPlan(StrictModule, NonTrainableState):
         maximum_dimension: int = 4096,
         equivariance_tolerance: float = 1e-6,
     ) -> None:
-        if not isinstance(support, LearnedSupportTuple):
-            raise TypeError("support must be LearnedSupportTuple.")
         maximum = int(maximum_dimension)
         tolerance = float(equivariance_tolerance)
         if maximum <= 0 or support.dimension > maximum:

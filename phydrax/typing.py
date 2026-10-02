@@ -33,6 +33,16 @@ PSD, ...) is not part of this language and stays with its scientific owner.
 explicit conversion and then validate, and `validate` checks every contract field
 of an opted-in module (``__strict_contract__ = True``). Opted-in modules are also
 checked, read-only, when constructed.
+
+`checked` applies the same checker to the annotated arguments of a function,
+method, or custom constructor. Signature inputs differ from stored fields:
+besides the forms above, nominal runtime classes are checked with `isinstance`
+and ``Callable`` annotations with `callable`, while ``Literal``/`Enum`
+selectors, ``Like`` and other conversion inputs, builtin scalars and
+containers, NumPy/JAX array types, and protocols stay static-only because their
+owner parses, converts, or normalizes them. Stored-field contracts keep the
+grammar above, so a constructor may accept a convertible input and store its
+canonical array.
 """
 
 from __future__ import annotations
@@ -94,6 +104,7 @@ from ._typing_plan import (
     Scope,
     validate_tree,
 )
+from ._typing_signature import checked
 
 
 _T = TypeVar("_T")
@@ -265,6 +276,7 @@ __all__ = [
     "VariadicDim",
     "as_array",
     "as_host_array",
+    "checked",
     "parse",
     "validate",
 ]

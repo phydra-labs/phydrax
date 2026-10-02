@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..uq._checkpoint import (
     pack_array_tree,
     read_checkpoint_archive,
@@ -219,6 +220,7 @@ class MarkerFlowReplayPlan(StrictModule, NonTrainableState):
         self.event_map_certified = bool(event_map_certified)
         self.pathwise_noise = bool(pathwise_noise)
 
+    @checked
     def replay(
         self,
         initial_state: object,
@@ -228,8 +230,6 @@ class MarkerFlowReplayPlan(StrictModule, NonTrainableState):
         *,
         initial_time: ArrayLike = 0.0,
     ) -> MarkerFlowReplayResult:
-        if not isinstance(record, MarkerFlowReplayRecord):
-            raise TypeError("record must be MarkerFlowReplayRecord.")
         if record.replay_id != self.replay_id:
             raise ValueError("Replay record belongs to another plan.")
         if not callable(step):

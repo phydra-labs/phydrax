@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import checked
 from .._abelian_charge import AbelianGroup
 from .._fermionic_fock import FermionModeOrder
 
@@ -291,6 +292,7 @@ class FixedAbelianChargeBasis(AbstractSectorBasis):
     charge_widths: tuple[int, ...] = eqx.field(static=True)
     maximum_local_dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         site_ids: Sequence[str],
@@ -308,10 +310,6 @@ class FixedAbelianChargeBasis(AbstractSectorBasis):
             tuple(tuple(int(charge) for charge in state) for state in site)
             for site in local_charge_vectors
         )
-        if not isinstance(group, AbelianGroup):
-            raise TypeError("group must be AbelianGroup.")
-        if not isinstance(resources, SectorBasisResourcePolicy):
-            raise TypeError("resources must be SectorBasisResourcePolicy.")
         if (
             not sites
             or any(not value for value in sites)
@@ -550,6 +548,7 @@ class FixedCardinalityFermionBasis(_FixedChargeCoordinateBasis):
     mode_order: FermionModeOrder = eqx.field(static=True)
     particle_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode_order: FermionModeOrder,
@@ -558,8 +557,6 @@ class FixedCardinalityFermionBasis(_FixedChargeCoordinateBasis):
         *,
         resources: SectorBasisResourcePolicy,
     ) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         particles = int(particle_count)
         if not 0 <= particles <= mode_order.mode_count:
             raise ValueError("particle_count is outside the fermion mode range.")

@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 FieldStatistics: TypeAlias = Literal["boson", "fermion", "ghost"]
@@ -177,6 +177,7 @@ class PropagatorSpec(StrictModule, NonTrainableState):
     residue: Array
     propagator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: FieldSpec,
@@ -185,8 +186,6 @@ class PropagatorSpec(StrictModule, NonTrainableState):
         mass: float = 0.0,
         residue: complex = 1.0,
     ) -> None:
-        if not isinstance(field, FieldSpec):
-            raise TypeError("field must be a FieldSpec.")
         mass_ = float(mass)
         residue_ = _finite_scalar(residue, "residue")
         if not np.isfinite(mass_) or mass_ < 0.0:
@@ -203,6 +202,7 @@ class PropagatorSpec(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         route: MomentumRoute,
@@ -210,8 +210,6 @@ class PropagatorSpec(StrictModule, NonTrainableState):
         *,
         regulator: RegulatorContract | None = None,
     ) -> Array:
-        if not isinstance(route, MomentumRoute):
-            raise TypeError("route must be a MomentumRoute.")
         momentum_squared = (
             jnp.vdot(route.momentum, route.momentum).real + route.frequency**2
         )
@@ -287,9 +285,8 @@ class VertexInsertion(StrictModule, NonTrainableState):
     label: str = eqx.field(static=True)
     rule: VertexRule
 
+    @checked
     def __init__(self, label: str, rule: VertexRule, /) -> None:
-        if not isinstance(rule, VertexRule):
-            raise TypeError("rule must be a VertexRule.")
         self.label = _identifier(label, "label")
         self.rule = rule
 
@@ -303,6 +300,7 @@ class PropagatorLine(StrictModule, NonTrainableState):
     target: str = eqx.field(static=True)
     route: MomentumRoute
 
+    @checked
     def __init__(
         self,
         label: str,
@@ -312,10 +310,6 @@ class PropagatorLine(StrictModule, NonTrainableState):
         route: MomentumRoute,
         /,
     ) -> None:
-        if not isinstance(propagator, PropagatorSpec):
-            raise TypeError("propagator must be a PropagatorSpec.")
-        if not isinstance(route, MomentumRoute):
-            raise TypeError("route must be a MomentumRoute.")
         self.label = _identifier(label, "label")
         self.propagator = propagator
         self.source = _identifier(source, "source")

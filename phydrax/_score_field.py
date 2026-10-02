@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from ._strict import StrictModule
 from .domain import DomainFunction
-from .typing import PRNGKey
+from .typing import checked, PRNGKey
 
 
 class StateTimeScoreField(StrictModule):
@@ -24,6 +24,7 @@ class StateTimeScoreField(StrictModule):
     time_label: str = eqx.field(static=True)
     context_labels: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         function: DomainFunction,
@@ -33,8 +34,6 @@ class StateTimeScoreField(StrictModule):
         time_label: str,
         context_labels: Iterable[str] = (),
     ) -> None:
-        if not isinstance(function, DomainFunction):
-            raise TypeError("score field must be a DomainFunction.")
         if not state_label or not time_label or state_label == time_label:
             raise ValueError("state_label and time_label must be distinct and non-empty.")
         contexts = tuple(str(label) for label in context_labels)

@@ -18,7 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ...stochastic._path_diffusion import TrajectoryEventLayout
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class HybridFlowSample(StrictModule):
@@ -199,6 +199,7 @@ class FiniteFieldFlowLaw(StrictModule):
     law_id: str = eqx.field(static=True)
     reference_measure: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coefficient_law: AbstractProbabilityLaw,
@@ -209,8 +210,6 @@ class FiniteFieldFlowLaw(StrictModule):
         query_evidence: Any = None,
         law_id: str | None = None,
     ) -> None:
-        if not isinstance(coefficient_law, AbstractProbabilityLaw):
-            raise TypeError("coefficient_law must be an AbstractProbabilityLaw.")
         if not callable(decoder):
             raise TypeError(
                 "decoder must be callable as decoder(coefficients, query_points)."

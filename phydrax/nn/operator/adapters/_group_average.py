@@ -19,6 +19,8 @@ from phydrax.nn.operator.representations import (
     TensorFieldLayout,
 )
 
+from ....typing import checked
+
 
 class GroupAveragedOperator(StrictModule):
     """Reference equivariantization by averaging a lattice model over a finite group."""
@@ -29,6 +31,7 @@ class GroupAveragedOperator(StrictModule):
     output_layout: TensorFieldLayout
     spatial_axes: tuple[int, ...] | None
 
+    @checked
     def __init__(
         self,
         model: Callable,
@@ -41,8 +44,6 @@ class GroupAveragedOperator(StrictModule):
     ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(group, FiniteOrthogonalGroup):
-            raise TypeError("group must be a FiniteOrthogonalGroup.")
         if not isinstance(input_layout, TensorFieldLayout) or not isinstance(
             output_layout, TensorFieldLayout
         ):

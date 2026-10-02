@@ -33,6 +33,7 @@ from ..equations import (
     ParticleContinuumExchangeEvaluation,
     ReactiveCFDDEMCouplingPlan,
 )
+from ..typing import checked
 from ._particle_conversion import (
     advance_particle_conversion,
     ParticleConversionSolverPlan,
@@ -66,6 +67,7 @@ class ReactiveParticleCouplingSchedulePlan(StrictModule, NonTrainableState):
     relaxation: float = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         conversion_solver: ParticleConversionSolverPlan,
@@ -77,8 +79,6 @@ class ReactiveParticleCouplingSchedulePlan(StrictModule, NonTrainableState):
         coupling_tolerance: float = 1.0e-6,
         relaxation: float = 1.0,
     ) -> None:
-        if not isinstance(conversion_solver, ParticleConversionSolverPlan):
-            raise TypeError("conversion_solver must be a ParticleConversionSolverPlan.")
         substeps = int(dem_substeps)
         iterations = int(maximum_iterations)
         tolerance = float(coupling_tolerance)

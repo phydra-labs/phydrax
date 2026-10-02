@@ -14,6 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import TIME, UnitDefinition
 from ..imaging import DenseDisplacementField2D
 from ._types import PhysicalPIVResult2D, PIVResult
@@ -26,6 +27,7 @@ class AffinePixelMap2D(StrictModule, NonTrainableState):
     transform_id: str = eqx.field(static=True)
     coordinate_contract: SpatialCoordinateContract = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         matrix: Array,
@@ -39,8 +41,6 @@ class AffinePixelMap2D(StrictModule, NonTrainableState):
             raise ValueError("Affine matrix must have shape (2, 3).")
         if not bool(jnp.all(jnp.isfinite(matrix_))):
             raise ValueError("Affine matrix must be finite.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         homogeneous = jnp.concatenate((matrix_, jnp.asarray([[0.0, 0.0, 1.0]])), axis=0)
         resolved_id = transform_id or canonical_fingerprint(
             {
@@ -63,6 +63,7 @@ class HomographyPixelMap2D(StrictModule, NonTrainableState):
     transform_id: str = eqx.field(static=True)
     coordinate_contract: SpatialCoordinateContract = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         matrix: Array,
@@ -76,8 +77,6 @@ class HomographyPixelMap2D(StrictModule, NonTrainableState):
             raise ValueError("Homography matrix must have shape (3, 3).")
         if not bool(jnp.all(jnp.isfinite(matrix_))):
             raise ValueError("Homography matrix must be finite.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         resolved_id = transform_id or canonical_fingerprint(
             {
                 "kind": "homography-pixel-map-2d",

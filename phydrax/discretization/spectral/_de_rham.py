@@ -26,7 +26,7 @@ from ...linalg._complexes import (
 from ...linalg._operators import FunctionLinearOperator
 from ...linalg._pairings import DiagonalPairing
 from ...linalg._spaces import ArraySpace
-from ...typing import Dim, Float, Int32, parse, Size
+from ...typing import checked, Dim, Float, Int32, parse, Size
 from ._complex_support import (
     analytic_decomposition_policy,
     closed_boundary,
@@ -74,6 +74,7 @@ class FourierDeRhamComplex(AbstractDeRhamComplex):
     _realization_id: str = eqx.field(static=True)
     _bases: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: TensorSpectralDiscretization,
@@ -81,8 +82,6 @@ class FourierDeRhamComplex(AbstractDeRhamComplex):
         *,
         nyquist_policy: FourierNyquistPolicy,
     ) -> None:
-        if not isinstance(space, TensorSpectralDiscretization):
-            raise TypeError("space must be a prepared tensor spectral discretization.")
         if not space.axes or any(axis.family != "fourier" for axis in space.axes):
             raise ValueError("Fourier de Rham complexes require periodic Fourier axes.")
         policy = parse(nyquist_policy, FourierNyquistPolicy, "nyquist_policy")

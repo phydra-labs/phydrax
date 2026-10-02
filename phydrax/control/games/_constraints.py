@@ -22,6 +22,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._trajectory_optimization import (
     BoundedPathConstraint,
     BoundedTrajectoryConstraint,
@@ -213,14 +214,13 @@ class OpenLoopGameConstraints(StrictModule):
     blocks: tuple[GameConstraintBlock, ...]
     constraints_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: PlayerControlPartition,
         blocks: Sequence[GameConstraintBlock] = (),
         /,
     ) -> None:
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         if isinstance(blocks, (str, bytes)):
             raise TypeError("blocks must be a sequence of GameConstraintBlock values.")
         blocks_ = tuple(blocks)
@@ -296,6 +296,7 @@ class GameConstraintLayout(StrictModule):
     num_residuals: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         constraints: OpenLoopGameConstraints,
@@ -303,8 +304,6 @@ class GameConstraintLayout(StrictModule):
         *,
         num_path_sites: int,
     ) -> None:
-        if not isinstance(constraints, OpenLoopGameConstraints):
-            raise TypeError("constraints must be OpenLoopGameConstraints.")
         if isinstance(num_path_sites, bool):
             raise TypeError("num_path_sites must be a positive integer.")
         sites_ = index(num_path_sites)
@@ -387,6 +386,7 @@ class GameMultiplierLayout(StrictModule):
     num_multipliers: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         constraint_layout: GameConstraintLayout,
@@ -394,8 +394,6 @@ class GameMultiplierLayout(StrictModule):
         *,
         variational: bool,
     ) -> None:
-        if not isinstance(constraint_layout, GameConstraintLayout):
-            raise TypeError("constraint_layout must be a GameConstraintLayout.")
         if not isinstance(variational, bool):
             raise TypeError("variational must be a bool.")
 
@@ -487,6 +485,7 @@ class GameFeasibilityEvidence(StrictModule):
     certified: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -506,8 +505,6 @@ class GameFeasibilityEvidence(StrictModule):
         case_shape: Sequence[int],
         tolerance: float,
     ) -> None:
-        if not isinstance(layout, GameConstraintLayout):
-            raise TypeError("layout must be a GameConstraintLayout.")
         cases = tuple(index(size) for size in case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("case_shape dimensions must be positive.")

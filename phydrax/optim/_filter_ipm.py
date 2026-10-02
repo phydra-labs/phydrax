@@ -23,6 +23,7 @@ from ..linalg import (
     LinearSolvePolicy,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._certificates import (
     certify_constrained_physical,
     reconcile_optimization_status,
@@ -188,6 +189,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             implicit_differentiation=True,
         )
 
+    @checked
     def solve(
         self,
         problem: MinimizationProblem,
@@ -197,8 +199,6 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> MinimizationResult:
-        if not isinstance(problem, MinimizationProblem):
-            raise TypeError("problem must be MinimizationProblem.")
         self.precision.validate_tolerance(termination.absolute_optimality)
         parameters = self.precision.state(
             validate_real_inexact_tree(initial_parameters, name="parameters")

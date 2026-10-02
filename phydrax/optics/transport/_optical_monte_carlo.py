@@ -48,6 +48,7 @@ from ...geometry._triangle_ray import (
 )
 from ...typing import (
     Bool,
+    checked,
     Complex128,
     Dim,
     Float64,
@@ -607,9 +608,8 @@ class ExplicitPhotonSource(StrictModule, NonTrainableState):
     state: OpticalPhotonState
     photon_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, state: OpticalPhotonState, /) -> None:
-        if not isinstance(state, OpticalPhotonState):
-            raise TypeError("state must be an OpticalPhotonState.")
         if state.weights.ndim != 1:
             raise ValueError("An explicit source needs a rank-one photon batch.")
         self.state = state
@@ -694,6 +694,7 @@ class OpticalMonteCarloPlan(StrictModule, NonTrainableState):
     weight_tolerance: float = eqx.field(static=True)
     detector_arrival_capacity: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surfaces: NonSequentialSurfaceTable,
@@ -714,10 +715,6 @@ class OpticalMonteCarloPlan(StrictModule, NonTrainableState):
         weight_tolerance: float = 0.0,
         detector_arrival_capacity: int = 0,
     ) -> None:
-        if not isinstance(surfaces, NonSequentialSurfaceTable):
-            raise TypeError("surfaces must be a NonSequentialSurfaceTable.")
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         policy = (
             OpticalVarianceReduction()
             if variance_reduction is None

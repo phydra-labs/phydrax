@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._amplitude import LogAmplitude
 
 
@@ -136,11 +137,10 @@ class SymmetryProjectedAmplitude(StrictModule):
     model: Any
     symmetry: FiniteSignedPermutationSymmetry
 
+    @checked
     def __init__(self, model: Any, symmetry: FiniteSignedPermutationSymmetry, /) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(symmetry, FiniteSignedPermutationSymmetry):
-            raise TypeError("symmetry must be a FiniteSignedPermutationSymmetry.")
         self.model = model
         self.symmetry = symmetry
 

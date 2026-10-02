@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...sparse import EdgeRelation
+from ...typing import checked
 from .._core import DiscretizationKey, PreparationReport
 from .._periodic_cell import PeriodicCell
 from ._cell_list import (
@@ -41,6 +42,7 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         search_radius: float,
@@ -56,8 +58,6 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         radius = float(search_radius)
         if not np.isfinite(radius) or radius <= 0.0:
             raise ValueError("search_radius must be finite and positive.")
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
         cell.require_unique_image(radius)
         singular_values = np.linalg.svd(np.asarray(cell.vectors), compute_uv=False)
         fractional_radius = radius / float(singular_values[-1])
@@ -115,16 +115,13 @@ class PreparedMetricCellListParticleNeighborhood(AbstractPreparedParticleNeighbo
     prepared_id: str = eqx.field(static=True)
     artifact_kind: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MetricCellListParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, MetricCellListParticleNeighborhoodPlan):
-            raise TypeError("plan must be MetricCellListParticleNeighborhoodPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         if particles.ambient_dimension != plan.box.ambient_dimension:
             raise ValueError("Particle support and metric cell dimensions differ.")
         base = plan.fractional_base.prepare(particles)

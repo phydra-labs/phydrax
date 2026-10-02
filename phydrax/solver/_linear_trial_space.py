@@ -34,7 +34,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..terms import ResidualPenalty
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._functional_residual import (
     materialize_prepared_residual_terms,
     prepared_term_residual_vector,
@@ -67,6 +67,7 @@ class LinearTrialSpaceResult(StrictModule):
     residual_count: int = eqx.field(static=True)
     valid: Array
 
+    @checked
     def __init__(
         self,
         *,
@@ -79,8 +80,6 @@ class LinearTrialSpaceResult(StrictModule):
         coefficient_count: int,
         residual_count: int,
     ) -> None:
-        if not isinstance(linear_result, LinearSolveResult):
-            raise TypeError("linear_result must be a LinearSolveResult.")
         affine_residual = jnp.asarray(affine_audit_residual)
         affine_tolerance = jnp.asarray(affine_audit_tolerance)
         self.solver = solver

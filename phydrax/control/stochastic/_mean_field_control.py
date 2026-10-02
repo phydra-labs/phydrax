@@ -38,7 +38,7 @@ from ...stochastic import (
     MeanFieldBSDEProblem,
     MeanFieldSnapshot,
 )
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 
 
 MEAN_FIELD_CONTROL_PLANNER_STATIONARITY = "MEAN_FIELD_CONTROL_PLANNER_STATIONARITY"
@@ -210,6 +210,7 @@ class MeanFieldControlProblem(StrictModule):
     global_optimality_claimed: bool = eqx.field(static=True)
     finite_population_game_claimed: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_problem: MeanFieldBSDEProblem,
@@ -227,16 +228,9 @@ class MeanFieldControlProblem(StrictModule):
             MINIMUM_MEAN_FIELD_CONTROL_EFFECTIVE_SAMPLE_SIZE
         ),
     ) -> None:
-        if not isinstance(base_problem, MeanFieldBSDEProblem):
-            raise TypeError("base_problem must be a MeanFieldBSDEProblem.")
         if base_problem.control_adapter is None:
             raise ValueError(
                 "base_problem must carry a MeanFieldBSDEControlAdapter so physical planner controls are explicit."
-            )
-        if not isinstance(externality, MeanFieldExternality):
-            raise TypeError(
-                "externality must be an explicit MeanFieldExternality; planner "
-                "evaluation never drops the measure derivative."
             )
         minimum_ess = float(minimum_effective_sample_size)
         if not isfinite(minimum_ess) or minimum_ess <= 0.0:

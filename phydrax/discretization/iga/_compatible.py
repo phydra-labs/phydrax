@@ -53,7 +53,7 @@ from ...linalg._complexes import (
     HodgeLaplacianPart,
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
-from ...typing import Dim, Float64, parse, Scope
+from ...typing import checked, Dim, Float64, parse, Scope
 from .._cell_de_rham import AbstractCellDeRhamComplex
 from .._topology import CellComplexTopology, EntitySet, OrientedIncidence
 from ._compatible_basis import (
@@ -1587,6 +1587,7 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex_: _SplineComplex,
@@ -1595,8 +1596,6 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1e-12,
     ) -> None:
-        if not isinstance(complex_, _SplineComplex):
-            raise TypeError("Relative evidence requires a spline de Rham complex.")
         faces = tuple((int(axis), side) for axis, side in boundary_faces)
         tolerance_ = float(tolerance)
         if tolerance_ <= 0.0 or not np.isfinite(tolerance_):
@@ -1787,6 +1786,7 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
     qualified: bool = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -1809,8 +1809,6 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
         diagnostics: Sequence[Diagnostic],
         qualified: bool,
     ) -> None:
-        if not isinstance(numeric_revision, NumericRevision):
-            raise TypeError("Compatible evidence requires a NumericRevision.")
         diagnostics_ = tuple(diagnostics)
         if any(not isinstance(value, Diagnostic) for value in diagnostics_):
             raise TypeError("Compatible evidence diagnostics have invalid types.")

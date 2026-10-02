@@ -15,6 +15,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator, ConstraintMap
+from ...typing import checked
 from .._partition import (
     CellAdjacency,
     CellPartition,
@@ -38,6 +39,7 @@ class PartitionedFiniteElementDofMap(StrictModule, NonTrainableState):
     multiplicity: Array
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dof_map: FiniteElementDofMap,
@@ -48,8 +50,6 @@ class PartitionedFiniteElementDofMap(StrictModule, NonTrainableState):
         multiplicity: ArrayLike | None = None,
         partition_id: str | None = None,
     ) -> None:
-        if not isinstance(dof_map, FiniteElementDofMap):
-            raise TypeError("dof_map must be FiniteElementDofMap.")
         identifiers = np.asarray(global_ids, dtype=np.int64)
         owned = np.asarray(owned_mask, dtype=np.bool_)
         if (
@@ -300,14 +300,13 @@ class DistributedFiniteElementConstraint(StrictModule, NonTrainableState):
     constraint: ConstraintMap
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         constraint: ConstraintMap,
         partition: PartitionedFiniteElementDofMap,
         /,
     ) -> None:
-        if not isinstance(constraint, ConstraintMap):
-            raise TypeError("constraint must be ConstraintMap.")
         if constraint.full_space.size != partition.dof_map.global_dof_count:
             raise ValueError("Constraint and distributed DOF dimensions do not match.")
         self.constraint = constraint
@@ -459,6 +458,7 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
     cell_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: CellPartition,
@@ -470,8 +470,6 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         completions: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(partition, CellPartition):
-            raise TypeError("partition must be CellPartition.")
         owned = np.asarray(owned_cells, dtype=np.int32)
         owned_valid_ = np.asarray(owned_valid, dtype=np.bool_)
         halo = np.asarray(halo_cells, dtype=np.int32)
@@ -651,6 +649,7 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
     cell_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: CellPartition,
@@ -660,8 +659,6 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
         cell_global_ids: ArrayLike | None = None,
         facet_global_ids: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(partition, CellPartition):
-            raise TypeError("partition must be CellPartition.")
         owner = np.asarray(partition.cell_owner)
         facets = np.asarray(facet_cells, dtype=np.int32)
         cell_ids = (
@@ -890,6 +887,7 @@ class DistributedFiniteElementMortarPlan(StrictModule, NonTrainableState):
     facet_indices: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ownership: FiniteElementFacetOwnershipPlan,
@@ -899,8 +897,6 @@ class DistributedFiniteElementMortarPlan(StrictModule, NonTrainableState):
     ) -> None:
         mortar_plans = tuple(mortars)
         indices = np.asarray(facet_indices, dtype=np.int32)
-        if not isinstance(ownership, FiniteElementFacetOwnershipPlan):
-            raise TypeError("ownership must be FiniteElementFacetOwnershipPlan.")
         if (
             not mortar_plans
             or any(not isinstance(plan, FiniteElementMortarPlan) for plan in mortar_plans)

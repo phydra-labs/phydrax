@@ -23,6 +23,7 @@ from ..discretization.amr._cut_complex import (
     MultivaluedCutCellPlan,
 )
 from ..discretization.amr._cut_transition import MultivaluedCutCellTransition
+from ..typing import checked
 
 
 UncoveredStateProvider = Callable[
@@ -39,6 +40,7 @@ class MovingCutCellState(StrictModule):
     revision: Array
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex_: MultivaluedCutCellComplex,
@@ -47,8 +49,6 @@ class MovingCutCellState(StrictModule):
         revision: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(complex_, MultivaluedCutCellComplex):
-            raise TypeError("Moving cut-cell state requires MultivaluedCutCellComplex.")
         value = jnp.asarray(content)
         time_ = jnp.asarray(time)
         revision_ = jnp.asarray(revision)
@@ -320,6 +320,7 @@ class MovingMultivaluedCutCellPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cut_plan: MultivaluedCutCellPlan,
@@ -328,8 +329,6 @@ class MovingMultivaluedCutCellPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
     ) -> None:
         tolerance_ = float(tolerance)
-        if not isinstance(cut_plan, MultivaluedCutCellPlan):
-            raise TypeError("Moving cut-cell plan requires MultivaluedCutCellPlan.")
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Moving cut-cell tolerance must be positive and finite.")
         self.cut_plan = cut_plan
@@ -402,6 +401,7 @@ class MovingMultivaluedCutCellPlan(StrictModule, NonTrainableState):
             "Uncovered target averages must be finite.",
         )
 
+    @checked
     def advance(
         self,
         state: MovingCutCellState,
@@ -410,8 +410,6 @@ class MovingMultivaluedCutCellPlan(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> MovingCutCellStepResult:
-        if not isinstance(state, MovingCutCellState):
-            raise TypeError("Moving cut-cell advancement requires MovingCutCellState.")
         step = jnp.asarray(step_size, dtype=state.time.dtype)
         if step.shape != () or not bool(jnp.isfinite(step) & (step > 0.0)):
             raise ValueError("Moving cut-cell step_size must be positive and finite.")

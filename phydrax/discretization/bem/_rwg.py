@@ -24,6 +24,7 @@ from ...exterior._algebra import map_reference_values
 from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import ArraySpace
 from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import checked
 from .._boundary_trace_space import (
     boundary_geometry_revision,
     BoundaryTraceSpaceCapability,
@@ -135,6 +136,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
     trace_pairing: TangentialTracePairing3D
     space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: OrientedTriangleSurfaceComplex3D,
@@ -142,8 +144,6 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         *,
         coefficient_dtype: DTypeLike = np.complex128,
     ) -> None:
-        if not isinstance(surface, OrientedTriangleSurfaceComplex3D):
-            raise TypeError("surface must be OrientedTriangleSurfaceComplex3D.")
         dtype = np.dtype(coefficient_dtype)
         if not np.issubdtype(dtype, np.complexfloating):
             raise TypeError("RWG Maxwell coefficients require a native complex dtype.")

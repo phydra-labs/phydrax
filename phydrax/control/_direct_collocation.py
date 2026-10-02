@@ -56,7 +56,7 @@ from ..sparse import (
     SparseDerivativeVerification,
     verify_sparse_derivative,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._constraints import TerminalConstraint
 from ._dynamics import DifferentialControlDynamics
 from ._problem import _identifier, ControlProblem
@@ -257,6 +257,7 @@ class DirectCollocationPlan(StrictModule):
     variable_duration: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: TemporalMesh,
@@ -273,8 +274,6 @@ class DirectCollocationPlan(StrictModule):
             raise TypeError(
                 "Direct collocation requires TemporalMesh(role='collocation')."
             )
-        if not isinstance(method, ThetaMethod):
-            raise TypeError("method must be a ThetaMethod.")
         supported = (method.theta == 1.0 and method.endpoint) or (
             method.theta == 0.5 and not method.endpoint
         )
@@ -372,6 +371,7 @@ class DirectCollocationDecisionLayout(StrictModule):
     num_variables: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -387,8 +387,6 @@ class DirectCollocationDecisionLayout(StrictModule):
         variable_duration: bool,
         layout_id: str,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         geometry = state_layout.geometry
         if (
             not geometry.supports_exact_inverse
@@ -487,9 +485,8 @@ class DirectCollocationDecisionLayout(StrictModule):
             )
         )(flat_anchors, flat_local).reshape(self.state_array_shape)
 
+    @checked
     def pack(self, decision: DirectCollocationDecision, /) -> Array:
-        if not isinstance(decision, DirectCollocationDecision):
-            raise TypeError("decision must be a DirectCollocationDecision.")
         states = _inexact(decision.states, "decision states")
         controls = _inexact(decision.controls, "decision controls")
         if states.shape != self.state_array_shape:

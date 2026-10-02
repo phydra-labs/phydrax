@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._materialization import materialize
 from .._operators import AbstractLinearOperator, DenseLinearOperator
 from .._pairings import DiagonalPairing, EuclideanPairing
@@ -46,6 +47,7 @@ class ResolventScanProblem(StrictModule):
     shifts: Array
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -54,8 +56,6 @@ class ResolventScanProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
             raise ValueError("Resolvent scans require an unbatched endomorphism.")
         if not isinstance(operator.source, ArraySpace):
@@ -476,6 +476,7 @@ class PencilPseudospectrumProblem(StrictModule):
     perturbation_norm: PencilPerturbationNorm
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eigenproblem: GeneralEigenproblem,
@@ -485,8 +486,6 @@ class PencilPseudospectrumProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(eigenproblem, GeneralEigenproblem):
-            raise TypeError("eigenproblem must be a GeneralEigenproblem.")
         if not isinstance(eigenproblem.operator, DenseLinearOperator) or (
             eigenproblem.mass_operator is not None
             and not isinstance(eigenproblem.mass_operator, DenseLinearOperator)
@@ -496,8 +495,6 @@ class PencilPseudospectrumProblem(StrictModule):
             )
         if not isinstance(eigenproblem.operator.source, ArraySpace):
             raise TypeError("Pencil pseudospectra require an ArraySpace.")
-        if not isinstance(perturbation_norm, PencilPerturbationNorm):
-            raise TypeError("perturbation_norm must be a PencilPerturbationNorm.")
         shifts = jnp.asarray(homogeneous_shifts)
         if shifts.ndim != 2 or shifts.shape[1] != 2 or shifts.shape[0] == 0:
             raise ValueError(

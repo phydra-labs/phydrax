@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
 
@@ -228,14 +228,13 @@ class MACBoundaryPlan(StrictModule, NonTrainableState):
     closure_kind: MACPressureClosureKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
         sides: Sequence[MACBoundarySide] | None = None,
         /,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         grid = operators.discretization.grid
         supplied = () if sides is None else tuple(sides)
         if not all(isinstance(value, MACBoundarySide) for value in supplied):
@@ -303,9 +302,8 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
     closure_kind: MACPressureClosureKind = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACBoundaryPlan, /) -> None:
-        if not isinstance(plan, MACBoundaryPlan):
-            raise TypeError("plan must be MACBoundaryPlan.")
         grid = plan.operators.discretization.grid
         axes: list[int] = []
         indices: list[int] = []
@@ -469,9 +467,8 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def validate_stage(self, stage: MACBoundaryStageData, /) -> MACBoundaryStageData:
-        if not isinstance(stage, MACBoundaryStageData):
-            raise TypeError("stage must be MACBoundaryStageData.")
         if stage.boundary_id != self.prepared_id:
             raise ValueError("MAC boundary stage belongs to a different prepared plan.")
         return stage

@@ -56,6 +56,7 @@ from ...solver import (
     ProductionRunPlan,
     RobustRetryPolicy,
 )
+from ...typing import checked
 from ...variational import (
     FieldJetSpec,
     Functional,
@@ -92,6 +93,7 @@ class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
     evolution_law: AbstractBulkEvolutionLaw
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: BinaryThermodynamicParameters,
@@ -100,8 +102,6 @@ class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
         closure: BinaryPhaseThermodynamicClosure | None = None,
         evolution_law: AbstractBulkEvolutionLaw | None = None,
     ) -> None:
-        if not isinstance(thermodynamics, BinaryThermodynamicParameters):
-            raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
         selected = BinaryPhaseThermodynamicClosure() if closure is None else closure
         if not isinstance(selected, BinaryPhaseThermodynamicClosure):
             raise TypeError("closure must be BinaryPhaseThermodynamicClosure.")
@@ -1183,6 +1183,7 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
     minimum_transition_cells: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: BinaryPhaseFieldModel,
@@ -1195,8 +1196,6 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
         execution_policy: FiniteElementExecutionPolicy | None = None,
         minimum_transition_cells: float = 4.0,
     ) -> None:
-        if not isinstance(model, BinaryPhaseFieldModel):
-            raise TypeError("model must be BinaryPhaseFieldModel.")
         mobility_ = _validated_mobility(
             mobility,
             model.thermodynamics.bulk_scale.dtype,
@@ -1264,6 +1263,7 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
     field_index: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: AllenCahnFEMPlan,
@@ -1275,8 +1275,6 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
         noise: PhaseFieldNoisePlan | None = None,
         constraints: Any = None,
     ) -> None:
-        if not isinstance(plan, AllenCahnFEMPlan):
-            raise TypeError("plan must be AllenCahnFEMPlan.")
         name = str(field_name)
         if not name:
             raise ValueError("Allen-Cahn field name must be nonempty.")
@@ -1389,6 +1387,7 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
             raise ValueError("Allen-Cahn initial diagnostics must be finite.")
         return AllenCahnAcceptedState(value, mass, energy)
 
+    @checked
     def step_detailed(
         self,
         step_index: Array,
@@ -1399,8 +1398,6 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
         /,
     ) -> PhaseFieldStepResult:
         del step_index
-        if not isinstance(state, AllenCahnAcceptedState):
-            raise TypeError("Allen-Cahn step state must be AllenCahnAcceptedState.")
         step = jnp.asarray(step_size, dtype=state.phase.dtype)
         time_ = jnp.asarray(time, dtype=state.phase.dtype)
         if step.shape != () or time_.shape != ():
@@ -1593,14 +1590,13 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
             jnp.zeros((), dtype=state.phase.dtype),
         )
 
+    @checked
     def production_case(
         self,
         case_name: str,
         initial_state: AllenCahnAcceptedState,
         /,
     ) -> PhaseFieldProductionCase:
-        if not isinstance(initial_state, AllenCahnAcceptedState):
-            raise TypeError("Allen-Cahn production case requires initialized state.")
         if not bool(np.asarray(tree_allfinite(initial_state))):
             raise ValueError("Allen-Cahn production case state must be finite.")
         return PhaseFieldProductionCase(
@@ -1647,6 +1643,7 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
     minimum_transition_cells: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: BinaryPhaseFieldModel,
@@ -1659,8 +1656,6 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
         execution_policy: FiniteElementExecutionPolicy | None = None,
         minimum_transition_cells: float = 4.0,
     ) -> None:
-        if not isinstance(model, BinaryPhaseFieldModel):
-            raise TypeError("model must be BinaryPhaseFieldModel.")
         mobility_ = _validated_mobility(
             mobility,
             model.thermodynamics.bulk_scale.dtype,
@@ -1734,6 +1729,7 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
     chemical_index: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CahnHilliardFEMPlan,
@@ -1746,8 +1742,6 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
         noise: PhaseFieldNoisePlan | None = None,
         constraints: Any = None,
     ) -> None:
-        if not isinstance(plan, CahnHilliardFEMPlan):
-            raise TypeError("plan must be CahnHilliardFEMPlan.")
         concentration = str(concentration_field)
         chemical = str(chemical_field)
         if not concentration or not chemical or concentration == chemical:
@@ -1930,6 +1924,7 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
             energy,
         )
 
+    @checked
     def step_detailed(
         self,
         step_index: Array,
@@ -1940,8 +1935,6 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
         /,
     ) -> PhaseFieldStepResult:
         del step_index
-        if not isinstance(state, CahnHilliardAcceptedState):
-            raise TypeError("Cahn-Hilliard step state must be CahnHilliardAcceptedState.")
         step = jnp.asarray(step_size, dtype=state.concentration.dtype)
         time_ = jnp.asarray(time, dtype=state.concentration.dtype)
         if step.shape != () or time_.shape != ():
@@ -2169,14 +2162,13 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
             jnp.zeros((), dtype=state.concentration.dtype),
         )
 
+    @checked
     def production_case(
         self,
         case_name: str,
         initial_state: CahnHilliardAcceptedState,
         /,
     ) -> PhaseFieldProductionCase:
-        if not isinstance(initial_state, CahnHilliardAcceptedState):
-            raise TypeError("Cahn-Hilliard production case requires initialized state.")
         if not bool(np.asarray(tree_allfinite(initial_state))):
             raise ValueError("Cahn-Hilliard production case state must be finite.")
         return PhaseFieldProductionCase(

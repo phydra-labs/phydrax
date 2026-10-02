@@ -33,7 +33,7 @@ from ..linalg import (
     prepare,
     solve,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     BayesianQuadratureDiagnostics,
@@ -252,6 +252,7 @@ class BayesianQuadraturePlan(StrictModule):
     solve_policy: LinearSolvePolicy
     max_points: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel_mean: AbstractKernelMean,
@@ -267,8 +268,6 @@ class BayesianQuadraturePlan(StrictModule):
         solve_policy: LinearSolvePolicy | None = None,
         max_points: int = 4096,
     ) -> None:
-        if not isinstance(kernel_mean, AbstractKernelMean):
-            raise TypeError("kernel_mean must implement AbstractKernelMean.")
         if isinstance(design, PointSampling):
             if not isinstance(design.count, int) or design.count < 1:
                 raise ValueError(

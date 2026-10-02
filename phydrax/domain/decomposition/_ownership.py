@@ -12,7 +12,7 @@ from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._components import DomainComponent
 from .._function import DomainFunction
 from ._cover import SubdomainCover
@@ -89,6 +89,7 @@ class IntegrationOwnership(StrictModule, NonTrainableState):
     weights: tuple[DomainFunction, ...]
     kind: Literal["window", "support"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cover: SubdomainCover,
@@ -97,8 +98,6 @@ class IntegrationOwnership(StrictModule, NonTrainableState):
         *,
         kind: Literal["window", "support"],
     ) -> None:
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be a SubdomainCover.")
         weights_ = tuple(weights)
         if len(weights_) != len(cover.patches):
             raise ValueError("Ownership requires one weight per cover patch.")

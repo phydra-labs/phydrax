@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractRealCoordinateMap, AbstractVectorSpace, PyTreeSpace
+from ..typing import checked
 
 
 def _same_structure(left: AbstractVectorSpace, right: AbstractVectorSpace, /) -> bool:
@@ -154,6 +155,7 @@ class ContinuationGeometry(StrictModule, NonTrainableState):
     coordinate_scale: float = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         public_state_space: AbstractVectorSpace,
@@ -163,12 +165,6 @@ class ContinuationGeometry(StrictModule, NonTrainableState):
         *,
         coordinate_scale: float = 1.0,
     ) -> None:
-        if not isinstance(public_state_space, AbstractVectorSpace):
-            raise TypeError("public_state_space must be an AbstractVectorSpace.")
-        if not isinstance(public_residual_space, AbstractVectorSpace):
-            raise TypeError("public_residual_space must be an AbstractVectorSpace.")
-        if not isinstance(representation, ContinuationRepresentationPolicy):
-            raise TypeError("representation must be a ContinuationRepresentationPolicy.")
         state_map = representation.state_coordinates
         residual_map = representation.residual_coordinates
         if state_map is not None and not public_state_space.compatible(

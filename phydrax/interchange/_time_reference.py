@@ -17,7 +17,7 @@ from .._external_resource import ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 TimeScale: TypeAlias = Literal["tai", "gps", "utc", "instrument", "source-relative"]
@@ -37,6 +37,7 @@ class LeapSecondTable(StrictModule, NonTrainableState):
     source: ResourceManifest
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transition_utc_seconds: ArrayLike,
@@ -60,8 +61,6 @@ class LeapSecondTable(StrictModule, NonTrainableState):
             raise ValueError(
                 "Leap-second transitions and offsets must be finite and ordered."
             )
-        if not isinstance(source, ResourceManifest):
-            raise TypeError("Leap-second table requires an exact source manifest.")
         self.transition_utc_seconds = jnp.asarray(transitions)
         self.tai_minus_utc_after = jnp.asarray(offsets)
         self.initial_tai_minus_utc = initial

@@ -15,7 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._lattice import LatticeBoltzmannVelocitySet
 
 
@@ -340,6 +340,7 @@ class ReferenceLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
     backend: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         velocity_set: LatticeBoltzmannVelocitySet,
@@ -349,8 +350,6 @@ class ReferenceLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         step_id: str,
         backend: str = "jax",
     ) -> None:
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         if not callable(step):
             raise TypeError("step must be callable.")
         identifier = str(step_id)

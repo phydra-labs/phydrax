@@ -25,6 +25,7 @@ from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._spacetime_conventions import RelativityConvention
+from ...typing import checked
 from ...units import derived_unit, TESLA, UnitDefinition
 
 
@@ -44,6 +45,7 @@ class GRMediumFieldUnits(StrictModule, NonTrainableState):
     magnetic_field_unit: UnitDefinition = eqx.field(static=True)
     units_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -51,10 +53,6 @@ class GRMediumFieldUnits(StrictModule, NonTrainableState):
         *,
         magnetic_field_unit: UnitDefinition = TESLA,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
-        if not isinstance(magnetic_field_unit, UnitDefinition):
-            raise TypeError("magnetic_field_unit must be a UnitDefinition.")
         length = scale.dimensional_scale.length_unit
         number_density = derived_unit(f"1/{length.symbol}^3", ((length, -3),))
         if (
@@ -113,6 +111,7 @@ class FixedGRFieldSamplingPlan(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stencil: GatherStencil,
@@ -125,8 +124,6 @@ class FixedGRFieldSamplingPlan(StrictModule, NonTrainableState):
     ) -> None:
         shape = tuple(query_shape)
         smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
-        if not isinstance(stencil, GatherStencil):
-            raise TypeError("stencil must be a GatherStencil.")
         if smooth.shape != shape or stencil.support.shape != shape:
             raise ValueError("Sampling smoothness and stencil query shapes must match.")
         identifier = str(source_id).strip()
@@ -280,6 +277,7 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
     chart_id: str = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinate_axes: Sequence[ArrayLike],
@@ -353,8 +351,6 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
             raise ValueError(
                 "Active fast-light fields must be finite with physical scalar states."
             )
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be a RelativityConvention.")
         chart = str(chart_id).strip()
         provenance = str(source_id).strip()
         if not chart or not provenance:
@@ -459,9 +455,8 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def sample(self, plan: FixedGRFieldSamplingPlan, /) -> GRMediumSample:
-        if not isinstance(plan, FixedGRFieldSamplingPlan):
-            raise TypeError("plan must be a FixedGRFieldSamplingPlan.")
         if plan.source_id != self.snapshot_id:
             raise ValueError("Sampling plan was prepared for a different snapshot.")
         return _sample_medium_fields(

@@ -38,6 +38,7 @@ from ..tensor_network._environments import (
 )
 from ..tensor_network._mpo import apply_mpo_exact
 from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
+from ..typing import checked
 
 
 class FiniteDMRGStatus(IntEnum):
@@ -54,6 +55,7 @@ class FiniteDMRGProblem(StrictModule):
     hamiltonian: MatrixProductOperator
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_state: MatrixProductState,
@@ -62,10 +64,6 @@ class FiniteDMRGProblem(StrictModule):
         *,
         problem_id: str = "matrix-product-ground-state",
     ) -> None:
-        if not isinstance(initial_state, MatrixProductState):
-            raise TypeError("initial_state must be a MatrixProductState.")
-        if not isinstance(hamiltonian, MatrixProductOperator):
-            raise TypeError("hamiltonian must be a MatrixProductOperator.")
         if initial_state.site_count < 2:
             raise ValueError("Two-site DMRG requires at least two sites.")
         if hamiltonian.output_dimensions != hamiltonian.input_dimensions:

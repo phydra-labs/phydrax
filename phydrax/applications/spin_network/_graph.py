@@ -23,6 +23,7 @@ from ...operators.quantum.lattice import (
     SU2CouplingTreePlan,
     SU2SectorResourcePolicy,
 )
+from ...typing import checked
 
 
 class SpinNetworkEdge(StrictModule):
@@ -57,6 +58,7 @@ class SpinNetworkGraphPlan(StrictModule):
     resources: SU2SectorResourcePolicy = eqx.field(static=True)
     graph_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vertices: Sequence[str],
@@ -84,8 +86,6 @@ class SpinNetworkGraphPlan(StrictModule):
             for value in edge_values
         ):
             raise ValueError("A spin-network edge endpoint is outside the graph.")
-        if not isinstance(resources, SU2SectorResourcePolicy):
-            raise TypeError("resources must be SU2SectorResourcePolicy.")
         orders = tuple(
             (str(vertex), tuple(str(edge) for edge in order))
             for vertex, order in sorted(vertex_edge_order.items())

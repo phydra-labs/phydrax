@@ -26,6 +26,7 @@ from ...solver._grrmhd_runtime import (
     GRRMHDState,
 )
 from ...solver._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
+from ...typing import checked
 from ._coupled_runtime import Z4cMatterCoupledRuntime
 from ._matter_coupling import (
     ConservationLedger,
@@ -53,6 +54,7 @@ class GRRMHDZ4cStageAdapter(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: FixedGridGRRMHDIMEXPlan,
@@ -62,8 +64,6 @@ class GRRMHDZ4cStageAdapter(StrictModule, NonTrainableState):
         stage_geometry_id: str,
         topology_id: str,
     ) -> None:
-        if not isinstance(runtime, FixedGridGRRMHDIMEXPlan):
-            raise TypeError("runtime must be FixedGridGRRMHDIMEXPlan.")
         if not callable(stage_geometry):
             raise TypeError("stage_geometry must be callable.")
         geometry_id = str(stage_geometry_id).strip()
@@ -114,6 +114,7 @@ class GRRMHDZ4cStageAdapter(StrictModule, NonTrainableState):
         )
         return eqx.tree_at(lambda value: value.time, stage, checked_time)
 
+    @checked
     def stress_energy_at_stage(
         self,
         state: GRRMHDState,
@@ -124,8 +125,6 @@ class GRRMHDZ4cStageAdapter(StrictModule, NonTrainableState):
     ) -> StressEnergyProjection:
         del address
         arguments = self._arguments(args)
-        if not isinstance(state, GRRMHDState):
-            raise TypeError("GRRMHD coupling matter state must be GRRMHDState.")
         full = self.runtime.material_transport.constrained_transport.full_state(
             state.material_state, state.constrained_transport.magnetic_flux
         )

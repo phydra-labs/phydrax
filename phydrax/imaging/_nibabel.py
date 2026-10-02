@@ -20,6 +20,7 @@ from .._physical import SpatialCoordinateContract
 from .._publication import publish_bytes
 from ..measurement import AcquisitionIdentity, DerivationRecord, SampleTimeAxis
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 from ..units import METER, MICROMETER, MILLIMETER, MILLISECOND, SECOND
 from ._asset import ImageFieldSpec
 from ._core import (
@@ -215,6 +216,7 @@ class NibabelImageProvider:
         )
         return asset
 
+    @checked
     def write(
         self,
         asset: MedicalImageAsset,
@@ -224,8 +226,6 @@ class NibabelImageProvider:
         maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
         allow_semantic_loss: bool = False,
     ) -> NiftiExportResult:
-        if not isinstance(asset, MedicalImageAsset):
-            raise TypeError("asset must be MedicalImageAsset.")
         for reference in asset.references:
             reference.require_rights(export=True)
         losses = ["references", "derivation", "deidentification"]

@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import SparseLinearMap
-from ...typing import Bool, Dim, Float, Int32, Scalar
+from ...typing import Bool, checked, Dim, Float, Int32, Scalar
 from .._cell_complex import simplicial_cell_complex
 from .._simplicial_locator import PreparedSimplicialCellLocator
 from ..fem._simplicial_whitney_chains import SimplicialWhitneyKernel
@@ -70,6 +70,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         locator: PreparedSimplicialCellLocator,
@@ -78,8 +79,6 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
         maximum_segments: int = 8,
         tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(locator, PreparedSimplicialCellLocator):
-            raise TypeError("locator must be a prepared simplicial locator.")
         if locator.cell_map.coordinate_element.degree != 1:
             raise ValueError("Whitney current requires an order-one cell map.")
         if maximum_segments <= 0 or not np.isfinite(tolerance) or tolerance <= 0:

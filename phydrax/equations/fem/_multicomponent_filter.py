@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._hyperbolic_systems import AbstractAdmissibleSystem
 
 
@@ -59,11 +60,10 @@ class MulticomponentAdmissibilityFilterPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def apply(
         self, system: AbstractAdmissibleSystem, state: ArrayLike, /
     ) -> MulticomponentFilterResult:
-        if not isinstance(system, AbstractAdmissibleSystem):
-            raise TypeError("Filter requires AbstractAdmissibleSystem.")
         value = jnp.asarray(state)
         if (
             value.ndim < 3

@@ -24,6 +24,7 @@ from ...operators.quantum.gaussian import (
     molecular_integrals,
     PreparedGaussianBasis,
 )
+from ...typing import checked
 from ...units import (
     BOHR,
     conversion_factor,
@@ -45,6 +46,7 @@ class MolecularIntegrationGridPlan(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     grid_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -52,8 +54,6 @@ class MolecularIntegrationGridPlan(StrictModule, NonTrainableState):
         weights: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         points_ = jnp.asarray(points, dtype=np.dtype(system.coordinate_dtype))
         weights_ = jnp.asarray(weights, dtype=points_.dtype)
         if (
@@ -115,6 +115,7 @@ class StaticPolarizabilityResult(StrictModule, NonTrainableState):
     source_state_ids: tuple[str, ...] = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tensor: ArrayLike,
@@ -132,8 +133,6 @@ class StaticPolarizabilityResult(StrictModule, NonTrainableState):
             symmetry_residual, dtype=tensor_.dtype
         ).reshape(())
         self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("unit must be UnitDefinition.")
         self.unit = unit
         self.source_state_ids = source_state_ids
         self.result_id = canonical_fingerprint(

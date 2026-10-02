@@ -28,6 +28,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._training_kernel import AbstractKernelUpdateRule, KernelUpdateContext
+from ..typing import checked
 from ._iterative import (
     AbstractCompositeLeastSquaresMethod,
     AbstractLeastSquaresMethod,
@@ -122,6 +123,7 @@ class LeastSquaresUpdateRule(_AbstractNativeMethodRule):
     termination: OptimizationTermination | None = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: AbstractLeastSquaresMethod,
@@ -132,8 +134,6 @@ class LeastSquaresUpdateRule(_AbstractNativeMethodRule):
         rule_id: str,
         prepared_state: Any = None,
     ) -> None:
-        if not isinstance(method, AbstractLeastSquaresMethod):
-            raise TypeError("method must be an AbstractLeastSquaresMethod.")
         if not callable(residual):
             raise TypeError("residual must be callable.")
         self.method = method
@@ -183,6 +183,7 @@ class CompositeLeastSquaresUpdateRule(_AbstractNativeMethodRule):
     termination: OptimizationTermination | None = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: AbstractCompositeLeastSquaresMethod,
@@ -193,8 +194,6 @@ class CompositeLeastSquaresUpdateRule(_AbstractNativeMethodRule):
         rule_id: str,
         prepared_state: Any = None,
     ) -> None:
-        if not isinstance(method, AbstractCompositeLeastSquaresMethod):
-            raise TypeError("method must be an AbstractCompositeLeastSquaresMethod.")
         if not callable(problem):
             raise TypeError("problem must be callable.")
         self.method = method
@@ -245,6 +244,7 @@ class ScalarIterativeUpdateRule(_AbstractNativeMethodRule):
     termination: OptimizationTermination | None = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: AbstractScalarIterativeMethod,
@@ -254,8 +254,6 @@ class ScalarIterativeUpdateRule(_AbstractNativeMethodRule):
         rule_id: str,
         prepared_state: Any = None,
     ) -> None:
-        if not isinstance(method, AbstractScalarIterativeMethod):
-            raise TypeError("method must be an AbstractScalarIterativeMethod.")
         self.method = method
         self.prepared_state = prepared_state
         self.termination = termination
@@ -295,9 +293,8 @@ class MirrorUpdateRule(AbstractKernelUpdateRule):
     optimizer: AbstractMirrorOptimizer
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, optimizer: AbstractMirrorOptimizer, /, *, rule_id: str) -> None:
-        if not isinstance(optimizer, AbstractMirrorOptimizer):
-            raise TypeError("optimizer must be an AbstractMirrorOptimizer.")
         self.optimizer = optimizer
         self.rule_id = canonical_fingerprint(
             {
@@ -387,11 +384,10 @@ class RiemannianLineSearchUpdateRule(AbstractKernelUpdateRule):
     optimizer: AbstractRiemannianLineSearchOptimizer
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, optimizer: AbstractRiemannianLineSearchOptimizer, /, *, rule_id: str
     ) -> None:
-        if not isinstance(optimizer, AbstractRiemannianLineSearchOptimizer):
-            raise TypeError("optimizer must be a Riemannian line-search optimizer.")
         self.optimizer = optimizer
         self.rule_id = canonical_fingerprint(
             {

@@ -14,7 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._model import ValuePort
 from ..._strict import StrictModule
 from ...exterior._form_type import FormType
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import DIMENSIONLESS, DimensionSignature
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
@@ -48,6 +48,7 @@ class OperatorFieldSpec(StrictModule):
     clifford_layout: CliffordGradeRepresentation | None
     required: bool
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -96,8 +97,6 @@ class OperatorFieldSpec(StrictModule):
         names = tuple(str(value) for value in component_names)
         if names and (len(names) != channel_count or len(set(names)) != len(names)):
             raise ValueError("component_names must uniquely name every field channel.")
-        if not isinstance(dimension, DimensionSignature):
-            raise TypeError("Operator field dimension must be a DimensionSignature.")
 
         def channel_values(
             value: float | Sequence[float],

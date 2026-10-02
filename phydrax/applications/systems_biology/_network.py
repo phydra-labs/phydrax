@@ -28,7 +28,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations import PreparedChemicalMechanism
 from ...stochastic import AbstractJumpProcess
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 ApproximationKind: TypeAlias = Literal["deterministic", "cle"]
@@ -572,9 +572,8 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
     maximum_order: int = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: StoichiometricNetworkPlan, /) -> None:
-        if not isinstance(plan, StoichiometricNetworkPlan):
-            raise TypeError("plan must be StoichiometricNetworkPlan.")
         species_index = {item.name: index for index, item in enumerate(plan.species)}
         compartment_measure = {
             item.name: float(item.measure) for item in plan.compartments
@@ -1067,11 +1066,10 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
     def exact_jump_process(self) -> CompartmentalJumpProcess:
         return CompartmentalJumpProcess(self)
 
+    @checked
     def bind_thermochemical(
         self, mechanism: PreparedChemicalMechanism, /
     ) -> ThermochemicalInteropEvidence:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         mechanism_species = {
             name: index for index, name in enumerate(mechanism.schema.species_names)
         }
@@ -1341,9 +1339,8 @@ class CompartmentalJumpProcess(AbstractJumpProcess):
     mark_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, network: PreparedStoichiometricNetwork, /) -> None:
-        if not isinstance(network, PreparedStoichiometricNetwork):
-            raise TypeError("network must be PreparedStoichiometricNetwork.")
         if any(item.quantity != "count" for item in network.plan.species):
             raise ValueError("Exact SSA requires every species quantity to be 'count'.")
         self.network = network

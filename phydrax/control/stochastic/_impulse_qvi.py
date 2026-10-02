@@ -22,6 +22,7 @@ from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics._grid import TimeGrid
+from ...typing import checked
 from ._hjb import BoundedUniformGrid1D
 
 
@@ -87,6 +88,7 @@ class BoundedImpulseQVIProblem(StrictModule, NonTrainableState):
     corner_tolerance: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spatial_grid: BoundedUniformGrid1D,
@@ -107,10 +109,6 @@ class BoundedImpulseQVIProblem(StrictModule, NonTrainableState):
         corner_tolerance: float = 0.0,
         problem_id: str,
     ) -> None:
-        if not isinstance(spatial_grid, BoundedUniformGrid1D):
-            raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         for owner, callback in (
             ("drift", drift),
             ("diffusion", diffusion),

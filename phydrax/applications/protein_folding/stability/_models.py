@@ -23,7 +23,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ...._validation import positive_finite_float
 from ....qualification import ScientificCampaign
-from ....typing import parse
+from ....typing import checked, parse
 from ....uq import DenseCovariance, fit_laplace, ParameterSpace, PosteriorProblem
 from ....uq._linearized import propagate_linearized
 from ..interchange._megascale import (
@@ -1189,6 +1189,7 @@ class ProteinStabilityModelSelectionRecord:
     chosen_baseline_fit_id: str
     selection_id: str
 
+    @checked
     def __init__(
         self,
         cohort: ProteinStabilityCohort,
@@ -1199,8 +1200,6 @@ class ProteinStabilityModelSelectionRecord:
         candidate_hyperparameters: Mapping[str, Mapping[str, float]],
         score_name: str = "family-macro-mae-kcal-per-mol",
     ) -> None:
-        if not isinstance(cohort, ProteinStabilityCohort):
-            raise TypeError("cohort must be a ProteinStabilityCohort.")
         values = tuple(features)
         candidates = tuple(candidate_fits)
         if not values or any(

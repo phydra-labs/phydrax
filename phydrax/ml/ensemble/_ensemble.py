@@ -23,6 +23,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
+from ...typing import checked
 from ...uq import (
     HeterogeneousFunctionEnsemble,
     HomogeneousFunctionEnsemble,
@@ -508,6 +509,7 @@ class BaggingRecipe(AbstractRecipe):
     num_members: int = eqx.field(static=True)
     sample_fraction: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         recipe: AbstractRecipe,
@@ -516,8 +518,6 @@ class BaggingRecipe(AbstractRecipe):
         num_members: int = 16,
         sample_fraction: float = 1.0,
     ) -> None:
-        if not isinstance(recipe, AbstractRecipe):
-            raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or not (0.0 < float(sample_fraction) <= 1.0):
             raise ValueError(
                 "num_members must be positive and sample_fraction in (0, 1]."
@@ -556,11 +556,10 @@ class RandomSubspaceRecipe(AbstractRecipe):
     num_members: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, recipe: AbstractRecipe, /, *, num_members: int = 16, feature_count: int
     ) -> None:
-        if not isinstance(recipe, AbstractRecipe):
-            raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or int(feature_count) <= 0:
             raise ValueError("num_members and feature_count must be positive.")
         self.recipe = recipe
@@ -663,6 +662,7 @@ class StackingRecipe(AbstractRecipe):
     meta_recipe: AbstractRecipe
     num_folds: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_recipes: Sequence[AbstractRecipe],
@@ -674,8 +674,6 @@ class StackingRecipe(AbstractRecipe):
         bases = tuple(base_recipes)
         if not bases or any(not isinstance(value, AbstractRecipe) for value in bases):
             raise TypeError("base_recipes must be a nonempty sequence of recipes.")
-        if not isinstance(meta_recipe, AbstractRecipe):
-            raise TypeError("meta_recipe must be an AbstractRecipe.")
         if int(num_folds) < 2:
             raise ValueError("num_folds must be at least two.")
         self.base_recipes = bases
@@ -781,6 +779,7 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
     gate_recipe: AbstractRecipe
     temperature: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         expert_recipes: Sequence[AbstractRecipe],
@@ -792,8 +791,6 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         experts = tuple(expert_recipes)
         if not experts or any(not isinstance(value, AbstractRecipe) for value in experts):
             raise TypeError("expert_recipes must be a nonempty sequence of recipes.")
-        if not isinstance(gate_recipe, AbstractRecipe):
-            raise TypeError("gate_recipe must be an AbstractRecipe.")
         if float(temperature) <= 0.0:
             raise ValueError("temperature must be positive.")
         self.expert_recipes = experts

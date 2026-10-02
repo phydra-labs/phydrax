@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout, TrajectoryData
+from ...typing import checked
 from ._hydrostatic import (
     _cell_from_faces,
     HydrostaticOceanState,
@@ -68,9 +69,8 @@ class PassiveOceanTrajectoryPlan(StrictModule, NonTrainableState):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, ocean: PreparedHydrostaticOcean, maximum_steps: int, /) -> None:
-        if not isinstance(ocean, PreparedHydrostaticOcean):
-            raise TypeError("ocean must be a PreparedHydrostaticOcean.")
         capacity = int(maximum_steps)
         if capacity <= 0:
             raise ValueError("maximum_steps must be positive.")

@@ -10,7 +10,7 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._availability import import_backend_module, probe_backend
 from ._types import AbstractExternalBackend, BackendAvailability, BackendCapabilities
 
@@ -140,9 +140,8 @@ class PreparedMPAX(StrictModule):
     solver: Any
     backend_version: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MPAXPlan, solver: Any, /, *, backend_version: str) -> None:
-        if not isinstance(plan, MPAXPlan):
-            raise TypeError("plan must be an MPAXPlan.")
         version = str(backend_version)
         if not version:
             raise ValueError("backend_version must be non-empty.")

@@ -26,7 +26,7 @@ from ...optim import (
     NewtonKrylov,
     OptimizationTermination,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 # pCN scan carry: whitened state, log likelihood, PRNG key, accepted count.
@@ -167,6 +167,7 @@ class EnsembleKalmanInversionPlan(StrictModule, NonTrainableState):
     covariance: DiagonalCovarianceAction
     inflation: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observation: ArrayLike,
@@ -175,10 +176,6 @@ class EnsembleKalmanInversionPlan(StrictModule, NonTrainableState):
         *,
         inflation: float = 1.0,
     ) -> None:
-        if not isinstance(covariance, DiagonalCovarianceAction):
-            raise TypeError(
-                "Scalable ensemble inversion currently requires diagonal covariance."
-            )
         observed = jnp.asarray(observation)
         inflation_ = float(inflation)
         if (

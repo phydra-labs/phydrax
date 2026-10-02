@@ -25,6 +25,7 @@ from ..discretization.particle import (
     ParticleInternalBatchState,
     PreparedParticleInternalBatch,
 )
+from ..typing import checked
 from ._particle_reaction import (
     EvaporationPhaseChangePlan,
     ParticlePhaseChangeEvaluation,
@@ -150,14 +151,13 @@ class PreparedParticleConversionDynamics(StrictModule, NonTrainableState):
     batches: tuple[PreparedParticleInternalBatch, ...]
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: ParticleConversionProblemIR,
         batches: Sequence[PreparedParticleInternalBatch],
         /,
     ) -> None:
-        if not isinstance(problem, ParticleConversionProblemIR):
-            raise TypeError("problem must be a ParticleConversionProblemIR.")
         batch_values = tuple(batches)
         if len(batch_values) != len(problem.materials) or any(
             not isinstance(value, PreparedParticleInternalBatch) for value in batch_values

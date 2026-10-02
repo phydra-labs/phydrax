@@ -95,6 +95,7 @@ from ...typing import (
     as_array,
     as_host_array,
     Bool,
+    checked,
     Dim,
     Float,
     Float64,
@@ -745,6 +746,7 @@ class FilmDrainageCoalescencePlan(StrictModule):
             canonical=canonical,
         )
 
+    @checked
     def advance(
         self,
         ledger: FilmContactLedger,
@@ -759,10 +761,6 @@ class FilmDrainageCoalescencePlan(StrictModule):
         released; new in-contact pairs start at ``initial_film_thickness`` and
         drain over this step. Fixed shapes, no host synchronization.
         """
-        if not isinstance(ledger, FilmContactLedger):
-            raise TypeError("ledger must be a FilmContactLedger.")
-        if not isinstance(observation, FilmContactObservation):
-            raise TypeError("observation must be a FilmContactObservation.")
         capacity = self.pair_capacity
         if ledger.status.shape != (capacity,):
             raise ValueError(f"ledger must have {capacity} slots.")

@@ -31,7 +31,7 @@ from ...linalg import (
     TransformDiagonalSolvePlan,
     TransformDiagonalSolveResult,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
 
@@ -175,14 +175,13 @@ class FDLaplacianDiagonalization(StrictModule, NonTrainableState):
     nullspace_dimension: int = eqx.field(static=True)
     diagonalization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
         boundaries: Mapping[str, FDBoundaryPair] | Sequence[FDBoundaryPair],
         /,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         pairs = _normalize_boundaries(grid, boundaries)
         dtype = np.dtype(grid.points.dtype)
         actions = []
@@ -311,6 +310,7 @@ class FDLaplacianSolvePlan(StrictModule, NonTrainableState):
     operator_scale: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         diagonalization: FDLaplacianDiagonalization,
@@ -322,8 +322,6 @@ class FDLaplacianSolvePlan(StrictModule, NonTrainableState):
         gauge: GaugePolicy = "minimum_norm",
         zero_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(diagonalization, FDLaplacianDiagonalization):
-            raise TypeError("diagonalization must be FDLaplacianDiagonalization.")
         scale = jnp.asarray(operator_scale, dtype=diagonalization.space.dtype)
         shift = jnp.asarray(diagonal_shift, dtype=diagonalization.space.dtype)
         if (

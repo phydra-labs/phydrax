@@ -27,6 +27,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class PairRelationEventKind(IntEnum):
@@ -368,6 +369,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
     plan: DynamicPairRelationPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DynamicPairRelationPlan,
@@ -375,8 +377,6 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         *,
         prepared_scope_id: str = "dynamic-pair-relations",
     ) -> None:
-        if not isinstance(plan, DynamicPairRelationPlan):
-            raise TypeError("plan must be a DynamicPairRelationPlan.")
         scope = str(prepared_scope_id)
         if not scope:
             raise ValueError("prepared_scope_id must be nonempty.")
@@ -495,6 +495,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
             )
         return state
 
+    @checked
     def _validate_shapes(
         self,
         state: PairRelationState,
@@ -502,10 +503,6 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         endpoint_active: Array,
     ) -> None:
         relation_shape = (self.plan.relation_capacity,)
-        if not isinstance(state, PairRelationState):
-            raise TypeError("state must be a PairRelationState.")
-        if not isinstance(events, PairRelationEventBatch):
-            raise TypeError("events must be a PairRelationEventBatch.")
         if any(
             value.shape != relation_shape
             for value in (
@@ -959,14 +956,13 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         )
         return PairRelationEvaluation(state, candidate, evidence, self.prepared_id)
 
+    @checked
     def commit(
         self,
         state: PairRelationState,
         evaluation: PairRelationEvaluation,
         /,
     ) -> PairRelationCommitResult:
-        if not isinstance(evaluation, PairRelationEvaluation):
-            raise TypeError("evaluation must be a PairRelationEvaluation.")
         if evaluation.prepared_id != self.prepared_id:
             raise ValueError(
                 "evaluation belongs to a different prepared relation runtime."
@@ -1112,6 +1108,7 @@ class PreparedPairSpringEnergy(StrictModule, NonTrainableState):
     ambient_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PairSpringPlan,
@@ -1120,10 +1117,6 @@ class PreparedPairSpringEnergy(StrictModule, NonTrainableState):
         *,
         ambient_dimension: int,
     ) -> None:
-        if not isinstance(plan, PairSpringPlan):
-            raise TypeError("plan must be a PairSpringPlan.")
-        if not isinstance(relations, PreparedDynamicPairRelations):
-            raise TypeError("relations must be PreparedDynamicPairRelations.")
         dimension = int(ambient_dimension)
         if dimension <= 0:
             raise ValueError("ambient_dimension must be positive.")

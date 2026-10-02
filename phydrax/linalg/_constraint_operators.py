@@ -19,7 +19,7 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._constraints import ConstraintMap
 from ._costs import _array_tree_storage_bytes
 from ._factorizations import (
@@ -214,6 +214,7 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
     factorization_kind: ConstraintFactorizationKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -225,8 +226,6 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
         materialization: MaterializationPolicy | None = None,
         factorization_kind: ConstraintFactorizationKind = "auto",
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError(
                 "Constraint operator preparation requires an unbatched operator."
@@ -305,6 +304,7 @@ class PreparedConstraintOperator(StrictModule, NonTrainableState):
     evidence: ConstraintOperatorEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ConstraintOperatorPlan,
@@ -316,20 +316,6 @@ class PreparedConstraintOperator(StrictModule, NonTrainableState):
         evidence: ConstraintOperatorEvidence,
         /,
     ) -> None:
-        if not isinstance(plan, ConstraintOperatorPlan):
-            raise TypeError("plan must be a ConstraintOperatorPlan.")
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
-        if not isinstance(factorization, PreparedFactorization):
-            raise TypeError("factorization must be a PreparedFactorization.")
-        if not isinstance(right_inverse_operator, AbstractLinearOperator):
-            raise TypeError("right_inverse_operator must be an AbstractLinearOperator.")
-        if not isinstance(nullspace, LinearSubspace):
-            raise TypeError("nullspace must be a LinearSubspace.")
-        if not isinstance(nullspace_operator, AbstractLinearOperator):
-            raise TypeError("nullspace_operator must be an AbstractLinearOperator.")
-        if not isinstance(evidence, ConstraintOperatorEvidence):
-            raise TypeError("evidence must be ConstraintOperatorEvidence.")
         if not operator.source.compatible(
             plan.operator.source
         ) or not operator.target.compatible(plan.operator.target):

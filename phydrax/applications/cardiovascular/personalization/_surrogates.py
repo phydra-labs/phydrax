@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ....typing import checked
 from ....uq import GaussianScaleCalibrator, SplitConformal
 from .._quantities import CardiovascularQuantitySpec
 from ._cohorts import PreparedLearningCohort, TrainOnlyFeaturePreprocessor
@@ -389,6 +390,7 @@ class CardiacSurrogateCalibration:
     calibration_id: str
 
     @classmethod
+    @checked
     def fit(
         cls,
         location: ArrayLike,
@@ -399,8 +401,6 @@ class CardiacSurrogateCalibration:
         *,
         alpha: float = 0.1,
     ) -> CardiacSurrogateCalibration:
-        if not isinstance(prepared, PreparedLearningCohort):
-            raise TypeError("prepared must be a PreparedLearningCohort.")
         center = jnp.asarray(location, dtype=jnp.float64)
         raw_scale = jnp.asarray(scale, dtype=jnp.float64)
         truth = jnp.asarray(target, dtype=jnp.float64)

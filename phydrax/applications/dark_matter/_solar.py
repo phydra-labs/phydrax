@@ -25,6 +25,7 @@ from ...solver import (
     solve_jump_differential,
 )
 from ...stochastic import PoissonClockRealization
+from ...typing import checked
 from ...units import KILOGRAM, METER, SECOND
 from ..astrodynamics import (
     AstrodynamicsContext,
@@ -365,6 +366,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
     surface_out_event_index: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: SmoothStellarRadialProfile,
@@ -381,8 +383,6 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
             scattering, ElasticScatteringTable
         ):
             raise TypeError("Solar transport requires a stellar profile and tables.")
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         _require_si_physical_inertial_context(context)
         if profile.frame_id != context.frame.frame_id:
             raise ValueError("Profile and astrodynamics body-frame identities differ.")
@@ -513,6 +513,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
 
         return jax.vmap(one)(surface_states, available_times_s, active)
 
+    @checked
     def simulate(
         self,
         initial_paths: WeightedSampleBatch,
@@ -530,10 +531,6 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
         propagation, rate, mark, and crossing kernels remain JAX traceable.
         Event histories are not pathwise gradients.
         """
-        if not isinstance(initial_paths, WeightedSampleBatch):
-            raise TypeError("initial_paths must be a WeightedSampleBatch.")
-        if not isinstance(poisson, PoissonClockRealization):
-            raise TypeError("poisson must be a PoissonClockRealization.")
         raw_states = jnp.asarray(initial_paths.samples, dtype=jnp.float64)
         if raw_states.ndim != 2 or raw_states.shape[0] == 0 or raw_states.shape[1] != 6:
             raise ValueError("initial path samples must have nonempty shape (path, 6).")

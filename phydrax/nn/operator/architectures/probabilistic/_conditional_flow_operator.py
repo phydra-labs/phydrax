@@ -40,7 +40,7 @@ from phydrax.nn.operator.distribution import (
 )
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from .....typing import PRNGKey
+from .....typing import checked, PRNGKey
 
 
 class _FixedReferenceQuery(StrictModule, NonTrainableState):
@@ -162,6 +162,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
     case_shape: tuple[int, ...]
     uncertainty_source: UncertaintySource
 
+    @checked
     def __init__(
         self,
         *,
@@ -175,8 +176,6 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         case_shape: tuple[int, ...],
         uncertainty_source: UncertaintySource,
     ) -> None:
-        if not isinstance(flow, AbstractFlowDistribution):
-            raise TypeError("flow must be an AbstractFlowDistribution.")
         cases = tuple(case_shape)
         axes = tuple(str(axis) for axis in case_axes)
         expected = cases + query.sample_shape + output_spec.channel_shape
@@ -326,6 +325,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
     in_size: Any
     out_size: int | Literal["scalar"]
 
+    @checked
     def __init__(
         self,
         location_model: AbstractOperatorModel,
@@ -336,14 +336,6 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
         *,
         uncertainty_source: UncertaintySource,
     ) -> None:
-        if not isinstance(location_model, AbstractOperatorModel):
-            raise TypeError("location_model must be a neural operator.")
-        if not isinstance(conditioner, OperatorBatchConditioner):
-            raise TypeError("conditioner must be an OperatorBatchConditioner.")
-        if not isinstance(flow, AbstractFlowDistribution):
-            raise TypeError("flow must be an AbstractFlowDistribution.")
-        if not isinstance(reference_query, FunctionSamples):
-            raise TypeError("reference_query must be FunctionSamples.")
         if reference_query.geometry_case_shape:
             raise ValueError(
                 "Native flow requires one query geometry shared by every case."

@@ -13,6 +13,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..artifacts import DerivativeEvidence
 from ..qualification import CapabilityProfile
+from ..typing import checked
 from ._identity import ReproducibilityGrade
 
 
@@ -34,6 +35,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
     reproducibility: ReproducibilityGrade = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: CapabilityProfile,
@@ -52,10 +54,6 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
         license_ids: Sequence[str],
         reproducibility: ReproducibilityGrade,
     ) -> None:
-        if not isinstance(profile, CapabilityProfile):
-            raise TypeError("profile must be CapabilityProfile.")
-        if not isinstance(differentiation, DerivativeEvidence):
-            raise TypeError("differentiation must be DerivativeEvidence.")
         if not isinstance(reproducibility, ReproducibilityGrade):
             raise TypeError("reproducibility must be ReproducibilityGrade.")
 

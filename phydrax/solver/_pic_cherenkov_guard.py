@@ -26,6 +26,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._cochain_pic_field import CochainMaxwellPICFieldSolver
 from ._maxwell_dispersion import CherenkovRegimeEvidence, CherenkovRegimePlan
 from ._pic_field_solver import AbstractPreparedPICFieldSolver
@@ -42,9 +43,8 @@ class PICCherenkovGuard(StrictModule, NonTrainableState):
     species: int = eqx.field(static=True)
     guard_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, regime: CherenkovRegimePlan, /, *, species: int) -> None:
-        if not isinstance(regime, CherenkovRegimePlan):
-            raise TypeError("regime must be a CherenkovRegimePlan.")
         index = int(species)
         if index < 0:
             raise ValueError("species must be a nonnegative species index.")

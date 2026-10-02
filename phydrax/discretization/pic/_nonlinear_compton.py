@@ -97,7 +97,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float, positive_integer
 from ...special import synchrotron_f, synchrotron_g, synchrotron_h
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ._qed_tables import (
     _INVERSE_NORMALIZATION,
     QED_SUPPORT_FAILURE,
@@ -251,6 +251,7 @@ class NonlinearComptonPlan(StrictModule, NonTrainableState):
     critical_frequency_scale: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: QEDEmissionModel,
@@ -273,10 +274,6 @@ class NonlinearComptonPlan(StrictModule, NonTrainableState):
         model_ = parse(model, QEDEmissionModel, "model")
         polarization_ = parse(polarization, QEDPolarizationModel, "polarization")
         conservation_ = parse(conservation, QEDConservation, "conservation")
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
-        if not isinstance(table, QEDTable):
-            raise TypeError("table must be a QEDTable.")
         if table.process != "nonlinear-compton":
             raise ValueError("NonlinearComptonPlan requires a 'nonlinear-compton' table.")
         if table.polarization != "averaged":
@@ -355,10 +352,9 @@ class NonlinearComptonPlan(StrictModule, NonTrainableState):
             )
         self.plan_id = canonical_fingerprint(identity)
 
+    @checked
     def validate_relativity(self, relativity: RelativityScaleContract, /) -> None:
         """Refuse a pusher whose units or speed of light differ from ``scale``."""
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         own = self.scale.relativity
         if relativity.dimensional_scale.scale_id != own.dimensional_scale.scale_id:
             raise ValueError(

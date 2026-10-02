@@ -23,7 +23,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..measurement import PulseResponse, WaveformSupport
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ..units import conversion_factor, derived_unit, LENGTH, TIME, UnitDefinition
 from ._lidar import PreparedLidarSurface
 
@@ -272,13 +272,10 @@ class LidarReturnExtractionPlan:
                 "threshold must be nonnegative and return capacities positive."
             )
 
+    @checked
     def evaluate(
         self, waveform: LidarWaveformResult, support: WaveformSupport, /
     ) -> LidarReturnExtractionResult:
-        if not isinstance(waveform, LidarWaveformResult):
-            raise TypeError("waveform must be LidarWaveformResult.")
-        if not isinstance(support, WaveformSupport):
-            raise TypeError("support must be WaveformSupport.")
         expected = support.sample_shape
         if waveform.values.shape != expected:
             raise ValueError(f"waveform values must have shape {expected}.")
@@ -345,6 +342,7 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
     overlap: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: WaveformSupport,
@@ -358,8 +356,6 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         wave_speed_unit: UnitDefinition,
         overlap: ArrayLike = 1.0,
     ) -> None:
-        if not isinstance(support, WaveformSupport):
-            raise TypeError("support must be WaveformSupport.")
         if not isinstance(range_unit, UnitDefinition) or range_unit.dimension != LENGTH:
             raise ValueError("range_unit must be a length UnitDefinition.")
         range_factor = float(
@@ -474,6 +470,7 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
     path_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: WaveformSupport,
@@ -485,8 +482,6 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
         wave_speed_unit: UnitDefinition,
         path_capacity: int,
     ) -> None:
-        if not isinstance(support, WaveformSupport):
-            raise TypeError("support must be WaveformSupport.")
         if (
             not isinstance(path_length_unit, UnitDefinition)
             or path_length_unit.dimension != LENGTH
@@ -592,6 +587,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
     wave_speed: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: WaveformSupport,
@@ -605,8 +601,6 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
         distance_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
     ) -> None:
-        if not isinstance(support, WaveformSupport):
-            raise TypeError("support must be WaveformSupport.")
         if (
             not isinstance(distance_unit, UnitDefinition)
             or distance_unit.dimension != LENGTH

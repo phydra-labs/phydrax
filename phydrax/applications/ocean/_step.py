@@ -24,6 +24,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._ksgs import KSGSState, replace_ksgs_kinetic_energy
 from ...solver import AbstractFixedStepMethod, FixedStepResult
+from ...typing import checked
 from ._boussinesq import PreparedCartesianBoussinesqOcean
 
 
@@ -75,9 +76,8 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod, NonTrainableState):
     ocean: PreparedCartesianBoussinesqOcean
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, ocean: PreparedCartesianBoussinesqOcean, /) -> None:
-        if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
-            raise TypeError("ocean must be PreparedCartesianBoussinesqOcean.")
         self.ocean = ocean
         self.method_id = canonical_fingerprint(
             {
@@ -246,6 +246,7 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod, NonTrainableState):
             scalars[prepared.scalar_field_name],
         )
 
+    @checked
     def step(
         self,
         step_index: Array,
@@ -256,8 +257,6 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod, NonTrainableState):
         /,
     ) -> FixedStepResult:
         del step_index
-        if not isinstance(state, OceanBoussinesqContinuationState):
-            raise TypeError("Ocean SSPRK3 requires OceanBoussinesqContinuationState.")
         state = self._initialize_ksgs(state)
         dt = jnp.asarray(step_size, dtype=state.coordinates.dtype)
         first_rate, _, first_success, first_residual = self._rate(time, state, args)

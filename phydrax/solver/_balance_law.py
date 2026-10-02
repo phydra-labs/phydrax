@@ -25,6 +25,7 @@ from ..stochastic._realization import (
     is_stochastic_realization,
     StochasticRealization,
 )
+from ..typing import checked
 from ._balance_law_composition import BalanceLawCompositionPlan
 from ._balance_law_transport import (
     AbstractPreparedBalanceLawTransport,
@@ -195,6 +196,7 @@ class BalanceLawRuntimeState(StrictModule):
     accepted_budget: BalanceLawAcceptedBudget
     process_ids: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transport_state: BalanceLawTransportState,
@@ -212,8 +214,6 @@ class BalanceLawRuntimeState(StrictModule):
         identifiers = tuple(state.process_id for state in states)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Balance-law process IDs must be unique.")
-        if not isinstance(accepted_budget, BalanceLawAcceptedBudget):
-            raise TypeError("accepted_budget must be BalanceLawAcceptedBudget.")
         self.transport_state = transport_state
         self.process_states = states
         self.accepted_budget = accepted_budget
@@ -261,6 +261,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
     )
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transport: AbstractPreparedBalanceLawTransport,
@@ -270,8 +271,6 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         accepted_step_couplings: tuple[AbstractPreparedAcceptedStepCoupling, ...] = (),
         composition: BalanceLawCompositionPlan | None = None,
     ) -> None:
-        if not isinstance(transport, AbstractPreparedBalanceLawTransport):
-            raise TypeError("transport must be a prepared balance-law transport.")
         prepared = tuple(processes)
         if not prepared or any(
             not isinstance(process, AbstractPreparedBalanceLawProcess)
@@ -455,6 +454,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         accepted = reported_success & ownership_valid & jnp.all(jnp.isfinite(candidate_))
         return jnp.where(accepted, candidate_, incoming), accepted, ownership_valid
 
+    @checked
     def _accepted_process_average(
         self,
         index: int,
@@ -462,8 +462,6 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         result: BalanceLawProcessAdvance,
         /,
     ) -> tuple[Array, Array, Array, Array]:
-        if not isinstance(result, BalanceLawProcessAdvance):
-            raise TypeError("Process advance must return BalanceLawProcessAdvance.")
         if result.process_state.process_id != self.process_ids[index]:
             raise ValueError("Process advance changed its auxiliary-state owner.")
         change = jnp.asarray(result.source_change)
@@ -729,6 +727,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
     replay: FiniteVolumeReplayPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedBalanceLawRuntime,
@@ -737,10 +736,6 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         *,
         replay: FiniteVolumeReplayPolicy | None = None,
     ) -> None:
-        if not isinstance(runtime, PreparedBalanceLawRuntime):
-            raise TypeError("runtime must be PreparedBalanceLawRuntime.")
-        if not isinstance(temporal_mesh, TemporalMesh):
-            raise TypeError("temporal_mesh must be TemporalMesh.")
         if temporal_mesh.role != "internal" or not bool(
             np.all(np.asarray(temporal_mesh.active_intervals))
         ):
@@ -763,6 +758,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_realized_mesh(
         cls,
         runtime: PreparedBalanceLawRuntime,
@@ -772,8 +768,6 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         replay: FiniteVolumeReplayPolicy | None = None,
     ) -> ScheduledBalanceLawRolloutPlan:
         """Construct an exact scheduled replay from one adaptive realization."""
-        if not isinstance(realized_mesh, RealizedTemporalMesh):
-            raise TypeError("realized_mesh must be RealizedTemporalMesh.")
         count = int(np.asarray(jax.device_get(realized_mesh.count)))
         if count <= 0:
             raise ValueError(
@@ -789,6 +783,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         )
         return cls(runtime, temporal_mesh, replay=replay)
 
+    @checked
     def rollout(
         self,
         initial_state: BalanceLawRuntimeState,
@@ -796,8 +791,6 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         realization: StochasticRealization | None = None,
         /,
     ) -> BalanceLawRolloutResult:
-        if not isinstance(initial_state, BalanceLawRuntimeState):
-            raise TypeError("initial_state must be BalanceLawRuntimeState.")
 
         def step(
             carry: _RolloutCarry, interval: tuple[Array, Array]

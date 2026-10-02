@@ -23,6 +23,7 @@ from ..discretization.flip import (
     PreparedSparseFLIPParticleTransfer,
     SparseFLIPTransferState,
 )
+from ..typing import checked
 from ._flip import FLIPProblemIR
 
 
@@ -162,14 +163,13 @@ class CompiledSparseFLIPProblem(StrictModule, NonTrainableState):
         )
         return jnp.where(retained, previous.pressure[lookup.storage_slots], 0.0)
 
+    @checked
     def step_detailed(
         self,
         state: SparseFLIPRuntimeState,
         step_size: ArrayLike,
         /,
     ) -> SparseFLIPStepResult:
-        if not isinstance(state, SparseFLIPRuntimeState):
-            raise TypeError("state must be SparseFLIPRuntimeState.")
         dt = jnp.asarray(step_size, dtype=state.time.dtype).reshape(())
         routes = self.transfer.build(
             state.particles.position,

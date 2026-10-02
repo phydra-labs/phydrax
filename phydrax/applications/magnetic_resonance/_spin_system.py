@@ -24,7 +24,7 @@ from ...solver._local_hamiltonian import (
     LocalHamiltonianTerm,
     materialize_local_hamiltonian,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._conventions import (
     HBAR_J_S,
     MagneticResonanceConvention,
@@ -143,6 +143,7 @@ class SpinSite(StrictModule):
     chemical_shift_ppm: Array
     site_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         site_id: str,
@@ -161,8 +162,6 @@ class SpinSite(StrictModule):
             (0.0, 0.0, 0.0),
         ),
     ) -> None:
-        if not isinstance(isotope, ResonanceIsotope):
-            raise TypeError("isotope must be a ResonanceIsotope.")
         self.isotope = isotope
         self.position_m = _finite_vector(position_m, "position_m")
         self.zeeman_tensor = _finite_tensor(zeeman_tensor, "zeeman_tensor")

@@ -41,7 +41,7 @@ from ...solver._mac_viscous import (
     MACSBDF2Method,
     MACSBDF2State,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._statistics import _mac_face_to_cell
 
 
@@ -496,6 +496,7 @@ class MACFlowControlPlan(StrictModule):
     maximum_resource_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: AbstractSSPRKFixedStepMethod | MACIMEXEulerMethod | MACSBDF2Method,
@@ -511,8 +512,6 @@ class MACFlowControlPlan(StrictModule):
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
         dynamics, _ = _method_dynamics(method)
-        if not isinstance(target, MACFlowControlTarget):
-            raise TypeError("target must be a MACFlowControlTarget.")
         dimension = dynamics.problem.spatial_dimension
         if any(axis >= dimension for axis in target.axes):
             raise ValueError("Controlled axes exceed the MAC spatial dimension.")
@@ -572,9 +571,8 @@ class PreparedMACFlowControl(StrictModule):
     control_space_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACFlowControlPlan, /) -> None:
-        if not isinstance(plan, MACFlowControlPlan):
-            raise TypeError("plan must be a MACFlowControlPlan.")
         dynamics, method_kind = _method_dynamics(plan.method)
         target = plan.target
         faces = _face_density(dynamics.momentum.operators, target)
@@ -725,9 +723,8 @@ class PreparedMACFlowControl(StrictModule):
             plan_id=self.prepared_id,
         )
 
+    @checked
     def _validate_state(self, state: MACFlowControlState, /) -> None:
-        if not isinstance(state, MACFlowControlState):
-            raise TypeError("state must be a MACFlowControlState.")
         if (
             state.plan_id != self.prepared_id
             or state.method_id != self.plan.method.method_id

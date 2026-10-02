@@ -20,6 +20,7 @@ from ..._polynomial._cubature import lebedev_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticSystemPlan
+from ...typing import checked
 
 
 class AtomicRadialGridKind(StrEnum):
@@ -91,6 +92,7 @@ class MolecularDFTGridPlan(StrictModule, NonTrainableState):
     maximum_points: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -101,8 +103,6 @@ class MolecularDFTGridPlan(StrictModule, NonTrainableState):
         becke_iterations: int = 3,
         maximum_points: int = 2_000_000,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         radial_ = AtomicRadialGridPlan() if radial is None else radial
         if not isinstance(radial_, AtomicRadialGridPlan):
             raise TypeError("radial must be AtomicRadialGridPlan or None.")
@@ -149,9 +149,8 @@ class PreparedMolecularDFTGrid(StrictModule, NonTrainableState):
     angular_source_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MolecularDFTGridPlan, /) -> None:
-        if not isinstance(plan, MolecularDFTGridPlan):
-            raise TypeError("plan must be MolecularDFTGridPlan.")
         angular = lebedev_rule_data(plan.angular_degree)
         radial, radial_weights = plan.radial.rule()
         local = (radial[:, None, None] * np.asarray(angular.points)[None, :, :]).reshape(

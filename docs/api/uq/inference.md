@@ -40,6 +40,14 @@
             - gauss_newton_residual
             - validate
 
+Prediction, observation-variance, observation-sampling, and Gauss–Newton residual
+callbacks may be callable PyTrees or bound methods with numerical state. Their
+arrays remain dynamic PyTree leaves, just like those of the likelihood callback.
+Plain Python functions remain non-array leaves and are treated as static by
+Equinox filtering. Do not mark an array-bearing callback `static=True` or hide it
+inside a closure to suppress the static-array warning. Compiled evaluation must
+receive updated callback arrays as data.
+
 
 ### Stochastic likelihood contracts
 

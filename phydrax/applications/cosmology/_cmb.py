@@ -22,6 +22,7 @@ from ...observation import (
     LinearObservationPlan,
     TheoryVector,
 )
+from ...typing import checked
 from ._products import CosmologyProductProvenance, CosmologyRealizationSignature
 
 
@@ -275,6 +276,7 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
     expected_temperature_unit: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transform: CmbSpectrumTransformPlan,
@@ -286,8 +288,6 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
         expected_temperature_unit: str,
         response_id: str,
     ) -> None:
-        if not isinstance(transform, CmbSpectrumTransformPlan):
-            raise TypeError("transform must be a CmbSpectrumTransformPlan.")
         windows_host = np.asarray(windows, dtype=np.float64)
         observed_host = np.asarray(observed_bandpowers, dtype=np.float64)
         cholesky_host = np.asarray(covariance_cholesky, dtype=np.float64)
@@ -342,9 +342,8 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
     def covariance_cholesky(self) -> Array:
         return self.covariance.lower_cholesky
 
+    @checked
     def evaluate(self, table: CmbSpectrumTable, /) -> CmbBandpowerResponseResult:
-        if not isinstance(table, CmbSpectrumTable):
-            raise TypeError("table must be a CmbSpectrumTable.")
         if table.temperature_unit != self.expected_temperature_unit:
             raise ValueError("CMB table temperature unit does not match response.")
         packed = self.transform.pack(table)

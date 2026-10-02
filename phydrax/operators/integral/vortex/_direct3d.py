@@ -28,6 +28,7 @@ from ....discretization.vortex._interfaces import (
 )
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
+from ....typing import checked
 from ._gaussian3d import GaussianErfVortexKernel3D
 
 
@@ -239,6 +240,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
     backend_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: GaussianErfDirectVortexPlan3D,
@@ -253,8 +255,6 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         target_chunk_count: int,
         estimated_working_set_bytes: int,
     ) -> None:
-        if not isinstance(compatibility, VortexVelocityCompatibility):
-            raise TypeError("compatibility must be VortexVelocityCompatibility.")
         self.plan = plan
         self.precision = plan.precision
         self.capabilities = plan.capabilities

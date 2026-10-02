@@ -24,6 +24,7 @@ from ..discretization.spectral import (
     PreparedPseudospectralMethod,
     TensorSpectralDiscretization,
 )
+from ..typing import checked
 from ._channel_flow import (
     ChannelVelocityDiagnostics,
     CompiledChannelFlowDynamics,
@@ -264,16 +265,13 @@ class CompiledChannelLESDynamics(StrictModule):
     compilation_id: str = eqx.field(static=True)
     source_hash: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: CompiledChannelFlowDynamics,
         model: PreparedAlgebraicLESModel,
         /,
     ) -> None:
-        if not isinstance(base, CompiledChannelFlowDynamics):
-            raise TypeError("base must be CompiledChannelFlowDynamics.")
-        if not isinstance(model, PreparedAlgebraicLESModel):
-            raise TypeError("model must be PreparedAlgebraicLESModel.")
         discretization = base.discretization
         resolved_filter = model.provenance.resolved_filter
         expected_filter = channel_les_filter(discretization)

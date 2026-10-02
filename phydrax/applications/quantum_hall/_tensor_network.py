@@ -25,6 +25,7 @@ from ...tensor_network import (
     QuantumLatticeAbelianMPOPolicy,
     QuantumLatticeAbelianMPOResult,
 )
+from ...typing import checked
 from ._cylinder import PreparedHallCylinderHamiltonian
 
 
@@ -38,6 +39,7 @@ class HallCylinderDMRGPlan(StrictModule, NonTrainableState):
     maximum_mpo_tensor_elements: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedHallCylinderHamiltonian,
@@ -50,8 +52,6 @@ class HallCylinderDMRGPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         maximum_mpo_tensor_elements: int = 100_000_000,
     ) -> None:
-        if not isinstance(prepared, PreparedHallCylinderHamiltonian):
-            raise TypeError("prepared must be PreparedHallCylinderHamiltonian.")
         occupations = tuple(int(value) for value in initial_occupations)
         sweeps = int(maximum_sweeps)
         bond = int(maximum_bond_dimension)

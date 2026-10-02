@@ -20,7 +20,7 @@ from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
 from ..metrix import AbstractRiemannianManifold
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class ManifoldProbabilityLaw(AbstractProbabilityLaw):
@@ -31,6 +31,7 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
     log_density: Any
     law_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         manifold: AbstractRiemannianManifold,
@@ -40,8 +41,6 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
         *,
         law_id: str,
     ) -> None:
-        if not isinstance(manifold, AbstractRiemannianManifold):
-            raise TypeError("manifold must implement AbstractRiemannianManifold.")
         if not callable(sampler) or not callable(log_density):
             raise TypeError("sampler and log_density must be callable.")
         if not law_id:
@@ -150,6 +149,7 @@ class IsotropicRiemannianDiffusion(StrictModule):
     terminal_time: float = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         manifold: AbstractRiemannianManifold,
@@ -161,8 +161,6 @@ class IsotropicRiemannianDiffusion(StrictModule):
         terminal_time: float = 1.0,
         process_id: str | None = None,
     ) -> None:
-        if not isinstance(manifold, AbstractRiemannianManifold):
-            raise TypeError("manifold must implement AbstractRiemannianManifold.")
         if (
             not callable(drift)
             or not callable(diffusion_rate)

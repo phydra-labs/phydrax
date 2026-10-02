@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
+from ..typing import checked
 from ._chemical_rates import (
     AbstractChemicalRatePlan,
     ChemicalRateRuntime,
@@ -45,6 +46,7 @@ class ChemicalReactionSpec(StrictModule):
     thermodynamic_reversible: bool = eqx.field(static=True)
     duplicate_group: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -68,8 +70,6 @@ class ChemicalReactionSpec(StrictModule):
         )
         if not name_:
             raise ValueError("Reaction name must be nonempty.")
-        if not isinstance(forward_rate, AbstractChemicalRatePlan):
-            raise TypeError("forward_rate must implement AbstractChemicalRatePlan.")
         if reverse_rate is not None and not isinstance(
             reverse_rate, AbstractChemicalRatePlan
         ):
@@ -97,6 +97,7 @@ class ChemicalMechanismIR(StrictModule):
     reactions: tuple[ChemicalReactionSpec, ...]
     name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -109,12 +110,6 @@ class ChemicalMechanismIR(StrictModule):
         reaction_values = tuple(reactions)
         if not name_:
             raise ValueError("Mechanism name must be nonempty.")
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be ChemicalSpeciesSchema.")
-        if not isinstance(thermodynamics, AbstractSpeciesThermodynamicsPlan):
-            raise TypeError(
-                "thermodynamics must implement AbstractSpeciesThermodynamicsPlan."
-            )
         if thermodynamics.schema.schema_id != schema.schema_id:
             raise ValueError("Thermodynamics and mechanism schemas must match exactly.")
         if not reaction_values or any(
@@ -175,9 +170,8 @@ class PreparedChemicalMechanism(StrictModule):
     mechanism_id: str = eqx.field(static=True)
     preparation_evidence: ChemicalMechanismEvidence
 
+    @checked
     def __init__(self, mechanism: ChemicalMechanismIR, /) -> None:
-        if not isinstance(mechanism, ChemicalMechanismIR):
-            raise TypeError("mechanism must be ChemicalMechanismIR.")
         species_index = {
             name: index for index, name in enumerate(mechanism.schema.species_names)
         }

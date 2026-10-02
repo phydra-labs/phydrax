@@ -22,6 +22,7 @@ from ..equations._chemical_mechanism import PreparedChemicalMechanism
 from ..equations._chemical_rates import ChemicalRateRuntime
 from ..equations._chemical_species import ChemicalPhaseKind
 from ..equations._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
+from ..typing import checked
 from ._bdf_method import BDFMethod
 from ._differential import DifferentialProblem
 from ._differential_algebraic import (
@@ -103,6 +104,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
     inversion_iterations: int = eqx.field(static=True)
     reactor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -116,8 +118,6 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
         maximum_temperature: float | None = None,
         inversion_iterations: int = 48,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(kind, ChemicalReactorKind):
             raise TypeError("kind must be ChemicalReactorKind.")
         temperature = None if fixed_temperature is None else float(fixed_temperature)
@@ -296,6 +296,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
             return jnp.concatenate((amount_rate, jnp.zeros((1,), dtype=state.dtype)))
         return amount_rate
 
+    @checked
     def solve(
         self,
         species_amount: ArrayLike,
@@ -306,8 +307,6 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
         runtime: ChemicalRateRuntime | None = None,
         adaptive: RosenbrockAdaptivePolicy | None = None,
     ) -> ChemicalReactorSolution:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be TimeGrid.")
         initial = self.initial_state(species_amount, initial_temperature)
         dynamics = PreparedChemicalReactorDynamics(self)
         problem = DifferentialProblem(
@@ -338,6 +337,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
             self.reactor_id,
         )
 
+    @checked
     def solve_bdf(
         self,
         species_amount: ArrayLike,
@@ -350,8 +350,6 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
     ) -> ChemicalReactorSolution:
         """Integrate the reactor through the native variable-step BDF substrate."""
 
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be TimeGrid.")
         initial = self.initial_state(species_amount, initial_temperature)
         residual = _ChemicalReactorODEResidual(self)
         system = DifferentialAlgebraicSystem(
@@ -484,9 +482,8 @@ class _ChemicalReactorODEResidual(StrictModule):
 class PreparedChemicalReactorDynamics(StrictModule):
     plan: ChemicalReactorPlan
 
+    @checked
     def __init__(self, plan: ChemicalReactorPlan, /) -> None:
-        if not isinstance(plan, ChemicalReactorPlan):
-            raise TypeError("plan must be ChemicalReactorPlan.")
         self.plan = plan
 
     def __call__(

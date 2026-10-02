@@ -26,6 +26,7 @@ from ...linalg import (
     FunctionLinearOperator,
     TransposeLinearOperator,
 )
+from ...typing import checked
 from .._core import DiscretizationCapability, PreparationReport
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._transfer import FieldTransfer, TransferProperties
@@ -50,6 +51,7 @@ class DeclaredPopulationMomentMap(StrictModule, NonTrainableState):
     moment_names: tuple[str, ...] = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -59,8 +61,6 @@ class DeclaredPopulationMomentMap(StrictModule, NonTrainableState):
         moment_names: Sequence[str],
         name: str,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         values = np.asarray(coefficients)
         names = tuple(str(value) for value in moment_names)
         name_ = str(name)
@@ -110,11 +110,10 @@ class DeclaredPopulationMomentMap(StrictModule, NonTrainableState):
             name="population-integrals",
         )
 
+    @checked
     def validate_quadrature(
         self, quadrature: CertifiedDiscreteVelocityQuadrature, /
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.quadrature_id != self.quadrature_id:
             raise ValueError("Declared-moment map and transport quadrature do not match.")
 
@@ -430,6 +429,7 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
     target_shape: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -442,8 +442,6 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
         requirements: SemiLagrangianTransferRequirements | None = None,
         declared_moments: DeclaredPopulationMomentMap | None = None,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.transport_kind != "off_lattice":
             raise ValueError(
                 "PreparedOffLatticeSemiLagrangianDVM requires an explicitly off-lattice quadrature."

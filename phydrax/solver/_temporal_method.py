@@ -24,7 +24,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import RealCoordinateEvidence
-from ..typing import parse
+from ..typing import checked, parse
 
 
 TemporalEquationForm: TypeAlias = Literal[
@@ -433,6 +433,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     state_coordinates: RealCoordinateEvidence | None
 
+    @checked
     def __init__(
         self,
         capabilities: TemporalMethodCapabilities,
@@ -450,10 +451,6 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         state_coordinates: RealCoordinateEvidence | None = None,
     ) -> None:
-        if not isinstance(capabilities, TemporalMethodCapabilities):
-            raise TypeError("capabilities must be TemporalMethodCapabilities.")
-        if not isinstance(differentiation, TemporalDifferentiationEvidence):
-            raise TypeError("differentiation must be TemporalDifferentiationEvidence.")
         values = tuple(
             str(value)
             for value in (

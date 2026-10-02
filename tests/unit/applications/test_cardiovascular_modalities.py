@@ -221,7 +221,7 @@ def test_cardiovascular_modalities_scenario_1() -> None:
     assert bool(result.evidence.successful)
     assert bool(result.evidence.electrode.every_electrode_responsive)
     assert bool(result.evidence.timebase.uniform)
-    with pytest.raises(TypeError, match="sampled Vm"):
+    with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         plan.observe(jnp.zeros((5, 2)))
     timebase = SampleTimeAxis.uniform("ecg-2ms", 4, 2.0, MILLISECOND)

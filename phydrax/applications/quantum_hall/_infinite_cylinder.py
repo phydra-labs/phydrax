@@ -27,6 +27,7 @@ from ...tensor_network import (
     UniformMatrixProductState,
     UniformTransferPolicy,
 )
+from ...typing import checked
 
 
 class InfiniteHallCylinderPlan(StrictModule, NonTrainableState):
@@ -40,6 +41,7 @@ class InfiniteHallCylinderPlan(StrictModule, NonTrainableState):
     charge_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         filling_numerator: int,
@@ -62,8 +64,6 @@ class InfiniteHallCylinderPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Infinite Hall cylinders require uniform Abelian MPS/MPO values."
             )
-        if not isinstance(vumps_policy, UniformVUMPSPolicy):
-            raise TypeError("vumps_policy must be UniformVUMPSPolicy.")
         if (
             numerator < 1
             or denominator < 1

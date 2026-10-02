@@ -22,6 +22,7 @@ from ..enforcement import EnforcementProgram
 from ..integration import IntegrationRealization
 from ..operators.differential._runtime import derivative_runtime_context
 from ..terms import ResidualPenalty
+from ..typing import checked
 from ._functional_objective import _PreparedObjective
 
 
@@ -404,6 +405,7 @@ class PreparedFunctionalResidual(StrictModule):
     layout: FunctionalResidualLayout
     iteration: Any
 
+    @checked
     def __init__(
         self,
         terms: Sequence[PreparedResidualTerm],
@@ -419,8 +421,6 @@ class PreparedFunctionalResidual(StrictModule):
             raise ValueError("PreparedFunctionalResidual requires residual terms.")
         if any(not isinstance(term, PreparedResidualTerm) for term in values):
             raise TypeError("Prepared functional residual terms have invalid types.")
-        if not isinstance(layout, FunctionalResidualLayout):
-            raise TypeError("layout must be a FunctionalResidualLayout.")
         self.terms = values
         self.non_trainable = non_trainable
         self.enforcement = enforcement

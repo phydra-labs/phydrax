@@ -44,6 +44,7 @@ from ...stochastic import (
     FeynmanKacSamplingPlan,
     trajectory_node_feynman_kac_labels,
 )
+from ...typing import checked
 from ._evaluation import ControlledPathBatch, ControlledTransitionProblem
 
 
@@ -149,6 +150,7 @@ class FittedBellmanProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         training_paths: ControlledPathBatch,
@@ -163,10 +165,6 @@ class FittedBellmanProblem(StrictModule):
         holdout_weights: ArrayLike | None = None,
         args: Any = None,
     ) -> None:
-        if not isinstance(training_paths, ControlledPathBatch):
-            raise TypeError("training_paths must be a ControlledPathBatch.")
-        if not isinstance(holdout_paths, ControlledPathBatch):
-            raise TypeError("holdout_paths must be a ControlledPathBatch.")
         if not callable(feature_map):
             raise TypeError("feature_map must be callable.")
         _compatible_batches(training_paths, holdout_paths)

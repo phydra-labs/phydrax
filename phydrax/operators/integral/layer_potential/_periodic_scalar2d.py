@@ -18,7 +18,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import PeriodicCell
-from ....typing import parse
+from ....typing import checked, parse
 from ._core import BoundaryPanelization2D
 
 
@@ -48,6 +48,7 @@ class PeriodicScalarSpectralKernel2D(StrictModule, NonTrainableState):
     equation: PeriodicScalarEquation2D = eqx.field(static=True)
     parameter: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell: PeriodicCell,
@@ -59,8 +60,6 @@ class PeriodicScalarSpectralKernel2D(StrictModule, NonTrainableState):
         maximum_modes: int = 100_000,
         resonance_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
         if cell.rank != 2 or cell.ambient_dimension != 2:
             raise ValueError("Periodic scalar 2D kernels require a full-rank 2D cell.")
         equation = parse(equation, PeriodicScalarEquation2D, "equation")
@@ -163,6 +162,7 @@ class PeriodicScalarLayerPotential2D(StrictModule, NonTrainableState):
     kind: Literal["single", "double"] = eqx.field(static=True)
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: BoundaryPanelization2D,
@@ -172,10 +172,6 @@ class PeriodicScalarLayerPotential2D(StrictModule, NonTrainableState):
         *,
         kind: Literal["single", "double"] = "single",
     ) -> None:
-        if not isinstance(panelization, BoundaryPanelization2D):
-            raise TypeError("panelization must be BoundaryPanelization2D.")
-        if not isinstance(kernel, PeriodicScalarSpectralKernel2D):
-            raise TypeError("kernel must be PeriodicScalarSpectralKernel2D.")
         values = jnp.asarray(density, dtype=jnp.float64)
         if values.shape != (panelization.node_count,):
             raise ValueError("density must contain one scalar per source node.")

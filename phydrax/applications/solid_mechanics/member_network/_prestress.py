@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
+from ....typing import checked
 from .._force_density import ForceDensityResult
 from .._force_density_stability import analyze_force_density_mechanisms
 from .._force_density_topology import ForceDensityStructure
@@ -45,9 +46,8 @@ class PrestressTarget(StrictModule):
     source_problem_id: str = eqx.field(static=True)
 
     @classmethod
+    @checked
     def from_force_density(cls, result: ForceDensityResult, /) -> PrestressTarget:
-        if not isinstance(result, ForceDensityResult):
-            raise TypeError("result must be a ForceDensityResult.")
         return cls(
             result.state.positions,
             result.state.axial_forces,

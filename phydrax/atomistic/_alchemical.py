@@ -24,6 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
+from ..typing import checked
 from ._classical import (
     HarmonicAnglePotential,
     HarmonicBondPotential,
@@ -752,6 +753,7 @@ class ControlledHamiltonianPlan(StrictModule, NonTrainableState):
     requirements: AtomisticPotentialRequirements
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         force_field: PreparedAtomisticForceField,
@@ -761,12 +763,6 @@ class ControlledHamiltonianPlan(StrictModule, NonTrainableState):
         *,
         soft_core: SoftCorePolicy | None = None,
     ) -> None:
-        if not isinstance(force_field, PreparedAtomisticForceField):
-            raise TypeError("force_field must be a PreparedAtomisticForceField.")
-        if not isinstance(schedule, AlchemicalControlSchedulePlan):
-            raise TypeError("schedule must be an AlchemicalControlSchedulePlan.")
-        if not isinstance(partition, AlchemicalInteractionPartitionPlan):
-            raise TypeError("partition must be an AlchemicalInteractionPartitionPlan.")
         policy = SoftCorePolicy() if soft_core is None else soft_core
         if not isinstance(policy, SoftCorePolicy):
             raise TypeError("soft_core must be SoftCorePolicy or None.")
@@ -1082,6 +1078,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         successful = successful & jnp.isfinite(energy)
         return jnp.where(successful, energy, jnp.nan), successful
 
+    @checked
     def reduced_potentials(
         self,
         positions: ArrayLike,
@@ -1092,8 +1089,6 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         state_indices: ArrayLike | None = None,
         context_kwargs: Sequence[dict[str, Any]] | None = None,
     ) -> AlchemicalReducedPotentialEvaluation:
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be a PreparedThermodynamicStateTable.")
         if (
             thermodynamic.program_id != self.prepared_id
             or thermodynamic.system_id != self.system.prepared_id

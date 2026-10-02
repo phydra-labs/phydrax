@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySelection, EntitySet
+from ..typing import checked
 
 
 class MeshingEntityKind(StrEnum):
@@ -85,6 +86,7 @@ class MeshingScope(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_selection(
         cls,
         source_id: str,
@@ -94,10 +96,6 @@ class MeshingScope(StrictModule, NonTrainableState):
         /,
     ) -> MeshingScope:
         """Convert a positional selection using its exact owning entity set."""
-        if not isinstance(entities, EntitySet):
-            raise TypeError("entities must be EntitySet.")
-        if not isinstance(selection, EntitySelection):
-            raise TypeError("selection must be EntitySelection.")
         if selection.entity_set_id != entities.entity_set_id:
             raise ValueError("Selection must belong to the supplied entity set.")
         mask = np.asarray(selection.mask, dtype=np.bool_)
@@ -116,9 +114,8 @@ class MeshingScope(StrictModule, NonTrainableState):
             np.asarray(entities.entity_ids)[mask],
         )
 
+    @checked
     def _check_compatible(self, other: MeshingScope, /) -> None:
-        if not isinstance(other, MeshingScope):
-            raise TypeError("Scope set operations require MeshingScope values.")
         binding = (
             self.source_id,
             self.source_revision,
@@ -219,6 +216,7 @@ class ScopeResolutionReport(StrictModule, NonTrainableState):
     scope: MeshingScope
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         query: str,
@@ -228,8 +226,6 @@ class ScopeResolutionReport(StrictModule, NonTrainableState):
         matched_names: tuple[str, ...] = (),
         unmatched_names: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         expression = str(query).strip()
         if not expression:
             raise ValueError("Scope resolution query must be non-empty.")

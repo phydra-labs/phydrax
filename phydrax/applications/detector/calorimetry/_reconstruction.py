@@ -16,6 +16,7 @@ from phydrax import ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._geometry import CalorimeterGeometry
 from ._response import CalorimeterResponse
 
@@ -26,6 +27,7 @@ class CalorimeterClusteringPlan(StrictModule, NonTrainableState):
     cluster_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CalorimeterGeometry,
@@ -34,8 +36,6 @@ class CalorimeterClusteringPlan(StrictModule, NonTrainableState):
         *,
         cluster_capacity: int,
     ) -> None:
-        if not isinstance(geometry, CalorimeterGeometry):
-            raise TypeError("geometry must be CalorimeterGeometry.")
         mapping = np.asarray(cell_to_cluster)
         capacity = int(cluster_capacity)
         if mapping.shape != (geometry.cell_count,) or not np.issubdtype(

@@ -26,6 +26,7 @@ from ...linalg.eigen import (
     EigenSolvePolicy,
     GeneralizedEigenproblem,
 )
+from ...typing import checked
 from ...units import UnitDefinition
 from ._family import PeriodicResourceError
 from ._orbital import PreparedPeriodicOrbitalPencil
@@ -52,6 +53,7 @@ class PeriodicSpectrumResult(StrictModule, NonTrainableState):
     pencil_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fractional_points: ArrayLike,
@@ -91,8 +93,6 @@ class PeriodicSpectrumResult(StrictModule, NonTrainableState):
             or metric.shape != (points.shape[0],)
         ):
             raise ValueError("Periodic spectrum arrays do not align.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         self.fractional_points = points
         self.weights = weight
         self.distances = distance
@@ -140,6 +140,7 @@ class PeriodicSpectrumPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pencil: PreparedPeriodicOrbitalPencil,
@@ -150,8 +151,6 @@ class PeriodicSpectrumPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-9,
         maximum_eigenpairs: int = 1_000_000,
     ) -> None:
-        if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
-            raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         if not isinstance(support, (ReciprocalMeshPlan, ReciprocalPathPlan)):
             raise TypeError("support must be ReciprocalMeshPlan or ReciprocalPathPlan.")
         support.require_cell(pencil.plan.basis.cell)

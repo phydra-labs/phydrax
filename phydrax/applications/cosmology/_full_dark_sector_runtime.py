@@ -72,6 +72,7 @@ from ...solver._dark_sector_epoch_runtime import (
     DarkSectorEpochState,
     DarkSectorRunCoordinator,
 )
+from ...typing import checked
 from ..curved_spacetime_qft._coherent_transport import (
     CoherentDensityMatrixState,
     CoherentTransportPlan,
@@ -181,6 +182,7 @@ class FullDarkSectorStageToken(StrictModule, NonTrainableState):
     matrix_element_revision_id: str = eqx.field(static=True)
     stage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frame: LocalRelativisticFramePlan,
@@ -188,10 +190,6 @@ class FullDarkSectorStageToken(StrictModule, NonTrainableState):
         matrix_element_revision: MatrixElementRevision,
         /,
     ) -> None:
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be LocalRelativisticFramePlan.")
-        if not isinstance(epoch_state, DarkSectorEpochState):
-            raise TypeError("epoch_state must be DarkSectorEpochState.")
         revision = _matrix_revision_id(matrix_element_revision)
         plan = epoch_state.plan
         realization = frame.realization_id()
@@ -253,6 +251,7 @@ class NamedStressEnergyComponent(StrictModule):
     component_name: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component_name: str,
@@ -267,8 +266,6 @@ class NamedStressEnergyComponent(StrictModule):
         evidence_valid: ArrayLike,
         evidence_id: str,
     ) -> None:
-        if not isinstance(projection, StressEnergyProjection):
-            raise TypeError("projection must be StressEnergyProjection.")
         dtype = projection.energy_density.dtype
         ledgers = tuple(
             _real_scalar(value, name, dtype=dtype)
@@ -832,16 +829,13 @@ class FullDarkSectorRuntimePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def ledger(
         self,
         assembly: FullDarkSectorStressAssembly,
         exchange: DarkRadiationFourForce,
         /,
     ) -> FullDarkSectorStageLedger:
-        if not isinstance(assembly, FullDarkSectorStressAssembly):
-            raise TypeError("assembly must be FullDarkSectorStressAssembly.")
-        if not isinstance(exchange, DarkRadiationFourForce):
-            raise TypeError("exchange must be DarkRadiationFourForce.")
         if (
             exchange.frame_id != self.quantum.frame.frame_id
             or exchange.frame_realization_id != self.quantum.frame_realization_id
@@ -1322,14 +1316,13 @@ class FullDarkSectorOutputBundle(StrictModule):
     checkpoint_id: str = eqx.field(static=True)
     output_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FullDarkSectorRuntimePlan,
         commit: FullDarkSectorStageCommit,
         /,
     ) -> None:
-        if not isinstance(plan, FullDarkSectorRuntimePlan):
-            raise TypeError("plan must be FullDarkSectorRuntimePlan.")
         if not isinstance(commit, FullDarkSectorStageCommit) or not commit.committed:
             raise ValueError("Output requires one atomically committed full stage.")
         if commit.receipt is None:
@@ -1461,6 +1454,7 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
     execution_plan_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: FullDarkSectorRuntimePlan,
@@ -1469,10 +1463,6 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         *,
         epoch_manifest_id: str,
     ) -> None:
-        if not isinstance(runtime, FullDarkSectorRuntimePlan):
-            raise TypeError("runtime must be FullDarkSectorRuntimePlan.")
-        if not isinstance(stage, FullDarkSectorStageToken):
-            raise TypeError("stage must be FullDarkSectorStageToken.")
         epoch_manifest = _identifier(epoch_manifest_id, "epoch_manifest_id")
         if (
             stage.epoch_plan_id != runtime.epoch.plan_id
@@ -1513,9 +1503,8 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def validate_state(self, state: FullDarkSectorCompositeState, /) -> None:
-        if not isinstance(state, FullDarkSectorCompositeState):
-            raise TypeError("state must be FullDarkSectorCompositeState.")
         if state.stage.stage_id != self.stage.stage_id:
             raise ValueError("Checkpoint state does not match the exact stage identity.")
         if not bool(np.asarray(_state_consistency(self.runtime, state))):

@@ -18,6 +18,7 @@ from ..operators.integral.vortex._filament3d import (
     PreparedFilamentVelocity3D,
     regularized_filament_velocity_3d,
 )
+from ..typing import checked
 from ._vortex_lattice import SteadyVortexLatticePlan, VortexLatticeResult
 
 
@@ -45,11 +46,8 @@ class UnsteadyVortexLatticePlan(StrictModule, NonTrainableState):
     wake: VortexWakePlan
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, bound: SteadyVortexLatticePlan, wake: VortexWakePlan, /) -> None:
-        if not isinstance(bound, SteadyVortexLatticePlan):
-            raise TypeError("bound must be SteadyVortexLatticePlan.")
-        if not isinstance(wake, VortexWakePlan):
-            raise TypeError("wake must be VortexWakePlan.")
         if wake.source_count != bound.surface.panel_count:
             raise ValueError("Wake source count must match lifting panels.")
         self.bound = bound

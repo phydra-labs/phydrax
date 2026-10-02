@@ -20,7 +20,7 @@ from phydrax import ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._calabi_yau import ProjectiveMeasureTarget
 
 
@@ -113,6 +113,7 @@ class PreparedCalabiYauModuliSamples(StrictModule):
     yukawa_density: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CalabiYauModuliObservablePlan,
@@ -121,10 +122,6 @@ class PreparedCalabiYauModuliSamples(StrictModule):
         yukawa_density: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, CalabiYauModuliObservablePlan):
-            raise TypeError("plan must be CalabiYauModuliObservablePlan.")
-        if not isinstance(measure, ProjectiveMeasureTarget):
-            raise TypeError("measure must be ProjectiveMeasureTarget.")
         values = jnp.asarray(representatives)
         yukawa = jnp.asarray(yukawa_density, dtype=values.dtype)
         sample_count = measure.normalized_weights.shape[0]

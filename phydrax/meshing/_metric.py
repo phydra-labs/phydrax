@@ -41,7 +41,7 @@ from ..linalg import (
     verify_dense_properties,
 )
 from ..nonlinear import Brent, NonlinearTermination, scalar_root, ScalarRootProblem
-from ..typing import Dim, Float64, Identifier
+from ..typing import checked, Dim, Float64, Identifier
 from ._scope import MeshingScope
 
 
@@ -201,6 +201,7 @@ class MeshMetricField(StrictModule, NonTrainableState):
     maximum_anisotropy: float = eqx.field(static=True)
     metric_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: MeshingScope,
@@ -211,8 +212,6 @@ class MeshMetricField(StrictModule, NonTrainableState):
         maximum_size: float,
         maximum_anisotropy: float = 100.0,
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         minimum = _positive(minimum_size, "minimum_size")
         maximum = _positive(maximum_size, "maximum_size")
         anisotropy = _at_least_one(maximum_anisotropy, "maximum_anisotropy")
@@ -257,9 +256,8 @@ class MeshMetricSamples(StrictModule, NonTrainableState):
     values: Float64[_MetricEntityDim, _MetricAxisDim, _MetricAxisDim]
     samples_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(self, scope: MeshingScope, values: ArrayLike, /) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         tensors = _tensor_array(values, scope.entity_ids.shape[0])
         self.scope = scope
         self.values = jnp.asarray(tensors)
@@ -373,6 +371,7 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
     maximum_violation: float = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: MetricGradationPolicy,
@@ -384,8 +383,6 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
         modified_count: int,
         maximum_violation: float,
     ) -> None:
-        if not isinstance(policy, MetricGradationPolicy):
-            raise TypeError("policy must be MetricGradationPolicy.")
         if not isinstance(status, MetricGradationStatus):
             raise TypeError("status must be MetricGradationStatus.")
         self.policy_id = policy.policy_id
@@ -414,9 +411,8 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
 class MetricGradationError(ValueError):
     """A metric-gradation request could not satisfy its scientific contract."""
 
+    @checked
     def __init__(self, evidence: MetricGradationEvidence, /) -> None:
-        if not isinstance(evidence, MetricGradationEvidence):
-            raise TypeError("evidence must be MetricGradationEvidence.")
         self.evidence = evidence
         super().__init__(
             "Metric gradation failed "
@@ -525,6 +521,7 @@ class MetricNormalizationEvidence(StrictModule, NonTrainableState):
     gradation: MetricGradationEvidence | None
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: MetricNormalizationPolicy,
@@ -544,8 +541,6 @@ class MetricNormalizationEvidence(StrictModule, NonTrainableState):
         final_complexity: float | None,
         gradation: MetricGradationEvidence | None,
     ) -> None:
-        if not isinstance(policy, MetricNormalizationPolicy):
-            raise TypeError("policy must be MetricNormalizationPolicy.")
         if not isinstance(complexity_status, MetricComplexityStatus):
             raise TypeError("complexity_status must be MetricComplexityStatus.")
         if gradation is not None and not isinstance(gradation, MetricGradationEvidence):
@@ -1397,6 +1392,7 @@ class MetricCombinationResult(StrictModule, NonTrainableState):
     successful: bool = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: MeshMetricField | None,
@@ -1405,8 +1401,6 @@ class MetricCombinationResult(StrictModule, NonTrainableState):
     ) -> None:
         if field is not None and not isinstance(field, MeshMetricField):
             raise TypeError("field must be MeshMetricField or None.")
-        if not isinstance(evidence, MetricCombinationEvidence):
-            raise TypeError("evidence must be MetricCombinationEvidence.")
         if (field is not None) != evidence.passed:
             raise ValueError(
                 "A combined field exists exactly when the combination has no conflict."
@@ -1585,6 +1579,7 @@ class HessianMetricEvidence(StrictModule, NonTrainableState):
     normalization: MetricNormalizationEvidence
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         normalization: MetricNormalizationEvidence,
@@ -1597,8 +1592,6 @@ class HessianMetricEvidence(StrictModule, NonTrainableState):
         zero_tensor_count: int,
         floored_eigenvalue_count: int,
     ) -> None:
-        if not isinstance(normalization, MetricNormalizationEvidence):
-            raise TypeError("normalization must be MetricNormalizationEvidence.")
         self.p = float(p)
         self.exponent = float(exponent)
         self.negative_eigenvalue_count = int(negative_eigenvalue_count)

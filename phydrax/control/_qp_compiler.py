@@ -39,7 +39,7 @@ from ..optim._programming import (
 )
 from ..optim._programming._quadratic import _rebind_quadratic_program
 from ..sparse import EdgeRelation, SparseLinearMap
-from ..typing import parse
+from ..typing import checked, parse
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._trajectory import (
@@ -768,16 +768,13 @@ class LinearControlBoundLayout(StrictModule):
     control_lower_slices: SliceTuple = eqx.field(static=True)
     control_upper_slices: SliceTuple = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         specification: LinearQuadraticControlProblem,
         decision: LinearControlDecisionLayout,
         /,
     ) -> None:
-        if not isinstance(specification, LinearQuadraticControlProblem):
-            raise TypeError("specification must be a LinearQuadraticControlProblem.")
-        if not isinstance(decision, LinearControlDecisionLayout):
-            raise TypeError("decision must be a LinearControlDecisionLayout.")
         self.state_lower_slices = (
             decision.state_slices if specification.state_lower_bounds is not None else ()
         )
@@ -808,9 +805,8 @@ class LinearControlConstraintLayout(StrictModule):
     num_equalities: int = eqx.field(static=True)
     num_inequalities: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, specification: LinearQuadraticControlProblem, /) -> None:
-        if not isinstance(specification, LinearQuadraticControlProblem):
-            raise TypeError("specification must be a LinearQuadraticControlProblem.")
         horizon = specification.horizon
         state_size = specification.state_size
         equality_cursor = state_size
@@ -1292,16 +1288,13 @@ class PreparedLinearControlQP(StrictModule):
     compilation: LinearControlQPCompilation
     prepared: PreparedConvexProgram
 
+    @checked
     def __init__(
         self,
         compilation: LinearControlQPCompilation,
         prepared: PreparedConvexProgram,
         /,
     ) -> None:
-        if not isinstance(compilation, LinearControlQPCompilation):
-            raise TypeError("compilation must be a LinearControlQPCompilation.")
-        if not isinstance(prepared, PreparedConvexProgram):
-            raise TypeError("prepared must be a PreparedConvexProgram.")
         if prepared.program is not compilation.program:
             raise ValueError("Prepared program must be bound to the compilation QP.")
         self.compilation = compilation

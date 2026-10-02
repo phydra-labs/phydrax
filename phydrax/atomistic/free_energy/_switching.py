@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
+from ...typing import checked
 from .._alchemical import PreparedControlledHamiltonian
 from .._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from .._thermodynamic import (
@@ -145,6 +146,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
     sample_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedAtomisticDynamics,
@@ -157,10 +159,6 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         sample_count: int,
         /,
     ) -> None:
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         from ..sampling._multistate import AtomisticCanonicalSamplingQualification
 
         if not isinstance(qualification, AtomisticCanonicalSamplingQualification):

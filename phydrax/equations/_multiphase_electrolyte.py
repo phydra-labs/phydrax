@@ -19,6 +19,7 @@ from .._thermodynamics import (
     BinaryThermodynamicParameters,
 )
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._electrochemistry import (
     AbstractElectrochemicalClosure,
     ElectrolyteTransportParameters,
@@ -33,6 +34,7 @@ class MultiphaseElectrolyteParameters(StrictModule, NonTrainableState):
     positive_phase_permittivity: Array
     parameters_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binary: BinaryThermodynamicParameters,
@@ -42,10 +44,6 @@ class MultiphaseElectrolyteParameters(StrictModule, NonTrainableState):
         positive_phase_permittivity: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(binary, BinaryThermodynamicParameters):
-            raise TypeError("binary must be BinaryThermodynamicParameters.")
-        if not isinstance(electrolyte, ElectrolyteTransportParameters):
-            raise TypeError("electrolyte must be ElectrolyteTransportParameters.")
         coefficients = jnp.asarray(solvation_coefficients)
         negative = jnp.asarray(negative_phase_permittivity, dtype=coefficients.dtype)
         positive = jnp.asarray(positive_phase_permittivity, dtype=coefficients.dtype)
@@ -98,18 +96,13 @@ class MultiphaseElectrolyteClosure(StrictModule, NonTrainableState):
     electrochemical: AbstractElectrochemicalClosure
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binary: BinaryPhaseThermodynamicClosure,
         electrochemical: AbstractElectrochemicalClosure,
         /,
     ) -> None:
-        if not isinstance(binary, BinaryPhaseThermodynamicClosure):
-            raise TypeError("binary must be BinaryPhaseThermodynamicClosure.")
-        if not isinstance(electrochemical, AbstractElectrochemicalClosure):
-            raise TypeError(
-                "electrochemical must implement AbstractElectrochemicalClosure."
-            )
         self.binary = binary
         self.electrochemical = electrochemical
         self.closure_id = canonical_fingerprint(

@@ -25,7 +25,7 @@ from ..nonlinear import (
     ImplicitRootDerivativePolicy,
     NonlinearTermination,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ..units import UnitDefinition
 from ._partitioned_coupling_measurement import CouplingMeasurement, field_storage
 
@@ -151,6 +151,7 @@ class CouplingQuantity(StrictModule, NonTrainableState):
     compatibility_id: str = eqx.field(static=True)
     quantity_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quantity_kind: str,
@@ -160,8 +161,6 @@ class CouplingQuantity(StrictModule, NonTrainableState):
         reference_configuration: str = "absolute",
         sign_convention: str = "positive",
     ) -> None:
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("Coupling quantity unit must be UnitDefinition.")
         self.unit = unit
         self.quantity_kind = _identifier(quantity_kind, "quantity_kind")
         self.reference_configuration = _identifier(
@@ -238,6 +237,7 @@ class CouplingPort(StrictModule, NonTrainableState):
     direction: CouplingDirection = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         port_id: str,
@@ -255,8 +255,6 @@ class CouplingPort(StrictModule, NonTrainableState):
     ) -> None:
         direction = parse(direction, CouplingDirection, "direction")
         temporal_kind = parse(temporal_kind, CouplingTemporalKind, "temporal_kind")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("Coupling port space must be an AbstractVectorSpace.")
         if field_space is not None:
             if not isinstance(field_space, DiscreteFieldSpace):
                 raise TypeError(
@@ -521,9 +519,8 @@ class ExplicitCouplingPolicy(AbstractCouplingPolicy):
     sweep: CouplingSweep
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, sweep: CouplingSweep, /) -> None:
-        if not isinstance(sweep, CouplingSweep):
-            raise TypeError("Explicit coupling requires a CouplingSweep.")
         self.sweep = sweep
         self.policy_id = canonical_fingerprint(
             {"kind": "explicit-coupling-policy", "sweep": sweep.sweep_id}
@@ -540,6 +537,7 @@ class ImplicitCouplingPolicy(AbstractCouplingPolicy):
     derivative_policy: ImplicitRootDerivativePolicy | None
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: FixedPointIteration | AbstractNonlinearMethod,
@@ -554,8 +552,6 @@ class ImplicitCouplingPolicy(AbstractCouplingPolicy):
             raise TypeError(
                 "Implicit coupling method must be FixedPointIteration or AbstractNonlinearMethod."
             )
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("Implicit coupling termination must be NonlinearTermination.")
         tolerances_ = tuple(tolerances)
         if not tolerances_ or any(
             not isinstance(value, CouplingTolerance) for value in tolerances_
@@ -786,6 +782,7 @@ class CallableCouplingSubsystem(AbstractCouplingSubsystem, NonTrainableState):
     subsystem_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         advance: Any,
@@ -810,8 +807,6 @@ class CallableCouplingSubsystem(AbstractCouplingSubsystem, NonTrainableState):
         port_ids = tuple(port.port_id for port in (*inputs, *outputs))
         if len(set(port_ids)) != len(port_ids):
             raise ValueError("Subsystem port IDs must be unique.")
-        if not isinstance(capabilities, CouplingSubsystemCapabilities):
-            raise TypeError("capabilities must be CouplingSubsystemCapabilities.")
         bundle_id = (
             None
             if discretization_bundle_id is None

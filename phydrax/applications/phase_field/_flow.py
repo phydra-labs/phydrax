@@ -17,7 +17,7 @@ from phydrax import ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 CapillaryForceRepresentation: TypeAlias = Literal["mu-grad-phi", "minus-phi-grad-mu"]
@@ -96,6 +96,7 @@ class ModelHCouplingPlan(StrictModule, NonTrainableState):
     incompressibility_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: PhaseFluidMaterial,
@@ -104,8 +105,6 @@ class ModelHCouplingPlan(StrictModule, NonTrainableState):
         force_representation: CapillaryForceRepresentation = "mu-grad-phi",
         incompressibility_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(material, PhaseFluidMaterial):
-            raise TypeError("material must be PhaseFluidMaterial.")
         force_representation = parse(
             force_representation, CapillaryForceRepresentation, "force_representation"
         )

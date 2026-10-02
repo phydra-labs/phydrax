@@ -18,6 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing
+from ..typing import checked
 from ._axis import AxisDiscretization, broadcasted_grid, TensorGridPlan
 from ._measure import DiscreteMeasure
 from ._spaces import (
@@ -240,14 +241,13 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         self.prepared_id = resolved_prepared_id
 
     @classmethod
+    @checked
     def from_plan(
         cls,
         plan: TensorGridPlan,
         bounds: ArrayLike,
         /,
     ) -> "PreparedTensorGrid":
-        if not isinstance(plan, TensorGridPlan):
-            raise TypeError("plan must be a TensorGridPlan.")
         limits = jnp.asarray(bounds, dtype=canonical_dtype(jnp.float64))
         if limits.shape != (2, len(plan.axes)):
             raise ValueError(

@@ -32,6 +32,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.mpm import MPMRuntimeState
 from ..equations import CompiledMaterialPointProblem
+from ..typing import checked
 
 
 def _leaf_name(path: KeyPath, index: int) -> str:
@@ -67,16 +68,13 @@ class MPMCheckpointPlan(StrictModule):
     leaf_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     leaf_dtypes: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         compiled: CompiledMaterialPointProblem,
         template_state: MPMRuntimeState,
         /,
     ) -> None:
-        if not isinstance(compiled, CompiledMaterialPointProblem):
-            raise TypeError("compiled must be CompiledMaterialPointProblem.")
-        if not isinstance(template_state, MPMRuntimeState):
-            raise TypeError("template_state must be MPMRuntimeState.")
         paths, _leaves = jax.tree_util.tree_flatten_with_path(template_state)[0], None
         names = tuple(_leaf_name(path, index) for index, (path, _) in enumerate(paths))
         if len(set(names)) != len(names):
@@ -110,11 +108,10 @@ class MPMCheckpointPlan(StrictModule):
             raise ValueError("MPM checkpoint runtime leaf shape or dtype changed.")
         return dict(zip(names, arrays, strict=True))
 
+    @checked
     def write(
         self, path: str | Path, state: MPMRuntimeState, /, *, generation: int = 0
     ) -> MPMCheckpointManifest:
-        if not isinstance(state, MPMRuntimeState):
-            raise TypeError("state must be MPMRuntimeState.")
         arrays = self._arrays(state)
         payload_digest = array_collection_digest(arrays)
         metadata = {

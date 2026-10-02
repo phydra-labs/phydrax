@@ -22,7 +22,7 @@ from ...dynamics._evolution import (
     EVOLUTION_SUCCESS,
     EvolutionStep,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -125,6 +125,7 @@ class ContinuousTransport(StrictModule):
     args: Any
     transport_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_law: AbstractProbabilityLaw,
@@ -136,10 +137,6 @@ class ContinuousTransport(StrictModule):
         args: Any = None,
         transport_id: str | None = None,
     ) -> None:
-        if not isinstance(source_law, AbstractProbabilityLaw):
-            raise TypeError("source_law must implement AbstractProbabilityLaw.")
-        if not isinstance(evolution, AbstractEvolution):
-            raise TypeError("evolution must implement AbstractEvolution.")
         if tuple(source_law.batch_shape):
             raise ValueError(
                 "ContinuousTransport initially requires an unbatched source law."

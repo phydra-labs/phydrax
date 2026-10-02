@@ -25,7 +25,7 @@ from ...equations import (
     DiagnosticPhotonCoefficientTable,
     PhotonEnergyGrid,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import conversion_factor, derived_unit, KILOGRAM, METER, UnitDefinition
 from ._core import BeerLambertResult, ProjectionSupport, VoxelXRayTransformPlan
 
@@ -370,6 +370,7 @@ class MaterialBasisProjectionPlan(StrictModule):
     areal_mass_unit: UnitDefinition = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transform: VoxelXRayTransformPlan,
@@ -378,15 +379,11 @@ class MaterialBasisProjectionPlan(StrictModule):
         *,
         path_length_unit: UnitDefinition = METER,
     ) -> None:
-        if not isinstance(transform, VoxelXRayTransformPlan):
-            raise TypeError("transform must be VoxelXRayTransformPlan.")
         materials = tuple(
             _identifier(material_id, "material_id") for material_id in material_ids
         )
         if not materials or len(materials) != len(set(materials)):
             raise ValueError("material_ids must be nonempty and unique.")
-        if not isinstance(path_length_unit, UnitDefinition):
-            raise TypeError("path_length_unit must be UnitDefinition.")
         scale = float(conversion_factor(path_length_unit, METER))
         self.transform = transform
         self.path_length_to_meter = jnp.asarray(scale)
@@ -469,6 +466,7 @@ class PolychromaticDetectorPlan(StrictModule, NonTrainableState):
     coefficient_table_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: ProjectionSupport,
@@ -476,12 +474,6 @@ class PolychromaticDetectorPlan(StrictModule, NonTrainableState):
         coefficients: DiagnosticPhotonCoefficientTable,
         /,
     ) -> None:
-        if not isinstance(support, ProjectionSupport):
-            raise TypeError("support must be ProjectionSupport.")
-        if not isinstance(protocol, CTAcquisitionProtocol):
-            raise TypeError("protocol must be CTAcquisitionProtocol.")
-        if not isinstance(coefficients, DiagnosticPhotonCoefficientTable):
-            raise TypeError("coefficients must be DiagnosticPhotonCoefficientTable.")
         if protocol.view_ids != support.view_ids:
             raise ValueError(
                 "Protocol view ordering must exactly match ProjectionSupport."

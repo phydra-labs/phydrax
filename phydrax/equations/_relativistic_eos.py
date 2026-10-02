@@ -20,6 +20,7 @@ from .._physical import RelativityScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_finite_float
+from ..typing import checked
 from ..units import UnitDefinition
 
 
@@ -450,6 +451,7 @@ class GammaLawEOS(AbstractRelativisticEOS):
     provenance: str = eqx.field(static=True)
     eos_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -462,8 +464,6 @@ class GammaLawEOS(AbstractRelativisticEOS):
         maximum_specific_internal_energy: float | None = None,
         provenance: str = "analytic gamma-law",
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         gamma = float(adiabatic_index)
         if not np.isfinite(gamma) or not 1.0 < gamma <= 2.0:
             raise ValueError("adiabatic_index must be finite and lie in (1, 2].")
@@ -616,6 +616,7 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
     provenance: str = eqx.field(static=True)
     eos_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -630,8 +631,6 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
         cold_constraint_tolerance: float = 1.0e-7,
         provenance: str = "analytic continuous piecewise polytrope",
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         breaks = np.asarray(density_breaks, dtype=np.float64)
         gammas = np.asarray(adiabatic_indices, dtype=np.float64)
         if breaks.ndim != 1 or gammas.shape != (breaks.size + 1,):
@@ -915,6 +914,7 @@ class HybridColdThermalEOS(AbstractRelativisticEOS):
     provenance: str = eqx.field(static=True)
     eos_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cold_eos: PiecewisePolytropicEOS,
@@ -925,8 +925,6 @@ class HybridColdThermalEOS(AbstractRelativisticEOS):
         maximum_thermal_specific_energy: float | None = None,
         provenance: str = "analytic hybrid cold-plus-thermal EOS",
     ) -> None:
-        if not isinstance(cold_eos, PiecewisePolytropicEOS):
-            raise TypeError("cold_eos must be a PiecewisePolytropicEOS.")
         gamma = float(thermal_adiabatic_index)
         if not np.isfinite(gamma) or not 1.0 < gamma <= 2.0:
             raise ValueError("thermal_adiabatic_index must be finite and lie in (1, 2].")
@@ -1110,6 +1108,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
     table_id: str = eqx.field(static=True)
     eos_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -1124,8 +1123,6 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
         source_checksum: str,
         license_id: str,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         density = np.asarray(density_nodes, dtype=np.float64)
         temperature = np.asarray(temperature_nodes, dtype=np.float64)
         composition = np.asarray(composition_nodes, dtype=np.float64)

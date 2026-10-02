@@ -16,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._categorical import CategoricalFamily
 from ._contracts import ExponentialFamilyLaw, NaturalCoordinates
 from ._dirichlet import DirichletFamily
@@ -289,11 +289,10 @@ class GammaPoissonConjugacy(StrictModule):
             self.summarize(counts, exposure=exposure, sample_axes=sample_axes)
         )
 
+    @checked
     def update_statistics(
         self, statistics: GammaPoissonStatistics, /
     ) -> GammaPoissonUpdate:
-        if not isinstance(statistics, GammaPoissonStatistics):
-            raise TypeError("statistics must be GammaPoissonStatistics.")
         statistic_arrays = (
             statistics.total_count,
             statistics.total_exposure,
@@ -582,11 +581,10 @@ class DirichletCategoricalConjugacy(StrictModule):
     ) -> DirichletCategoricalUpdate:
         return self.update_statistics(self.summarize(labels, sample_axes=sample_axes))
 
+    @checked
     def update_statistics(
         self, statistics: DirichletCategoricalStatistics, /
     ) -> DirichletCategoricalUpdate:
-        if not isinstance(statistics, DirichletCategoricalStatistics):
-            raise TypeError("statistics must be DirichletCategoricalStatistics.")
         if (
             statistics.category_counts.ndim == 0
             or statistics.category_counts.shape[-1]

@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._free_energy import (
     _dataset_fingerprint,
     _dimensionless_unit,
@@ -242,6 +243,7 @@ class SparsePairwiseFreeEnergyNetworkResult(StrictModule, NonTrainableState):
     dataset_id: str = eqx.field(static=True)
     analysis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         edge_results: Sequence[FreeEnergyResult],
@@ -267,8 +269,6 @@ class SparsePairwiseFreeEnergyNetworkResult(StrictModule, NonTrainableState):
             raise TypeError(
                 "edge_observations must contain FreeEnergyEdgeObservation values."
             )
-        if not isinstance(network_result, FreeEnergyNetworkResult):
-            raise TypeError("network_result must be FreeEnergyNetworkResult.")
         identity = _identifier(dataset_id, "dataset_id")
         analysis_id = canonical_fingerprint(
             {

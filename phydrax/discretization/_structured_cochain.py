@@ -28,6 +28,7 @@ from ..linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ..typing import checked
 from ._cell_complex import cubical_cell_complex, CubicalCellComplex
 from ._cell_de_rham import AbstractCellDeRhamComplex
 from ._cochain import CochainDiscretization, DiagonalHodge
@@ -205,6 +206,7 @@ class StructuredCochainBridge(AbstractCellDeRhamComplex, NonTrainableState):
     incidence_route_count: int = eqx.field(static=True)
     preparation_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -212,8 +214,6 @@ class StructuredCochainBridge(AbstractCellDeRhamComplex, NonTrainableState):
         *,
         resources: StructuredCochainResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("Structured cochain bridge requires PreparedTensorGrid.")
         resource_policy = (
             StructuredCochainResourcePolicy() if resources is None else resources
         )

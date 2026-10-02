@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -42,6 +43,7 @@ class LatticeBoltzmannPlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -53,10 +55,6 @@ class LatticeBoltzmannPlan(AbstractDiscretizationPlan):
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("LBM plan requires a PreparedTensorGrid.")
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         velocity_set.require("athermal-hydrodynamics")
         velocity_set.require("nearest-neighbor-streaming")
         precision_ = LatticeBoltzmannPrecisionPolicy() if precision is None else precision
@@ -131,11 +129,10 @@ class LatticeBoltzmannDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
+    @checked
     def __init__(
         self, plan: LatticeBoltzmannPlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, LatticeBoltzmannPlan):
-            raise TypeError("plan must be a LatticeBoltzmannPlan.")
         grid = plan.grid
         dimension = len(grid.shape)
         if dimension not in (2, 3):

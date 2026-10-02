@@ -21,6 +21,7 @@ from ...discretization.contact import (
     ContactInterfacePlan,
     ContactInterfaceResidual,
 )
+from ...typing import checked
 
 
 class LubricationContactPlan(StrictModule, NonTrainableState):
@@ -215,6 +216,7 @@ class ReynoldsFilmPlan(StrictModule, NonTrainableState):
     convergence_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         film_mesh: CellMesh,
@@ -227,14 +229,6 @@ class ReynoldsFilmPlan(StrictModule, NonTrainableState):
         active_set_iterations: int = 32,
         convergence_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(film_mesh, CellMesh):
-            raise TypeError("film_mesh must be CellMesh.")
-        if not isinstance(interface, ContactInterfacePlan):
-            raise TypeError("interface must be ContactInterfacePlan.")
-        if not isinstance(boundary_conditions, ReynoldsPressureBoundaryConditions):
-            raise TypeError(
-                "boundary_conditions must be ReynoldsPressureBoundaryConditions."
-            )
         if film_mesh.topological_dimension != 2 or any(
             block.cell_kind != "triangle" for block in film_mesh.blocks
         ):
@@ -359,6 +353,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
             jnp.asarray(0, dtype=jnp.int32),
         )
 
+    @checked
     def evaluate(
         self,
         state: ReynoldsFilmState,
@@ -367,8 +362,6 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
         tangential_velocity: ArrayLike,
         /,
     ) -> ReynoldsFilmResult:
-        if not isinstance(state, ReynoldsFilmState):
-            raise TypeError("state must be ReynoldsFilmState.")
         thickness = jnp.asarray(film_thickness)
         squeeze = jnp.asarray(squeeze_rate, dtype=thickness.dtype)
         velocity = jnp.asarray(tangential_velocity, dtype=thickness.dtype)

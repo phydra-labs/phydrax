@@ -26,7 +26,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._tensor_support import PreparedTensorGrid
 from ..finite_difference._certification import FDConservationReport, FDStabilityReport
 from ._precision import FiniteVolumePrecisionPolicy
@@ -160,6 +160,7 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
     function_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -169,8 +170,6 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
         function: Callable[[Array, Array, Array | None], Array] | None = None,
         function_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("Face coefficient plan requires PreparedTensorGrid.")
         kind = parse(kind, FaceInterpolationKind, "kind")
         if (kind == "callable") != (function is not None):
             raise ValueError("Callable face interpolation requires exactly one function.")
@@ -301,6 +300,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     precision: FiniteVolumePrecisionPolicy
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -320,8 +320,6 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
         precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("Conservative diffusion requires PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
             raise ValueError("Conservative diffusion requires an interval-primary grid.")
         boundaries_ = _normalize_boundaries(grid, boundaries)
@@ -358,14 +356,13 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
     stability_report: FDStabilityReport
     precision: FiniteVolumePrecisionPolicy
 
+    @checked
     def __init__(
         self,
         plan: ConservativeDiffusionPlan,
         coefficient: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, ConservativeDiffusionPlan):
-            raise TypeError("plan must be ConservativeDiffusionPlan.")
         coefficient_ = plan.precision.flux(
             _normalize_tensor_coefficient(coefficient, plan.grid)
         )
@@ -850,6 +847,7 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
     precision: FiniteVolumePrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -867,8 +865,6 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
         | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("Conservative advection requires PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
             raise ValueError("Conservative advection requires an interval-primary grid.")
         form = parse(form, AdvectionForm, "form")
@@ -910,14 +906,13 @@ class PreparedConservativeAdvection(StrictModule):
     geometry: PreparedConservativeDiffusion
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ConservativeAdvectionPlan,
         velocity: ArrayLike | Sequence[ArrayLike],
         /,
     ) -> None:
-        if not isinstance(plan, ConservativeAdvectionPlan):
-            raise TypeError("plan must be ConservativeAdvectionPlan.")
         faces = self._prepare_velocity(plan, velocity)
         geometry = ConservativeDiffusionPlan(
             plan.grid,

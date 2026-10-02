@@ -22,6 +22,7 @@ from ...._trainable import NonTrainableState
 from ....discretization import CellMesh, TetrahedralConnectivity
 from ....discretization.fem._de_rham import FiniteElementDeRhamComplex
 from ....linalg._complexes import coordinate_space
+from ....typing import checked
 from ._frequency_domain import (
     _hx_preconditioner,
     _material_stiffness,
@@ -63,12 +64,9 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
         complex = FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
-        if not isinstance(survey, FrequencyDomainEMSurvey):
-            raise TypeError(
-                "Time-domain EM requires frequency-compatible source/receiver rows."
-            )
         if survey.electric_current_functionals.shape[1] != complex.cell_counts[1]:
             raise ValueError("Time-domain EM survey does not match H(curl) edges.")
         connectivity = mesh.connectivity

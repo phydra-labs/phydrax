@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace
 from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import checked
 from .._conservation_ledger import (
     AcceptedConservationFluxIntegralBlock,
     AcceptedConservationIntegralLedger,
@@ -64,6 +65,7 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
     level_cell_offsets: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: PreparedFDAMRHierarchy,
@@ -72,8 +74,6 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(hierarchy, PreparedFDAMRHierarchy):
-            raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(topology, BlockHierarchyTopology) or (
             topology.plan.plan_id != hierarchy.plan.hierarchy.plan_id
         ):
@@ -407,6 +407,7 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
             owner_id=self.plan_id,
         )
 
+    @checked
     def reflux(
         self,
         level_values: Sequence[ArrayLike],
@@ -414,8 +415,6 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, ...]:
         """Apply one route-bound cell register to the matching hierarchy payload."""
-        if not isinstance(register, FluxRegister):
-            raise TypeError("register must be a FluxRegister.")
         if register.owner_id != self.plan_id:
             raise ValueError("Flux register belongs to another AMR conservation plan.")
         values = tuple(jnp.asarray(value) for value in level_values)

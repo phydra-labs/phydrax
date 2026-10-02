@@ -14,6 +14,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 def _identity(value: str, name: str, /) -> str:
@@ -408,10 +409,9 @@ class StressEnergyProjection(StrictModule, NonTrainableState):
     def all_active_valid(self) -> Array:
         return jnp.all(~self.active | self.physically_valid)
 
+    @checked
     def compatible_with(self, geometry: ADMGridGeometry, /) -> Array:
         """Return exact static-lineage and dynamic-snapshot compatibility."""
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         static_compatible = (
             self.geometry_lineage_id == geometry.geometry_lineage_id
             and self.convention_id == geometry.convention_id

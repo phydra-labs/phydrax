@@ -67,6 +67,7 @@ from ..discretization.finite_volume._shallow_water import (
 from ..discretization.finite_volume._unstructured_motion import (
     UnstructuredALEStepGeometry,
 )
+from ..typing import checked
 from ._finite_volume import (
     FiniteVolumeStageStateProvider,
     unstructured_ale_ssprk33_candidate,
@@ -301,6 +302,7 @@ class FiniteVolumeRuntimeState(StrictModule):
     sliding_coupling_id: str | None = eqx.field(static=True)
     sliding_event_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         content_state: FiniteVolumeConservativeContentState,
@@ -317,10 +319,6 @@ class FiniteVolumeRuntimeState(StrictModule):
         sliding_shift: ArrayLike = 0.0,
         sliding_event_id: str | None = None,
     ) -> None:
-        if not isinstance(content_state, FiniteVolumeConservativeContentState):
-            raise TypeError("content_state must be FiniteVolumeConservativeContentState.")
-        if not isinstance(topology_journal, FiniteVolumeTopologyEventJournal):
-            raise TypeError("topology_journal must be FiniteVolumeTopologyEventJournal.")
         if topology_journal.current_epoch_id != content_state.topology_epoch_id:
             raise ValueError(
                 "Runtime content and topology journal must own the same current epoch."
@@ -470,6 +468,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     evidence_policy_id: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: (
@@ -500,8 +499,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise ValueError(
                 "Wave-propagation dynamics do not expose the face fluxes required by PreparedFiniteVolumeRuntime."
             )
-        if not isinstance(positivity, FluxPositivityPlan):
-            raise TypeError("positivity must be FluxPositivityPlan.")
         policy_ = FiniteVolumeStepPolicy() if policy is None else policy
         if not isinstance(policy_, FiniteVolumeStepPolicy):
             raise TypeError("policy must be FiniteVolumeStepPolicy.")
@@ -1796,14 +1793,13 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             is_leaf=lambda node: node is None,
         )
 
+    @checked
     def advance(
         self,
         runtime_state: FiniteVolumeRuntimeState,
         args: Any = None,
         /,
     ) -> FiniteVolumeAdvanceResult:
-        if not isinstance(runtime_state, FiniteVolumeRuntimeState):
-            raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
         content_state = runtime_state.content_state
         if content_state.precision.policy_id != self.precision.policy_id:
             raise ValueError("Runtime content precision does not match the runtime.")

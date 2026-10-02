@@ -66,7 +66,7 @@ from ..nonlinear import (
     refresh_nonlinear,
 )
 from ..nonlinear._prepared import _solve_prepared_nonlinear_stateful
-from ..typing import parse
+from ..typing import checked, parse
 from ._checkpoint import (
     continuation_checkpoint,
     ContinuationCheckpoint,
@@ -891,6 +891,7 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
         self.pair_tolerance = pair
         self.analyzer_id = identifier
 
+    @checked
     def analyze(
         self,
         problem: ContinuationCurveProblem,
@@ -901,8 +902,6 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
         *,
         geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
-        if not isinstance(problem, ContinuationCurveProblem):
-            raise TypeError("problem must be a ContinuationCurveProblem.")
         geometry_ = _resolve_stability_geometry(
             problem,
             state,
@@ -999,6 +998,7 @@ class SelfAdjointKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         self.pair_tolerance = pair
         self.analyzer_id = identifier
 
+    @checked
     def analyze(
         self,
         problem: ContinuationCurveProblem,
@@ -1009,8 +1009,6 @@ class SelfAdjointKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         *,
         geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
-        if not isinstance(problem, ContinuationCurveProblem):
-            raise TypeError("problem must be a ContinuationCurveProblem.")
         geometry_ = _resolve_stability_geometry(
             problem,
             state,
@@ -1124,6 +1122,7 @@ class GeneralKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         self.pair_tolerance = pair
         self.analyzer_id = identifier
 
+    @checked
     def analyze(
         self,
         problem: ContinuationCurveProblem,
@@ -1134,8 +1133,6 @@ class GeneralKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         *,
         geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
-        if not isinstance(problem, ContinuationCurveProblem):
-            raise TypeError("problem must be a ContinuationCurveProblem.")
         geometry_ = _resolve_stability_geometry(
             problem,
             state,
@@ -1500,6 +1497,7 @@ class ContinuationBranch(StrictModule):
     method: str = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         points: Sequence[BranchPoint],
@@ -1523,8 +1521,6 @@ class ContinuationBranch(StrictModule):
             int(ContinuationStatus.COORDINATE_BOUND_REACHED),
         ):
             raise ValueError("A successful continuation branch requires a point.")
-        if not isinstance(geometry, ContinuationGeometry):
-            raise TypeError("geometry must be a ContinuationGeometry.")
         if any(not isinstance(point, BranchPoint) for point in points_):
             raise TypeError("points must contain BranchPoint values.")
         for point in points_:
@@ -2776,6 +2772,7 @@ class ContinuationProvenance(StrictModule):
     corrector_preconditioner_plan_id: str = eqx.field(static=True)
     terminal_coordinate: float | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -2814,8 +2811,6 @@ class ContinuationProvenance(StrictModule):
         )
         if any(not value for value in identifiers):
             raise ValueError("Continuation provenance identities must be non-empty.")
-        if not isinstance(corrector_provenance, NonlinearProvenance):
-            raise TypeError("corrector_provenance must be a NonlinearProvenance.")
         self.corrector_provenance = corrector_provenance
         geometry_identifiers = tuple(
             str(value)
@@ -2881,6 +2876,7 @@ class ContinuationResult(StrictModule):
     checkpoint: ContinuationCheckpoint | None
     iteration_session_state: IterationSessionState | None
 
+    @checked
     def __init__(
         self,
         *,
@@ -2893,12 +2889,6 @@ class ContinuationResult(StrictModule):
         checkpoint: ContinuationCheckpoint | None,
         iteration_session_state: IterationSessionState | None = None,
     ) -> None:
-        if not isinstance(branch, ContinuationBranch):
-            raise TypeError("branch must be a ContinuationBranch.")
-        if not isinstance(diagnostics, ContinuationDiagnostics):
-            raise TypeError("diagnostics must be ContinuationDiagnostics.")
-        if not isinstance(provenance, ContinuationProvenance):
-            raise TypeError("provenance must be ContinuationProvenance.")
         steps_ = tuple(steps)
         if any(not isinstance(step, ContinuationStepResult) for step in steps_):
             raise TypeError("steps must contain ContinuationStepResult values.")
@@ -3007,6 +2997,7 @@ class ContinuationPlan(StrictModule):
     plan_id: str = eqx.field(static=True)
     terminal_coordinate: float | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -3020,8 +3011,6 @@ class ContinuationPlan(StrictModule):
         plan_id: str,
         terminal_coordinate: float | None = None,
     ) -> None:
-        if not isinstance(method, AbstractContinuationMethod):
-            raise TypeError("method must be an AbstractContinuationMethod.")
         if stability_analyzer is not None and not isinstance(
             stability_analyzer, AbstractStabilityAnalyzer
         ):
@@ -3073,6 +3062,7 @@ class PreparedContinuation(StrictModule):
     decision_history: tuple[str, ...] = eqx.field(static=True)
     attempt_history: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: ContinuationCurveProblem | AbstractContinuationAdapter,
@@ -3091,8 +3081,6 @@ class PreparedContinuation(StrictModule):
         prepared_id: str,
     ) -> None:
         problem_, adapter = _resolve_continuation_adapter(problem)
-        if not isinstance(plan, ContinuationPlan):
-            raise TypeError("plan must be a ContinuationPlan.")
         if plan.problem_id != problem_.problem_id:
             raise ValueError("Continuation plan and problem IDs must match.")
         if plan.adapter_id != adapter.adapter_id:

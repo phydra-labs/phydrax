@@ -24,6 +24,7 @@ from ..discretization.spectral import (
     PseudospectralMethodPlan,
     TensorSpectralDiscretization,
 )
+from ..typing import checked
 from ._dynamic_les import (
     DynamicLESInputs,
     DynamicLESResult,
@@ -93,6 +94,7 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
     boundary_support: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicFourierTestFilterPlan,
@@ -100,14 +102,6 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         test_discretization: TensorSpectralDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, PeriodicFourierTestFilterPlan):
-            raise TypeError("plan must be a PeriodicFourierTestFilterPlan.")
-        if not isinstance(resolved_filter, PreparedPeriodicFourierGridFilter):
-            raise TypeError(
-                "resolved_filter must be a PreparedPeriodicFourierGridFilter."
-            )
-        if not isinstance(test_discretization, TensorSpectralDiscretization):
-            raise TypeError("test_discretization must be a TensorSpectralDiscretization.")
         resolved = resolved_filter.discretization
         if len(resolved.axes) != 3 or len(test_discretization.axes) != 3:
             raise ValueError("Periodic dynamic LES requires exactly three Fourier axes.")
@@ -202,6 +196,7 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         trailing = (1,) * (value.ndim - 3)
         return value * self.retained_mask.reshape(self.retained_mask.shape + trailing)
 
+    @checked
     def apply_physical(
         self,
         values: ArrayLike,
@@ -209,8 +204,6 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         """Project, test-filter, and reconstruct a field on the closure grid."""
-        if not isinstance(closure_method, PreparedPseudospectralMethod):
-            raise TypeError("closure_method must be a PreparedPseudospectralMethod.")
         dealiasing = closure_method.dealiasing
         if (
             dealiasing.retained.prepared_id
@@ -231,6 +224,7 @@ class PeriodicDynamicLESPlan(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamic_model: PreparedDynamicSmagorinskyPlan,
@@ -241,14 +235,6 @@ class PeriodicDynamicLESPlan(StrictModule, NonTrainableState):
         *,
         energy_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(dynamic_model, PreparedDynamicSmagorinskyPlan):
-            raise TypeError("dynamic_model must be PreparedDynamicSmagorinskyPlan.")
-        if not isinstance(grid_filter, PeriodicFourierGridFilterPlan):
-            raise TypeError("grid_filter must be PeriodicFourierGridFilterPlan.")
-        if not isinstance(test_filter, PeriodicFourierTestFilterPlan):
-            raise TypeError("test_filter must be PeriodicFourierTestFilterPlan.")
-        if not isinstance(closure_method, PseudospectralMethodPlan):
-            raise TypeError("closure_method must be PseudospectralMethodPlan.")
         if not isinstance(closure_method.dealiasing, OversamplingDealiasingPlan):
             raise ValueError(
                 "Periodic dynamic LES requires oversampling for Germano products; "
@@ -340,6 +326,7 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
     continuation_required: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicDynamicLESPlan,
@@ -348,12 +335,6 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
         projector: PeriodicLerayProjector,
         /,
     ) -> None:
-        if not isinstance(plan, PeriodicDynamicLESPlan):
-            raise TypeError("plan must be PeriodicDynamicLESPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be TensorSpectralDiscretization.")
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be PeriodicLerayProjector.")
         if projector.discretization.prepared_id != discretization.prepared_id:
             raise ValueError("Dynamic LES projector and discretization disagree.")
         if projector.spatial_dimension != 3:
@@ -461,6 +442,7 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
             prepared_id=self.prepared_id,
         )
 
+    @checked
     def step_restriction(
         self,
         velocity: ArrayLike,
@@ -470,8 +452,6 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
     ) -> PeriodicLESStepRestriction:
         """Return conservative explicit bounds from one already evaluated stage."""
         value = self.projector.validate_state(velocity)
-        if not isinstance(stage, PeriodicDynamicLESStage):
-            raise TypeError("stage must be PeriodicDynamicLESStage.")
         if stage.prepared_id != self.prepared_id:
             raise ValueError("Dynamic LES stage belongs to another prepared action.")
         live = self.grid_filter.apply(value)

@@ -28,6 +28,7 @@ from ....nonlinear import (
     prepare_nonlinear_update,
     refresh_nonlinear_update,
 )
+from ....typing import checked
 from ._basis import (
     _array,
     EffectiveMass1D,
@@ -56,6 +57,7 @@ class QuantumPoisson1D(StrictModule):
     prepared: la.PreparedLinearSolve
     scale: Array
 
+    @checked
     def __init__(
         self,
         basis: EffectiveMass1D,
@@ -63,10 +65,6 @@ class QuantumPoisson1D(StrictModule):
         fixed_charge_density: ArrayLike,
         electrode_voltages: ArrayLike,
     ) -> None:
-        if not isinstance(basis, EffectiveMass1D):
-            raise TypeError(
-                "Quantum Poisson currently admits the EffectiveMass1D cell basis only."
-            )
         n = basis.x.size
         eps = _array(
             np.broadcast_to(face_permittivity, (n + 1,)),

@@ -27,6 +27,7 @@ from ..._dtype_names import inexact_result_type
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -136,9 +137,8 @@ class ExactFeatureSelectorModel(AbstractFittedModel):
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
+    @checked
     def __init__(self, selection: ExactSelection, /, *, input_size: int) -> None:
-        if not isinstance(selection, ExactSelection):
-            raise TypeError("selection must be an ExactSelection.")
         self.selection = selection
         self.in_size = int(input_size)
         self.out_size = selection.indices.shape[0]
@@ -470,6 +470,7 @@ class RecursiveFeatureEliminationRecipe(AbstractRecipe):
     num_features: int = eqx.field(static=True)
     importance_getter: Callable[[AbstractArrayModel], Array] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         estimator: AbstractRecipe,
@@ -478,8 +479,6 @@ class RecursiveFeatureEliminationRecipe(AbstractRecipe):
         num_features: int,
         importance_getter: Callable[[AbstractArrayModel], Array],
     ) -> None:
-        if not isinstance(estimator, AbstractRecipe):
-            raise TypeError("estimator must be an AbstractRecipe.")
         if int(num_features) <= 0:
             raise ValueError("num_features must be positive.")
         if not callable(importance_getter):
@@ -558,6 +557,7 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
     validation_fraction: float = eqx.field(static=True)
     scorer: Callable[[AbstractArrayModel, MLBatch], Array] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         estimator: AbstractRecipe,
@@ -568,8 +568,6 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
         validation_fraction: float = 0.2,
         scorer: Callable[[AbstractArrayModel, MLBatch], Array] | None = None,
     ) -> None:
-        if not isinstance(estimator, AbstractRecipe):
-            raise TypeError("estimator must be an AbstractRecipe.")
         if int(num_features) <= 0 or direction not in ("forward", "backward"):
             raise ValueError("num_features must be positive and direction supported.")
         if not 0.0 < float(validation_fraction) < 1.0:
@@ -660,6 +658,7 @@ class ModelBasedSelectionRecipe(AbstractRecipe):
     max_features: int | None = eqx.field(static=True)
     importance_getter: Callable[[AbstractArrayModel], Array] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         estimator: AbstractRecipe,
@@ -669,8 +668,6 @@ class ModelBasedSelectionRecipe(AbstractRecipe):
         max_features: int | None = None,
         importance_getter: Callable[[AbstractArrayModel], Array],
     ) -> None:
-        if not isinstance(estimator, AbstractRecipe):
-            raise TypeError("estimator must be an AbstractRecipe.")
         if max_features is not None and int(max_features) <= 0:
             raise ValueError("max_features must be positive.")
         if not callable(importance_getter):

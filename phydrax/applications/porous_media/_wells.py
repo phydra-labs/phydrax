@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class WellControl(StrictModule, NonTrainableState):
@@ -175,6 +176,7 @@ class WellCompletionPlan(StrictModule, NonTrainableState):
             cell_count,
         )
 
+    @checked
     def evaluate(
         self,
         cell_pressure_Pa: ArrayLike,
@@ -188,8 +190,6 @@ class WellCompletionPlan(StrictModule, NonTrainableState):
             self.cell_indices.size,
         ):
             raise ValueError("Well pressure/mobility shapes are invalid.")
-        if not isinstance(control, WellControl):
-            raise TypeError("Well evaluation requires WellControl.")
         pressure = eqx.error_if(
             pressure,
             jnp.any(~jnp.isfinite(pressure))

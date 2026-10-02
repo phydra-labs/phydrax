@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._identity import BaseSpanId, OverlayCellId
 from ._topology import PatchAtlas
 
@@ -27,6 +28,7 @@ class IntegrationOverlay(StrictModule, NonTrainableState):
     source_spans: tuple[tuple[BaseSpanId, ...], ...]
     overlay_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         atlas: PatchAtlas,
@@ -35,8 +37,6 @@ class IntegrationOverlay(StrictModule, NonTrainableState):
         *,
         name: str = "overlay",
     ) -> None:
-        if not isinstance(atlas, PatchAtlas):
-            raise TypeError("atlas must be a PatchAtlas.")
         name_ = str(name)
         if not name_:
             raise ValueError("Overlay name must be non-empty.")

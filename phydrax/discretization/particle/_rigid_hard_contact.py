@@ -26,6 +26,7 @@ from ...linalg import (
     LinearSystem,
     solve as solve_linear,
 )
+from ...typing import checked
 from ._rigid_body import (
     PreparedRigidBodySet,
     rigid_body_world_inertia,
@@ -550,13 +551,10 @@ class PreparedHardContact(StrictModule, NonTrainableState):
     tangent_policy: LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: HardContactRoutePlan, bodies: PreparedRigidBodySet, /
     ) -> None:
-        if not isinstance(plan, HardContactRoutePlan):
-            raise TypeError("plan must be a HardContactRoutePlan.")
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be a PreparedRigidBodySet.")
         left = np.asarray(plan.left_body)
         right = np.asarray(plan.right_body)
         valid = np.asarray(plan.valid)
@@ -908,6 +906,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
             successful,
         )
 
+    @checked
     def _validate_inputs(
         self,
         state: HardContactState,
@@ -915,12 +914,6 @@ class PreparedHardContact(StrictModule, NonTrainableState):
         geometry: RigidContactGeometry,
         /,
     ) -> None:
-        if not isinstance(state, HardContactState):
-            raise TypeError("state must be HardContactState.")
-        if not isinstance(kinematics, RigidBodyKinematics):
-            raise TypeError("kinematics must be RigidBodyKinematics.")
-        if not isinstance(geometry, RigidContactGeometry):
-            raise TypeError("geometry must be RigidContactGeometry.")
         contact = (self.capacity,)
         vector = (self.capacity, self.ambient_dimension)
         angular = (self.capacity, self.bodies.angular_dimension)

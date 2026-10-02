@@ -43,7 +43,7 @@ from ...optim import (
     StateDesignConstraint,
     StateDesignProblem,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 CalibrationSplit: TypeAlias = Literal["train", "validation", "held_out"]
@@ -471,6 +471,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
     plant_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterization: ReducedRodParameterization,
@@ -491,10 +492,6 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         absolute_rank_tolerance: float = 0.0,
         problem_id: str,
     ) -> None:
-        if not isinstance(parameterization, ReducedRodParameterization):
-            raise TypeError("parameterization must be ReducedRodParameterization.")
-        if not isinstance(acceptance, CalibrationAcceptance):
-            raise TypeError("acceptance must be CalibrationAcceptance.")
         if not callable(realize):
             raise TypeError("realize must be callable.")
         if admissible is not None and not callable(admissible):
@@ -1141,6 +1138,7 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
     problem_id: str = eqx.field(static=True)
     co_design_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterization: ReducedRodParameterization,
@@ -1176,8 +1174,6 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
         has_aux: bool = False,
         problem_id: str,
     ) -> None:
-        if not isinstance(parameterization, ReducedRodParameterization):
-            raise TypeError("parameterization must be ReducedRodParameterization.")
         for value, name in (
             (state_residual, "state_residual"),
             (objective, "objective"),

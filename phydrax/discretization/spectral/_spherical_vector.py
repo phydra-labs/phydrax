@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._spherical import SphericalSpectralDiscretization
 from ._spherical_operators import PreparedSphericalSpinOperator, SphericalSpinOperatorPlan
 
@@ -42,6 +43,7 @@ class PreparedSphericalVectorOperators(StrictModule, NonTrainableState):
     mean_policy: Literal["reject", "project"] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: SphericalSpectralDiscretization,
@@ -49,8 +51,6 @@ class PreparedSphericalVectorOperators(StrictModule, NonTrainableState):
         *,
         mean_policy: Literal["reject", "project"] = "reject",
     ) -> None:
-        if not isinstance(space, SphericalSpectralDiscretization):
-            raise TypeError("space must be a prepared spherical spectral discretization.")
         if space.layout.spin != 0 or not space.layout.reality:
             raise ValueError("Tangent vector operators require a real spin-zero space.")
         if space.layout.bandlimit < 2:

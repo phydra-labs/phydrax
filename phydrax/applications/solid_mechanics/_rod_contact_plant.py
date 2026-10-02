@@ -25,6 +25,7 @@ from ...dynamics import (
     PlantProposal,
     PlantStepContext,
 )
+from ...typing import checked
 from ..contact._cone import ContactConeSolverPlan
 from ..contact._rod_capsule import ReducedRodCapsuleContactParticipant
 from ..contact._rod_contact_lifecycle import (
@@ -104,6 +105,7 @@ class ReducedRodContactPlantState(StrictModule):
     contact_state: RodContactManifoldState
     sensor_state: ReducedRodPassiveSensorState
 
+    @checked
     def __init__(
         self,
         reduced_state: ReducedRodState,
@@ -113,16 +115,6 @@ class ReducedRodContactPlantState(StrictModule):
         sensor_state: ReducedRodPassiveSensorState,
         /,
     ) -> None:
-        if not isinstance(reduced_state, ReducedRodState):
-            raise TypeError("reduced_state must be ReducedRodState.")
-        if not isinstance(material_state, ReducedRodMaterialState):
-            raise TypeError("material_state must be ReducedRodMaterialState.")
-        if not isinstance(actuator_state, ReducedRodPassiveActuatorState):
-            raise TypeError("actuator_state must be ReducedRodPassiveActuatorState.")
-        if not isinstance(contact_state, RodContactManifoldState):
-            raise TypeError("contact_state must be RodContactManifoldState.")
-        if not isinstance(sensor_state, ReducedRodPassiveSensorState):
-            raise TypeError("sensor_state must be ReducedRodPassiveSensorState.")
         self.reduced_state = reduced_state
         self.material_state = material_state
         self.actuator_state = actuator_state
@@ -302,6 +294,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
     require_finite_parameters: bool = eqx.field(static=True)
     plant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedReducedRodDynamics,
@@ -327,8 +320,6 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         native_loads: RodLoadLedger | None = None,
         capability_id: RodContactCapabilityId | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedReducedRodDynamics):
-            raise TypeError("dynamics must be PreparedReducedRodDynamics.")
         from ._rod_reduced_integrators import (
             ReducedRodImplicitMidpoint,
             ReducedRodSemiImplicitVelocityEuler,
@@ -338,12 +329,6 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
             policy, (ReducedRodSemiImplicitVelocityEuler, ReducedRodImplicitMidpoint)
         ):
             raise TypeError("policy must select one reduced rod integrator route.")
-        if not isinstance(participant, ReducedRodCapsuleContactParticipant):
-            raise TypeError("participant must be ReducedRodCapsuleContactParticipant.")
-        if not isinstance(search, PreparedRodContactSearch):
-            raise TypeError("search must be PreparedRodContactSearch.")
-        if not isinstance(ccd, RodContactCCDPlan):
-            raise TypeError("ccd must be RodContactCCDPlan.")
         solver = ContactConeSolverPlan() if cone_solver is None else cone_solver
         if not isinstance(solver, ContactConeSolverPlan):
             raise TypeError("cone_solver must be ContactConeSolverPlan or None.")

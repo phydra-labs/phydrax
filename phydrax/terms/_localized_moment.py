@@ -21,7 +21,7 @@ from .._term import AbstractScalarTerm
 from .._trainable import NonTrainableState
 from ..conditions import AbstractResidualCondition
 from ..domain import DomainComponent, DomainFunction
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class LocalTestSpaceEvidence(StrictModule, NonTrainableState):
@@ -55,6 +55,7 @@ class LocalTestSpace(StrictModule, NonTrainableState):
     evidence: LocalTestSpaceEvidence
     test_space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: DomainComponent,
@@ -66,8 +67,6 @@ class LocalTestSpace(StrictModule, NonTrainableState):
         test_space_id: str,
         gram_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(component, DomainComponent):
-            raise TypeError("component must be a DomainComponent.")
         basis = np.asarray(basis_values, dtype=np.float64)
         if basis.ndim != 2 or basis.shape[0] <= 0 or basis.shape[1] <= 0:
             raise ValueError("basis_values must have shape (points, modes).")
@@ -115,6 +114,7 @@ class LocalizedResidualNorm(AbstractScalarTerm):
     fields: tuple[str, ...] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         condition: AbstractResidualCondition,
@@ -124,10 +124,6 @@ class LocalizedResidualNorm(AbstractScalarTerm):
         scale: float = 1.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(condition, AbstractResidualCondition):
-            raise TypeError("condition must be an AbstractResidualCondition.")
-        if not isinstance(test_space, LocalTestSpace):
-            raise TypeError("test_space must be a LocalTestSpace.")
         if not condition.on.domain.same_support(test_space.component.domain):
             raise ValueError("Condition and local test space must share one domain.")
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())

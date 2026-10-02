@@ -14,6 +14,7 @@ from jax.typing import ArrayLike, DTypeLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap, Immersion
 from ._utils import _pointwise_array
@@ -25,14 +26,13 @@ class ComplexCoordinateConvention(StrictModule):
     chart: CoordinateChart
     pairs: tuple[tuple[int, int], ...]
 
+    @checked
     def __init__(
         self,
         chart: CoordinateChart,
         pairs: Sequence[tuple[int, int]] | None = None,
         /,
     ) -> None:
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Complex coordinates require a CoordinateChart.")
         if chart.dimension % 2:
             raise ValueError("Complex coordinates require even real dimension.")
         half = chart.dimension // 2
@@ -102,6 +102,7 @@ class AlmostComplexStructure(StrictModule):
     matrix_function: Callable[[Array], Array]
     chart: CoordinateChart
 
+    @checked
     def __init__(
         self,
         matrix: Callable[[Array], Array],
@@ -111,8 +112,6 @@ class AlmostComplexStructure(StrictModule):
     ) -> None:
         if not callable(matrix):
             raise TypeError("Almost-complex matrix must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Almost-complex structure requires a CoordinateChart.")
         if chart.dimension % 2:
             raise ValueError("Almost-complex structures require even real dimension.")
         self.matrix_function = matrix

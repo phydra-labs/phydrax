@@ -21,6 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.collocation import ChebyshevCollocation
+from ...typing import checked
 from ._perturbation import (
     PerturbationStatus,
     RadialBoundaryCondition,
@@ -112,6 +113,7 @@ class SchwarzschildRadialPlan(StrictModule, NonTrainableState):
     infinity_asymptotic_order: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -131,8 +133,6 @@ class SchwarzschildRadialPlan(StrictModule, NonTrainableState):
         integration_substeps: int = 32,
         infinity_asymptotic_order: int = 12,
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         _validate_schwarzschild_sector(mode)
         mass_value = _positive_scalar_host(mass, "mass")
         count, maximum = _collocation_capacity(node_count, maximum_dimension)
@@ -329,6 +329,7 @@ class KerrTeukolskyRadialPlan(StrictModule, NonTrainableState):
     wave_number_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -347,8 +348,6 @@ class KerrTeukolskyRadialPlan(StrictModule, NonTrainableState):
         wave_number_tolerance: float = 1.0e-10,
         maximum_dimension: int = 512,
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         if mode.sector not in ("teukolsky", "scalar"):
             raise ValueError(
                 "Kerr Teukolsky plans require sector 'teukolsky' or 'scalar'."

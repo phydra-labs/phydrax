@@ -25,7 +25,7 @@ from ..conditions._ir import ArrayCodomain, ConditionQuantifier
 from ..conditions._lowering import BoundCondition
 from ..conditions._relations import Equality, NoisyObservation
 from ..linalg._constraint_operators import PreparedConstraintOperator
-from ..typing import parse
+from ..typing import checked, parse
 from ._conditional_moments import condition_gaussian, ConditionalGaussianMoments
 from ._factor_law import GaussianFactorLaw
 from ._gaussian_factor import (
@@ -186,6 +186,7 @@ class ConstraintLikelihoodTerm(StrictModule):
         self.bound = bound
 
     @classmethod
+    @checked
     def from_bound_condition(
         cls,
         bound: BoundCondition,
@@ -197,8 +198,6 @@ class ConstraintLikelihoodTerm(StrictModule):
         rank_tolerance: ArrayLike = 0.0,
     ) -> ConstraintLikelihoodTerm:
         """Build from the shared typed action and its authoritative relation."""
-        if not isinstance(bound, BoundCondition):
-            raise TypeError("bound must be a BoundCondition.")
         if not isinstance(bound.codomain, ArrayCodomain):
             raise TypeError(
                 "Probabilistic conditioning currently needs an ArrayCodomain."
@@ -341,6 +340,7 @@ class LinearGaussianConstraintConditioner(StrictModule):
         self.rank_tolerance = rank
         self.support_tolerance = support
 
+    @checked
     def condition(
         self,
         prior_mean: ArrayLike,
@@ -351,10 +351,6 @@ class LinearGaussianConstraintConditioner(StrictModule):
         *,
         offset: ArrayLike | None = None,
     ) -> ConstraintConditioningResult:
-        if not isinstance(prior_factor, GaussianFactor):
-            raise TypeError("prior_factor must be a GaussianFactor.")
-        if not isinstance(likelihood, ConstraintLikelihoodTerm):
-            raise TypeError("likelihood must be a ConstraintLikelihoodTerm.")
         mean = jnp.asarray(prior_mean)
         action = jnp.asarray(matrix)
         if mean.ndim != 1 or prior_factor.event_size != mean.size:
@@ -386,6 +382,7 @@ class LinearGaussianConstraintConditioner(StrictModule):
             likelihood,
         )
 
+    @checked
     def condition_from_covariances(
         self,
         query_mean: ArrayLike,
@@ -397,8 +394,6 @@ class LinearGaussianConstraintConditioner(StrictModule):
         /,
     ) -> ConstraintConditioningResult:
         """Condition query coordinates from kernel/linear-action Gram blocks."""
-        if not isinstance(likelihood, ConstraintLikelihoodTerm):
-            raise TypeError("likelihood must be a ConstraintLikelihoodTerm.")
         query = jnp.asarray(query_mean)
         condition = jnp.asarray(condition_mean)
         query_cov = _covariance_matrix(query_covariance, query.size, "query_covariance")
@@ -431,6 +426,7 @@ class LinearGaussianConstraintConditioner(StrictModule):
             likelihood,
         )
 
+    @checked
     def log_evidence_from_covariance(
         self,
         condition_mean: ArrayLike,
@@ -438,8 +434,6 @@ class LinearGaussianConstraintConditioner(StrictModule):
         likelihood: ConstraintLikelihoodTerm,
         /,
     ) -> Array:
-        if not isinstance(likelihood, ConstraintLikelihoodTerm):
-            raise TypeError("likelihood must be a ConstraintLikelihoodTerm.")
         condition = jnp.asarray(condition_mean)
         if condition.shape != likelihood.observed.shape:
             raise ValueError("condition_mean must align with likelihood coordinates.")
@@ -576,6 +570,7 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
         self.kappa = kappa_value
         self.hermite_order = order
 
+    @checked
     def condition(
         self,
         prior_mean: ArrayLike,
@@ -584,10 +579,6 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
         likelihood: ConstraintLikelihoodTerm,
         /,
     ) -> ConstraintConditioningResult:
-        if not isinstance(prior_factor, GaussianFactor):
-            raise TypeError("prior_factor must be a GaussianFactor.")
-        if not isinstance(likelihood, ConstraintLikelihoodTerm):
-            raise TypeError("likelihood must be a ConstraintLikelihoodTerm.")
         mean = jnp.asarray(prior_mean)
         if mean.ndim != 1 or prior_factor.event_size != mean.size:
             raise ValueError("prior_mean and prior_factor must describe one flat event.")

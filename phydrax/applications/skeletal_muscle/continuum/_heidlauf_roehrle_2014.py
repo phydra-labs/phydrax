@@ -42,6 +42,7 @@ from ....equations import (
     FiniteElementExecutionContext,
     FiniteElementForm,
 )
+from ....typing import checked
 from ....units import convert_value, KILOPASCAL, ONE, PASCAL
 from ._fiber import PreparedUniformFiberArchitecture
 
@@ -366,6 +367,7 @@ class HeidlaufRoehrle2014Plan(StrictModule, NonTrainableState):
         )
         self.plan_id = self.provenance.semantic_id
 
+    @checked
     def prepare(
         self,
         parameters: HeidlaufRoehrle2014Parameters,
@@ -373,10 +375,6 @@ class HeidlaufRoehrle2014Plan(StrictModule, NonTrainableState):
         active_stress: HeidlaufRoehrle2014StressInput,
         /,
     ) -> PreparedHeidlaufRoehrle2014Material:
-        if not isinstance(parameters, HeidlaufRoehrle2014Parameters):
-            raise TypeError("parameters must be HeidlaufRoehrle2014Parameters.")
-        if not isinstance(architecture, PreparedUniformFiberArchitecture):
-            raise TypeError("architecture must be PreparedUniformFiberArchitecture.")
         if not bool(architecture.evidence.valid):
             raise ValueError(
                 "A valid supported reference fiber architecture is required."
@@ -479,11 +477,10 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
             self.prepared_id,
         )
 
+    @checked
     def with_commit(
         self, commit: HeidlaufRoehrle2014MaterialCommit, /
     ) -> PreparedHeidlaufRoehrle2014Material:
-        if not isinstance(commit, HeidlaufRoehrle2014MaterialCommit):
-            raise TypeError("commit must be HeidlaufRoehrle2014MaterialCommit.")
         if commit.prepared_id != self.prepared_id:
             raise ValueError("Commit belongs to a foreign prepared 2014 material.")
         equal_leaves = jax.tree_util.tree_map(
@@ -801,6 +798,7 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
             ),
         )
 
+    @checked
     def prepare_qualified_mixed(
         self,
         finite_element_plan: MixedFiniteElementConstraintPlan,
@@ -812,10 +810,6 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         pressure_origin_pa: ArrayLike = 0.0,
     ) -> PreparedMixedFiniteElementConstraint:
         """Use the core Taylor–Hood/Q2–Q1, gauge and assembled inf-sup owner."""
-        if not isinstance(finite_element_plan, MixedFiniteElementConstraintPlan):
-            raise TypeError(
-                "finite_element_plan must be MixedFiniteElementConstraintPlan."
-            )
         if (
             finite_element_plan.formulation != "exact"
             or finite_element_plan.bulk_modulus is not None

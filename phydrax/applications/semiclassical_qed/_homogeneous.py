@@ -29,6 +29,7 @@ from ...linalg import (
 )
 from ...solver._differential import DifferentialProblem, DifferentialSolution
 from ...solver._diffrax_backend import solve_diffrax
+from ...typing import checked
 
 
 _SIGMA_1 = jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=jnp.complex128)
@@ -377,6 +378,7 @@ class PreparedHomogeneousSpinorQED(StrictModule, NonTrainableState):
     state_coordinates: PreparedRealCoordinateTree
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: HomogeneousSpinorQEDPlan,
@@ -388,8 +390,6 @@ class PreparedHomogeneousSpinorQED(StrictModule, NonTrainableState):
         electric_field: ArrayLike,
         mode_spinors: ArrayLike | None,
     ) -> None:
-        if not isinstance(plan, HomogeneousSpinorQEDPlan):
-            raise TypeError("plan must be a HomogeneousSpinorQEDPlan.")
         modes = (
             negative_energy_spinor_modes(
                 plan.momenta,

@@ -15,6 +15,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._kinetic_gas import MonatomicBGKCollisionPlan
+from ..typing import checked
 
 
 class KineticSyntheticResidual(StrictModule):
@@ -38,6 +39,7 @@ class KineticSyntheticAccelerationPlan(StrictModule):
     positivity_floor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         collision: MonatomicBGKCollisionPlan,
@@ -46,8 +48,6 @@ class KineticSyntheticAccelerationPlan(StrictModule):
         positivity_floor: float = 1.0e-14,
     ) -> None:
         floor = float(positivity_floor)
-        if not isinstance(collision, MonatomicBGKCollisionPlan):
-            raise TypeError("collision must be MonatomicBGKCollisionPlan.")
         if not np.isfinite(floor) or floor <= 0.0:
             raise ValueError("positivity_floor must be finite and positive.")
         self.collision = collision

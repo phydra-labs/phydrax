@@ -23,7 +23,7 @@ from ..axes import AxisKey
 from ..exterior._form_type import FormType
 from ..linalg import AbstractVectorSpace, DualSpace
 from ..sparse import RowRelation
-from ..typing import parse
+from ..typing import checked, parse
 from ._core import nonempty_identifier, resolved_identifier
 
 
@@ -384,6 +384,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
     field_space_id: str = eqx.field(static=True)
     form_type: FormType | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -407,8 +408,6 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             (TensorDofLayout, EntityDofLayout, ModalDofLayout, BlockDofLayout),
         ):
             raise TypeError("layout must be a supported DofLayout value.")
-        if not isinstance(vector_space, AbstractVectorSpace):
-            raise TypeError("vector_space must be an AbstractVectorSpace.")
         if vector_space.size != layout.size:
             raise ValueError(
                 f"Vector-space size {vector_space.size} does not match DOF-layout size {layout.size}."

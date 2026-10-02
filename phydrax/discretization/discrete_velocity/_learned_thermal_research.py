@@ -28,6 +28,7 @@ from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._quadrature import CertifiedDiscreteVelocityQuadrature
 
 
@@ -146,9 +147,8 @@ class PressureExtendedParticleEquilibriumPlan(StrictModule, NonTrainableState):
     linear_solve: SmallLinearSolvePlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, quadrature: CertifiedDiscreteVelocityQuadrature, /) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         _require_standard_d2q9(quadrature, owner="The pressure-extended research plan")
         if quadrature.certification.maximum_degree < 4:
             raise ValueError(
@@ -477,6 +477,7 @@ class PositiveLearnedThermalEnergyPlan(StrictModule, NonTrainableState):
     constant_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -490,8 +491,6 @@ class PositiveLearnedThermalEnergyPlan(StrictModule, NonTrainableState):
         maximum_logit_span: float = 80.0,
         constant_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         count = int(statistic_count)
         if count <= 0 or count > quadrature.population_count:
             raise ValueError("statistic_count must lie in [1, Q].")
@@ -779,6 +778,7 @@ class MatchedThermalCrossRelaxationPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -786,8 +786,6 @@ class MatchedThermalCrossRelaxationPlan(StrictModule, NonTrainableState):
         *,
         conservation_tolerance: float = 1.0e-11,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         _require_standard_d2q9(quadrature, owner="The matched thermal plan")
         tolerance = float(conservation_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
@@ -1235,6 +1233,7 @@ class IntegerVelocityFrameShiftPlan(StrictModule, NonTrainableState):
     minimum_interior_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -1243,8 +1242,6 @@ class IntegerVelocityFrameShiftPlan(StrictModule, NonTrainableState):
         *,
         minimum_interior_margin: float = 1.0e-10,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2:
             raise ValueError("The integer frame-shift plan requires dimension two.")
         if quadrature.transport_kind != "integer_lattice":
@@ -1355,11 +1352,10 @@ class IntegerVelocityFrameShiftPlan(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def inverse(self, laboratory_moments: ThermalFrameMoments, /) -> ThermalFrameMoments:
         """Apply the exact inverse moment translation without remapping populations."""
 
-        if not isinstance(laboratory_moments, ThermalFrameMoments):
-            raise TypeError("laboratory_moments must be ThermalFrameMoments.")
         return self._translate(laboratory_moments, -self.shift)
 
     def forward(

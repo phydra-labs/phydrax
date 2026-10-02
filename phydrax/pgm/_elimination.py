@@ -21,7 +21,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._kernel import FactorGraphResourcePolicy
 from ._model import (
     DiscreteFactorGraph,
@@ -527,6 +527,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
     result: VariableEliminationResult
     evidence: Array
 
+    @checked
     def __init__(
         self,
         plan: VariableEliminationPlan,
@@ -535,8 +536,6 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         *,
         evidence: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(plan, VariableEliminationPlan):
-            raise TypeError("plan must be VariableEliminationPlan.")
         if result is not None and not isinstance(result, VariableEliminationResult):
             raise TypeError("result must be VariableEliminationResult or None.")
         if result is not None and result.plan.plan_id != plan.plan_id:

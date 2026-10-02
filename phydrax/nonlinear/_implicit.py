@@ -31,6 +31,7 @@ from ..linalg import (
     transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
+from ..typing import checked
 from ._components import admit_callable_components, admit_residual_components
 from ._fixed_point import FixedPointIteration
 from ._newton import NewtonKrylov, NewtonTrustRegion
@@ -83,14 +84,13 @@ class ImplicitRootDerivativePolicy(StrictModule):
         self.tangent_linear_policy = tangent_linear_policy
         self.adjoint_linear_policy = adjoint_linear_policy
 
+    @checked
     def resolve(
         self,
         method: AbstractNonlinearMethod,
         /,
     ) -> tuple[LinearSolvePolicy, LinearSolvePolicy]:
         """Resolve tangent and adjoint policies against one nonlinear method."""
-        if not isinstance(method, AbstractNonlinearMethod):
-            raise TypeError("method must be an AbstractNonlinearMethod.")
         if not method.capabilities.implicit_differentiation:
             raise ValueError(
                 "The nonlinear method does not support implicit root differentiation."

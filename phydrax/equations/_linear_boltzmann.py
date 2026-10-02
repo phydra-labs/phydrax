@@ -16,7 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._angular_quadrature import CertifiedSlabAngularQuadrature
-from ..typing import parse
+from ..typing import checked, parse
 
 
 TransportBoundaryKind: TypeAlias = Literal["vacuum", "incident", "reflecting"]
@@ -99,6 +99,7 @@ class MultigroupSlabTransportProblem(StrictModule, NonTrainableState):
     group_sets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_edges: ArrayLike,
@@ -115,10 +116,6 @@ class MultigroupSlabTransportProblem(StrictModule, NonTrainableState):
         total = np.asarray(total_cross_section, dtype=np.float64)
         scattering = np.asarray(scattering_cross_section, dtype=np.float64)
         source = np.asarray(fixed_isotropic_source, dtype=np.float64)
-        if not isinstance(quadrature, CertifiedSlabAngularQuadrature):
-            raise TypeError("quadrature must be CertifiedSlabAngularQuadrature.")
-        if not isinstance(boundaries, SlabTransportBoundaryPlan):
-            raise TypeError("boundaries must be SlabTransportBoundaryPlan.")
         if edges.ndim != 1 or edges.size < 2 or np.any(np.diff(edges) <= 0.0):
             raise ValueError("Slab cell edges must be finite and increasing.")
         cells = edges.size - 1

@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
+from ...typing import checked
 from ._experiment import BatteryRuntimeInputs
 from ._properties import (
     ConcentrationTemperaturePropertyLaw,
@@ -91,6 +92,7 @@ class Marquis2019SpmeParameters(StrictModule):
     positive_solid_conductivity_s_m: Array
     parameter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spm_parameters: SpmParameters,
@@ -108,8 +110,6 @@ class Marquis2019SpmeParameters(StrictModule):
         negative_solid_conductivity_s_m: ArrayLike,
         positive_solid_conductivity_s_m: ArrayLike,
     ) -> None:
-        if not isinstance(spm_parameters, SpmParameters):
-            raise TypeError("spm_parameters must be SpmParameters.")
         separator_thickness = _scalar(separator_thickness_m, "separator_thickness_m")
         negative_porosity = _scalar(
             negative_electrolyte_porosity, "negative_electrolyte_porosity"
@@ -425,9 +425,8 @@ class PreparedMarquis2019Spme(StrictModule, NonTrainableState):
     through_cell: PreparedThroughCellMesh
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: Marquis2019SpmePlan, /) -> None:
-        if not isinstance(plan, Marquis2019SpmePlan):
-            raise TypeError("plan must be Marquis2019SpmePlan.")
         spm = plan.spm_plan.prepare()
         through_cell = PreparedThroughCellMesh(
             plan.negative_region,
@@ -1216,9 +1215,8 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: Marquis2019SpmePlan, /) -> None:
-        if not isinstance(plan, Marquis2019SpmePlan):
-            raise TypeError("plan must be Marquis2019SpmePlan.")
         self.plan = plan
         self.model_id = "battery:spme:marquis-2019:isothermal-prescribed-current"
         self.equation_form = "ode"
@@ -1228,6 +1226,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedMarquis2019Spme:
         return self.plan.prepare()
 
+    @checked
     def initial_state(
         self,
         prepared_model: PreparedMarquis2019Spme,
@@ -1236,10 +1235,6 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         /,
     ) -> Marquis2019SpmeState:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(parameters, Marquis2019SpmeParameters):
-            raise TypeError("parameters must be Marquis2019SpmeParameters.")
-        if not isinstance(initial_condition, Marquis2019SpmeInitialCondition):
-            raise TypeError("initial_condition must be Marquis2019SpmeInitialCondition.")
         spm_initial = PrescribedCurrentSpmAdapter(self.plan.spm_plan).initial_state(
             prepared_model.spm,
             parameters.spm_parameters,
@@ -1271,6 +1266,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
             electrolyte,
         )
 
+    @checked
     def problem(
         self,
         prepared_model: PreparedMarquis2019Spme,
@@ -1279,10 +1275,6 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         /,
     ) -> DifferentialProblem:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(initial_state, Marquis2019SpmeState):
-            raise TypeError("initial_state must be Marquis2019SpmeState.")
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, Marquis2019SpmeParameters):
             raise TypeError("Marquis SPMe runtime parameters have the wrong type.")
         expected_negative = prepared_model.spm.negative_particle.shell_count
@@ -1317,6 +1309,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def observe(
         self,
         prepared_model: PreparedMarquis2019Spme,
@@ -1326,10 +1319,6 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         /,
     ) -> BatteryModelOutput:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(states, Marquis2019SpmeState):
-            raise TypeError("states must be Marquis2019SpmeState.")
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, Marquis2019SpmeParameters):
             raise TypeError("Marquis SPMe runtime parameters have the wrong type.")
         times = jnp.asarray(times_s)
@@ -1430,6 +1419,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         domain_valid = evaluation.domain_valid & jnp.all(jnp.isfinite(values), axis=-1)
         return BatteryModelOutput(values, domain_valid)
 
+    @checked
     def ledger(
         self,
         prepared_model: PreparedMarquis2019Spme,
@@ -1438,8 +1428,6 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         /,
     ) -> Marquis2019SpmeLedger:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, Marquis2019SpmeParameters):
             raise TypeError("Marquis SPMe runtime parameters have the wrong type.")
         states = native_solution.states

@@ -11,6 +11,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from ..linalg import PyTreeSpace
+from ..typing import checked
 from ._newton import (
     _root_attempt_handoff,
     NewtonKrylov,
@@ -146,6 +147,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             ),
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -155,10 +157,6 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
         state = problem.validate_state(initial_state)
         problem_ = problem

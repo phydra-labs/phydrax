@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._elements import ModifiedEquinoctialElements
 from ._status import AstrodynamicsStatus
 
@@ -86,11 +87,10 @@ class DsstPlan(StrictModule, NonTrainableState):
         )
         return jnp.sum(jnp.stack(contributions), axis=0)
 
+    @checked
     def propagate(
         self, initial: ModifiedEquinoctialElements, args: Any = None, /
     ) -> DsstResult:
-        if not isinstance(initial, ModifiedEquinoctialElements):
-            raise TypeError("initial must be ModifiedEquinoctialElements.")
 
         def step(elements: Array, interval: Array) -> tuple[Array, tuple[Array, Array]]:
             start, end = interval

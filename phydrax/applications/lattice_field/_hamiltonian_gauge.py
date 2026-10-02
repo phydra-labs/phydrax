@@ -42,6 +42,7 @@ from ...solver._local_hamiltonian import (
     materialize_local_hamiltonian,
 )
 from ...tensor_network._core import MatrixProductOperator
+from ...typing import checked
 
 
 class PeriodicSchwingerModel(StrictModule):
@@ -178,6 +179,7 @@ class CompactU1GaugeModel(StrictModule):
     link_wire_ids: tuple[str, ...] = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -188,8 +190,6 @@ class CompactU1GaugeModel(StrictModule):
         magnetic_coupling: float,
         electric_flux_offset: float = 0.0,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be a CellComplexTopology.")
         if topology.dimension < 2:
             raise ValueError("Compact U(1) topology must have dimension at least two.")
         electric = float(electric_coupling)

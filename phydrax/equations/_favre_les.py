@@ -18,7 +18,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._les_closures import (
     AlgebraicLESInputs,
     LESFilterScale,
@@ -180,6 +180,7 @@ class FavreLESInputs(StrictModule):
     specific_sgs_kinetic_energy: Array | None
     fields: FavreLESFieldContract
 
+    @checked
     def __init__(
         self,
         density: ArrayLike,
@@ -197,8 +198,6 @@ class FavreLESInputs(StrictModule):
         specific_sgs_kinetic_energy: ArrayLike | None = None,
         specific_sgs_kinetic_energy_gradient: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(fields, FavreLESFieldContract):
-            raise TypeError("fields must be a FavreLESFieldContract.")
         density_ = jnp.asarray(density)
         if not jnp.issubdtype(density_.dtype, jnp.inexact):
             density_ = density_.astype(inexact_result_type(density_))
@@ -343,6 +342,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
     numerical_stabilization_included: bool = eqx.field(static=True)
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebraic_model: PreparedAlgebraicLESModel,
@@ -357,12 +357,6 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
         sgs_kinetic_energy_dissipation_coefficient: float = 1.05,
         sgs_kinetic_energy_turbulent_schmidt_number: float = 1.0,
     ) -> None:
-        if not isinstance(algebraic_model, PreparedAlgebraicLESModel):
-            raise TypeError("algebraic_model must be a PreparedAlgebraicLESModel.")
-        if not isinstance(filter_scale, LESFilterScale):
-            raise TypeError("filter_scale must be a LESFilterScale.")
-        if not isinstance(fields, FavreLESFieldContract):
-            raise TypeError("fields must be a FavreLESFieldContract.")
         if isinstance(filter_scale.directional_widths, jax_core.Tracer):
             raise TypeError("Prepared Favre LES filter widths must be concrete.")
         widths = np.asarray(filter_scale.directional_widths)
@@ -490,10 +484,9 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
             )
         return max(diffusivities)
 
+    @checked
     def evaluate(self, inputs: FavreLESInputs, /) -> FavreLESResult:
         """Evaluate SGS transport, energy exchange, and conservative fluxes."""
-        if not isinstance(inputs, FavreLESInputs):
-            raise TypeError("inputs must be FavreLESInputs.")
         if inputs.fields.contract_id != self.fields.contract_id:
             raise ValueError("Favre LES inputs use a different field contract.")
         widths = self.filter_scale.directional_widths

@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._contraction import ContractionCandidate
 
 
@@ -120,6 +121,7 @@ class PreparedActiveStrain(StrictModule, NonTrainableState):
     dtype: np.dtype = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ActiveStrainPlan,
@@ -127,8 +129,6 @@ class PreparedActiveStrain(StrictModule, NonTrainableState):
         reference_sheet: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, ActiveStrainPlan):
-            raise TypeError("Active strain preparation requires ActiveStrainPlan.")
         fiber = jnp.asarray(reference_fiber)
         sheet = jnp.asarray(reference_sheet, dtype=fiber.dtype)
         if fiber.ndim < 1 or fiber.shape[-1] != 3 or sheet.shape != fiber.shape:
@@ -176,6 +176,7 @@ class PreparedActiveStrain(StrictModule, NonTrainableState):
         )
         return ActiveStrainState(jnp.zeros(self.field_shape, dtype=self.dtype), identity)
 
+    @checked
     def candidate(
         self,
         previous_state: ActiveStrainState,
@@ -183,10 +184,6 @@ class PreparedActiveStrain(StrictModule, NonTrainableState):
         deformation_gradient: ArrayLike,
         /,
     ) -> ActiveStrainCandidate:
-        if not isinstance(previous_state, ActiveStrainState):
-            raise TypeError("Active strain candidate requires ActiveStrainState.")
-        if not isinstance(contraction, ContractionCandidate):
-            raise TypeError("Active strain requires a ContractionCandidate.")
         if contraction.evidence.fidelity_id == "prescribed-tension":
             raise TypeError(
                 "Active strain requires a dimensionless activation contraction route."
@@ -256,9 +253,8 @@ class PreparedActiveStrain(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def commit(self, candidate: ActiveStrainCandidate, /) -> ActiveStrainState:
-        if not isinstance(candidate, ActiveStrainCandidate):
-            raise TypeError("commit requires ActiveStrainCandidate.")
         if candidate.prepared_id != self.prepared_id:
             raise ValueError("Active strain candidate belongs to another prepared plan.")
         return jax.tree.map(

@@ -43,6 +43,7 @@ from ....solver._partitioned_coupling_types import (
     ImplicitCouplingPolicy,
 )
 from ....sparse import gather_routes, route_reduce, RowRelation
+from ....typing import checked
 
 
 class SparseMarkerRelationEvidence(StrictModule):
@@ -117,6 +118,7 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
     maximum_resource_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -127,8 +129,6 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         minimum_coverage: float = 0.5,
         maximum_resource_bytes: int = 1024**3,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         identifiers = np.asarray(marker_ids)
         if identifiers.ndim != 1 or identifiers.size == 0:
             raise ValueError("marker_ids must be one non-empty vector.")
@@ -600,9 +600,8 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def _validate_relation(self, relation: SparseMarkerRelation, /) -> None:
-        if not isinstance(relation, SparseMarkerRelation):
-            raise TypeError("relation must be SparseMarkerRelation.")
         if relation.transfer_id != self.prepared_id:
             raise ValueError("Sparse marker relation belongs to another transfer.")
 
@@ -635,6 +634,7 @@ class ImmersedDirectForcingPlan(StrictModule, NonTrainableState):
     convergence_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedSparseMarkerTransfer,
@@ -643,8 +643,6 @@ class ImmersedDirectForcingPlan(StrictModule, NonTrainableState):
         iteration_count: int = 8,
         convergence_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(transfer, PreparedSparseMarkerTransfer):
-            raise TypeError("transfer must be PreparedSparseMarkerTransfer.")
         iterations = int(iteration_count)
         tolerance = float(convergence_tolerance)
         if iterations <= 0:

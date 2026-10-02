@@ -60,6 +60,7 @@ from ...._validation import finite_real_scalar
 from ....optics.wave import PulseEnvelopeField
 from ....typing import (
     Bool,
+    checked,
     Complex128,
     Float64,
     Identifier,
@@ -127,11 +128,10 @@ class FELPulseSeed(StrictModule, NonTrainableState):
     uniform: bool = eqx.field(static=True)
     seed_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, envelope: PulseEnvelopeField, /, *, reference_position: float = 0.0
     ) -> None:
-        if not isinstance(envelope, PulseEnvelopeField):
-            raise TypeError("envelope must be a PulseEnvelopeField.")
         if envelope.polarization != "scalar":
             raise ValueError("An FEL pulse seed must be a scalar envelope.")
         values = np.asarray(envelope.values)
@@ -387,6 +387,7 @@ class FELTimeDependentPlan(StrictModule, NonTrainableState):
     spike_threshold: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         core: FELPlan,
@@ -401,8 +402,6 @@ class FELTimeDependentPlan(StrictModule, NonTrainableState):
         window_tolerance: float = 1.0e-3,
         spike_threshold: float = 0.1,
     ) -> None:
-        if not isinstance(core, FELPlan):
-            raise TypeError("core must be an FELPlan.")
         if pulse_seed is not None and not isinstance(pulse_seed, FELPulseSeed):
             raise TypeError("pulse_seed must be FELPulseSeed or None.")
         if prebunching is not None and not isinstance(prebunching, FELPrebunching):

@@ -54,7 +54,7 @@ from ...linalg import (
     DualSpace,
     FunctionLinearOperator,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._fem_bem_scalar import PreparedScalarLaplaceFEMBEM3D
 from .._fem_bem_vector import PreparedElasticityFEMBEM3D
 
@@ -83,10 +83,9 @@ class ComponentBlock(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     space: AbstractVectorSpace
 
+    @checked
     def __init__(self, name: str, space: AbstractVectorSpace, /) -> None:
         name_ = canonical_identifier(name, "name")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         self.name = name_
         self.space = space
 
@@ -110,6 +109,7 @@ class ComponentField(StrictModule, NonTrainableState):
     constraint: ConstraintMap | None
     free_rows: Array | None
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -121,8 +121,6 @@ class ComponentField(StrictModule, NonTrainableState):
         constraint: ConstraintMap | None,
         free_rows: Array | None,
     ) -> None:
-        if not isinstance(full_space, ArraySpace):
-            raise TypeError("full_space must be an ArraySpace.")
         if constraint is not None and not isinstance(constraint, ConstraintMap):
             raise TypeError("constraint must be a ConstraintMap or None.")
         if constraint is not None and not constraint.full_space.compatible(full_space):
@@ -985,10 +983,9 @@ class ScalarLaplaceFEMBEMComponent(AbstractSpatialComponent, NonTrainableState):
     row_blocks: tuple[ComponentBlock, ...]
     fields: tuple[ComponentField, ...]
 
+    @checked
     def __init__(self, name: str, product: PreparedScalarLaplaceFEMBEM3D, /) -> None:
         name_ = canonical_identifier(name, "name")
-        if not isinstance(product, PreparedScalarLaplaceFEMBEM3D):
-            raise TypeError("product must be a PreparedScalarLaplaceFEMBEM3D.")
         state_blocks, row_blocks, fields = _product_publication(product.operator)
         self.name = name_
         self.product = product
@@ -1091,10 +1088,9 @@ class ElasticityFEMBEMComponent(AbstractSpatialComponent, NonTrainableState):
     row_blocks: tuple[ComponentBlock, ...]
     fields: tuple[ComponentField, ...]
 
+    @checked
     def __init__(self, name: str, product: PreparedElasticityFEMBEM3D, /) -> None:
         name_ = canonical_identifier(name, "name")
-        if not isinstance(product, PreparedElasticityFEMBEM3D):
-            raise TypeError("product must be a PreparedElasticityFEMBEM3D.")
         state_blocks, row_blocks, fields = _product_publication(product.operator)
         self.name = name_
         self.product = product

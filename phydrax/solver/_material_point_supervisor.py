@@ -19,6 +19,7 @@ from ..discretization.mpm import (
     PreparedMPMDynamics,
 )
 from ..equations import MaterialPointArguments
+from ..typing import checked
 from ._material_point_checkpoint import MPMCheckpointPlan
 from ._material_point_output import MPMOutputPlan
 
@@ -47,6 +48,7 @@ class MPMOperationalResult:
 class MPMRunSupervisor:
     """Host lifecycle; numerical retries remain owned by adaptive rollout."""
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedMPMDynamics,
@@ -59,12 +61,6 @@ class MPMRunSupervisor:
         checkpoint_interval: int = 1,
         output_plan: MPMOutputPlan | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedMPMDynamics):
-            raise TypeError("dynamics must be PreparedMPMDynamics.")
-        if not isinstance(initial_state, MPMRuntimeState):
-            raise TypeError("initial_state must be MPMRuntimeState.")
-        if not isinstance(arguments, MaterialPointArguments):
-            raise TypeError("arguments must be MaterialPointArguments.")
         interval = int(checkpoint_interval)
         if interval <= 0:
             raise ValueError("checkpoint_interval must be positive.")

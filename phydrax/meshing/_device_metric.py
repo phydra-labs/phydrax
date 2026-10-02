@@ -68,6 +68,7 @@ from ..discretization._adaptive_simplex import (
     MaskedSimplexMesh,
 )
 from ..linalg import hermitian_exp, hermitian_log
+from ..typing import checked
 from ._device_status import DeviceEpoch, require_committed_status
 from ._lineage import MeshTransitionKind
 from ._local_metric import (
@@ -242,6 +243,7 @@ class DeviceMetricState(StrictModule, NonTrainableState):
     counters: Array
     flags: Array
 
+    @checked
     def __init__(
         self,
         mesh: MaskedSimplexMesh,
@@ -266,8 +268,6 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         counters: ArrayLike,
         flags: ArrayLike,
     ) -> None:
-        if not isinstance(mesh, MaskedSimplexMesh):
-            raise TypeError("mesh must be MaskedSimplexMesh.")
         if mesh.cell_kind != "triangle" or mesh.ambient_dimension != 2:
             raise ValueError("Device metric adaptation holds planar triangle meshes.")
         vertices, cells = mesh.vertex_capacity, mesh.cell_capacity

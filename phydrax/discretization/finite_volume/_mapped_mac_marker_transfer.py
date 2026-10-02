@@ -16,7 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from ._incompressible import FaceVelocity
 from ._mac_ale import PreparedMappedMACGeometry
@@ -61,6 +61,7 @@ class MappedMACMarkerTransferPlan(StrictModule, NonTrainableState):
     accumulation: MACMarkerAccumulation = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: PreparedMappedMACGeometry,
@@ -71,10 +72,6 @@ class MappedMACMarkerTransferPlan(StrictModule, NonTrainableState):
         condition_limit: float = 1.0e10,
         accumulation: MACMarkerAccumulation = "deterministic",
     ) -> None:
-        if not isinstance(geometry, PreparedMappedMACGeometry):
-            raise TypeError("geometry must be PreparedMappedMACGeometry.")
-        if not isinstance(markers, LagrangianMarkerDiscretization):
-            raise TypeError("markers must be LagrangianMarkerDiscretization.")
         if len(geometry.reference.cell_shape) != markers.ambient_dimension:
             raise ValueError("Mapped grid and marker dimensions differ.")
         dimension = markers.ambient_dimension
@@ -365,9 +362,8 @@ class PreparedMappedMACMarkerTransfer(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def _validate_relation(self, relation: MappedMACMarkerRelation, /) -> None:
-        if not isinstance(relation, MappedMACMarkerRelation):
-            raise TypeError("relation must be MappedMACMarkerRelation.")
         if relation.transfer_id != self.prepared_id:
             raise ValueError("Mapped marker relation belongs to another transfer.")
 

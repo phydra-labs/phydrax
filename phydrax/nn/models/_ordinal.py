@@ -10,6 +10,7 @@ from jax import Array
 
 from ..._model import AbstractArrayModel
 from ..._model._component import ModelExecutionContract
+from ...typing import checked
 from .._contracts import (
     AFFINE,
     compose_regularity,
@@ -27,16 +28,13 @@ class OrdinalCumulativeLinkHead(AbstractArrayModel):
     _in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _out_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         location_model: AbstractArrayModel,
         cutpoints: OrderedOrdinalCutpoints,
         /,
     ) -> None:
-        if not isinstance(location_model, AbstractArrayModel):
-            raise TypeError("location_model must be an AbstractArrayModel.")
-        if not isinstance(cutpoints, OrderedOrdinalCutpoints):
-            raise TypeError("cutpoints must be OrderedOrdinalCutpoints.")
         output_size = location_model.out_size
         if output_size not in (1, "scalar", ()):
             raise ValueError(

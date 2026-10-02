@@ -20,6 +20,7 @@ from ....qualification import (
     ScientificCampaign,
     ScientificClaimProfile,
 )
+from ....typing import checked
 from ....units import conversion_factor, ONE, SECOND, UnitDefinition
 
 
@@ -97,6 +98,7 @@ class ChargeTransferObservationSeries:
     source: ReferenceArtifactManifest
     observation_id: str
 
+    @checked
     def __init__(
         self,
         series_ids: tuple[str, ...],
@@ -200,10 +202,6 @@ class ChargeTransferObservationSeries:
                 "Each independent series needs at least two observed time points."
             )
         conversion_factor(time_unit, SECOND)
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError(
-                "Charge-transfer observations require a ReferenceArtifactManifest."
-            )
         source.require_rights()
         source.require_uncertainty()
         object.__setattr__(self, "series_ids", series)
@@ -262,6 +260,7 @@ class ElectronicModelFit:
     fit_integrity_ids: tuple[str, ...]
     fit_id: str
 
+    @checked
     def __init__(
         self,
         model_id: str,
@@ -272,8 +271,6 @@ class ElectronicModelFit:
         fit_execution_evidence: QualificationEvidence,
         /,
     ) -> None:
-        if not isinstance(campaign, ScientificCampaign):
-            raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
         calibration = _role_case_ids(campaign, "calibration")
         selection = _role_case_ids(campaign, "model_selection")
@@ -308,11 +305,7 @@ class ElectronicModelFit:
             )
         for artifact in artifacts:
             artifact.require_rights(training_use=True)
-        if not isinstance(prediction_code, ReferenceArtifactManifest):
-            raise TypeError("prediction_code must be a ReferenceArtifactManifest.")
         prediction_code.require_rights()
-        if not isinstance(fit_execution_evidence, QualificationEvidence):
-            raise TypeError("fit_execution_evidence must be QualificationEvidence.")
         required_subjects = {
             campaign.campaign_id,
             model,
@@ -382,6 +375,7 @@ class ElectronicModelPrediction:
     observable_unit: UnitDefinition
     prediction_id: str
 
+    @checked
     def __init__(
         self,
         observations: ChargeTransferObservationSeries,
@@ -391,10 +385,6 @@ class ElectronicModelPrediction:
         *,
         observable_unit: UnitDefinition,
     ) -> None:
-        if not isinstance(observations, ChargeTransferObservationSeries):
-            raise TypeError("observations must be ChargeTransferObservationSeries.")
-        if not isinstance(fit, ElectronicModelFit):
-            raise TypeError("fit must be an ElectronicModelFit.")
         _validate_locked_campaign(fit.campaign, observations)
         converted = np.asarray(values, dtype=np.float64)
         if converted.shape != observations.values.shape:
@@ -462,6 +452,7 @@ class ElectronicModelComparison:
             return "inconclusive"
         return "ready-for-claim-evaluation"
 
+    @checked
     def evaluate_claim(
         self,
         claim: ScientificClaimProfile,
@@ -480,8 +471,6 @@ class ElectronicModelComparison:
         issued_at: int,
         expires_at: int,
     ) -> QualificationEvidence:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
         if (
             claim.capability_name != self.capability_name
             or claim.observable_ids != self.observable_ids

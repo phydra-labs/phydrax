@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 LocalRootResidual = Callable[[Array, Any], Array]
@@ -207,14 +208,13 @@ class VelocityDependentAccelerationPlan(StrictModule, NonTrainableState):
             / safe_density[..., None]
         )
 
+    @checked
     def solve(
         self,
         problem: VelocityDependentAccelerationProblem,
         solver: LocalRootSolver,
         /,
     ) -> VelocityDependentAccelerationResult:
-        if not isinstance(problem, VelocityDependentAccelerationProblem):
-            raise TypeError("problem must be a VelocityDependentAccelerationProblem.")
         density = eqx.error_if(
             problem.density,
             jnp.any(~jnp.isfinite(problem.density) | (problem.density <= 0.0)),

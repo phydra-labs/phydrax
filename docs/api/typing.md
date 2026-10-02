@@ -2,10 +2,10 @@
 
 `phydrax.typing` provides the annotation vocabulary and explicit structural
 boundaries: nominal dimensions, JAX and host tensor forms, metadata forms,
-binding scopes, parsing, and one-time conversion.
+binding scopes, parsing, one-time conversion, and checked signatures.
 
 See the [typing guide](../guides_typing.md) for the grammar, scopes,
-conversion, and exception rules.
+conversion, signature, and exception rules.
 
 ## Dimensions and shape tokens
 
@@ -71,6 +71,11 @@ conversion, and exception rules.
       show_source: false
 
 ::: phydrax.typing.validate
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.typing.checked
     options:
       show_root_heading: true
       show_source: false

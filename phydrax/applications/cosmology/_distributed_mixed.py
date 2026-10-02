@@ -30,6 +30,7 @@ from ...discretization.spectral._distributed import DistributedSpectralExecution
 from ...lifecycle._distributed_checkpoint import restore_global_array_from_checkpoint
 from ...lifecycle._models import CheckpointManifest
 from ...solver._particle_gravity import DistributedParticleLayout
+from ...typing import checked
 from ._coupled import ComovingEulerState
 from ._force_scalability import DistributedPMFeasibilityEvidence
 from ._mixed_matter import (
@@ -216,6 +217,7 @@ class DistributedMixedExecutionPlan(StrictModule):
     particle_ghost_width: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mixed: PreparedWaveParticleCosmology | PreparedWaveParticleGasCosmology,
@@ -236,14 +238,6 @@ class DistributedMixedExecutionPlan(StrictModule):
             mixed, (PreparedWaveParticleCosmology, PreparedWaveParticleGasCosmology)
         ):
             raise TypeError("mixed must be a prepared fixed-grid mixed cosmology plan.")
-        if not isinstance(spectral, DistributedSpectralExecutionPlan):
-            raise TypeError("spectral must be DistributedSpectralExecutionPlan.")
-        if not isinstance(execution, ExecutionPlan):
-            raise TypeError("execution must be ExecutionPlan.")
-        if not isinstance(particles, DistributedParticleLayout):
-            raise TypeError("particles must be DistributedParticleLayout.")
-        if not isinstance(feasibility, DistributedPMFeasibilityEvidence):
-            raise TypeError("feasibility must be DistributedPMFeasibilityEvidence.")
         checkpoints = int(checkpoint_count)
         maximum = int(maximum_checkpoint_bytes)
         send = (
@@ -1010,9 +1004,8 @@ class PreparedDistributedMixedExecution(StrictModule):
             )
         return DistributedMixedState(wave, particles, gas, self.execution_id)
 
+    @checked
     def _require_state(self, state: DistributedMixedState, /) -> None:
-        if not isinstance(state, DistributedMixedState):
-            raise TypeError("state must be DistributedMixedState.")
         if state.execution_id != self.execution_id:
             raise ValueError("Distributed mixed state belongs to a different execution.")
         self.particle_runtime._require_state(state.particles)

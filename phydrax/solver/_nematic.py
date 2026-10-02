@@ -33,6 +33,7 @@ from ..equations._nematic_anchoring import (
     NematicAnchoringFields,
     NematicAnchoringPlan,
 )
+from ..typing import checked
 
 
 class NematicEvaluation(StrictModule):
@@ -61,6 +62,7 @@ class PreparedNematicDynamics(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         finite_difference: PreparedFiniteDifferenceDiscretization,
@@ -72,16 +74,6 @@ class PreparedNematicDynamics(StrictModule, NonTrainableState):
         anchoring: NematicAnchoringPlan | None = None,
         energy_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(finite_difference, PreparedFiniteDifferenceDiscretization):
-            raise TypeError(
-                "finite_difference must be PreparedFiniteDifferenceDiscretization."
-            )
-        if not isinstance(closure, LandauDeGennesClosure):
-            raise TypeError("closure must be LandauDeGennesClosure.")
-        if not isinstance(thermodynamic_parameters, LandauDeGennesParameters):
-            raise TypeError("thermodynamic_parameters must be LandauDeGennesParameters.")
-        if not isinstance(dynamics_parameters, BerisEdwardsParameters):
-            raise TypeError("dynamics_parameters must be BerisEdwardsParameters.")
         if anchoring is not None and (
             not isinstance(anchoring, NematicAnchoringPlan)
             or anchoring.basis.basis_id != closure.basis.basis_id
@@ -255,14 +247,13 @@ class PreparedNematicSemiImplicitStepPlan(StrictModule, NonTrainableState):
     elastic_solve: FDLaplacianSolvePlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedNematicDynamics,
         time_step: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(dynamics, PreparedNematicDynamics):
-            raise TypeError("dynamics must be PreparedNematicDynamics.")
         step = jnp.asarray(time_step)
         if step.shape != () or not bool(jnp.isfinite(step) & (step > 0.0)):
             raise ValueError("time_step must be one finite positive scalar.")
@@ -393,6 +384,7 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
     maximum_cells: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedNematicDynamics,
@@ -403,10 +395,6 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         work_tolerance: float = 1.0e-10,
         maximum_cells: int = 1_000_000,
     ) -> None:
-        if not isinstance(dynamics, PreparedNematicDynamics):
-            raise TypeError("dynamics must be PreparedNematicDynamics.")
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         spatial_dimension = len(dynamics.finite_difference.grid.axis_names)
         if spatial_dimension != dynamics.closure.basis.orientation_dimension:
             raise ValueError(
@@ -600,6 +588,7 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def step(
         self,
         state: MACNematicState,
@@ -608,8 +597,6 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         *,
         electric_field: ArrayLike | None = None,
     ) -> MACNematicStepResult:
-        if not isinstance(state, MACNematicState):
-            raise TypeError("state must be MACNematicState.")
         if state.plan_id != self.plan_id:
             raise ValueError("MAC nematic state belongs to another coupling plan.")
         step = jnp.asarray(time_step, dtype=state.compact_q.dtype)

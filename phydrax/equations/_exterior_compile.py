@@ -29,7 +29,7 @@ from ..linalg._algebra_operators import apply_real_map_componentwise
 from ..linalg._complexes import ComplexMap, HilbertComplex
 from ..linalg._operators import AbstractLinearOperator
 from ..linalg._spaces import AbstractVectorSpace
-from ..typing import parse
+from ..typing import checked, parse
 from ._ir import PDEExpression, PDEExpressionOp, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
@@ -289,6 +289,7 @@ class ExteriorPDERealization(StrictModule):
     trace_regions: tuple[str, ...] = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: AbstractDeRhamComplex,
@@ -297,8 +298,6 @@ class ExteriorPDERealization(StrictModule):
         products: WhitneyProductPlan | None = None,
         traces: Mapping[str, ComplexMap] | None = None,
     ) -> None:
-        if not isinstance(complex, AbstractDeRhamComplex):
-            raise TypeError("complex must implement AbstractDeRhamComplex.")
         if products is not None:
             if not isinstance(products, WhitneyProductPlan):
                 raise TypeError("products must be a WhitneyProductPlan.")

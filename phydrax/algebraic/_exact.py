@@ -18,7 +18,7 @@ import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._grading import PolynomialVariableGroup
 from ._system import SparsePolynomialSupport
 
@@ -161,16 +161,13 @@ class ExactSparsePolynomialSystem(StrictModule):
     domain: ExactCoefficientDomain = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SparsePolynomialSupport,
         coefficients: Sequence[object],
         domain: ExactCoefficientDomain = QQ,
     ) -> None:
-        if not isinstance(support, SparsePolynomialSupport):
-            raise TypeError("support must be SparsePolynomialSupport.")
-        if not isinstance(domain, ExactCoefficientDomain):
-            raise TypeError("domain must be an ExactCoefficientDomain.")
         values = tuple(domain.normalize(value) for value in coefficients)
         if len(values) != support.term_count:
             raise ValueError("Exact coefficient count must equal support term count.")
@@ -264,14 +261,13 @@ class NormalFormArguments(StrictModule):
     polynomial: ExactSparsePolynomialSystem
     monomial_order: MonomialOrder = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         polynomial: ExactSparsePolynomialSystem,
         monomial_order: MonomialOrder = "grevlex",
         /,
     ) -> None:
-        if not isinstance(polynomial, ExactSparsePolynomialSystem):
-            raise TypeError("normal-form polynomial must be exact.")
         if polynomial.equation_count != 1:
             raise ValueError("Normal form accepts exactly one polynomial dividend.")
         self.polynomial = polynomial
@@ -367,6 +363,7 @@ class ExactSymbolicPlan(StrictModule):
     maximum_storage_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: ExactSparsePolynomialSystem,
@@ -383,8 +380,6 @@ class ExactSymbolicPlan(StrictModule):
         maximum_exponent_entries: int = 10_000_000,
         maximum_storage_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if not isinstance(system, ExactSparsePolynomialSystem):
-            raise TypeError("system must be ExactSparsePolynomialSystem.")
         operation_ = ExactSymbolicOperation(operation)
         _validate_arguments(system, operation_, arguments)
         input_limit = _positive_integer(maximum_input_bytes, "maximum_input_bytes")
@@ -466,11 +461,10 @@ class PreparedExactSymbolic(StrictModule):
     provider: Any = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: ExactSymbolicPlan, provider: Any, request_id: str, /
     ) -> None:
-        if not isinstance(plan, ExactSymbolicPlan):
-            raise TypeError("plan must be ExactSymbolicPlan.")
         identifier = str(request_id)
         if not identifier:
             raise ValueError("request_id must be nonempty.")

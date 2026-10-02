@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractVectorSpace, ArraySpace, DualSpace
+from ..typing import checked
 from ._state_geometry import AbstractStateGeometry
 
 
@@ -53,6 +54,7 @@ class ProductStateGeometryBlock(StrictModule, NonTrainableState):
     cotangent_size: int = eqx.field(static=True)
     block_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: AbstractStateGeometry,
@@ -63,8 +65,6 @@ class ProductStateGeometryBlock(StrictModule, NonTrainableState):
         local_space: AbstractVectorSpace | None = None,
         tangent_space: AbstractVectorSpace | None = None,
     ) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("geometry must be an AbstractStateGeometry.")
         point_shape_ = _shape(point_shape, "Product-state point block")
         local_space_ = ArraySpace(point_shape_) if local_space is None else local_space
         tangent_space_ = (

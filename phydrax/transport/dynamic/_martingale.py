@@ -16,6 +16,7 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...linalg import pseudoinverse
+from ...typing import checked
 from ._problem import SchrodingerBridgeProblem
 from ._solver import _reference_log_transitions
 
@@ -79,6 +80,7 @@ class MartingaleSchrodingerBridgeProblem(StrictModule):
     constraint_tolerance: float = eqx.field(static=True)
     constraint_kind: str = eqx.field(static=True, default="martingale")
 
+    @checked
     def __init__(
         self,
         bridge: SchrodingerBridgeProblem,
@@ -87,8 +89,6 @@ class MartingaleSchrodingerBridgeProblem(StrictModule):
         martingale_coordinates: ArrayLike | None = None,
         constraint_tolerance: float = 1e-7,
     ) -> None:
-        if not isinstance(bridge, SchrodingerBridgeProblem):
-            raise TypeError("bridge must be a SchrodingerBridgeProblem.")
         tolerance = float(constraint_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("constraint_tolerance must be finite and nonnegative.")
@@ -211,15 +211,10 @@ class MartingaleSchrodingerBridgeSolver(StrictModule):
         self.tolerance = tolerance_
         self.max_path_entries = budget
 
+    @checked
     def solve(
         self, problem: MartingaleSchrodingerBridgeProblem, /
     ) -> MartingaleSchrodingerBridgeResult:
-        if not isinstance(problem, MartingaleSchrodingerBridgeProblem):
-            raise TypeError(
-                "MartingaleSchrodingerBridgeSolver requires a "
-                "MartingaleSchrodingerBridgeProblem; a classical bridge does not "
-                "carry conditional-mean constraints."
-            )
         return _solve_martingale_bridge(
             problem,
             max_iterations=self.max_iterations,

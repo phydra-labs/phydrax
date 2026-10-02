@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._validation import positive_finite_float
+from ...typing import checked
 from ..core import Currency, FinanceDate
 from ._base import AbstractResolvedContract
 from ._cashflows import CashflowBatch
@@ -87,6 +88,7 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
     face_value: float = eqx.field(static=True)
     discount_curve_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -98,8 +100,6 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
         face_value: float,
         discount_curve_id: str,
     ) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if not isinstance(valuation_date, FinanceDate) or not isinstance(
             maturity_date, FinanceDate
         ):
@@ -195,9 +195,8 @@ class ResolvedFixedRateBond(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, contract_id: str, coupon_leg: ResolvedFixedLeg, /) -> None:
-        if not isinstance(coupon_leg, ResolvedFixedLeg):
-            raise TypeError("coupon_leg must be a ResolvedFixedLeg.")
         if coupon_leg.pay_receive is not PayReceive.RECEIVE:
             raise ValueError("A held bond coupon leg must be receive-directed.")
         if coupon_leg.exchange_initial or not coupon_leg.exchange_final:
@@ -283,9 +282,8 @@ class ResolvedFloatingRateBond(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, contract_id: str, coupon_leg: ResolvedFloatingLeg, /) -> None:
-        if not isinstance(coupon_leg, ResolvedFloatingLeg):
-            raise TypeError("coupon_leg must be a ResolvedFloatingLeg.")
         if coupon_leg.pay_receive is not PayReceive.RECEIVE:
             raise ValueError("A held floating bond leg must be receive-directed.")
         if coupon_leg.exchange_initial or not coupon_leg.exchange_final:

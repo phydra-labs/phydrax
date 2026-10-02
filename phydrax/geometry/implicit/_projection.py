@@ -15,6 +15,7 @@ from jax import Array
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryTolerance
 from .._validity import GeometryValidityEvidence
 from ..design._schema import DesignState, ParameterSchema
@@ -100,6 +101,7 @@ class ImplicitPointProjectionEvidence(StrictModule):
     status: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -111,8 +113,6 @@ class ImplicitPointProjectionEvidence(StrictModule):
         status: Any,
         plan_id: str,
     ) -> None:
-        if not isinstance(geometry, GeometryValidityEvidence):
-            raise TypeError("geometry must be GeometryValidityEvidence.")
         self.geometry = geometry
         self.root_residual = jnp.asarray(root_residual, dtype=jnp.float64).reshape(())
         self.minimum_gradient_norm = jnp.asarray(
@@ -191,6 +191,7 @@ class ImplicitPointProjectionPlan(StrictModule):
     source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CompiledGeometry,
@@ -202,10 +203,6 @@ class ImplicitPointProjectionPlan(StrictModule):
         source_id: str,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be CompiledGeometry.")
-        if not isinstance(policy, ImplicitProjectionPolicy):
-            raise TypeError("policy must be ImplicitProjectionPolicy.")
         if not source_id:
             raise ValueError("source_id must be non-empty.")
         anchors_host = np.asarray(anchors, dtype=np.float64)

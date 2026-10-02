@@ -13,6 +13,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import (
     AssetReference,
     Currency,
@@ -45,6 +46,7 @@ class ReferenceDataSnapshot(StrictModule, NonTrainableState):
     lineage: DataLineage
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         assets: Sequence[AssetReference] = (),
@@ -64,10 +66,6 @@ class ReferenceDataSnapshot(StrictModule, NonTrainableState):
             raise TypeError("instruments must contain only InstrumentReference values.")
         if not all(isinstance(value, Currency) for value in currency_values):
             raise TypeError("currencies must contain only Currency values.")
-        if not isinstance(as_of, FinancialTimestamp):
-            raise TypeError("as_of must be a FinancialTimestamp.")
-        if not isinstance(lineage, DataLineage):
-            raise TypeError("lineage must be a DataLineage.")
         asset_ids = tuple(_identifier_key(value) for value in asset_values)
         instrument_ids = tuple(_identifier_key(value) for value in instrument_values)
         currency_ids = tuple(value.currency_id for value in currency_values)
@@ -144,6 +142,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
     reference_data_id: str = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observations: Sequence[QuoteObservation],
@@ -155,8 +154,6 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
         values = tuple(observations)
         if not all(isinstance(value, QuoteObservation) for value in values):
             raise TypeError("observations must contain QuoteObservation values.")
-        if not isinstance(snapshot_time, FinancialTimestamp):
-            raise TypeError("snapshot_time must be a FinancialTimestamp.")
         if not isinstance(reference_data_id, str):
             raise TypeError("reference_data_id must be a string.")
         snapshot_ns = int(snapshot_time.available_ns)
@@ -208,6 +205,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
             raise ValueError("Market snapshot record does not match snapshot_id.")
         return value
 
+    @checked
     def prepare(
         self,
         layout: RiskFactorLayout,
@@ -220,8 +218,6 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
     ) -> MarketState:
         """Resolve one causal host snapshot into fixed-shape device coordinates."""
 
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
         decision_event_ns, decision_available_ns = _snapshot_clocks(
             decision_time, "decision_time"
         )

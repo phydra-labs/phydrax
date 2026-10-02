@@ -22,6 +22,7 @@ from ....atomistic.sampling import (
 )
 from ....optim import least_squares, LevenbergMarquardt, OptimizationTermination
 from ....qualification import ReferenceArtifactManifest
+from ....typing import checked
 from ....units import conversion_factor, UnitDefinition
 
 
@@ -67,6 +68,7 @@ class IntervalDistanceReconstruction(StrictModule):
     sources: tuple[ReferenceArtifactManifest, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -84,8 +86,6 @@ class IntervalDistanceReconstruction(StrictModule):
         minimum_volume: npt.ArrayLike = (),
         chirality_standard_deviation: npt.ArrayLike = (),
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("Reconstruction must consume an existing atomistic support.")
         if system.cell is not None:
             raise ValueError(
                 "Reconstruction requires a nonperiodic support; unwrap explicitly into a separate realization."

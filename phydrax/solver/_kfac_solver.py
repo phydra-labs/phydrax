@@ -70,6 +70,7 @@ from ..optim._kfac._types import (
     KFACState,
     ParameterLayout,
 )
+from ..typing import checked
 from ._functional_checkpoint import (
     load_functional_training_checkpoint,
     save_functional_training_checkpoint,
@@ -371,9 +372,8 @@ class KFACUpdateRule(AbstractKernelUpdateRule):
     plan: KFACPlan = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: KFACPlan, /) -> None:
-        if not isinstance(plan, KFACPlan):
-            raise TypeError("plan must be a KFACPlan.")
         self.plan = plan
         self.rule_id = canonical_fingerprint(
             {

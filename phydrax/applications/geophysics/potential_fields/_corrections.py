@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._gravity import FreeSpaceGravityPlan, GravityResult
 
 
@@ -23,11 +24,10 @@ class TerrainCorrectionPlan(StrictModule, NonTrainableState):
     density_contrast_kg_m3: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, gravity: FreeSpaceGravityPlan, density_contrast_kg_m3: ArrayLike, /
     ) -> None:
-        if not isinstance(gravity, FreeSpaceGravityPlan):
-            raise TypeError("Terrain correction requires a free-space gravity plan.")
         contrast = jnp.broadcast_to(
             jnp.asarray(density_contrast_kg_m3), (gravity.source.cell_count,)
         )

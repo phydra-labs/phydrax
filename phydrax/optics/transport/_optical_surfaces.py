@@ -44,7 +44,7 @@ from jax import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import ConvertibleToArray, Dim, Float64, Int32, parse, Size
+from ...typing import checked, ConvertibleToArray, Dim, Float64, Int32, parse, Size
 from ..geometric._interface import evaluate_refractive_interface
 from ..geometric._nonsequential import (
     NonSequentialSurfaceKind,
@@ -267,9 +267,8 @@ class UnifiedSurfaceModel(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def validate_surfaces(self, surfaces: NonSequentialSurfaceTable, /) -> None:
-        if not isinstance(surfaces, NonSequentialSurfaceTable):
-            raise TypeError("surfaces must be a NonSequentialSurfaceTable.")
         if surfaces.surface_count != self.surface_count:
             raise ValueError(
                 "UnifiedSurfaceModel needs one finish per surface id of the table."

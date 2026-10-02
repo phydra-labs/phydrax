@@ -25,6 +25,7 @@ from ...dynamics import (
     SecondOrderDifferentialSystem,
 )
 from ...linalg import AbstractLinearOperator
+from ...typing import checked
 from ._rod_loads import RodLoadLedger
 from ._rod_materials import (
     PreparedKelvinVoigtRodMaterial,
@@ -95,6 +96,7 @@ class ReducedRodPlantState(StrictModule):
     contact_state: ReducedRodPassiveContactState
     sensor_state: ReducedRodPassiveSensorState
 
+    @checked
     def __init__(
         self,
         reduced_state: ReducedRodState,
@@ -104,16 +106,6 @@ class ReducedRodPlantState(StrictModule):
         sensor_state: ReducedRodPassiveSensorState,
         /,
     ) -> None:
-        if not isinstance(reduced_state, ReducedRodState):
-            raise TypeError("reduced_state must be ReducedRodState.")
-        if not isinstance(material_state, ReducedRodMaterialState):
-            raise TypeError("material_state must be ReducedRodMaterialState.")
-        if not isinstance(actuator_state, ReducedRodPassiveActuatorState):
-            raise TypeError("actuator_state must be ReducedRodPassiveActuatorState.")
-        if not isinstance(contact_state, ReducedRodPassiveContactState):
-            raise TypeError("contact_state must be ReducedRodPassiveContactState.")
-        if not isinstance(sensor_state, ReducedRodPassiveSensorState):
-            raise TypeError("sensor_state must be ReducedRodPassiveSensorState.")
         self.reduced_state = reduced_state
         self.material_state = material_state
         self.actuator_state = actuator_state
@@ -176,10 +168,9 @@ class ReducedRodMassResponseRevision(StrictModule):
         """Return the free velocity plus the certified impulse response."""
         return self.free_velocity + self.apply_impulse(impulse)
 
+    @checked
     def is_current(self, state: PlantRuntimeState, /) -> Array:
         """Check the complete mechanical revision and reject foreign identities."""
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         if (
             state.semantic_provenance_id != self.semantic_provenance_id
             or state.numeric_revision_id != self.numeric_revision_id
@@ -257,6 +248,7 @@ class PreparedReducedRodPlant(AbstractDiscretePlant, NonTrainableState):
     require_finite_parameters: bool = eqx.field(static=True)
     plant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedReducedRodDynamics,
@@ -267,8 +259,6 @@ class PreparedReducedRodPlant(AbstractDiscretePlant, NonTrainableState):
         initial_material_state: ReducedRodMaterialState | None = None,
         native_loads: RodLoadLedger | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedReducedRodDynamics):
-            raise TypeError("dynamics must be PreparedReducedRodDynamics.")
 
         if not isinstance(
             policy, (ReducedRodSemiImplicitVelocityEuler, ReducedRodImplicitMidpoint)
@@ -568,12 +558,11 @@ class PreparedReducedRodPlant(AbstractDiscretePlant, NonTrainableState):
             source.sensor_state,
         )
 
+    @checked
     def mass_response(
         self, state: PlantRuntimeState, /
     ) -> ReducedRodMassResponseRevision:
         """Prepare the certified accepted-q inverse mass without route fallback."""
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         if (
             state.semantic_provenance_id != self.semantic_provenance.semantic_id
             or state.numeric_revision_id != self.numeric_revision.revision_id

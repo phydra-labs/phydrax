@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import checked
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_frame import KineticFrameRemapResult, remap_kinetic_frame
 from ._compressible_rules import CompressibleVelocityRule
@@ -38,6 +39,7 @@ class PredictiveKineticRefinementPlan(StrictModule, NonTrainableState):
     prediction_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rule: CompressibleVelocityRule,
@@ -47,8 +49,6 @@ class PredictiveKineticRefinementPlan(StrictModule, NonTrainableState):
         coarsen_threshold: float,
         prediction_steps: int = 2,
     ) -> None:
-        if not isinstance(rule, CompressibleVelocityRule):
-            raise TypeError("rule must be a CompressibleVelocityRule.")
         refine = float(refine_threshold)
         coarsen = float(coarsen_threshold)
         steps = int(prediction_steps)

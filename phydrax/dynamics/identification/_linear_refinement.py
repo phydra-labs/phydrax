@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import LinearSolveControl
+from ...typing import checked
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,18 +123,18 @@ class ProgressiveLinearRefinementPolicy(StrictModule, NonTrainableState):
     def initialize(self) -> ProgressiveLinearRefinementState:
         return ProgressiveLinearRefinementState(self.initial_steps)
 
+    @checked
     def training_control(
         self,
         state: ProgressiveLinearRefinementState,
         /,
     ) -> LinearSolveControl:
-        if not isinstance(state, ProgressiveLinearRefinementState):
-            raise TypeError("state must be ProgressiveLinearRefinementState.")
         return LinearSolveControl(maximum_steps=state.current_steps)
 
     def evaluation_control(self) -> LinearSolveControl:
         return LinearSolveControl(maximum_steps=self.evaluation_steps)
 
+    @checked
     def observe(
         self,
         state: ProgressiveLinearRefinementState,
@@ -142,8 +143,6 @@ class ProgressiveLinearRefinementPolicy(StrictModule, NonTrainableState):
         *,
         validation_step: int,
     ) -> tuple[ProgressiveLinearRefinementState, ProgressiveLinearRefinementRecord]:
-        if not isinstance(state, ProgressiveLinearRefinementState):
-            raise TypeError("state must be ProgressiveLinearRefinementState.")
         value = float(metric)
         step = int(validation_step)
         if not np.isfinite(value) or value < 0.0 or step < 0:

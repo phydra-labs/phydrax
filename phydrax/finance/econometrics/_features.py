@@ -13,7 +13,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ._datasets import PreparedPointInTimePanel
 from ._returns import ReturnResult
 
@@ -120,6 +120,7 @@ class FeatureLabelContract(StrictModule):
     row_capacity: int = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         features: Sequence[FeatureDefinition],
@@ -138,8 +139,6 @@ class FeatureLabelContract(StrictModule):
             )
         if len({feature.name for feature in features_}) != len(features_):
             raise ValueError("feature names must be unique.")
-        if not isinstance(label, LabelDefinition):
-            raise TypeError("label must be a LabelDefinition.")
         capacity = int(row_capacity)
         if capacity < 1:
             raise ValueError("row_capacity must be positive.")

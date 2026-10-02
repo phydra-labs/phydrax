@@ -21,6 +21,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..geometry._wall_frame import PlanarWallFramePlan
+from ..typing import checked
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from ._observer import AbstractAtomisticObserverPlan
 
@@ -552,6 +553,7 @@ class DiffusionTensorFitPlan(StrictModule, NonTrainableState):
         intercept_weights = jnp.ones_like(time) / time.size - mean * slope_weights
         return slope_weights, intercept_weights
 
+    @checked
     def evaluate(
         self,
         correlation: MultiOriginCorrelationResult,
@@ -562,8 +564,6 @@ class DiffusionTensorFitPlan(StrictModule, NonTrainableState):
         force_field_id: str,
         rollout_id: str,
     ) -> DiffusionTensorFitResult:
-        if not isinstance(correlation, MultiOriginCorrelationResult):
-            raise TypeError("correlation must be MultiOriginCorrelationResult.")
         provenance = tuple(
             str(value).strip()
             for value in (support_id, system_id, force_field_id, rollout_id)
@@ -717,6 +717,7 @@ class DrivenSlipFitPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         profile: PlanarWallProfileResult,
@@ -730,8 +731,6 @@ class DrivenSlipFitPlan(StrictModule, NonTrainableState):
         force_field_id: str,
         rollout_id: str,
     ) -> DrivenSlipFitResult:
-        if not isinstance(profile, PlanarWallProfileResult):
-            raise TypeError("profile must be PlanarWallProfileResult.")
         provenance = tuple(
             str(value).strip()
             for value in (support_id, system_id, force_field_id, rollout_id)

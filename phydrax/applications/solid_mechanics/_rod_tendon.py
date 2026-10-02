@@ -24,6 +24,7 @@ from ...linalg import (
     DualSpace,
     FunctionLinearOperator,
 )
+from ...typing import checked
 from ._rod_dynamics import PreparedRod, RodState
 from ._rod_reduction import PreparedReducedRod, ReducedRodState
 
@@ -189,9 +190,8 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
     workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TendonRoutePlan, rod: RodPreparation, /) -> None:
-        if not isinstance(plan, TendonRoutePlan):
-            raise TypeError("plan must be a TendonRoutePlan.")
         if isinstance(rod, PreparedReducedRod):
             reduction: PreparedReducedRod | None = rod
             native = rod.rod
@@ -730,6 +730,7 @@ class FrictionlessElasticTendonPlan(StrictModule, NonTrainableState):
     calibration_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         route: TendonRoutePlan,
@@ -743,8 +744,6 @@ class FrictionlessElasticTendonPlan(StrictModule, NonTrainableState):
         power_tolerance: float = 1.0e-8,
         label: str | None = None,
     ) -> None:
-        if not isinstance(route, TendonRoutePlan):
-            raise TypeError("route must be a TendonRoutePlan.")
         stiffness_ = _positive_finite("stiffness", stiffness)
         free_lower, free_upper = _finite_pair("free_length_bounds", free_length_bounds)
         payout_lower, payout_upper = _finite_pair(
@@ -882,16 +881,13 @@ class PreparedFrictionlessElasticTendon(StrictModule, NonTrainableState):
     route: PreparedTendonRoute
     tendon_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FrictionlessElasticTendonPlan,
         route: PreparedTendonRoute,
         /,
     ) -> None:
-        if not isinstance(plan, FrictionlessElasticTendonPlan):
-            raise TypeError("plan must be a FrictionlessElasticTendonPlan.")
-        if not isinstance(route, PreparedTendonRoute):
-            raise TypeError("route must be a PreparedTendonRoute.")
         if route.plan.plan_id != plan.route.plan_id:
             raise ValueError("Prepared tendon route does not belong to this tendon plan.")
         self.plan = plan
@@ -916,6 +912,7 @@ class PreparedFrictionlessElasticTendon(StrictModule, NonTrainableState):
             raise TypeError("Tendon state dtype must match the prepared rod dtype.")
         return state
 
+    @checked
     def integrate_payout(
         self,
         state: TendonActuatorState,
@@ -924,10 +921,6 @@ class PreparedFrictionlessElasticTendon(StrictModule, NonTrainableState):
         /,
     ) -> TendonActuatorState:
         """Advance deployed free length without clipping or hidden saturation."""
-        if not isinstance(state, TendonActuatorState):
-            raise TypeError("state must be a TendonActuatorState.")
-        if not isinstance(command, TendonPayoutCommand):
-            raise TypeError("command must be a TendonPayoutCommand.")
         dtype = self.route.length_rate_space.dtype
         if (
             np.dtype(state.free_length.dtype) != dtype
@@ -941,6 +934,7 @@ class PreparedFrictionlessElasticTendon(StrictModule, NonTrainableState):
             raise ValueError("time_step must be scalar.")
         return TendonActuatorState(state.free_length + time_step_ * command.payout_rate)
 
+    @checked
     def evaluate(
         self,
         rod_state: RodActuationState,
@@ -951,10 +945,6 @@ class PreparedFrictionlessElasticTendon(StrictModule, NonTrainableState):
         time_step: ArrayLike = 0.0,
     ) -> TendonActuationEvaluation:
         """Evaluate unilateral tension, pullbacks, ratings, and the power ledger."""
-        if not isinstance(state, TendonActuatorState):
-            raise TypeError("state must be a TendonActuatorState.")
-        if not isinstance(command, TendonPayoutCommand):
-            raise TypeError("command must be a TendonPayoutCommand.")
         dtype = self.route.length_rate_space.dtype
         if (
             np.dtype(state.free_length.dtype) != dtype

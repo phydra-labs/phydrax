@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class ExternalFieldBoundaryPolicy(enum.Enum):
@@ -156,9 +157,8 @@ class PreparedGriddedExternalField(StrictModule, NonTrainableState):
     grid_shape: tuple[int, int, int] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: GriddedExternalFieldPlan, /) -> None:
-        if not isinstance(plan, GriddedExternalFieldPlan):
-            raise TypeError("plan must be a GriddedExternalFieldPlan.")
         self.plan = plan
         shape = plan.values.shape
         self.grid_shape = (shape[0], shape[1], shape[2])

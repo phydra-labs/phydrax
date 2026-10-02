@@ -20,6 +20,7 @@ from ..atomistic._alchemical import (
 )
 from ..atomistic._thermodynamic import PreparedThermodynamicStateTable
 from ..discretization import AbstractPreparedParticleNeighborhood
+from ..typing import checked
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
     AbstractReducedPotential,
@@ -37,6 +38,7 @@ class CenterOfMassPreservingBijector(AbstractBijector):
     event_shape: tuple[int, int] = eqx.field(static=True)
     chart_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         internal: AbstractBijector,
@@ -45,8 +47,6 @@ class CenterOfMassPreservingBijector(AbstractBijector):
         *,
         chart_id: str | None = None,
     ) -> None:
-        if not isinstance(internal, AbstractBijector):
-            raise TypeError("internal must implement AbstractBijector.")
         mass = np.asarray(masses, dtype=np.float64).reshape((-1,))
         if mass.size < 2 or np.any(~np.isfinite(mass)) or np.any(mass <= 0.0):
             raise ValueError(
@@ -150,6 +150,7 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
     event_shape: tuple[int, int] = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hamiltonian: PreparedControlledHamiltonian,
@@ -158,14 +159,6 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
         state_index: int,
         /,
     ) -> None:
-        if not isinstance(hamiltonian, PreparedControlledHamiltonian):
-            raise TypeError("hamiltonian must be a PreparedControlledHamiltonian.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be a PreparedThermodynamicStateTable.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError(
-                "neighborhood must implement AbstractPreparedParticleNeighborhood."
-            )
         if (
             neighborhood.particle_discretization_id
             != hamiltonian.system.particles.prepared_id

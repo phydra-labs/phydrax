@@ -26,7 +26,7 @@ from ...qualification import (
     SupportTuple,
 )
 from ...qualification._registry import SupportValue
-from ...typing import parse
+from ...typing import checked, parse
 
 
 DarkMatterClaimName = Literal[
@@ -939,6 +939,7 @@ class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
     admitted: bool = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         claim: ScientificClaimProfile,
@@ -952,12 +953,6 @@ class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
         admitted: bool,
         /,
     ) -> None:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
-        if not isinstance(promotion, PromotionState):
-            raise TypeError("promotion must be PromotionState.")
-        if not isinstance(differentiation, DerivativeContract):
-            raise TypeError("differentiation must be DerivativeContract.")
         unsupported = tuple(
             _identifier(value, "unsupported claim") for value in unsupported_claims
         )

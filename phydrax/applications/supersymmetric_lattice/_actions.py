@@ -18,6 +18,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._fields import (
     ComplexifiedPFormField,
     invert_gauge_transform,
@@ -228,9 +229,8 @@ class PreparedTwistedSYMAction(StrictModule):
         auxiliary = 0.5 * jnp.sum(jnp.real(_trace(_mul(divergence, divergence))))
         return self.prefactor * (curvature + auxiliary)
 
+    @checked
     def _validate(self, configuration: TwistedSYMConfiguration, /) -> None:
-        if not isinstance(configuration, TwistedSYMConfiguration):
-            raise TypeError("configuration must be TwistedSYMConfiguration.")
         if (
             configuration.links.plan.plan_id != self.link_plan.plan_id
             or configuration.links.matrix_rank != self.plan.matrix_rank
@@ -438,9 +438,8 @@ class PreparedBFSSAction(StrictModule):
         reduced = reduced + 0.5 * self.plan.mass * self.plan.mass * mass_term
         return self.prefactor * spacing * reduced
 
+    @checked
     def _validate(self, configuration: BFSSConfiguration, /) -> None:
-        if not isinstance(configuration, BFSSConfiguration):
-            raise TypeError("configuration must be BFSSConfiguration.")
         expected = (
             self.plan.time_slices,
             self.plan.matrix_count,

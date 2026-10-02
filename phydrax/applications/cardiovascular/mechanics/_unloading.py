@@ -26,6 +26,7 @@ from ....optim import (
     NonlinearLeastSquaresProblem,
     OptimizationTermination,
 )
+from ....typing import checked
 
 
 def _coordinate_array(value: ArrayLike, name: str, /) -> Array:
@@ -225,6 +226,7 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
     forward_continuation_path: ForwardContinuationPath = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: UnloadedReferenceRecoveryPlan,
@@ -232,8 +234,6 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
         forward_continuation_path: ForwardContinuationPath,
         /,
     ) -> None:
-        if not isinstance(plan, UnloadedReferenceRecoveryPlan):
-            raise TypeError("plan must be UnloadedReferenceRecoveryPlan.")
         loaded = _coordinate_array(loaded_coordinates, "loaded_coordinates")
         if not callable(forward_continuation_path):
             raise TypeError("forward_continuation_path must be callable.")
@@ -348,6 +348,7 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
             state_id,
         )
 
+    @checked
     def propose(
         self,
         state: UnloadedReferenceState,
@@ -357,8 +358,6 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
         termination: OptimizationTermination | None = None,
         args: Any = None,
     ) -> tuple[UnloadedReferenceCandidate, UnloadedReferenceEvidence]:
-        if not isinstance(state, UnloadedReferenceState):
-            raise TypeError("state must be UnloadedReferenceState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("Unloaded-reference state belongs to another preparation.")
         termination_ = (
@@ -452,6 +451,7 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
         )
         return candidate, evidence
 
+    @checked
     def commit(
         self,
         state: UnloadedReferenceState,
@@ -460,12 +460,6 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
         /,
     ) -> UnloadedReferenceState:
         """Commit only a finite, converged, continuation-consistent candidate."""
-        if not isinstance(state, UnloadedReferenceState):
-            raise TypeError("state must be UnloadedReferenceState.")
-        if not isinstance(candidate, UnloadedReferenceCandidate):
-            raise TypeError("candidate must be UnloadedReferenceCandidate.")
-        if not isinstance(evidence, UnloadedReferenceEvidence):
-            raise TypeError("evidence must be UnloadedReferenceEvidence.")
         if (
             state.prepared_id != self.prepared_id
             or candidate.prepared_id != self.prepared_id

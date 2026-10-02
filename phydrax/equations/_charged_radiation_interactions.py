@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
+from ..typing import checked
 from ._matter_radiation_interactions import (
     BremsstrahlungSpectrumRoute,
     sample_bremsstrahlung_fraction,
@@ -84,6 +85,7 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
     manifest: ReferenceArtifactManifest = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energy_ev: ArrayLike,
@@ -102,8 +104,6 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
         scattering = np.asarray(scattering_power_rad2_m, dtype=np.float64)
         brems = np.asarray(bremsstrahlung_rate_m, dtype=np.float64)
         materials = tuple(str(value).strip() for value in material_ids)
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("Charged radiation material data require a manifest.")
         manifest.require_rights(commercial_use=commercial_use, export=export)
         shape = (len(materials), energy.size)
         if (

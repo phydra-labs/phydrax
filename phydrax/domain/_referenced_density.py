@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import RiemannianMetric, WeightedRiemannianMeasure
-from ..typing import parse
+from ..typing import checked, parse
 from ._function import DomainFunction
 
 
@@ -33,6 +33,7 @@ class ReferencedDensityField(StrictModule):
     state_var: str = eqx.field(static=True)
     reference: DensityReference = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: DomainFunction,
@@ -43,8 +44,6 @@ class ReferencedDensityField(StrictModule):
         metric: RiemannianMetric | None = None,
         measure: WeightedRiemannianMeasure | None = None,
     ) -> None:
-        if not isinstance(field, DomainFunction):
-            raise TypeError("field must be a DomainFunction.")
         reference = parse(reference, DensityReference, "reference")
         state_var_ = str(state_var)
         if state_var_ not in field.domain.labels:

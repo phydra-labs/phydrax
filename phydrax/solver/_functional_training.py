@@ -28,7 +28,7 @@ from ..optim._gradient_composition import ConflictFreeGradientPolicy
 from ..optim._update_alignment import ConflictFreeUpdatePolicy
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
-from ..typing import parse
+from ..typing import checked, parse
 
 
 PseudoTimeFreshness: TypeAlias = Literal["every_update", "periodic", "experimental_fixed"]
@@ -167,6 +167,7 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
     freshness: PseudoTimeFreshness = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         term_index: int,
@@ -180,8 +181,6 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
         index = int(term_index)
         if index < 0:
             raise ValueError("term_index must be non-negative.")
-        if not isinstance(relaxation, ResidualRelaxationMap):
-            raise TypeError("relaxation must be a ResidualRelaxationMap.")
         values = jnp.asarray(inverse_step, dtype=jnp.float64)
         if values.ndim > 1 or values.size < 1:
             raise ValueError("inverse_step must be a scalar or one-dimensional array.")
@@ -235,6 +234,7 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
     per_block: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         term_index: int,
@@ -249,8 +249,6 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
         label = str(time_label)
         if index < 0 or not label:
             raise ValueError("Causal term index and time label are invalid.")
-        if not isinstance(schedule, CausalTimeSlabSchedule):
-            raise TypeError("schedule must be a CausalTimeSlabSchedule.")
         if schedule.overlap_fraction != 0.0:
             raise ValueError(
                 "Causal residual loss initially requires non-overlapping slabs."
@@ -608,6 +606,7 @@ class FunctionalTrainingState(StrictModule):
     training_seconds: float = eqx.field(static=True)
     resumed_from_step: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -626,10 +625,6 @@ class FunctionalTrainingState(StrictModule):
         training_seconds: float = 0.0,
         resumed_from_step: int = 0,
     ) -> None:
-        if not isinstance(progress, TrainingProgress):
-            raise TypeError("progress must be a TrainingProgress.")
-        if not isinstance(kernel_state, TrainingKernelState):
-            raise TypeError("kernel_state must be a TrainingKernelState.")
         if enforcement_state is not None and not isinstance(
             enforcement_state, EnforcementState
         ):

@@ -23,6 +23,7 @@ from ..discretization.finite_volume._incompressible import FaceVelocity
 from ..discretization.finite_volume._mac_marker_transfer import MACMarkerRouteState
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ..linalg import LinearSolvePolicy
+from ..typing import checked
 from ._mac_immersed_boundary import (
     MACImmersedBoundaryProjectionPlan,
     MACImmersedBoundaryProjectionResult,
@@ -90,6 +91,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
     allow_route_refresh: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -108,10 +110,6 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         marker_constraint_normals: ArrayLike | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
-        if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
-            raise TypeError("projection must be MACImmersedBoundaryProjectionPlan.")
         if projection.operators.prepared_id != dynamics.momentum.operators.prepared_id:
             raise ValueError("Immersed projection and dynamics must share MAC operators.")
         if projection.boundaries.prepared_id != dynamics.momentum.boundaries.prepared_id:
@@ -527,11 +525,10 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
             method_id=self.method_id,
         )
 
+    @checked
     def step(
         self, history: MACImmersedBoundarySBDF2State, /, *, args: Any = None
     ) -> MACImmersedBoundarySBDF2Result:
-        if not isinstance(history, MACImmersedBoundarySBDF2State):
-            raise TypeError("history must be MACImmersedBoundarySBDF2State.")
         if history.method_id != self.method_id:
             raise ValueError("SBDF2 history belongs to another immersed method.")
         current = self.dynamics.validate_state(history.state)

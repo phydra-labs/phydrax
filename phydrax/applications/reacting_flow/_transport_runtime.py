@@ -20,6 +20,7 @@ from ...equations._gas_transport_properties import (
     AbstractGasTransportPropertyPlan,
     GasTransportPropertyEvaluation,
 )
+from ...typing import checked
 
 
 class TransportPropertyReuseState(StrictModule):
@@ -54,6 +55,7 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
     maximum_reuse_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         properties: AbstractGasTransportPropertyPlan,
@@ -65,8 +67,6 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         maximum_relative_errors: tuple[float, float, float],
         maximum_reuse_count: int,
     ) -> None:
-        if not isinstance(properties, AbstractGasTransportPropertyPlan):
-            raise TypeError("properties must implement AbstractGasTransportPropertyPlan.")
         temperature = tuple(float(value) for value in temperature_bounds)
         pressure = tuple(float(value) for value in pressure_bounds)
         sensitivities = tuple(
@@ -138,6 +138,7 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def propose(
         self,
         accepted: TransportPropertyReuseState,
@@ -145,8 +146,6 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         pressure: ArrayLike,
         /,
     ) -> TransportPropertyReuseCandidate:
-        if not isinstance(accepted, TransportPropertyReuseState):
-            raise TypeError("accepted must be TransportPropertyReuseState.")
         if accepted.plan_id != self.plan_id:
             raise ValueError("Transport reuse state belongs to another plan.")
         temperature_, pressure_ = jnp.broadcast_arrays(

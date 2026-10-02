@@ -20,7 +20,7 @@ from ._dtype_names import (
 )
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
-from .typing import parse
+from .typing import checked, parse
 
 
 MicroscalingElementFormat: TypeAlias = Literal[
@@ -285,6 +285,7 @@ class PrecisionResolution:
     effective: tuple[tuple[str, PrecisionFormat | None], ...]
     resolution_id: str
 
+    @checked
     def __init__(
         self,
         request: PrecisionRequest,
@@ -292,8 +293,6 @@ class PrecisionResolution:
         effective: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
     ) -> None:
-        if not isinstance(request, PrecisionRequest):
-            raise TypeError("request must be a PrecisionRequest.")
         provider_ = _identifier("provider", provider)
         effective_ = _canonical_entries(effective)
         requested_roles = {name for name, _ in request.requested}
@@ -370,6 +369,7 @@ class PrecisionEvidenceEnvelope:
     children: tuple[tuple[str, PrecisionEvidenceEnvelope], ...]
     evidence_id: str
 
+    @checked
     def __init__(
         self,
         resolution: PrecisionResolution,
@@ -379,8 +379,6 @@ class PrecisionEvidenceEnvelope:
         children: Mapping[str, PrecisionEvidenceEnvelope]
         | Sequence[tuple[str, PrecisionEvidenceEnvelope]] = (),
     ) -> None:
-        if not isinstance(resolution, PrecisionResolution):
-            raise TypeError("resolution must be a PrecisionResolution.")
         observed_ = _canonical_entries(observed)
         effective_roles = {name for name, _ in resolution.effective}
         if {name for name, _ in observed_} != effective_roles:
@@ -599,6 +597,7 @@ class MicroscaledArray(StrictModule):
     format: MicroscalingFormat = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         packed_values: Any,
@@ -610,8 +609,6 @@ class MicroscaledArray(StrictModule):
         saturation_count: Any,
         /,
     ) -> None:
-        if not isinstance(format, MicroscalingFormat):
-            raise TypeError("format must be a MicroscalingFormat.")
         packed = jnp.asarray(packed_values, dtype=jnp.uint8)
         scale_codes = jnp.asarray(scales, dtype=jnp.uint8)
         shape = tuple(original_shape)

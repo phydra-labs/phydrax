@@ -29,7 +29,7 @@ from ...equations._nonequilibrium_gas import (
 )
 from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ...qualification._evidence import QualificationEvidence, SupportDependency
-from ...typing import parse
+from ...typing import checked, parse
 
 
 CompressibleEquation: TypeAlias = Literal["euler", "navier_stokes"]
@@ -545,6 +545,7 @@ class ShockResolvingPolicy(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def select_flux(
         self,
         primary_flux: ArrayLike,
@@ -552,8 +553,6 @@ class ShockResolvingPolicy(StrictModule, NonTrainableState):
         ledger: ShockRouteLedger,
         /,
     ) -> Array:
-        if not isinstance(ledger, ShockRouteLedger):
-            raise TypeError("ledger must be ShockRouteLedger.")
         primary = jnp.asarray(primary_flux)
         fallback = jnp.asarray(fallback_flux)
         if (

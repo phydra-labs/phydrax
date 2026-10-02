@@ -23,6 +23,7 @@ from ..._spectral._spherical import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 _METRIC_SOLVE = la.SmallLinearSolvePlan(3)
@@ -312,9 +313,8 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def _validate_surface(self, surface: SphericalSpectralSurface, /) -> None:
-        if not isinstance(surface, SphericalSpectralSurface):
-            raise TypeError("surface must be a SphericalSpectralSurface.")
         if surface.plan_id != self.plan_id:
             raise ValueError("Surface and spherical plan identities differ.")
         if (

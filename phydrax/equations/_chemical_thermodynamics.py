@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
 
 
@@ -57,6 +58,7 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
     reference_molar_entropy: Array
     reference_temperature: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
@@ -70,8 +72,6 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         maximum_temperature: float = 5000.0,
         thermodynamics_id: str | None = None,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         coefficients = np.asarray(heat_capacity_volume, dtype=np.float64)
         if coefficients.ndim == 1:
             coefficients = coefficients[:, None]
@@ -206,6 +206,7 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
     upper_temperature: Array
     interval_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
@@ -217,8 +218,6 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         *,
         thermodynamics_id: str | None = None,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         if not isinstance(polynomial_kind, NASAPolynomialKind):
             raise TypeError("polynomial_kind must be NASAPolynomialKind.")
         values = np.asarray(coefficients, dtype=np.float64)

@@ -16,7 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellComplexTopology
-from ..typing import parse
+from ..typing import checked, parse
 from ._coefficients import CoefficientDomain, PrimeField, RationalField
 from ._complex import (
     CellComplexPair,
@@ -63,6 +63,7 @@ class FiniteFieldBasis(StrictModule, NonTrainableState):
     entity_set_id: str = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         degree: int,
@@ -77,8 +78,6 @@ class FiniteFieldBasis(StrictModule, NonTrainableState):
         if degree_ < 0 or degree_ > layout.max_degree:
             raise ValueError("Finite-field basis degree is outside the compact layout.")
         kind = parse(kind, BasisKind, "kind")
-        if not isinstance(field, PrimeField):
-            raise TypeError("Finite-field bases require a PrimeField.")
         cells = []
         entities = []
         generators = []

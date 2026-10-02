@@ -19,6 +19,7 @@ from ..._polynomial._total_degree import TotalDegreePolynomialFeatures
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
+from ...typing import checked
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -321,6 +322,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CellPolynomialReconstructionPlan,
@@ -329,10 +331,6 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         *,
         stencil_direction: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(plan, CellPolynomialReconstructionPlan):
-            raise TypeError("plan must be CellPolynomialReconstructionPlan.")
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Cell polynomials require unstructured FV geometry.")
         required_quadrature_degree = max(plan.degree, 2 * (plan.degree - 1))
         if required_quadrature_degree > discretization.cell_quadrature_degree:
             raise ValueError(
@@ -465,6 +463,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             self.factors[routes],
         )
 
+    @checked
     def stage_coefficients(
         self,
         state: Array,
@@ -472,8 +471,6 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array]:
         """Refresh degree-one WLSQ factors from fixed-topology stage centers."""
-        if not isinstance(metrics, FiniteVolumeStageMetrics):
-            raise TypeError("metrics must be FiniteVolumeStageMetrics.")
         if self.basis.degree not in (1, 2):
             raise ValueError(
                 "Moving reconstruction certifies degree one generally and degree two for rigid translations."

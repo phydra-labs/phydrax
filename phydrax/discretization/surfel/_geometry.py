@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import PreparedSurfelDiscretization
 
 
@@ -135,6 +136,7 @@ class SurfelGeometryPlan(NonTrainableState, StrictModule):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: PreparedSurfelDiscretization,
@@ -145,8 +147,6 @@ class SurfelGeometryPlan(NonTrainableState, StrictModule):
         minimum_axis_scale: float = 1.0e-12,
         maximum_condition: float = 1.0e8,
     ) -> None:
-        if not isinstance(discretization, PreparedSurfelDiscretization):
-            raise TypeError("discretization must be PreparedSurfelDiscretization.")
         normal_tol = float(normal_tolerance)
         tangent_tol = float(tangency_tolerance)
         axis_scale = float(minimum_axis_scale)

@@ -19,6 +19,7 @@ from ...linalg import (
     HermitianSpectrum,
     OperatorProperties,
 )
+from ...typing import checked
 
 
 def _correlation_matrix(value: ArrayLike, /) -> Array:
@@ -81,9 +82,8 @@ class MultiAssetLognormalModel(StrictModule):
     dependence: CorrelationMatrix
     asset_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, volatilities: ArrayLike, dependence: CorrelationMatrix, /) -> None:
-        if not isinstance(dependence, CorrelationMatrix):
-            raise TypeError("dependence must be a CorrelationMatrix.")
         volatility = jnp.asarray(volatilities, dtype=jnp.float64)
         if volatility.shape != (dependence.dimension,):
             raise ValueError(
@@ -152,9 +152,8 @@ class FactorDependenceModel(StrictModule):
 class GaussianCopulaModel(StrictModule):
     dependence: CorrelationMatrix
 
+    @checked
     def __init__(self, dependence: CorrelationMatrix, /) -> None:
-        if not isinstance(dependence, CorrelationMatrix):
-            raise TypeError("dependence must be a CorrelationMatrix.")
         self.dependence = dependence
 
 
@@ -162,11 +161,10 @@ class StudentTCopulaModel(StrictModule):
     dependence: CorrelationMatrix
     degrees_of_freedom: Array
 
+    @checked
     def __init__(
         self, dependence: CorrelationMatrix, degrees_of_freedom: ArrayLike, /
     ) -> None:
-        if not isinstance(dependence, CorrelationMatrix):
-            raise TypeError("dependence must be a CorrelationMatrix.")
         degrees = jnp.asarray(degrees_of_freedom, dtype=jnp.float64)
         if degrees.shape != ():
             raise ValueError("degrees_of_freedom must be scalar.")

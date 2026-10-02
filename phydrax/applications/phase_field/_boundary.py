@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FiniteElementDiscretization, IntegrationDomain
 from ...discretization.fem import FiniteElementBoundarySet
+from ...typing import checked
 
 
 class AbstractPhaseFieldSurfaceEnergy(StrictModule, NonTrainableState):
@@ -228,6 +229,7 @@ class PhaseFieldBoundaryPlan(StrictModule, NonTrainableState):
     patch_names: tuple[str, ...] = eqx.field(static=True)
     boundary_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -243,8 +245,6 @@ class PhaseFieldBoundaryPlan(StrictModule, NonTrainableState):
         *,
         boundary_set: FiniteElementBoundarySet | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         exterior = discretization.exterior_facet_domain
         exterior_ids = np.asarray(exterior.entity_indices, dtype=np.int32)
         position = {int(facet): row for row, facet in enumerate(exterior_ids)}

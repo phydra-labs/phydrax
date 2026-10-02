@@ -21,6 +21,7 @@ from ..discretization.finite_volume._incompressible import FaceVelocity
 from ..discretization.finite_volume._mac_passive_tracer import (
     PreparedMACPassiveTracerMacCormack,
 )
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -45,6 +46,7 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
     velocity_provider_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_method: AbstractFixedStepMethod,
@@ -53,10 +55,6 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
         velocity_provider_id: str,
         /,
     ) -> None:
-        if not isinstance(base_method, AbstractFixedStepMethod):
-            raise TypeError("base_method must implement AbstractFixedStepMethod.")
-        if not isinstance(transport, PreparedMACPassiveTracerMacCormack):
-            raise TypeError("transport must be PreparedMACPassiveTracerMacCormack.")
         if not callable(velocity_from_state):
             raise TypeError("velocity_from_state must be callable.")
         provider_id = str(velocity_provider_id)
@@ -75,6 +73,7 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
             }
         )
 
+    @checked
     def step(
         self,
         step_index: Array,
@@ -84,8 +83,6 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
         args: Any,
         /,
     ) -> FixedStepResult:
-        if not isinstance(state, MACPassiveTracerContinuationState):
-            raise TypeError("state must be MACPassiveTracerContinuationState.")
         frozen_velocity = self.velocity_from_state(state.base_state)
         base = self.base_method.step(
             step_index,

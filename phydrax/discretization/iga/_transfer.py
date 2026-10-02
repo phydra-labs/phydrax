@@ -31,6 +31,7 @@ from ...linalg import (
     FunctionLinearOperator,
     transpose,
 )
+from ...typing import checked
 from .._core import DiscretizationCapability, PreparationReport
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._transfer import FieldTransfer, TransferProperties
@@ -162,6 +163,7 @@ class TransferPlan(StrictModule, NonTrainableState):
     invalidation_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_transfer: FieldTransfer,
@@ -178,10 +180,6 @@ class TransferPlan(StrictModule, NonTrainableState):
         composition: Sequence[str] = (),
         archive_arrays: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]] = (),
     ) -> None:
-        if not isinstance(field_transfer, FieldTransfer):
-            raise TypeError("field_transfer must be the generic FieldTransfer.")
-        if not isinstance(evidence, TransferEvidence):
-            raise TypeError("evidence must be TransferEvidence.")
         if not isinstance(source_revision, NumericRevision) or not isinstance(
             target_revision, NumericRevision
         ):

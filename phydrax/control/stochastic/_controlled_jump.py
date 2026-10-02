@@ -27,6 +27,7 @@ from ...stochastic._jump import (
     JumpEventBatch,
     PoissonClockRealization,
 )
+from ...typing import checked
 
 
 ControlledJumpPolicy: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
@@ -74,6 +75,7 @@ class ControlledJumpProblem(StrictModule):
     action_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         process: AbstractJumpProcess,
@@ -84,8 +86,6 @@ class ControlledJumpProblem(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> None:
-        if not isinstance(process, AbstractJumpProcess):
-            raise TypeError("process must implement AbstractJumpProcess.")
         state = _finite_real(initial_state, "initial_state")
         if tuple(state.shape) != process.state_shape:
             raise ValueError(
@@ -107,6 +107,7 @@ class ControlledJumpPlan(StrictModule):
     same_time_order: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -115,8 +116,6 @@ class ControlledJumpPlan(StrictModule):
         intensity_tolerance: float = 1.0e-12,
         plan_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         tolerance = float(intensity_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("intensity_tolerance must be finite and nonnegative.")

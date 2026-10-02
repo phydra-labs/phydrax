@@ -51,7 +51,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._function import _drop_model_construction_certificates
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 def _graph_label_for_component(
@@ -680,9 +680,8 @@ class CochainCorrectionProvider(StrictModule):
 
     action: GraphRestrictionCorrectionAction
 
+    @checked
     def __init__(self, restriction: CochainAction, /) -> None:
-        if not isinstance(restriction, CochainAction):
-            raise TypeError("CochainCorrectionProvider requires CochainAction.")
         self.action = GraphRestrictionCorrectionAction(restriction)
 
     @property

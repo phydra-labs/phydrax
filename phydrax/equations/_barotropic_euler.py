@@ -14,6 +14,7 @@ from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._barotropic import AbstractBarotropicMaterial
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
@@ -30,6 +31,7 @@ class BarotropicEulerSystem(
 
     material: AbstractBarotropicMaterial
 
+    @checked
     def __init__(
         self,
         dimension: int = 1,
@@ -40,8 +42,6 @@ class BarotropicEulerSystem(
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Barotropic Euler dimension must be one, two, or three.")
-        if not isinstance(material, AbstractBarotropicMaterial):
-            raise TypeError("material must be AbstractBarotropicMaterial.")
         self.dimension = dimension_
         self.component_names = (
             "density",

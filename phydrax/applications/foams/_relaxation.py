@@ -56,7 +56,7 @@ from ...linalg import (
     prepare as prepare_linear,
     solve as solve_linear,
 )
-from ...typing import Bool, Dim, Float, Float64, Identifier, Int32, Scalar
+from ...typing import Bool, checked, Dim, Float, Float64, Identifier, Int32, Scalar
 from ._contracts import FoamMaterialPlan
 from ._equilibrium import _independent_rows, _volume_jacobian, _wire_coordinates
 
@@ -212,6 +212,7 @@ class PreparedFoamRelaxation(StrictModule):
     constrained_region_ids: tuple[str, ...] = eqx.field(static=True)
     prepared_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FoamRelaxationPlan,
@@ -220,12 +221,6 @@ class PreparedFoamRelaxation(StrictModule):
         state: MultiRegionSurfaceState,
         /,
     ) -> None:
-        if not isinstance(plan, FoamRelaxationPlan):
-            raise TypeError("plan must be a FoamRelaxationPlan.")
-        if not isinstance(surface, PreparedMultiRegionSurface):
-            raise TypeError("surface must be a PreparedMultiRegionSurface.")
-        if not isinstance(material, FoamMaterialPlan):
-            raise TypeError("material must be a FoamMaterialPlan.")
         topology = surface.topology
         state.require_topology(topology)
         first, second = material.face_tension_indices(topology)

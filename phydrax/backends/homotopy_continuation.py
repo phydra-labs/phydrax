@@ -24,6 +24,7 @@ from .._external_runtime import (
 )
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._types import BackendAvailability, BackendCapabilities
 
 
@@ -257,15 +258,12 @@ class HomotopyContinuationProvider(StrictModule):
     protocol_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         executable: PinnedExecutable,
         environment: HomotopyContinuationEnvironment,
     ) -> None:
-        if not isinstance(executable, PinnedExecutable):
-            raise TypeError("executable must be a PinnedExecutable.")
-        if not isinstance(environment, HomotopyContinuationEnvironment):
-            raise TypeError("environment must be a HomotopyContinuationEnvironment.")
         self.executable = executable
         self.environment = environment
         self.protocol_id = HOMOTOPY_CONTINUATION_PROTOCOL

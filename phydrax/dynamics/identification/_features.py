@@ -23,6 +23,7 @@ from ..._numerics import (
     weighted_total_degree_indices,
 )
 from ..._strict import StrictModule
+from ...typing import checked
 from .._layout import InputLayout, StateLayout
 
 
@@ -157,6 +158,7 @@ class PolynomialFeatureLibrary(AbstractFeatureLibrary):
     interaction_only: bool = eqx.field(static=True)
     anisotropy: tuple[float, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -169,8 +171,6 @@ class PolynomialFeatureLibrary(AbstractFeatureLibrary):
         anisotropy: Sequence[float] | None = None,
         max_features: int = 4096,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         resolved_degree = int(degree)
@@ -284,6 +284,7 @@ class OperatorInferenceFeatureLibrary(AbstractFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -292,8 +293,6 @@ class OperatorInferenceFeatureLibrary(AbstractFeatureLibrary):
         input_layout: InputLayout | None = None,
         max_features: int = 4096,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         state_size = state_layout.size
@@ -381,6 +380,7 @@ class FourierFeatureLibrary(AbstractFeatureLibrary):
     include_sine: bool = eqx.field(static=True)
     include_cosine: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -394,8 +394,6 @@ class FourierFeatureLibrary(AbstractFeatureLibrary):
         include_cosine: bool = True,
         max_features: int = 4096,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         values = jnp.asarray(frequencies)
@@ -499,6 +497,7 @@ class CustomFeatureLibrary(AbstractFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         function: Callable[[Array, Array | None], Array],
@@ -511,8 +510,6 @@ class CustomFeatureLibrary(AbstractFeatureLibrary):
     ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         names = tuple(str(name) for name in feature_names)

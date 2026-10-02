@@ -22,6 +22,7 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial import AffineSimplexMap
+from ...typing import checked
 from ._dispersion_rays import (
     AbstractSeparableDispersionHamiltonian,
     DispersionRayPlan,
@@ -44,6 +45,7 @@ class AnalyticRefractiveIndexField(AbstractRefractiveIndexField):
 
     index_function: Callable[[Array], Array] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         index_function: Callable[[Array], Array],
@@ -54,8 +56,6 @@ class AnalyticRefractiveIndexField(AbstractRefractiveIndexField):
     ) -> None:
         if not callable(index_function):
             raise TypeError("index_function must be callable.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not isinstance(field_id, str) or not field_id:
             raise ValueError("field_id must be nonempty.")
         self.index_function = index_function
@@ -94,6 +94,7 @@ class StructuredRefractiveIndexField(AbstractRefractiveIndexField, NonTrainableS
     origin: Array
     spacing: Array
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -129,8 +130,6 @@ class StructuredRefractiveIndexField(AbstractRefractiveIndexField, NonTrainableS
             raise ValueError(
                 "origin and spacing must be finite three-vectors with positive spacing."
             )
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not isinstance(field_id, str) or not field_id:
             raise ValueError("field_id must be nonempty.")
         self.values = jnp.asarray(values_host)
@@ -327,9 +326,8 @@ class RefractiveIndexHamiltonian(AbstractSeparableDispersionHamiltonian):
 
     field: AbstractRefractiveIndexField
 
+    @checked
     def __init__(self, field: AbstractRefractiveIndexField, /) -> None:
-        if not isinstance(field, AbstractRefractiveIndexField):
-            raise TypeError("field must be AbstractRefractiveIndexField.")
         self.field = field
         self.coordinate_contract = field.coordinate_contract
         self.hamiltonian_id = canonical_fingerprint(

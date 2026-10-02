@@ -33,7 +33,7 @@ from ..nn.neural_tangent import (
 )
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockRef, ResidualPenalty
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._functional_objective import (
     _ObjectiveValues,
     _PreparedObjective,
@@ -779,6 +779,7 @@ class PreparedFunctionalUpdate(StrictModule):
 
     diagnostic_gradient: Any
 
+    @checked
     def __init__(
         self,
         physical: _PreparedObjective,
@@ -792,8 +793,6 @@ class PreparedFunctionalUpdate(StrictModule):
         diagnostic_gradient: Any = None,
         /,
     ) -> None:
-        if not isinstance(physical, _PreparedObjective):
-            raise TypeError("physical must be a _PreparedObjective.")
         if residual is not None and not isinstance(residual, PreparedFunctionalResidual):
             raise TypeError("residual must be PreparedFunctionalResidual or None.")
         self.physical = physical

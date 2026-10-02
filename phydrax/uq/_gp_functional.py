@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._constraint_conditioning import (
     ConstraintLikelihoodTerm,
     LinearGaussianConstraintConditioner,
@@ -325,6 +326,7 @@ class FunctionalObservationBlock(StrictModule):
     name: str = eqx.field(static=True)
     valid_knot_count: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         inputs: ArrayLike,
@@ -334,8 +336,6 @@ class FunctionalObservationBlock(StrictModule):
         name: str,
         valid_knot_count: int | None = None,
     ) -> None:
-        if not isinstance(functional, LinearDifferentialFunctional):
-            raise TypeError("functional must be a LinearDifferentialFunctional.")
         input_array = _as_functional_inputs(inputs, functional.input_shape)
         if input_array.shape[0] <= 0:
             raise ValueError("Functional observation blocks cannot be empty.")
@@ -483,6 +483,7 @@ class FunctionalGaussianProcessLikelihoodState(StrictModule):
     inducing_design: FunctionalDesign | None
     noise_layout: Literal["block", "observation"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -492,8 +493,6 @@ class FunctionalGaussianProcessLikelihoodState(StrictModule):
         jitter: ArrayLike = 1e-8,
         inducing_design: FunctionalDesign | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a positive-definite kernel.")
         noise = jnp.asarray(noise_scale, dtype=jnp.float64)
         if noise.ndim > 1 or (noise.ndim == 1 and noise.shape[0] <= 0):
             raise ValueError("noise_scale must be scalar or a nonempty vector.")
@@ -547,6 +546,7 @@ class FunctionalGaussianProcessCondition(StrictModule):
     covariance: Array
     variance: Array
 
+    @checked
     def __init__(
         self,
         *,
@@ -555,8 +555,6 @@ class FunctionalGaussianProcessCondition(StrictModule):
         covariance: ArrayLike,
         variance: ArrayLike,
     ) -> None:
-        if not isinstance(design, FunctionalDesign):
-            raise TypeError("design must be a FunctionalDesign.")
         mean_array = design.flatten(mean, name="conditioned functional mean")
         variance_array = design.flatten(
             variance,

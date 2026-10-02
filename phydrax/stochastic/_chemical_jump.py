@@ -19,7 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._chemical_mechanism import PreparedChemicalMechanism
 from ..equations._chemical_rates import ChemicalRateKind, ChemicalRateRuntime
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._jump import AbstractJumpProcess
 
 
@@ -66,14 +66,13 @@ class ChemicalJumpProcess(AbstractJumpProcess):
     channel_count: int = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
         system_measure: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         measure = jnp.asarray(system_measure)
         if measure.shape != ():
             raise ValueError("system_measure must be scalar.")

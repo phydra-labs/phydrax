@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
 
@@ -149,6 +149,7 @@ class PathCoefficientDiffusion(StrictModule):
     score_dependency: PathScoreDependency = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: TrajectoryEventLayout,
@@ -157,8 +158,6 @@ class PathCoefficientDiffusion(StrictModule):
         *,
         score_dependency: PathScoreDependency = "global",
     ) -> None:
-        if not isinstance(layout, TrajectoryEventLayout):
-            raise TypeError("layout must be a TrajectoryEventLayout.")
         if coefficient_process.state_shape != (layout.coefficient_layout.rank,):
             raise ValueError(
                 "Coefficient process dimension must equal trajectory basis rank."

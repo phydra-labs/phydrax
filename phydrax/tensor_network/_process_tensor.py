@@ -18,6 +18,7 @@ from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
+from ..typing import checked
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -151,6 +152,7 @@ class ProcessTensorPhysicality(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     status: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         local_cp_margins: ArrayLike,
@@ -162,8 +164,6 @@ class ProcessTensorPhysicality(StrictModule):
         status: str,
         precision_evidence: PrecisionEvidenceEnvelope,
     ) -> None:
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         cp_margins = jnp.asarray(local_cp_margins)
         tp_residuals = jnp.asarray(local_tp_residuals)
         initial_valid = jnp.asarray(initial_state_valid)

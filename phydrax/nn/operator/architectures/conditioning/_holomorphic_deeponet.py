@@ -30,7 +30,7 @@ from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from .....typing import parse
+from .....typing import checked, parse
 from ._deeponet import (
     AbstractBasisTrunk,
     AbstractBranchEncoder,
@@ -139,14 +139,13 @@ class TargetAugmentedBranchEncoder(AbstractBranchEncoder):
     latent_size: int = eqx.field(static=True)
     encoder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         free_encoder: AbstractBranchEncoder,
         target_indices: tuple[int, ...],
         /,
     ) -> None:
-        if not isinstance(free_encoder, AbstractBranchEncoder):
-            raise TypeError("free_encoder must be AbstractBranchEncoder.")
         indices = tuple(target_indices)
         if (
             not indices
@@ -385,9 +384,8 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
     out_size: int | Literal["scalar"]
     _certificate: ConditionalHolomorphicMapCertificate
 
+    @checked
     def __init__(self, operator: DeepONet, /) -> None:
-        if not isinstance(operator, DeepONet):
-            raise TypeError("operator must be DeepONet.")
         if not isinstance(operator.trunk, HolomorphicBasisTrunk):
             raise TypeError(
                 "Conditional holomorphic DeepONet requires HolomorphicBasisTrunk."
@@ -501,9 +499,8 @@ class ConditionalHarmonicOperator2D(AbstractOperatorModel):
     in_size: int | Literal["scalar"]
     out_size: Literal["scalar"]
 
+    @checked
     def __init__(self, potential: ConditionalHolomorphicDeepONet, /) -> None:
-        if not isinstance(potential, ConditionalHolomorphicDeepONet):
-            raise TypeError("potential must be ConditionalHolomorphicDeepONet.")
         if potential.conditional_holomorphic_certificate().complex_output_size != 1:
             raise ValueError("Conditional harmonic operator requires one complex output.")
         self.potential = potential

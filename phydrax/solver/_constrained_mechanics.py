@@ -33,6 +33,7 @@ from ..linalg import (
     RankPolicy,
     solve,
 )
+from ..typing import checked
 
 
 class ConstrainedMechanicsStatus(IntEnum):
@@ -187,6 +188,7 @@ class PreparedSHAKERATTLEPlan(StrictModule):
     constraint: Callable[[Array, object], Array]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SHAKERATTLEPlan,
@@ -195,8 +197,6 @@ class PreparedSHAKERATTLEPlan(StrictModule):
         constraint: Callable[[Array, object], Array],
         /,
     ) -> None:
-        if not isinstance(plan, SHAKERATTLEPlan):
-            raise TypeError("plan must be a SHAKERATTLEPlan.")
         inverse_mass_ = jnp.asarray(inverse_mass)
         if (
             inverse_mass_.ndim != 1
@@ -346,6 +346,7 @@ class PreparedSHAKERATTLEPlan(StrictModule):
         )
         return configuration, residual, used, rank, condition, status
 
+    @checked
     def step(
         self,
         state: ConstrainedMechanicalState,
@@ -355,8 +356,6 @@ class PreparedSHAKERATTLEPlan(StrictModule):
         args: object = None,
     ) -> ConstrainedMechanicalStep:
         """Advance one bounded kick-drift-kick step and atomically commit it."""
-        if not isinstance(state, ConstrainedMechanicalState):
-            raise TypeError("state must be ConstrainedMechanicalState.")
         if state.configuration.shape != self.inverse_mass.shape:
             raise ValueError("State dimension does not match inverse_mass.")
         if state.configuration.dtype != self.inverse_mass.dtype:

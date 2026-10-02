@@ -21,6 +21,7 @@ from ....linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ....typing import checked
 from ._compile import (
     certify_charge_map,
     ChargeMapCertification,
@@ -145,16 +146,13 @@ class QuantumSectorOperator(AbstractLinearOperator):
     certification: ChargeMapCertification
     action_workspace_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedQuantumLattice,
         charge_map: SectorChargeMap,
         /,
     ) -> None:
-        if not isinstance(prepared, PreparedQuantumLattice):
-            raise TypeError("prepared must be PreparedQuantumLattice.")
-        if not isinstance(charge_map, SectorChargeMap):
-            raise TypeError("charge_map must be SectorChargeMap.")
         certification = certify_charge_map(prepared, charge_map)
         if not bool(certification.accepted):
             raise ValueError("Compiled terms do not have the declared unique charge map.")

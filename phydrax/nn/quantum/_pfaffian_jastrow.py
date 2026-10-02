@@ -39,6 +39,7 @@ from ...linalg import (
     skew_row_column_low_rank_update,
 )
 from ...operators.quantum._amplitude import LogAmplitude
+from ...typing import checked
 
 
 _COMPACT_UPDATE = 0
@@ -88,6 +89,7 @@ class PfaffianJastrowAmplitude(StrictModule, ParameterOwner):
     pairing_id: str = eqx.field(static=True)
     cusp_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pairing_evaluator: Callable[[Array], Array],
@@ -125,8 +127,6 @@ class PfaffianJastrowAmplitude(StrictModule, ParameterOwner):
             raise ValueError(
                 "pairing_id and cusp_id must be non-empty canonical identities."
             )
-        if not isinstance(policy, PfaffianPolicy):
-            raise TypeError("policy must be a PfaffianPolicy.")
         self.pairing_evaluator = pairing_evaluator
         self.jastrow = jastrow
         self.policy = policy

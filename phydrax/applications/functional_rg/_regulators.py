@@ -19,7 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics import gauss_legendre_data, QuadratureRuleData
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 RegulatorName: TypeAlias = Literal["optimized", "exponential", "power-law"]
@@ -196,6 +196,7 @@ class ThresholdQuadraturePlan(StrictModule, NonTrainableState):
         value = contract("q...,q...->...", weight, density)
         return value, jnp.min(inverse, axis=0)
 
+    @checked
     def evaluate(
         self,
         regulator: Regulator,
@@ -203,8 +204,6 @@ class ThresholdQuadraturePlan(StrictModule, NonTrainableState):
         anomalous_dimension: ArrayLike = 0.0,
         /,
     ) -> ThresholdIntegral:
-        if not isinstance(regulator, Regulator):
-            raise TypeError("regulator must be a Regulator.")
         if (
             regulator.family == "power-law"
             and regulator.power <= 0.5 * self.dimension - 1.0

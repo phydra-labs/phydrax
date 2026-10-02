@@ -24,6 +24,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -312,6 +313,7 @@ class RegionalAssignmentRule(StrictModule, NonTrainableState):
     effect: RegionalEffect
     rule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         selector: AnatomicalRegionSelector,
@@ -320,8 +322,6 @@ class RegionalAssignmentRule(StrictModule, NonTrainableState):
         *,
         rule_id: str | None = None,
     ) -> None:
-        if not isinstance(selector, AnatomicalRegionSelector):
-            raise TypeError("selector must be an AnatomicalRegionSelector.")
         if not isinstance(
             effect,
             (

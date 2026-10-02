@@ -18,7 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem, DifferentialSolution
-from ...typing import parse
+from ...typing import checked, parse
 from ._experiment import BatteryRuntimeInputs
 from ._particle import (
     BatteryParticleEvaluation,
@@ -575,9 +575,8 @@ class PreparedPrescribedCurrentSpm(StrictModule, NonTrainableState):
     positive_particle: PreparedBatteryParticle
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PrescribedCurrentSpmPlan, /) -> None:
-        if not isinstance(plan, PrescribedCurrentSpmPlan):
-            raise TypeError("plan must be a PrescribedCurrentSpmPlan.")
         negative = plan.negative_particle.prepare()
         positive = plan.positive_particle.prepare()
         self.plan = plan
@@ -1066,9 +1065,8 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PrescribedCurrentSpmPlan, /) -> None:
-        if not isinstance(plan, PrescribedCurrentSpmPlan):
-            raise TypeError("plan must be a PrescribedCurrentSpmPlan.")
         self.plan = plan
         self.model_id = "battery:spm:isothermal-prescribed-current"
         self.equation_form = "ode"
@@ -1078,6 +1076,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedPrescribedCurrentSpm:
         return self.plan.prepare()
 
+    @checked
     def initial_state(
         self,
         prepared_model: PreparedPrescribedCurrentSpm,
@@ -1086,10 +1085,6 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         /,
     ) -> SpmState:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(parameters, SpmParameters):
-            raise TypeError("parameters must be SpmParameters.")
-        if not isinstance(initial_condition, SpmInitialCondition):
-            raise TypeError("initial_condition must be SpmInitialCondition.")
         profile = _profile(parameters)
         negative_concentration = (
             initial_condition.negative_stoichiometry
@@ -1111,6 +1106,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         )
         return SpmState(negative, positive)
 
+    @checked
     def problem(
         self,
         prepared_model: PreparedPrescribedCurrentSpm,
@@ -1119,10 +1115,6 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         /,
     ) -> DifferentialProblem:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(initial_state, SpmState):
-            raise TypeError("initial_state must be SpmState.")
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, SpmParameters):
             raise TypeError("SPM runtime parameters must be SpmParameters.")
         expected_negative = prepared_model.negative_particle.shell_count
@@ -1152,6 +1144,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def observe(
         self,
         prepared_model: PreparedPrescribedCurrentSpm,
@@ -1161,10 +1154,6 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         /,
     ) -> BatteryModelOutput:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
-        if not isinstance(states, SpmState):
-            raise TypeError("states must be SpmState.")
         if not isinstance(runtime_inputs.parameters, SpmParameters):
             raise TypeError("SPM runtime parameters must be SpmParameters.")
         times = jnp.asarray(times_s)
@@ -1344,6 +1333,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         domain_valid = domain_valid & jnp.all(jnp.isfinite(values), axis=-1)
         return BatteryModelOutput(values, domain_valid)
 
+    @checked
     def ledger(
         self,
         prepared_model: PreparedPrescribedCurrentSpm,
@@ -1352,8 +1342,6 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         /,
     ) -> SpmLedger:
         _check_prepared(self.plan, prepared_model)
-        if not isinstance(runtime_inputs, BatteryRuntimeInputs):
-            raise TypeError("runtime_inputs must be BatteryRuntimeInputs.")
         if not isinstance(runtime_inputs.parameters, SpmParameters):
             raise TypeError("SPM runtime parameters must be SpmParameters.")
         states = native_solution.states

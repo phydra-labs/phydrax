@@ -13,6 +13,7 @@ from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._cover import SubdomainCover
 from ._ownership import cover_integration_ownership, IntegrationOwnership
 
@@ -74,6 +75,7 @@ class PreparedFieldRouting(StrictModule, NonTrainableState):
     colors: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     maximum_overlap: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cover: SubdomainCover,
@@ -81,8 +83,6 @@ class PreparedFieldRouting(StrictModule, NonTrainableState):
         *,
         ownership: IntegrationOwnership | None = None,
     ) -> None:
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be a SubdomainCover.")
         maximum = cover.maximum_overlap
         if maximum is None:
             raise ValueError("Prepared routing requires a declared maximum_overlap.")

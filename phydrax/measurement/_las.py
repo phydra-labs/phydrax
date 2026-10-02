@@ -15,6 +15,7 @@ import numpy as np
 from .._physical import SpatialCoordinateContract
 from ..interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ..qualification import open_reference_artifact, ReferenceArtifactManifest
+from ..typing import checked
 from ..units import ONE, SECOND, UnitDefinition
 from ._asset import DataOrigin, DataStage, DerivationRecord
 from ._field import QuantityField, SamplingSemantics, SpatialSamplingKind
@@ -56,6 +57,7 @@ def _field(
 class LasPointProvider:
     """Read bounded LAS/LAZ Cartesian point products through optional laspy."""
 
+    @checked
     def read(
         self,
         path: str | Path,
@@ -72,10 +74,6 @@ class LasPointProvider:
             raise ImportError(
                 "LAS point admission requires the optional 'lidar-las' extra."
             )
-        if not isinstance(reference, ReferenceArtifactManifest):
-            raise TypeError("reference must be ReferenceArtifactManifest.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if isinstance(maximum_points, bool) or int(maximum_points) < 1:
             raise ValueError("maximum_points must be a positive integer.")
         if isinstance(maximum_source_bytes, bool) or int(maximum_source_bytes) < 1:

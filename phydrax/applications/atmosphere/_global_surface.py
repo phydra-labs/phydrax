@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._moist import MoistThermodynamicPlan
 from ._radiation import ColumnRadiationPlan, ColumnRadiationResult
 from ._surface import (
@@ -64,6 +65,7 @@ class GlobalSurfacePhysics(StrictModule):
     measurement_height: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         slab: WetSlabPlan,
@@ -75,12 +77,6 @@ class GlobalSurfacePhysics(StrictModule):
         subgrid_wind_speed: float = 5.0,
         measurement_height: float = 10.0,
     ) -> None:
-        if not isinstance(slab, WetSlabPlan):
-            raise TypeError("slab must be WetSlabPlan.")
-        if not isinstance(surface_exchange, BulkSurfaceExchangePlan):
-            raise TypeError("surface_exchange must be BulkSurfaceExchangePlan.")
-        if not isinstance(radiation, ColumnRadiationPlan):
-            raise TypeError("radiation must be ColumnRadiationPlan.")
         values = tuple(
             float(x)
             for x in (solar_constant, solar_p2, subgrid_wind_speed, measurement_height)

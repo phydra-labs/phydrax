@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import CompiledGeometry, GeometryCapability
+from ...typing import checked
 from ._discretization import LatticeBoltzmannDiscretization
 
 
@@ -43,6 +44,7 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
     discretization_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -53,8 +55,6 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
         body_names: Sequence[str] | None = None,
         link_fractions: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("Fixed SDF link geometry requires an LBM discretization.")
         shape = discretization.grid.shape
         phi = np.asarray(signed_distance, dtype=np.float64)
         if phi.shape != shape or np.any(~np.isfinite(phi)):

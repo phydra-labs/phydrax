@@ -29,6 +29,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import checked
 
 
 class BulkDGTransportEvidence(StrictModule):
@@ -439,14 +440,13 @@ class PermeabilityExchangePlan(StrictModule):
     coefficients: Array
     exchange_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedEmbeddedMeasureTransfer,
         coefficients: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(transfer, PreparedEmbeddedMeasureTransfer):
-            raise TypeError("transfer must be PreparedEmbeddedMeasureTransfer.")
         coefficient = jnp.asarray(coefficients)
         if coefficient.shape == ():
             coefficient = jnp.broadcast_to(coefficient, transfer.target_measures.shape)
@@ -587,9 +587,8 @@ class PreparedMixedDimensionalTransport(StrictModule):
     def sizes(self) -> tuple[int, int, int]:
         return self.bulk.cell_count, len(self.network.mass), len(self.reservoirs.volumes)
 
+    @checked
     def _validate_state(self, state: MixedDimensionalTransportState, /) -> None:
-        if not isinstance(state, MixedDimensionalTransportState):
-            raise TypeError("state must be MixedDimensionalTransportState.")
         expected = tuple((size,) for size in self.sizes)
         actual = (state.bulk.shape, state.network.shape, state.reservoirs.shape)
         if actual != expected:

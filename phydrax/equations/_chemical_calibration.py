@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_mechanism import PreparedChemicalMechanism
 from ._chemical_rates import ArrheniusRatePlan
 
@@ -119,14 +120,13 @@ class ChemicalCalibrationPlan(StrictModule, NonTrainableState):
     parameters: tuple[ChemicalCalibrationParameter, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
         parameters: Iterable[ChemicalCalibrationParameter],
         /,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
         values = tuple(parameters)
         if not values or any(
             not isinstance(value, ChemicalCalibrationParameter) for value in values

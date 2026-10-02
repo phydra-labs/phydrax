@@ -17,7 +17,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._context import AstrodynamicsTimeScale, JulianDate, TimeInstant
 from ._data import AstrodynamicsDataProvenance
 from ._status import AstrodynamicsStatus
@@ -51,6 +51,7 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
     interpolation: TimeInterpolation = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_scale: TimeScaleName,
@@ -67,8 +68,6 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
         if source == target:
             raise ValueError("Time-scale transform endpoints must differ.")
         interpolation = parse(interpolation, TimeInterpolation, "interpolation")
-        if not isinstance(provenance, AstrodynamicsDataProvenance):
-            raise TypeError("provenance must be AstrodynamicsDataProvenance.")
         nodes_host = np.asarray(nodes, dtype=np.float64)
         offsets_host = np.asarray(offsets, dtype=np.float64)
         if (

@@ -24,6 +24,7 @@ from ...applications.relativistic_scattering._unit_contract import (
     RelativisticUnitContract,
 )
 from ...metrix import StressEnergyProjection
+from ...typing import checked
 from .._measure import DiscreteMeasure
 from ..splatting import ParticleGridSplatState, PreparedParticleGridSplat
 
@@ -283,6 +284,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
     frame_momentum_relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedParticleGridSplat,
@@ -296,10 +298,6 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         conservation_tolerance: float = 1.0e-8,
         frame_momentum_relative_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(transfer, PreparedParticleGridSplat):
-            raise TypeError("transfer must be a PreparedParticleGridSplat.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
         if not transfer.materialized_target:
             raise ValueError(
                 "Relativistic stress transfer requires a materialized tensor grid."
@@ -382,9 +380,8 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         self._require_frame(frame)
         return _frame_token(frame)
 
+    @checked
     def _require_frame(self, frame: LocalRelativisticFramePlan, /) -> None:
-        if not isinstance(frame, LocalRelativisticFramePlan):
-            raise TypeError("frame must be a LocalRelativisticFramePlan.")
         if frame.units.contract_id != self.units.contract_id:
             raise ValueError("Frame and stress transfer use different unit contracts.")
         if frame.geometry.leading_shape != self.transfer.target_shape:
@@ -394,11 +391,10 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         if not frame.frame_id:
             raise ValueError("Frame identity must be non-empty.")
 
+    @checked
     def _require_state(
         self, state: RelativisticParticleState, frame: LocalRelativisticFramePlan, /
     ) -> None:
-        if not isinstance(state, RelativisticParticleState):
-            raise TypeError("state must be a RelativisticParticleState.")
         self._require_frame(frame)
         particles = self.transfer.particles
         if state.capacity != particles.capacity:

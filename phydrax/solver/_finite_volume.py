@@ -42,7 +42,7 @@ from ..discretization.finite_volume._small_cell import (
 from ..discretization.finite_volume._unstructured_motion import (
     UnstructuredALEStepGeometry,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 
 
@@ -781,6 +781,7 @@ class DirectionalSplitFiniteVolumePlan(StrictModule):
     temporal_method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedFiniteVolumeDynamics,
@@ -788,8 +789,6 @@ class DirectionalSplitFiniteVolumePlan(StrictModule):
         *,
         splitting: SplittingKind = "strang",
     ) -> None:
-        if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
-            raise TypeError("Directional splitting requires finite-volume dynamics.")
         if not isinstance(dynamics.method.interface_solver, AbstractNumericalFluxPlan):
             raise ValueError(
                 "Directional splitting requires a numerical-flux interface method."

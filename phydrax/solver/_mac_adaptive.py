@@ -21,6 +21,7 @@ from .._numerics._checkpointed_scan import checkpointed_scan, CheckpointedScanMo
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -127,6 +128,7 @@ class MACCompositeStepController(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     controller_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -135,8 +137,6 @@ class MACCompositeStepController(StrictModule, NonTrainableState):
         additional_limits: tuple[MACNamedRateLimit, ...] = (),
         safety_factor: float = 0.9,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         limits = tuple(additional_limits)
         if any(not isinstance(limit, MACNamedRateLimit) for limit in limits):
             raise TypeError("additional_limits must contain MACNamedRateLimit values.")
@@ -352,6 +352,7 @@ class MACAdaptiveRolloutPlan(StrictModule):
     initial_step_size: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -369,14 +370,6 @@ class MACAdaptiveRolloutPlan(StrictModule):
             raise ValueError(
                 "MAC SBDF2 is fixed-step and cannot be used by adaptive rollout."
             )
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
-        if not isinstance(method, AbstractFixedStepMethod):
-            raise TypeError("method must be an AbstractFixedStepMethod.")
-        if not isinstance(controller, MACCompositeStepController):
-            raise TypeError("controller must be MACCompositeStepController.")
-        if not isinstance(policy, MACAdaptivePolicy):
-            raise TypeError("policy must be MACAdaptivePolicy.")
         if controller.dynamics.compilation_id != dynamics.compilation_id:
             raise ValueError("MAC controller and rollout dynamics differ.")
         target = float(final_time)
@@ -440,6 +433,7 @@ class MACAdaptiveRolloutPlan(StrictModule):
             controller_id=self.controller.controller_id,
         )
 
+    @checked
     def advance(
         self,
         runtime_state: MACAdaptiveRuntimeState,
@@ -448,8 +442,6 @@ class MACAdaptiveRolloutPlan(StrictModule):
         /,
     ) -> MACAdaptiveAdvanceResult:
         """Continue from an explicit state without regenerating controller history."""
-        if not isinstance(runtime_state, MACAdaptiveRuntimeState):
-            raise TypeError("runtime_state must be MACAdaptiveRuntimeState.")
         if (
             runtime_state.dynamics_id != self.dynamics.compilation_id
             or runtime_state.method_id != self.method.method_id
@@ -872,6 +864,7 @@ class MACFrozenGridReplayPlan(StrictModule):
     block_size: int | None = eqx.field(static=True)
     replay_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -881,10 +874,6 @@ class MACFrozenGridReplayPlan(StrictModule):
         checkpointing: CheckpointedScanMode = "block",
         block_size: int | None = 16,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
-        if not isinstance(method, AbstractFixedStepMethod):
-            raise TypeError("method must be an AbstractFixedStepMethod.")
         if checkpointing not in ("full", "step", "block"):
             raise ValueError("Unknown MAC replay checkpointing mode.")
         size = None if block_size is None else int(block_size)
@@ -907,6 +896,7 @@ class MACFrozenGridReplayPlan(StrictModule):
             }
         )
 
+    @checked
     def replay(
         self,
         initial_state: Array,
@@ -914,8 +904,6 @@ class MACFrozenGridReplayPlan(StrictModule):
         args: Any = None,
         /,
     ) -> MACFrozenGridReplayResult:
-        if not isinstance(grid, MACAcceptedGridTrace):
-            raise TypeError("grid must be MACAcceptedGridTrace.")
         if grid.dynamics_id != self.dynamics.compilation_id:
             raise ValueError("Frozen MAC grid dynamics identity changed.")
         if grid.method_id != self.method.method_id:

@@ -28,6 +28,7 @@ from ..linalg import (
     MatrixFunctionResult,
     MatrixFunctionStatus,
 )
+from ..typing import checked
 from ._chemical_mechanism import PreparedChemicalMechanism
 from ._chemical_rates import (
     AbstractChemicalRatePlan,
@@ -264,6 +265,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
     has_forcing: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanism: PreparedChemicalMechanism,
@@ -271,12 +273,6 @@ class PreparedChemicalConditionalAffine(StrictModule):
         certificate: ChemicalConditionalAffineCertificate,
         /,
     ) -> None:
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
-        if not isinstance(plan, ChemicalConditionalAffinePlan):
-            raise TypeError("plan must be ChemicalConditionalAffinePlan.")
-        if not isinstance(certificate, ChemicalConditionalAffineCertificate):
-            raise TypeError("certificate must be ChemicalConditionalAffineCertificate.")
         if certificate.mechanism_id != mechanism.mechanism_id:
             raise ValueError("Certificate and mechanism identities differ.")
         if certificate.plan_id != plan.plan_id:
@@ -348,6 +344,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
     def channel_count(self) -> int:
         return self.channel_reaction_indices.shape[0]
 
+    @checked
     def assemble(
         self,
         drivers: ChemicalConditionalAffineDrivers,
@@ -355,8 +352,6 @@ class PreparedChemicalConditionalAffine(StrictModule):
         *,
         reaction_multiplier: ArrayLike | None = None,
     ) -> ChemicalConditionalAffineAssembly:
-        if not isinstance(drivers, ChemicalConditionalAffineDrivers):
-            raise TypeError("drivers must be ChemicalConditionalAffineDrivers.")
         driver_values = drivers.species_concentrations
         if driver_values.shape[-1] != self.driver_size:
             raise ValueError(

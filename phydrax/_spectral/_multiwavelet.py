@@ -19,7 +19,7 @@ from .._model import register_artifact_value
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._multiresolution import MultiresolutionCoefficients
 from ._wavelet import WaveletBoundary
 
@@ -183,10 +183,9 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
             transform_fingerprint=self.fingerprint,
         )
 
+    @checked
     def synthesis(self, coefficients: MultiresolutionCoefficients, /) -> Array:
         """Reconstruct channels-last samples and remove transform padding."""
-        if not isinstance(coefficients, MultiresolutionCoefficients):
-            raise TypeError("coefficients must be MultiresolutionCoefficients.")
         if coefficients.transform_fingerprint != self.fingerprint:
             raise ValueError("Multiwavelet coefficients belong to a different transform.")
         if coefficients.levels != self.levels:

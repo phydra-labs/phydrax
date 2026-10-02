@@ -51,7 +51,7 @@ from ..._training_kernel import (
 )
 from ..._training_objective import _ObjectiveContribution
 from ...linalg import FactorizationPolicy, inverse, OperatorProperties
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary, FeatureEvaluation
@@ -146,6 +146,7 @@ class ModelFeatureLibrary(AbstractFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -155,10 +156,6 @@ class ModelFeatureLibrary(AbstractFeatureLibrary):
         model_id: str,
         base: AbstractFeatureLibrary | None = None,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must implement AbstractArrayModel.")
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be StateLayout.")
         if base is not None and not isinstance(base, AbstractFeatureLibrary):
             raise TypeError("base must implement AbstractFeatureLibrary or be None.")
         if base is not None and base.state_layout.layout_id != state_layout.layout_id:

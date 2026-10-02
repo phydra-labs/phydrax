@@ -28,6 +28,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field, parameter_field, ParameterOwner
 from .._validation import positive_integer
 from ..linalg import PreparedSparseFactorization
+from ..typing import checked
 from ._core import AdsorptionKinetics, LangmuirSurfactantLaw
 from ._coupled import CoupledBulkSurfaceTransport
 from ._film_contracts import PreparedFilmSurface
@@ -179,6 +180,7 @@ class SymmetricFilmSurfactantPlan(StrictModule, ParameterOwner):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedFilmSurface,
@@ -190,10 +192,6 @@ class SymmetricFilmSurfactantPlan(StrictModule, ParameterOwner):
         tolerance: float = 1e-12,
         maximum_iterations: int = 30,
     ) -> None:
-        if not isinstance(surface, PreparedFilmSurface):
-            raise TypeError("surface must be a PreparedFilmSurface.")
-        if not isinstance(law, LangmuirSurfactantLaw):
-            raise TypeError("law must be a LangmuirSurfactantLaw.")
         if kinetics is not None and not isinstance(kinetics, AdsorptionKinetics):
             raise TypeError("kinetics must be AdsorptionKinetics or None.")
         diffusivity = np.asarray(surface_diffusivity_m2_s, dtype=np.float64)
@@ -283,9 +281,8 @@ class PreparedSymmetricFilmSurfactant(StrictModule):
     transport: CoupledBulkSurfaceTransport = fixed_field()
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SymmetricFilmSurfactantPlan, /) -> None:
-        if not isinstance(plan, SymmetricFilmSurfactantPlan):
-            raise TypeError("plan must be a SymmetricFilmSurfactantPlan.")
         topology = plan.surface.topology
         count = topology.num_vertices
         vertices = np.arange(count)

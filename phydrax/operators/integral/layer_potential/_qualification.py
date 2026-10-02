@@ -13,7 +13,7 @@ import equinox as eqx
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 
 
 BoundaryEvidenceLevel: TypeAlias = Literal[
@@ -204,6 +204,7 @@ class BoundaryQualificationEvidence(StrictModule, NonTrainableState):
     operational_evidence_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: BoundarySupportEnvelope,
@@ -221,8 +222,6 @@ class BoundaryQualificationEvidence(StrictModule, NonTrainableState):
         error_metric: str | None = None,
         unsupported_reason: str | None = None,
     ) -> None:
-        if not isinstance(support, BoundarySupportEnvelope):
-            raise TypeError("support must be BoundarySupportEnvelope.")
         claim_ = _required_text(claim, "claim")
         if claim_ not in support.claims:
             raise ValueError(f"Unknown boundary qualification claim {claim_!r}.")

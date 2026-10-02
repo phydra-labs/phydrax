@@ -27,6 +27,7 @@ from jax.typing import DTypeLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._membrane_scaling import CardiacMembraneScaling
 from ._reaction import (
     ArrayLike,
@@ -266,9 +267,8 @@ class PurkinjeStateLayout(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown Purkinje state field {name!r}.")
         return self.names.index(name)
 
+    @checked
     def pack(self, state: PurkinjeState, /) -> Array:
-        if not isinstance(state, PurkinjeState):
-            raise TypeError("state must be PurkinjeState.")
         return jnp.stack(
             (
                 state.voltage_mV,
@@ -352,9 +352,8 @@ class StewartPurkinjeModel(StrictModule, NonTrainableState):
     layout: PurkinjeStateLayout
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, parameters: StewartPurkinjeParameters, /) -> None:
-        if not isinstance(parameters, StewartPurkinjeParameters):
-            raise TypeError("parameters must be StewartPurkinjeParameters.")
         layout = PurkinjeStateLayout()
         self.parameters = parameters
         self.layout = layout
@@ -391,10 +390,9 @@ class StewartPurkinjeModel(StrictModule, NonTrainableState):
             *(jnp.full(shape, value, dtype=resolved_dtype) for value in values)
         )
 
+    @checked
     def currents(self, state: PurkinjeState, /) -> PurkinjeCurrents:
         """Evaluate named outward-positive currents without hidden stimulation."""
-        if not isinstance(state, PurkinjeState):
-            raise TypeError("state must be PurkinjeState.")
         p = self.parameters
         v = state.voltage_mV
         ena = p.rtf_mV * jnp.log(p.sodium_o_mM / p.sodium_i_mM)
@@ -461,11 +459,10 @@ class StewartPurkinjeModel(StrictModule, NonTrainableState):
             total,
         )
 
+    @checked
     def calcium_output(
         self, state: PurkinjeState, currents: PurkinjeCurrents, /
     ) -> PurkinjeCalciumOutput:
-        if not isinstance(currents, PurkinjeCurrents):
-            raise TypeError("currents must be PurkinjeCurrents.")
         p = self.parameters
         membrane_current = (
             currents.l_type_calcium

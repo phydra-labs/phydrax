@@ -21,6 +21,7 @@ from ..data_utils import (
     grouped_train_validation_test_split_indices,
 )
 from ..discretization._core import nonempty_identifier, resolved_identifier
+from ..typing import checked
 from ._execution import FidelityEvaluation
 from ._hierarchy import FidelityHierarchy
 
@@ -109,6 +110,7 @@ class FidelityDataset(StrictModule, NonTrainableState):
     dataset_id: str = eqx.field(static=True)
     cost_unit: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: FidelityHierarchy,
@@ -118,8 +120,6 @@ class FidelityDataset(StrictModule, NonTrainableState):
         *,
         dataset_id: str | None = None,
     ) -> None:
-        if not isinstance(hierarchy, FidelityHierarchy):
-            raise TypeError("hierarchy must be a FidelityHierarchy.")
         cases_ = tuple(cases)
         evaluations_ = tuple(evaluations)
         if not cases_ or not all(isinstance(case, FidelityCaseSpec) for case in cases_):
@@ -382,6 +382,7 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
     test_indices: tuple[int, ...] = eqx.field(static=True)
     seed: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         train: FidelityDataset,
@@ -395,8 +396,6 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
         test_indices: Sequence[int],
         seed: int,
     ) -> None:
-        if not isinstance(partition, CasePartitionManifest):
-            raise TypeError("partition must be a CasePartitionManifest.")
         expected = (
             partition.train_ids,
             partition.validation_ids,

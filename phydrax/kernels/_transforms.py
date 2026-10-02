@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._base import (
     _as_input,
     _as_inputs,
@@ -31,6 +32,7 @@ class InputTransformedKernel(AbstractPositiveDefiniteKernel):
     transform_derivative_order: int | None = eqx.field(static=True)
     _input_ndim: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractPositiveDefiniteKernel,
@@ -41,8 +43,6 @@ class InputTransformedKernel(AbstractPositiveDefiniteKernel):
         max_derivative_order: int | None = 0,
         input_ndim: int = 1,
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a positive-definite kernel.")
         if not callable(transform_function):
             raise TypeError("transform_function must be callable.")
         if not isinstance(transform_id, str) or not transform_id:

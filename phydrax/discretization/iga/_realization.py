@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._basis import TensorSplineBasisSpec
 from ._topology import SplineSpanTopology
 
@@ -132,9 +133,8 @@ class ExtractedBernsteinRealization(StrictModule, NonTrainableState):
     extraction: Array
     realization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, direct: DirectTensorRealization, extraction: ArrayLike, /) -> None:
-        if not isinstance(direct, DirectTensorRealization):
-            raise TypeError("direct must be a DirectTensorRealization.")
         matrices = np.asarray(extraction)
         width = direct.local_width
         if matrices.shape != (direct.cell_count, width, width):

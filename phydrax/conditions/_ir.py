@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from phydrax.domain import DomainFunction
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._base import _same_support, _validate_support, ConditionSupport
 
 
@@ -443,11 +444,10 @@ class OperatorLinearization(StrictModule):
     value: Any
     tangent_operator: AbstractConditionOperator
 
+    @checked
     def __init__(
         self, value: Any, tangent_operator: AbstractConditionOperator, /
     ) -> None:
-        if not isinstance(tangent_operator, AbstractConditionOperator):
-            raise TypeError("A linearization tangent must be a condition operator.")
         if not tangent_operator.capabilities.is_linear:
             raise ValueError("A linearization tangent operator must certify linearity.")
         self.value = value

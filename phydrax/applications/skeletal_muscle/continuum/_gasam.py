@@ -22,6 +22,7 @@ from ....discretization import (
 )
 from ....equations import FiniteElementForm
 from ....operators.mechanics import finite_strain_kinematics, VolumetricConstraint
+from ....typing import checked
 from ...solid_mechanics import (
     mixed_hyperelastic_form,
     MixedHyperelasticBlockTangent,
@@ -302,6 +303,7 @@ class EngelhardtGasam2025Plan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         parameters: EngelhardtGasam2025Parameters,
@@ -309,10 +311,6 @@ class EngelhardtGasam2025Plan(StrictModule, NonTrainableState):
         prescribed_activation: ArrayLike,
         /,
     ) -> PreparedEngelhardtGasam2025Material:
-        if not isinstance(parameters, EngelhardtGasam2025Parameters):
-            raise TypeError("parameters must be EngelhardtGasam2025Parameters.")
-        if not isinstance(architecture, PreparedUniformFiberArchitecture):
-            raise TypeError("architecture must be PreparedUniformFiberArchitecture.")
         if not bool(architecture.evidence.valid):
             raise ValueError(
                 "A GASAM material requires valid supported fiber architecture."
@@ -382,12 +380,11 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
             ),
         )
 
+    @checked
     def with_commit(
         self, commit: GasamMaterialCommit, /
     ) -> PreparedEngelhardtGasam2025Material:
         """Return a prepared material carrying the atomically selected state."""
-        if not isinstance(commit, GasamMaterialCommit):
-            raise TypeError("commit must be GasamMaterialCommit.")
         if commit.prepared_id != self.prepared_id:
             raise ValueError("GASAM commit belongs to a different prepared material.")
         source_mismatch = (commit.source_state_id != self.state.state_id) | (
@@ -571,6 +568,7 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
             form_id=form_id,
         )
 
+    @checked
     def prepare_qualified_mixed(
         self,
         finite_element_plan: MixedFiniteElementConstraintPlan,
@@ -580,10 +578,6 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
         args: object = None,
     ) -> QualifiedExactMixedGasamProblem:
         """Prepare and fail-close qualify the existing Taylor-Hood/Q2-Q1 owner."""
-        if not isinstance(finite_element_plan, MixedFiniteElementConstraintPlan):
-            raise TypeError(
-                "finite_element_plan must be MixedFiniteElementConstraintPlan."
-            )
         if (
             finite_element_plan.formulation != "exact"
             or finite_element_plan.bulk_modulus is not None

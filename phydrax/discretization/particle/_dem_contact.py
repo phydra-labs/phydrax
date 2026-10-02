@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
     evaluate_dem_cohesion,
@@ -826,6 +827,7 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
     rotational: AbstractDEMRotationalContactPlan | None
     contact_model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         normal: AbstractDEMNormalContactPlan,
@@ -836,8 +838,6 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
         rotational: AbstractDEMRotationalContactPlan | None = None,
         contact_model_id: str | None = None,
     ) -> None:
-        if not isinstance(normal, AbstractDEMNormalContactPlan):
-            raise TypeError("normal must be an AbstractDEMNormalContactPlan.")
         if cohesion is not None and not isinstance(cohesion, AbstractDEMCohesionPlan):
             raise TypeError("cohesion must be an AbstractDEMCohesionPlan or None.")
         if tangential is not None and not isinstance(
@@ -958,11 +958,10 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
     ambient_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: DEMContactModelPlan, materials: Any, ambient_dimension: int, /
     ) -> None:
-        if not isinstance(plan, DEMContactModelPlan):
-            raise TypeError("plan must be a DEMContactModelPlan.")
         dimension = int(ambient_dimension)
         if dimension not in (2, 3):
             raise ValueError("DEM contact model requires ambient dimension 2 or 3.")
@@ -1003,6 +1002,7 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             history.rotational,
         )
 
+    @checked
     def evaluate(
         self,
         batch: DEMContactBatch,
@@ -1012,8 +1012,6 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
         *,
         frame_tolerance: float = 1.0e-10,
     ) -> DEMContactResponse:
-        if not isinstance(context, DEMContactEvaluationContext):
-            raise TypeError("context must be a DEMContactEvaluationContext.")
         current_keys = context.current_keys
         current_valid = context.current_valid
         continued = context.continued

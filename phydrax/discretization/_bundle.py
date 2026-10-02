@@ -10,6 +10,7 @@ import equinox as eqx
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._core import DiscretizationKey, nonempty_identifier, resolved_identifier
 from ._transfer import FieldTransfer
 
@@ -27,6 +28,7 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
     resource_evidence_id: str | None = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         key: DiscretizationKey,
@@ -41,8 +43,6 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
         resource_evidence_id: str | None = None,
         record_id: str | None = None,
     ) -> None:
-        if not isinstance(key, DiscretizationKey):
-            raise TypeError("key must be a DiscretizationKey.")
         kind = nonempty_identifier("artifact_kind", artifact_kind)
         artifact = nonempty_identifier("artifact_id", artifact_id)
         version = (
@@ -195,6 +195,7 @@ class DiscretizationLevel(StrictModule, NonTrainableState):
     refinements: tuple[str, ...] = eqx.field(static=True)
     level_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bundle: DiscretizationBundle,
@@ -205,8 +206,6 @@ class DiscretizationLevel(StrictModule, NonTrainableState):
         refinements: Sequence[str] = (),
         level_id: str | None = None,
     ) -> None:
-        if not isinstance(bundle, DiscretizationBundle):
-            raise TypeError("bundle must be a DiscretizationBundle.")
         parent = (
             None
             if parent_level_id is None

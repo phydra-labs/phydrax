@@ -19,6 +19,7 @@ from ..._trainable import NonTrainableState
 from ...geometry.simplicial._ddg import DDGOperators, discrete_operators
 from ...geometry.simplicial._mesh import TriangleMesh
 from ...graph._charged_scalar_gauge import ChargedGaugeState, ChargedScalarGaugePlan
+from ...typing import checked
 
 
 class GinzburgLandauEnergy(StrictModule):
@@ -79,6 +80,7 @@ class GaugeCovariantGLPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: TriangleMesh,
@@ -93,8 +95,6 @@ class GaugeCovariantGLPlan(StrictModule, NonTrainableState):
         phase_anchor: int = 0,
         tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("mesh must be TriangleMesh.")
         values = tuple(
             float(value)
             for value in (

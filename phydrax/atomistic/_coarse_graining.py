@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._graph import AtomisticGraphExecutionPlan
 from ._potential import AbstractAtomisticPotential, AtomisticSpeciesKind
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
@@ -125,13 +125,10 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
     anchor_indices: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: MolecularCoarseMapPlan, system: PreparedAtomisticSystem, /
     ) -> None:
-        if not isinstance(plan, MolecularCoarseMapPlan):
-            raise TypeError("plan must be MolecularCoarseMapPlan.")
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
         membership = np.asarray(plan.particle_to_bead)
         if membership.shape != (system.capacity,):
             raise ValueError("particle_to_bead must match fine-system capacity.")
@@ -328,6 +325,7 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
     prior_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mapping: PreparedMolecularCoarseMap,
@@ -342,10 +340,6 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         validation_fine_forces: ArrayLike | None = None,
         validation_prior_forces: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(mapping, PreparedMolecularCoarseMap):
-            raise TypeError("mapping must be PreparedMolecularCoarseMap.")
-        if not isinstance(fine_batch, AtomisticBatch):
-            raise TypeError("fine_batch must be AtomisticBatch.")
         if (
             not isinstance(graph_execution, AtomisticGraphExecutionPlan)
             or graph_execution.backend != "dense"

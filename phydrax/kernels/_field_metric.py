@@ -20,7 +20,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..conditions._ir import ArrayCodomain, FieldCodomain, ProductFieldSpec
-from ..typing import parse
+from ..typing import checked, parse
 from ._base import AbstractPositiveDefiniteKernel
 from ._finite_feature import kernel_feature_rank, kernel_features
 from ._operator_valued import (
@@ -235,9 +235,8 @@ class KernelGram(StrictModule):
     matrix: Array
     evidence: KernelGramEvidence
 
+    @checked
     def __init__(self, matrix: ArrayLike, evidence: KernelGramEvidence, /) -> None:
-        if not isinstance(evidence, KernelGramEvidence):
-            raise TypeError("evidence must be KernelGramEvidence.")
         matrix_ = jnp.asarray(matrix)
         if matrix_.ndim != 2:
             raise ValueError("Kernel Gram values must be matrices.")
@@ -258,6 +257,7 @@ class ProductFieldKernelMetric(StrictModule):
     geometry_revision_id: str = eqx.field(static=True)
     numeric_version: Array
 
+    @checked
     def __init__(
         self,
         field_spec: ProductFieldSpec,
@@ -270,8 +270,6 @@ class ProductFieldKernelMetric(StrictModule):
         geometry_revision_id: str = "fixed",
         numeric_version: Any = 0,
     ) -> None:
-        if not isinstance(field_spec, ProductFieldSpec):
-            raise TypeError("field_spec must be a ProductFieldSpec.")
         kernels_ = tuple(kernels)
         adapters_ = tuple(adapters)
         channels_ = tuple(tuple(item) for item in channel_indices)
@@ -381,6 +379,7 @@ class ProductFieldKernelMetric(StrictModule):
         )
 
     @classmethod
+    @checked
     def coupled(
         cls,
         field_spec: ProductFieldSpec,
@@ -392,8 +391,6 @@ class ProductFieldKernelMetric(StrictModule):
         geometry_revision_id: str = "fixed",
         numeric_version: Any = 0,
     ) -> ProductFieldKernelMetric:
-        if not isinstance(kernel, AbstractOperatorValuedKernel):
-            raise TypeError("kernel must be an AbstractOperatorValuedKernel.")
         adapter = KernelInputAdapter() if input_adapter is None else input_adapter
         if not isinstance(adapter, KernelInputAdapter):
             raise TypeError("input_adapter must be a KernelInputAdapter.")
@@ -756,6 +753,7 @@ class KernelSection(StrictModule):
     functional: KernelFunctional
     field_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         metric: ProductFieldKernelMetric,
@@ -763,10 +761,6 @@ class KernelSection(StrictModule):
         field_name: str,
         /,
     ) -> None:
-        if not isinstance(metric, ProductFieldKernelMetric):
-            raise TypeError("metric must be a ProductFieldKernelMetric.")
-        if not isinstance(functional, KernelFunctional):
-            raise TypeError("functional must be a KernelFunctional.")
         metric._field_index(field_name)
         self.metric = metric
         self.functional = functional

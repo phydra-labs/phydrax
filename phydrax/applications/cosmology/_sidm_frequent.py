@@ -23,6 +23,7 @@ from ...discretization.particle import (
     particle_pair_geometry,
     ParticlePairRelation,
 )
+from ...typing import checked
 from ._sidm import _pair_keys
 from ._sidm_kernels import directions_from_angles, SmallAngleSplitPlan
 from ._sidm_weighted import (
@@ -116,6 +117,7 @@ class FrequentSmallAngleSIDMPlan(StrictModule, NonTrainableState):
     moment_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         neighborhood: AbstractPreparedParticleNeighborhood,
@@ -128,12 +130,6 @@ class FrequentSmallAngleSIDMPlan(StrictModule, NonTrainableState):
         maximum_transverse_variance_per_step: float = 0.2,
         moment_tolerance: float = 0.05,
     ) -> None:
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
-        if not isinstance(spatial_kernel, AbstractSPHSmoothingKernel):
-            raise TypeError("spatial_kernel must be an AbstractSPHSmoothingKernel.")
-        if not isinstance(split, SmallAngleSplitPlan):
-            raise TypeError("split must be SmallAngleSplitPlan.")
         if spatial_kernel.dimension != 3:
             raise ValueError("Frequent small-angle SIDM requires three dimensions.")
         first_species = split.kernel.first_species

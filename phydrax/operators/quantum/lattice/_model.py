@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
-from ....typing import parse
+from ....typing import checked, parse
 from .._fermionic_fock import FermionModeOrder
 
 
@@ -169,6 +169,7 @@ class LocalOperatorPlan(StrictModule):
     support_mask: Array
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: LocalSpacePlan,
@@ -179,8 +180,6 @@ class LocalOperatorPlan(StrictModule):
         *,
         fermion_parity: int | None = None,
     ) -> None:
-        if not isinstance(space, LocalSpacePlan):
-            raise TypeError("space must be LocalSpacePlan.")
         name = str(label)
         value = np.asarray(matrix)
         delta = tuple(charge_delta)

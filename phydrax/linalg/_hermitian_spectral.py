@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..typing import checked
 from ._hermitian_precision import HermitianPrecisionPolicy
 
 
@@ -228,6 +229,7 @@ class SylvesterSolveResult(StrictModule):
     valid: Array
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         value: ArrayLike,
@@ -241,8 +243,6 @@ class SylvesterSolveResult(StrictModule):
         self.residual_norm = jnp.asarray(residual_norm)
         self.minimum_denominator = jnp.asarray(minimum_denominator)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
 
 

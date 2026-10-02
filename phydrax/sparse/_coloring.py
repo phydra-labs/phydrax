@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._pattern import SparsePattern
 
 
@@ -45,6 +45,7 @@ class SparseColoring(StrictModule, NonTrainableState):
     compiler: SparseColoringCompiler = eqx.field(static=True)
     coloring_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pattern: SparsePattern,
@@ -58,8 +59,6 @@ class SparseColoring(StrictModule, NonTrainableState):
         compiler: SparseColoringCompiler = "native",
         num_colors: int | None = None,
     ) -> None:
-        if not isinstance(pattern, SparsePattern):
-            raise TypeError("pattern must be a SparsePattern.")
         mode = parse(mode, SparseDerivativeMode, "mode")
         if compiler != "native":
             raise ValueError(f"Unknown sparse coloring compiler {compiler!r}.")

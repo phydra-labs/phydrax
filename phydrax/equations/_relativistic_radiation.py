@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 from ._hyperbolic_systems import AbstractAdmissibleSystem
 from ._radiation_moments import MultigroupM1RadiationSystem
 
@@ -92,6 +93,7 @@ class GRGrayM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
     local_system: MultigroupM1RadiationSystem
     metric_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -102,10 +104,6 @@ class GRGrayM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         energy_floor: float = 1.0e-12,
         metric_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
         if convention.metric_signature != "mostly_plus":
             raise ValueError("GR gray M1 requires the mostly-plus convention.")
         physical_light_speed = float(scale.speed_of_light)
@@ -248,6 +246,7 @@ class GRGrayM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
             & (flux_norm <= self.physical_light_speed * energy)
         )
 
+    @checked
     def closure(
         self,
         energy_density: ArrayLike,
@@ -255,8 +254,6 @@ class GRGrayM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         geometry: ADMGridGeometry,
         /,
     ) -> GRGrayM1ClosureEvaluation:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id
@@ -398,14 +395,13 @@ class GRGrayM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         )
         return jnp.concatenate((energy_flux[..., None], momentum_flux), axis=-1)
 
+    @checked
     def coordinate_characteristic_bounds(
         self,
         unit_covector: ArrayLike,
         geometry: ADMGridGeometry,
         /,
     ) -> tuple[Array, Array]:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if (
             geometry.scale_id != self.scale.scale_id
             or geometry.convention_id != self.convention.convention_id

@@ -18,7 +18,7 @@ from ..._fingerprint import array_tree_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil, InterpolationResult
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._core import DiscretizationCapability, PreparationReport, resolved_identifier
 from .._measure import DiscreteMeasure
 from .._tensor_entities import TensorEntityLayout
@@ -76,6 +76,7 @@ class ParticleGridSplatState(StrictModule):
     successful: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -95,10 +96,6 @@ class ParticleGridSplatState(StrictModule):
         successful: ArrayLike,
         prepared_id: str,
     ) -> None:
-        if not isinstance(stencil, GatherStencil):
-            raise TypeError("stencil must be GatherStencil.")
-        if not isinstance(assignment_state, SplatAssignmentState):
-            raise TypeError("assignment_state must be SplatAssignmentState.")
         source_shape = stencil.support.shape
         supported = jnp.asarray(supported_mask, dtype=jnp.bool_)
         truncated = jnp.asarray(truncated_support_mask, dtype=jnp.bool_)
@@ -265,16 +262,13 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     artifact_kind: str = eqx.field(static=True)
     materialized_target: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ParticleGridSplatPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, ParticleGridSplatPlan):
-            raise TypeError("plan must be ParticleGridSplatPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         if particles.ambient_dimension != len(plan.target.axis_names):
             raise ValueError("Particle and target-grid dimensions must match.")
         target = plan.target
@@ -542,9 +536,8 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             prepared_id=self.prepared_id,
         )
 
+    @checked
     def _require_state(self, state: ParticleGridSplatState, /) -> None:
-        if not isinstance(state, ParticleGridSplatState):
-            raise TypeError("state must be ParticleGridSplatState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("Splat state was built by a different prepared transfer.")
 
@@ -587,6 +580,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         )
         return state.require_success(target)
 
+    @checked
     def deposit_content_mapped(
         self,
         state: ParticleGridSplatState,
@@ -597,8 +591,6 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     ) -> SplatDepositResult:
         """Deposit onto an explicit logical-to-storage stencil without dense output."""
         self._require_state(state)
-        if not isinstance(target_stencil, GatherStencil):
-            raise TypeError("target_stencil must be GatherStencil.")
         if target_stencil.relation.output_shape != state.stencil.relation.output_shape:
             raise ValueError("target_stencil must preserve the particle output shape.")
         source = self._source_payload(state, content, "content")

@@ -25,6 +25,7 @@ from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
 from ..._trainable import fixed_field
 from ...kernels import FiniteFeatureKernel, SquaredExponentialKernel
+from ...typing import checked
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -482,11 +483,8 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
     kernel: SquaredExponentialKernel
     n_components: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, kernel: SquaredExponentialKernel, /, *, n_components: int) -> None:
-        if not isinstance(kernel, SquaredExponentialKernel):
-            raise TypeError(
-                "Exact random Fourier sampling is supported only for SquaredExponentialKernel."
-            )
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         self.kernel = kernel

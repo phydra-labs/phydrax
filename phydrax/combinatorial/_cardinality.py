@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._method import (
     AbstractBoundableLinearCombinatorialMethod,
     CombinatorialPlan,
@@ -107,9 +108,8 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
     def integral_feature_mask(self, /) -> Array:
         return jnp.ones((self.size,), dtype=jnp.bool_)
 
+    @checked
     def canonicalize(self, decision: CardinalityDecision, /) -> CardinalityDecision:
-        if not isinstance(decision, CardinalityDecision):
-            raise TypeError("cardinality decisions must be CardinalityDecision values.")
         indices = jnp.asarray(decision.indices, dtype=jnp.int32)
         if indices.shape[-1:] != (self.count,):
             raise ValueError(

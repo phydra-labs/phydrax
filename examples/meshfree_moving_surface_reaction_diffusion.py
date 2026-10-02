@@ -16,31 +16,23 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from phydrax.discretization._topology_epoch import TopologyEpoch
-from phydrax.discretization.meshfree._capacity import (
+from phydrax.discretization import TopologyEpoch
+from phydrax.discretization.meshfree import (
+    LocalStencilPolicy,
     MeshfreeCapacityMap,
     MeshfreeCapacityPolicy,
-)
-from phydrax.discretization.meshfree._moving import (
+    MeshfreeFunctional,
+    MeshfreeNeighborhoodPlan,
     MovingGeometryRefresh,
     MovingSurfaceEpochResult,
     MovingSurfacePlan,
     MovingSurfaceState,
-)
-from phydrax.discretization.meshfree._neighbors import MeshfreeNeighborhoodPlan
-from phydrax.discretization.meshfree._resampling import SurfaceResamplingPolicy
-from phydrax.discretization.meshfree._shifting import (
+    prepare_local_stencils,
+    PreparedSurfaceTransfer,
     surface_relative_advection,
     SurfaceRelativeAdvectionResult,
+    SurfaceResamplingPolicy,
     SurfaceShiftPolicy,
-)
-from phydrax.discretization.meshfree._stencils import (
-    LocalStencilPolicy,
-    MeshfreeFunctional,
-    prepare_local_stencils,
-)
-from phydrax.discretization.meshfree._surface_transfer import (
-    PreparedSurfaceTransfer,
     SurfaceTransferPlan,
 )
 from phydrax.graph import graph_to_cochain_complex, GraphIR

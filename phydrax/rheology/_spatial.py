@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..ein import contract
 from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ..typing import checked
 from ._core import ViscoelasticLaw
 
 
@@ -41,6 +42,7 @@ class SpatialConformationSolver:
     conservation_tolerance: float = 1e-10
 
     @classmethod
+    @checked
     def create(
         cls,
         measure_weights: ArrayLike,
@@ -53,8 +55,6 @@ class SpatialConformationSolver:
     ) -> SpatialConformationSolver:
         weights = np.asarray(measure_weights, dtype=np.float64)
         generator = np.asarray(transport_generator_s_inv, dtype=np.float64)
-        if not isinstance(law, ViscoelasticLaw):
-            raise TypeError("Rheology law must be ViscoelasticLaw.")
         if (
             not isfinite(eigenvalue_floor)
             or eigenvalue_floor <= 0

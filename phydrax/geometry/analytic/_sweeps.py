@@ -14,7 +14,7 @@ import numpy as np
 from jax import Array
 
 from ..._mass import ExactMass, Mass, product_mass, scale_mass, sum_mass
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -87,6 +87,7 @@ class Extrusion(GeometrySource):
     height: Array
     feature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: GeometrySource,
@@ -94,8 +95,6 @@ class Extrusion(GeometrySource):
         *,
         feature_id: str | None = None,
     ) -> None:
-        if not isinstance(profile, GeometrySource):
-            raise TypeError("Extrusion.profile must be a GeometrySource.")
         height_host = np.asarray(height, dtype=np.float64)
         if height_host.shape != () or not np.isfinite(height_host):
             raise ValueError("Extrusion.height must be a finite scalar.")
@@ -344,14 +343,13 @@ class Revolution(GeometrySource):
     profile: GeometrySource
     feature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: GeometrySource,
         *,
         feature_id: str | None = None,
     ) -> None:
-        if not isinstance(profile, GeometrySource):
-            raise TypeError("Revolution.profile must be a GeometrySource.")
         self.profile = profile
         self.feature_id = _feature_id(feature_id, "revolution")
 

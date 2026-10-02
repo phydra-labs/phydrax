@@ -22,6 +22,7 @@ from ..discretization.particle import (
     PreparedTransportVelocityDynamics,
 )
 from ..equations._flip import CompiledFLIPProblem
+from ..typing import checked
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -142,9 +143,8 @@ class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     dynamics: PreparedSoftSphereDEMDynamics
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, dynamics: PreparedSoftSphereDEMDynamics, /) -> None:
-        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {
@@ -180,9 +180,8 @@ class FLIPFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     dynamics: CompiledFLIPProblem
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, dynamics: CompiledFLIPProblem, /) -> None:
-        if not isinstance(dynamics, CompiledFLIPProblem):
-            raise TypeError("dynamics must be CompiledFLIPProblem.")
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {"kind": "flip-fixed-step", "dynamics": dynamics.compilation_id}

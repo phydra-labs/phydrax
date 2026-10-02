@@ -22,6 +22,7 @@ from ...linalg import DenseLinearOperator, pseudoinverse, svd as svd_api
 from ...observation import ObservationRecord
 from ...optim import StateDesignProblem
 from ...spatial_sampling import PreparedObservationOperator
+from ...typing import checked
 
 
 class NeurofluidForward(Protocol):
@@ -50,6 +51,7 @@ class ImageSpaceObservation(StrictModule):
     standard_deviation: Array
     likelihood_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: PreparedObservationOperator,
@@ -60,8 +62,6 @@ class ImageSpaceObservation(StrictModule):
         *,
         observation_id: str,
     ) -> None:
-        if not isinstance(operator, PreparedObservationOperator):
-            raise TypeError("operator must be PreparedObservationOperator.")
         observed_ = jnp.asarray(observed)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         deviation = jnp.asarray(standard_deviation)
@@ -101,6 +101,7 @@ class ImageSpaceObservation(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_record(
         cls,
         operator: PreparedObservationOperator,
@@ -108,8 +109,6 @@ class ImageSpaceObservation(StrictModule):
         standard_deviation: ArrayLike,
         /,
     ) -> ImageSpaceObservation:
-        if not isinstance(record, ObservationRecord):
-            raise TypeError("record must be ObservationRecord.")
         return cls(
             operator,
             record.values,
@@ -210,6 +209,7 @@ class NeurofluidInverseProblem(StrictModule):
     regularization: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: NeurofluidParameterSchema,
@@ -219,10 +219,6 @@ class NeurofluidInverseProblem(StrictModule):
         *,
         regularization: float = 0.0,
     ) -> None:
-        if not isinstance(schema, NeurofluidParameterSchema):
-            raise TypeError("schema must be NeurofluidParameterSchema.")
-        if not isinstance(observation, ImageSpaceObservation):
-            raise TypeError("observation must be ImageSpaceObservation.")
         if not callable(forward):
             raise TypeError("forward must be callable.")
         penalty = float(regularization)

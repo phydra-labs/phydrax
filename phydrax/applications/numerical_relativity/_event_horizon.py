@@ -20,6 +20,7 @@ from phydrax.metrix._adm_exchange import ADMGridGeometry
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._surfaces import SphericalSpectralSurface
 
 
@@ -431,6 +432,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
     terminal_surface_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         terminal_surface: SphericalSpectralSurface,
@@ -450,8 +452,6 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         caustic_distance: float = 1.0e-6,
         plan_name: str = "offline-event-horizon-generator-trace",
     ) -> None:
-        if not isinstance(terminal_surface, SphericalSpectralSurface):
-            raise TypeError("terminal_surface must be a SphericalSpectralSurface.")
         positions = np.asarray(terminal_positions, dtype=np.float64)
         covectors = np.asarray(terminal_covectors, dtype=np.float64)
         active = np.asarray(terminal_active, dtype=np.bool_)

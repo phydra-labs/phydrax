@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity
 from .._sharp_clipping import (
     clip_positive_polygon as _clip_positive_polygon,
@@ -170,6 +171,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
     stabilization_policy: EmbeddedBoundaryStabilizationPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -180,8 +182,6 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         body_tag: int = 0,
         stabilization_policy: EmbeddedBoundaryStabilizationPolicy | None = None,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Embedded boundaries require unstructured FV geometry.")
         if discretization.cell_dimension != 2 or not isinstance(
             discretization.connectivity, PolygonalConnectivity
         ):

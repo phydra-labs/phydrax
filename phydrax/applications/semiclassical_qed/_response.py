@@ -22,6 +22,7 @@ from ..._trainable import NonTrainableState
 from ...linalg import PreparedRealCoordinateTree
 from ...solver._differential import DifferentialProblem, DifferentialSolution
 from ...solver._diffrax_backend import solve_diffrax
+from ...typing import checked
 from ._homogeneous import (
     _qed_state_coordinates,
     HomogeneousSpinorQEDPlan,
@@ -42,6 +43,7 @@ class HomogeneousSpinorQEDTangentState(StrictModule):
     electric_field_tangent: Array
     mode_spinor_tangent: Array
 
+    @checked
     def __init__(
         self,
         base: HomogeneousSpinorQEDState,
@@ -50,8 +52,6 @@ class HomogeneousSpinorQEDTangentState(StrictModule):
         mode_spinor_tangent: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(base, HomogeneousSpinorQEDState):
-            raise TypeError("base must be HomogeneousSpinorQEDState.")
         potential = jnp.asarray(vector_potential_tangent)
         field = jnp.asarray(electric_field_tangent)
         modes = jnp.asarray(mode_spinor_tangent, dtype=base.mode_spinors.dtype)
@@ -147,6 +147,7 @@ class PreparedHomogeneousSpinorQEDTangent(StrictModule, NonTrainableState):
     perturbation_source_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: PreparedHomogeneousSpinorQED,
@@ -158,8 +159,6 @@ class PreparedHomogeneousSpinorQEDTangent(StrictModule, NonTrainableState):
         electric_field_tangent: ArrayLike = 0.0,
         mode_spinor_tangent: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(base, PreparedHomogeneousSpinorQED):
-            raise TypeError("base must be PreparedHomogeneousSpinorQED.")
         if not callable(perturbation_current):
             raise TypeError("perturbation_current must be callable.")
         if (

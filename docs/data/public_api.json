@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "419d9d22c7b07ce28d11b68ce07252df08146ed33b6cf16c562db4d8ab0e3be6",
+  "manifest_id": "aa80ac8b5bf5d11439dbdabf15981ad8f631dd529c4c28e8bda68397d14678d5",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -36175,6 +36175,7 @@
       "phydrax.typing.VariadicDim",
       "phydrax.typing.as_array",
       "phydrax.typing.as_host_array",
+      "phydrax.typing.checked",
       "phydrax.typing.parse",
       "phydrax.typing.validate"
     ],

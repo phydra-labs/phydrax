@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
 from ._spherical import SphericalSpectralDiscretization, SphericalSpectralPlan
 from ._transfer import (
@@ -556,6 +557,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
     report: DealiasingReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: AbstractDealiasingPlan,
@@ -566,8 +568,6 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         modal_masks: tuple[Array, ...] = (),
         report: DealiasingReport,
     ) -> None:
-        if not isinstance(plan, AbstractDealiasingPlan):
-            raise TypeError("plan must be an AbstractDealiasingPlan.")
         tensor_pair = isinstance(retained, TensorSpectralDiscretization) and isinstance(
             evaluation, TensorSpectralDiscretization
         )
@@ -596,8 +596,6 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError("modal_masks must align with retained modal axes.")
-        if not isinstance(report, DealiasingReport):
-            raise TypeError("report must be a DealiasingReport.")
         embedding = prepare_spectral_modal_transfer(retained, evaluation)
         restriction = prepare_spectral_modal_transfer(evaluation, retained)
         self.plan = plan

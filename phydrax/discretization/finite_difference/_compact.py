@@ -30,6 +30,7 @@ from ...linalg import (
     solve_low_rank,
     TridiagonalLinearOperator,
 )
+from ...typing import checked
 from .._tensor_support import GridLocation, PreparedTensorGrid
 from ._request import DerivativeRequest
 
@@ -466,6 +467,7 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
     dtype: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -475,8 +477,6 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
         component_shape: Sequence[int] = (),
         dtype: DTypeLike = jnp.float64,
     ) -> None:
-        if not isinstance(request, DerivativeRequest):
-            raise TypeError("request must be a DerivativeRequest.")
         if request.bias != "centered" or request.boundary != "periodic":
             raise ValueError("Compact derivatives require centered periodic requests.")
         if request.derivative_order not in (1, 2) or request.accuracy_order not in (4, 6):

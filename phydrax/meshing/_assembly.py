@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PointCloudPlan, PreparedTensorGrid
 from ..discretization.iga import IsogeometricPlan
+from ..typing import checked
 from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
 
@@ -187,9 +188,8 @@ class MeshPart(StrictModule, NonTrainableState):
         self.require_scope(scope)
         return scope
 
+    @checked
     def require_scope(self, scope: MeshingScope, /) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         if (
             scope.source_id != self.name
             or scope.source_revision != self.part_id

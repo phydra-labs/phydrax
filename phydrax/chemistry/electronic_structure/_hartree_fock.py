@@ -29,6 +29,7 @@ from ...operators.quantum.gaussian import (
     point_charge_potential_matrix,
     PreparedGaussianBasis,
 )
+from ...typing import checked
 from ...units import BOHR, conversion_factor, derived_unit, ELEMENTARY_CHARGE, HARTREE
 from .._calculation import ElectronicCalculationPlan, make_electronic_evaluation
 from .._kernel import ElectronicKernelEvaluation
@@ -153,6 +154,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
     force_displacement: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -166,10 +168,6 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         linear_dependence_tolerance: float = 1.0e-9,
         force_displacement: float = 1.0e-4,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
-        if not isinstance(basis, PreparedGaussianBasis):
-            raise TypeError("basis must be PreparedGaussianBasis.")
         if basis.system_id != system.system_id:
             raise ValueError("Gaussian basis belongs to another system.")
         if not bool(np.all(np.asarray(system.active_mask))):
@@ -619,9 +617,8 @@ class NativeRHFProvider(AbstractElectronicProvider):
     provider_id: str = eqx.field(static=True)
     capabilities: ElectronicProviderCapabilities
 
+    @checked
     def __init__(self, plan: NativeRHFPlan, model_chemistry_id: str, /) -> None:
-        if not isinstance(plan, NativeRHFPlan):
-            raise TypeError("plan must be NativeRHFPlan.")
         model_id = str(model_chemistry_id).strip()
         if not model_id:
             raise ValueError("model_chemistry_id must be non-empty.")

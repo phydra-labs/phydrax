@@ -24,6 +24,8 @@ from phydrax.nn.operator.distribution import (
 )
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import checked
+
 
 def _gaussian_operator_contract(
     model: GaussianFunctionOperator,
@@ -70,6 +72,7 @@ class GaussianFunctionOperator(AbstractProbabilisticOperatorModel):
     in_size: Any
     out_size: int | Literal["scalar"]
 
+    @checked
     def __init__(
         self,
         base: AbstractOperatorModel,
@@ -83,8 +86,6 @@ class GaussianFunctionOperator(AbstractProbabilisticOperatorModel):
         fixed_scale: float = 1e-4,
         uncertainty_source: UncertaintySource = "observation",
     ) -> None:
-        if not isinstance(base, AbstractOperatorModel):
-            raise TypeError("GaussianFunctionOperator base must be a neural operator.")
         rank = int(factor_rank)
         if rank < 0:
             raise ValueError("factor_rank must be non-negative.")

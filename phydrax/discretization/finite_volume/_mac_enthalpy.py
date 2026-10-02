@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._diffusion import (
     ConservativeAdvectionPlan,
     ConservativeBoundaryCondition,
@@ -126,6 +126,7 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
     ]
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -140,8 +141,6 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
         ]
         | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         supplied = (
             {} if walls is None else {str(name): value for name, value in walls.items()}
         )
@@ -290,6 +289,7 @@ class MACEnthalpyTransportPlan(StrictModule, NonTrainableState):
     advection: MACEnthalpyAdvection = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -298,10 +298,6 @@ class MACEnthalpyTransportPlan(StrictModule, NonTrainableState):
         *,
         advection: MACEnthalpyAdvection = "upwind",
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
-        if not isinstance(boundaries, MACThermalBoundarySet):
-            raise TypeError("boundaries must be MACThermalBoundarySet.")
         if boundaries.operators.prepared_id != operators.prepared_id:
             raise ValueError("MAC enthalpy boundaries must share prepared operators.")
         advection = parse(advection, MACEnthalpyAdvection, "advection")
@@ -327,9 +323,8 @@ class PreparedMACEnthalpyTransport(StrictModule, NonTrainableState):
     diffusion: PreparedConservativeDiffusion
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACEnthalpyTransportPlan, /) -> None:
-        if not isinstance(plan, MACEnthalpyTransportPlan):
-            raise TypeError("plan must be MACEnthalpyTransportPlan.")
         operators = plan.operators
         discretization = operators.discretization
         zero_velocity = tuple(

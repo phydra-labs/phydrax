@@ -21,6 +21,7 @@ from ..linalg import (
     prepare as prepare_linear_solve,
     solve as solve_linear_system,
 )
+from ..typing import checked
 from ._decomposition import NonlinearAdditiveSchwarz, NonlinearSubdomain
 from ._linearization import JacobianPolicy
 from ._newton import NewtonKrylov
@@ -52,6 +53,7 @@ class ASPIN(AbstractNonlinearMethod):
     outer: NewtonKrylov = fixed_field()
     local_linear_policy: LinearSolvePolicy = fixed_field()
 
+    @checked
     def __init__(
         self,
         schwarz: NonlinearAdditiveSchwarz,
@@ -60,8 +62,6 @@ class ASPIN(AbstractNonlinearMethod):
         outer: NewtonKrylov | None = None,
         local_linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(schwarz, NonlinearAdditiveSchwarz):
-            raise TypeError("schwarz must be NonlinearAdditiveSchwarz.")
         outer_ = NewtonKrylov() if outer is None else outer
         if not isinstance(outer_, NewtonKrylov):
             raise TypeError("outer must be NewtonKrylov or None.")
@@ -88,6 +88,7 @@ class ASPIN(AbstractNonlinearMethod):
             nonlinear_preconditioning=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -97,10 +98,6 @@ class ASPIN(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
         if (
             termination.maximum_evaluations is not None
             and termination.maximum_evaluations < 2

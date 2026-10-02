@@ -19,6 +19,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._les_closures import (
     AlgebraicLESInputs,
     AlgebraicLESResult,
@@ -44,6 +45,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
     test_filter_ratio: tuple[float, float, float] = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_provenance: LESParameterProvenance,
@@ -51,10 +53,6 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
         test_filter_ratio: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(parameter_provenance, LESParameterProvenance):
-            raise TypeError("parameter_provenance must be LESParameterProvenance.")
-        if not isinstance(test_filter, ResolvedLESFilter):
-            raise TypeError("test_filter must be a ResolvedLESFilter.")
         resolved_filter = parameter_provenance.resolved_filter
         if resolved_filter.filter_id == test_filter.filter_id:
             raise ValueError("Resolved and test LES filters must be distinct.")
@@ -119,6 +117,7 @@ class DynamicLESInputs(StrictModule):
     provenance: DynamicLESProvenance
     accepted_update_mask: Array
 
+    @checked
     def __init__(
         self,
         leonard_tensor: ArrayLike,
@@ -129,10 +128,6 @@ class DynamicLESInputs(StrictModule):
         *,
         accepted_update_mask: ArrayLike,
     ) -> None:
-        if not isinstance(algebraic_inputs, AlgebraicLESInputs):
-            raise TypeError("algebraic_inputs must be AlgebraicLESInputs.")
-        if not isinstance(provenance, DynamicLESProvenance):
-            raise TypeError("provenance must be DynamicLESProvenance.")
         leonard = _inexact_array(leonard_tensor)
         modeled = _inexact_array(modeled_tensor)
         if leonard.ndim < 2 or leonard.shape[-2:] != (3, 3):
@@ -708,6 +703,7 @@ class DynamicSmagorinskyPlan(StrictModule, NonTrainableState):
     backscatter: AbstractBackscatterPolicy
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         averaging: AbstractDynamicLESAveraging,
@@ -715,12 +711,6 @@ class DynamicSmagorinskyPlan(StrictModule, NonTrainableState):
         backscatter: AbstractBackscatterPolicy,
         /,
     ) -> None:
-        if not isinstance(averaging, AbstractDynamicLESAveraging):
-            raise TypeError("averaging must be a dynamic LES averaging policy.")
-        if not isinstance(regularization, AbstractDenominatorRegularization):
-            raise TypeError("regularization must be a denominator policy.")
-        if not isinstance(backscatter, AbstractBackscatterPolicy):
-            raise TypeError("backscatter must be a backscatter policy.")
         self.averaging = averaging
         self.regularization = regularization
         self.backscatter = backscatter
@@ -753,16 +743,13 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     differentiation: _Differentiation = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DynamicSmagorinskyPlan,
         provenance: DynamicLESProvenance,
         /,
     ) -> None:
-        if not isinstance(plan, DynamicSmagorinskyPlan):
-            raise TypeError("plan must be DynamicSmagorinskyPlan.")
-        if not isinstance(provenance, DynamicLESProvenance):
-            raise TypeError("provenance must be DynamicLESProvenance.")
         self.averaging = plan.averaging
         self.regularization = plan.regularization
         self.backscatter = plan.backscatter
@@ -882,9 +869,8 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
             continuation_state=continuation_state,
         )
 
+    @checked
     def _validate_inputs(self, inputs: DynamicLESInputs, /) -> None:
-        if not isinstance(inputs, DynamicLESInputs):
-            raise TypeError("inputs must be DynamicLESInputs.")
         if inputs.provenance.provenance_id != self.provenance.provenance_id:
             raise ValueError("Dynamic LES input and prepared filter provenance differ.")
 

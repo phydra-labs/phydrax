@@ -54,6 +54,7 @@ from ..optim import (
     proximal_minimize,
     SimplexIndicator,
 )
+from ..typing import checked
 from ._audit_topology import _orient3d, _triangle_pairs_intersect
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._controls import (
@@ -351,6 +352,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -367,10 +369,6 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(mesh, CellMesh) or not isinstance(cap, (CellMesh, type(None))):
             raise TypeError("mesh must be CellMesh and cap CellMesh or None.")
-        if not isinstance(validity, CellValidityCertificate):
-            raise TypeError("validity must be CellValidityCertificate.")
-        if not isinstance(evidence, BoundaryLayerEvidence):
-            raise TypeError("evidence must be BoundaryLayerEvidence.")
         cap_ids = np.asarray(cap_vertices, dtype=np.int64)
         layers = np.asarray(layer_index, dtype=np.int32)
         cell_count = sum(block.cell_count for block in mesh.blocks)

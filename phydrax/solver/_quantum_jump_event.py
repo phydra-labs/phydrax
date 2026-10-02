@@ -24,6 +24,7 @@ from ..nonlinear import (
     ScalarRootProblem,
     TOMS748,
 )
+from ..typing import checked
 from ._quantum_jump import QuantumJumpProblem
 from ._quantum_trajectory_contract import QuantumTrajectoryPlan, QuantumTrajectoryStatus
 
@@ -63,6 +64,7 @@ class EventDrivenQuantumJumpResult(StrictModule):
     work: NonlinearWork
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         states: ArrayLike,
@@ -80,8 +82,6 @@ class EventDrivenQuantumJumpResult(StrictModule):
         self.times = jnp.asarray(times)
         self.events = events
         self.status = jnp.asarray(status, dtype=jnp.int32)
-        if not isinstance(work, NonlinearWork):
-            raise TypeError("work must be NonlinearWork.")
         self.work = work
         self.saturated = jnp.asarray(saturated, dtype=jnp.bool_)
         self.successful = jnp.asarray(successful, dtype=jnp.bool_) & (

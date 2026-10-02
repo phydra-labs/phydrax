@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations.fem._ir import LoweredOperatorProgram
 from ..equations.fem._worksets import WorksetProgram
+from ..typing import checked
 
 
 class ProductionResourceBudget(StrictModule, NonTrainableState):
@@ -138,14 +139,13 @@ class PreparedCompilationService:
     def entry_count(self) -> int:
         return len(self._executables)
 
+    @checked
     def compile(
         self,
         lowered: LoweredOperatorProgram,
         sample_inputs: Mapping[str, Any],
         /,
     ) -> Compiled:
-        if not isinstance(lowered, LoweredOperatorProgram):
-            raise TypeError("compile requires LoweredOperatorProgram.")
         backend = jax.default_backend()
         device = str(jax.devices()[0])
         key = canonical_fingerprint(

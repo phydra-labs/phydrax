@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._pairings import AbstractPairing, DiagonalPairing, EuclideanPairing
 
 
@@ -409,11 +410,10 @@ class DualSpace(AbstractVectorSpace):
 
     primal: AbstractVectorSpace
 
+    @checked
     def __init__(
         self, primal: AbstractVectorSpace, /, *, space_id: str | None = None
     ) -> None:
-        if not isinstance(primal, AbstractVectorSpace):
-            raise TypeError("primal must be an AbstractVectorSpace.")
         self.primal = primal
         self.space_id = _identifier(
             space_id,

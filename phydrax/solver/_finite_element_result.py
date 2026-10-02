@@ -23,6 +23,7 @@ from ..lifecycle import (
     open as open_lifecycle_archive,
     ResultManifest,
 )
+from ..typing import checked
 
 
 class FiniteElementRunConfiguration(StrictModule, NonTrainableState):
@@ -139,6 +140,7 @@ class FiniteElementResult(StrictModule, NonTrainableState):
     diagnostics: FiniteElementSolveDiagnostics
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_names: Sequence[str],
@@ -163,8 +165,6 @@ class FiniteElementResult(StrictModule, NonTrainableState):
             raise ValueError("Finite-element result fields are invalid.")
         if time_.shape != () or not prepared or not compilation:
             raise ValueError("Finite-element result metadata are invalid.")
-        if not isinstance(diagnostics, FiniteElementSolveDiagnostics):
-            raise TypeError("diagnostics must be FiniteElementSolveDiagnostics.")
         self.field_names = names
         self.fields = values
         self.time = time_

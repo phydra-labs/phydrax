@@ -20,6 +20,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ...units import (
     derived_unit,
     JOULE,
@@ -519,6 +520,7 @@ class NonlocalTunnelingPath(StrictModule):
     node_count: int = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         barrier: WKBBarrierPath,
@@ -528,8 +530,6 @@ class NonlocalTunnelingPath(StrictModule):
         *,
         provenance: str,
     ) -> None:
-        if not isinstance(barrier, WKBBarrierPath):
-            raise TypeError("barrier must be a WKBBarrierPath.")
         if (
             not isinstance(node_count, int)
             or isinstance(node_count, bool)

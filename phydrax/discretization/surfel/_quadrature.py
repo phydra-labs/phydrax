@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import PreparedSurfelDiscretization
 from ._geometry import SurfelGeometryState
 
@@ -32,6 +33,7 @@ class SurfelQuadraturePlan(NonTrainableState, StrictModule):
     deterministic: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: PreparedSurfelDiscretization,
@@ -39,8 +41,6 @@ class SurfelQuadraturePlan(NonTrainableState, StrictModule):
         *,
         deterministic: bool = False,
     ) -> None:
-        if not isinstance(discretization, PreparedSurfelDiscretization):
-            raise TypeError("discretization must be PreparedSurfelDiscretization.")
         self.discretization = discretization
         self.deterministic = bool(deterministic)
         self.plan_id = canonical_fingerprint(
@@ -51,14 +51,13 @@ class SurfelQuadraturePlan(NonTrainableState, StrictModule):
             }
         )
 
+    @checked
     def evaluate(
         self,
         geometry: SurfelGeometryState,
         values: ArrayLike,
         /,
     ) -> SurfelQuadratureResult:
-        if not isinstance(geometry, SurfelGeometryState):
-            raise TypeError("geometry must be SurfelGeometryState.")
         if geometry.discretization.prepared_id != self.discretization.prepared_id:
             raise ValueError("Surfel geometry uses a different discretization.")
         value = jnp.asarray(values, dtype=geometry.position.dtype)

@@ -27,6 +27,8 @@ from phydrax.nn.operator.architectures.dynamics._conditional_affine import (
 )
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 
+from ....typing import checked
+
 
 class TrainedChemicalConditionalAffineTransition(StrictModule):
     trained_operator: Any
@@ -37,6 +39,7 @@ class TrainedChemicalConditionalAffineTransition(StrictModule):
     minimum_duration: float | None = eqx.field(static=True)
     maximum_duration: float | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trained_operator: Any,
@@ -57,10 +60,6 @@ class TrainedChemicalConditionalAffineTransition(StrictModule):
             raise TypeError(
                 "trained_operator must contain ChemicalConditionalAffineOperator."
             )
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be StateLayout.")
-        if not isinstance(input_layout, InputLayout):
-            raise TypeError("input_layout must be InputLayout.")
         if state_layout.shape != (model.out_size,) or (
             state_layout.component_names != model.chemistry.mechanism.schema.species_names
         ):

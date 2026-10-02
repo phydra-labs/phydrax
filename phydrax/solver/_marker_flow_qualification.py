@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class MarkerFlowQualificationProfile(StrictModule, NonTrainableState):
@@ -123,21 +124,19 @@ class MarkerFlowQualificationPlan(StrictModule, NonTrainableState):
     profile: MarkerFlowQualificationProfile
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, profile: MarkerFlowQualificationProfile, /) -> None:
-        if not isinstance(profile, MarkerFlowQualificationProfile):
-            raise TypeError("profile must be MarkerFlowQualificationProfile.")
         self.profile = profile
         self.plan_id = canonical_fingerprint(
             {"kind": "marker-flow-qualification", "profile": profile.profile_id}
         )
 
+    @checked
     def evaluate(
         self,
         evidence: MarkerFlowQualificationEvidence,
         /,
     ) -> MarkerFlowQualificationResult:
-        if not isinstance(evidence, MarkerFlowQualificationEvidence):
-            raise TypeError("evidence must be MarkerFlowQualificationEvidence.")
         profile = self.profile
         residual = jnp.maximum(evidence.divergence_norm, evidence.marker_slip_norm)
         conservation = jnp.max(

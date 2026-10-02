@@ -34,6 +34,7 @@ from phydrax.kernels import (
 
 from .._measure_weights import normalized_weights
 from .._strict import StrictModule
+from ..typing import checked
 from ._measure_transform import FiniteMeasureRealization, lower_finite_measure
 
 
@@ -75,6 +76,7 @@ class IntervalKernelMean(AbstractKernelMean):
     amplitude: Array
     family: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interval: Interval1d,
@@ -84,8 +86,6 @@ class IntervalKernelMean(AbstractKernelMean):
         normalized: bool = False,
         target_id: str = "interval",
     ) -> None:
-        if not isinstance(interval, Interval1d):
-            raise TypeError("interval must be an Interval1d.")
         base, amplitude = _single_scale(kernel)
         if not isinstance(
             base, (SquaredExponentialKernel, Matern32Kernel, Matern52Kernel)
@@ -175,6 +175,7 @@ class FiniteMeasureKernelMean(AbstractKernelMean):
     physical_weights: Array
     block_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         realization: Any,
@@ -184,8 +185,6 @@ class FiniteMeasureKernelMean(AbstractKernelMean):
         block_size: int = 256,
         target_id: str | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a positive-definite kernel.")
         if not isinstance(block_size, Integral) or isinstance(block_size, bool):
             raise TypeError("block_size must be an integer.")
         size = int(block_size)
@@ -241,6 +240,7 @@ class FiniteFeatureKernelMean(AbstractKernelMean):
 
     feature_moment: Array
 
+    @checked
     def __init__(
         self,
         kernel: AbstractFiniteFeatureKernel,
@@ -251,8 +251,6 @@ class FiniteFeatureKernelMean(AbstractKernelMean):
         target_id: str,
         normalized: bool = True,
     ) -> None:
-        if not isinstance(kernel, AbstractFiniteFeatureKernel):
-            raise TypeError("kernel must be an AbstractFiniteFeatureKernel.")
         moment_dtype = (
             kernel.feature_factor.dtype
             if isinstance(kernel, FiniteFeatureKernel)

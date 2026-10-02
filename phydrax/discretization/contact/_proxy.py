@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator
+from ...typing import checked
 from ._guarantee import ContactGuaranteeLevel
 from ._precision import ContactPrecisionPolicy
 from ._surface import (
@@ -57,6 +58,7 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
     certified: bool = eqx.field(static=True)
     proxy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CollisionSurfacePlan,
@@ -65,8 +67,6 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
         *,
         certified: bool,
     ) -> None:
-        if not isinstance(topology, CollisionSurfacePlan):
-            raise TypeError("topology must be CollisionSurfacePlan.")
         error = np.asarray(approximation_error, dtype=np.float64)
         if error.shape == ():
             error = np.full((topology.vertex_count,), float(error), dtype=np.float64)

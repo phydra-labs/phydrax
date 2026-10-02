@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from ._frame import (
     AbstractAtomisticTrajectorySinkPlan,
@@ -28,6 +29,7 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
     coordinate_domain: AtomisticSiteDomain = eqx.field(static=True)
     reporter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sink: AbstractAtomisticTrajectorySinkPlan,
@@ -39,8 +41,6 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
         | AtomisticFrameFields.ENERGY,
         coordinate_domain: AtomisticSiteDomain = AtomisticSiteDomain.DOF_ATOMS,
     ) -> None:
-        if not isinstance(sink, AbstractAtomisticTrajectorySinkPlan):
-            raise TypeError("sink must be an atomistic trajectory sink plan.")
         stride_ = int(stride)
         if stride_ <= 0:
             raise ValueError("Reporter stride must be positive.")
@@ -58,13 +58,10 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def frame(
         self, dynamics: PreparedAtomisticDynamics, state: AtomisticDynamicsState, /
     ) -> AtomisticFrame:
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(state, AtomisticDynamicsState):
-            raise TypeError("state must be AtomisticDynamicsState.")
         if state.prepared_dynamics_id != dynamics.prepared_id:
             raise ValueError("Reporter state belongs to another dynamics runtime.")
         if state.force.program_id != dynamics.potential.prepared_id:

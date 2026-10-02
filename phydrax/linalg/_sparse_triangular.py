@@ -17,7 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 
 
@@ -83,6 +83,7 @@ class SparseTriangularFactor(StrictModule):
     pivot_tolerance: float = eqx.field(static=True)
     factor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         analysis: SparseTriangularAnalysis,
@@ -92,8 +93,6 @@ class SparseTriangularFactor(StrictModule):
         pivot_tolerance: float = 0.0,
         factor_id: str | None = None,
     ) -> None:
-        if not isinstance(analysis, SparseTriangularAnalysis):
-            raise TypeError("analysis must be SparseTriangularAnalysis.")
         values_ = jnp.asarray(values)
         if values_.shape != analysis.indices.shape:
             raise ValueError("Triangular values must match the analyzed CSR pattern.")

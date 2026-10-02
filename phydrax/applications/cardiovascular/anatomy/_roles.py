@@ -17,6 +17,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellMesh
 from ....discretization._cell_complex import TetrahedralConnectivity
+from ....typing import checked
 
 
 def _name(value: str, description: str, /) -> str:
@@ -219,6 +220,7 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
     evidence: BoundaryRoleEvidence
     roles_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -227,16 +229,12 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
         *,
         profile: CardiacBoundaryProfile,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         if mesh.topological_dimension != 3 or not all(
             block.cell_kind == "tetrahedron" for block in mesh.blocks
         ):
             raise ValueError("Cardiac boundary roles require an affine tetrahedral mesh.")
         if not isinstance(mesh.connectivity, TetrahedralConnectivity):
             raise TypeError("Cardiac boundary roles require tetrahedral connectivity.")
-        if not isinstance(profile, CardiacBoundaryProfile):
-            raise TypeError("profile must be a CardiacBoundaryProfile.")
         if isinstance(assignments, Mapping):
             normalized = tuple(
                 BoundaryRoleAssignment(name, indices)

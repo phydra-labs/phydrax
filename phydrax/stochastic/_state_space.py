@@ -34,7 +34,7 @@ from .._model._component import bind_positional_component
 from .._model._ports import require_port_shapes
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._linear_gaussian import (
     degenerate_gaussian_log_prob,
     LinearGaussianDynamics,
@@ -317,11 +317,10 @@ class DistributionStatePrior(AbstractStatePrior):
     prior_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, distribution: AbstractProcessDistribution, /, *, prior_id: str
     ) -> None:
-        if not isinstance(distribution, AbstractProcessDistribution):
-            raise TypeError("distribution must implement AbstractProcessDistribution.")
         self.distribution = distribution
         self.state_shape = distribution.event_shape
         self.batch_shape = distribution.batch_shape
@@ -655,6 +654,7 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
     approximation_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law: AbstractMarginalTransitionLaw,
@@ -662,8 +662,6 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         *,
         approximation_id: str = "marginal-transition",
     ) -> None:
-        if not isinstance(law, AbstractMarginalTransitionLaw):
-            raise TypeError("law must implement AbstractMarginalTransitionLaw.")
         self.law = law
         self.state_shape = law.state_shape
         self.process_id = _name(law.process_id, owner="law.process_id")
@@ -1127,6 +1125,7 @@ class ModelObservationLocation(StrictModule):
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     time_input: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -1138,8 +1137,6 @@ class ModelObservationLocation(StrictModule):
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(time_input, bool):
             raise TypeError("time_input must be bool.")
         states = _shape(state_shape, owner="state_shape")
@@ -1455,6 +1452,7 @@ class StateSpaceModel(StrictModule):
     discretization_id: str | None = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prior: AbstractStatePrior,
@@ -1468,12 +1466,6 @@ class StateSpaceModel(StrictModule):
         discretization_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(prior, AbstractStatePrior):
-            raise TypeError("prior must implement AbstractStatePrior.")
-        if not isinstance(transition, AbstractTransitionKernel):
-            raise TypeError("transition must implement AbstractTransitionKernel.")
-        if not isinstance(observation, AbstractObservationModel):
-            raise TypeError("observation must implement AbstractObservationModel.")
         if (
             prior.state_shape != transition.state_shape
             or prior.state_shape != observation.state_shape
@@ -1614,6 +1606,7 @@ class StateSpaceProblem(StrictModule):
     args: Any
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: StateSpaceModel,
@@ -1625,10 +1618,6 @@ class StateSpaceProblem(StrictModule):
         args: Any = None,
         input_signal: AbstractStateSpaceInput | None = None,
     ) -> None:
-        if not isinstance(model, StateSpaceModel):
-            raise TypeError("model must be a StateSpaceModel.")
-        if not isinstance(observations, ObservationSequence):
-            raise TypeError("observations must be an ObservationSequence.")
         if model.prior.batch_shape != observations.case_shape:
             raise ValueError("Prior batch_shape must equal the observation case_shape.")
         if model.observation_shape != observations.observation_shape:

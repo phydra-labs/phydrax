@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import checked
 from .._conservation_boundary import PrescribedNormalFluxBoundary, SourceFunction
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
@@ -102,6 +103,7 @@ class BlockAMRFiniteVolumePlan(StrictModule):
     source_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hierarchy: PreparedFDAMRHierarchy,
@@ -114,10 +116,6 @@ class BlockAMRFiniteVolumePlan(StrictModule):
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(hierarchy, PreparedFDAMRHierarchy):
-            raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
-        if not isinstance(method, FiniteVolumeMethodPlan):
-            raise TypeError("method must be FiniteVolumeMethodPlan.")
         if not isinstance(method.interface_solver, AbstractNumericalFluxPlan):
             raise TypeError("Block AMR finite volumes require a numerical-flux method.")
         if method.viscous is not None:
@@ -126,8 +124,6 @@ class BlockAMRFiniteVolumePlan(StrictModule):
             )
         if method.closure is not None:
             method.closure.admit_system(system)
-        if not isinstance(boundaries, FiniteVolumeBoundarySet):
-            raise TypeError("boundaries must be FiniteVolumeBoundarySet.")
         hierarchy_plan = hierarchy.plan.hierarchy
         if boundaries.axis_names != hierarchy_plan.grid.axis_names:
             raise ValueError("Boundary axes must match the block hierarchy geometry.")
@@ -208,14 +204,13 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
     level_cell_offsets: tuple[int, ...] = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: BlockAMRFiniteVolumePlan,
         topology: BlockHierarchyTopology,
         /,
     ) -> None:
-        if not isinstance(plan, BlockAMRFiniteVolumePlan):
-            raise TypeError("plan must be BlockAMRFiniteVolumePlan.")
         hierarchy_plan = plan.hierarchy.plan.hierarchy
         if not isinstance(topology, BlockHierarchyTopology) or (
             topology.plan.plan_id != hierarchy_plan.plan_id
@@ -825,6 +820,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
             speeds.append(speed)
         return tuple(fluxes), tuple(speeds)
 
+    @checked
     def evaluate(
         self,
         time: ArrayLike,
@@ -837,8 +833,6 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
         evidence_version: ArrayLike = 0,
     ) -> BlockAMRFiniteVolumeStageResult:
         self._validate_state(state)
-        if not isinstance(fill_patch, FDAMRFillPatchResult):
-            raise TypeError("fill_patch must be FDAMRFillPatchResult.")
         # Completion is enforced by the per-workspace validity error below; avoid
         # Python truth conversion of the dynamic aggregate flag under JIT.
         workspaces = fill_patch.workspaces

@@ -32,6 +32,7 @@ from ..._interpolation import (
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace
+from ...typing import checked
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
@@ -108,6 +109,7 @@ class MACPassiveTracerMacCormackPlan(StrictModule, NonTrainableState):
     interpolation: MACPassiveTracerInterpolation = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -118,10 +120,6 @@ class MACPassiveTracerMacCormackPlan(StrictModule, NonTrainableState):
         characteristic_integrator: MACPassiveTracerCharacteristicIntegrator = "midpoint",
         interpolation: MACPassiveTracerInterpolation = "multilinear",
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
-        if not isinstance(tracer_space, DiscreteFieldSpace):
-            raise TypeError("tracer_space must be a DiscreteFieldSpace.")
         if characteristic_integrator != "midpoint":
             raise ValueError("Passive-tracer characteristics require midpoint tracing.")
         if interpolation != "multilinear":
@@ -239,9 +237,8 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACPassiveTracerMacCormackPlan, /) -> None:
-        if not isinstance(plan, MACPassiveTracerMacCormackPlan):
-            raise TypeError("plan must be MACPassiveTracerMacCormackPlan.")
         tracer_vector_space = plan.tracer_space.vector_space
         if not isinstance(tracer_vector_space, ArraySpace):
             raise TypeError("The prepared tracer plan must own an ArraySpace.")

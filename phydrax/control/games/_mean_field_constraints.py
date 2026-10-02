@@ -22,6 +22,7 @@ from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
+from ...typing import checked
 from ._constraints import (
     GameConstraintBlock,
     GameConstraintLayout,
@@ -118,6 +119,7 @@ class MeanFieldIndividualConstraintEvidence(StrictModule):
     sampled_only: bool = eqx.field(static=True)
     certified: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         feasibility: GameFeasibilityEvidence,
@@ -129,8 +131,6 @@ class MeanFieldIndividualConstraintEvidence(StrictModule):
         evidence_id: str,
         valid: ArrayLike = True,
     ) -> None:
-        if not isinstance(feasibility, GameFeasibilityEvidence):
-            raise TypeError("feasibility must be GameFeasibilityEvidence.")
         if feasibility.case_shape != ():
             raise ValueError(
                 "Mean-field individual feasibility evidence must have scalar case shape."
@@ -301,6 +301,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
     multiplier_callback_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fixed_point_problem: MeanFieldGameFixedPointProblem,
@@ -337,16 +338,8 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         multiplier_callback_id: str | None = None,
         problem_id: str,
     ) -> None:
-        if not isinstance(fixed_point_problem, MeanFieldGameFixedPointProblem):
-            raise TypeError(
-                "fixed_point_problem must be a MeanFieldGameFixedPointProblem."
-            )
-        if not isinstance(constraints, OpenLoopGameConstraints):
-            raise TypeError("constraints must be OpenLoopGameConstraints.")
         if not isinstance(concept, MeanFieldConstraintConcept):
             raise TypeError("concept must be a MeanFieldConstraintConcept.")
-        if not isinstance(multiplier_layout, GameMultiplierLayout):
-            raise TypeError("multiplier_layout must be a GameMultiplierLayout.")
 
         num_path_sites = fixed_point_problem.initial_flow.times.size - 1
         layout = constraints.layout(num_path_sites=num_path_sites)

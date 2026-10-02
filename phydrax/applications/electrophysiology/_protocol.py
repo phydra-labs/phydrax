@@ -18,6 +18,7 @@ from jax import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._cable import (
     CableState,
     CableStepInputs,
@@ -183,6 +184,7 @@ class ElectrophysiologyProtocol(StrictModule, NonTrainableState):
     recording: RecordingPlan
     protocol_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         recording: RecordingPlan,
@@ -191,8 +193,6 @@ class ElectrophysiologyProtocol(StrictModule, NonTrainableState):
         current_clamps: Sequence[CurrentClamp] = (),
         voltage_clamps: Sequence[VoltageClamp] = (),
     ) -> None:
-        if not isinstance(recording, RecordingPlan):
-            raise TypeError("recording must be a RecordingPlan.")
         currents = tuple(current_clamps)
         voltages = tuple(voltage_clamps)
         if any(not isinstance(value, CurrentClamp) for value in currents):

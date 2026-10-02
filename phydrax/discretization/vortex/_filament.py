@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class VortexFilamentTopology(StrictModule, NonTrainableState):
@@ -163,6 +164,7 @@ class VortexFilamentState(StrictModule):
     core_radius: Array
     state_layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: VortexFilamentTopology,
@@ -171,8 +173,6 @@ class VortexFilamentState(StrictModule):
         core_radius: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(topology, VortexFilamentTopology):
-            raise TypeError("topology must be a VortexFilamentTopology.")
         vertices = jnp.asarray(vertex_position)
         strength = jnp.asarray(circulation)
         core = jnp.asarray(core_radius, dtype=vertices.dtype)

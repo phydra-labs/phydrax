@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticSystemPlan, AtomisticUnitSystem
+from ...typing import checked
 from ...units import BOHR, conversion_factor, DALTON, ELEMENTARY_CHARGE, HARTREE
 from .._context import ElectrostaticEmbeddingState
 from .._state import MolecularElectronicSectorPlan
@@ -42,6 +43,7 @@ class QuantumRegionPlan(StrictModule, NonTrainableState):
     spin_multiplicity: int = eqx.field(static=True)
     region_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -53,8 +55,6 @@ class QuantumRegionPlan(StrictModule, NonTrainableState):
         total_charge: int = 0,
         spin_multiplicity: int = 1,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         ids = tuple(particle_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("QM particle IDs must be non-empty and unique.")
@@ -296,6 +296,7 @@ class SubtractiveQMMMSurface(AbstractPreparedPotentialEnergySurface):
     surface_id: str = eqx.field(static=True)
     capabilities: PotentialEnergySurfaceCapabilities
 
+    @checked
     def __init__(
         self,
         region: PreparedQuantumRegion,
@@ -304,8 +305,6 @@ class SubtractiveQMMMSurface(AbstractPreparedPotentialEnergySurface):
         classical_model: AbstractPreparedPotentialEnergySurface,
         /,
     ) -> None:
-        if not isinstance(region, PreparedQuantumRegion):
-            raise TypeError("region must be PreparedQuantumRegion.")
         surfaces = (classical_full, quantum_model, classical_model)
         if any(
             not isinstance(value, AbstractPreparedPotentialEnergySurface)
@@ -465,6 +464,7 @@ class CallableEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
     provider_id: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evaluator: EmbeddedEvaluator,
@@ -483,8 +483,6 @@ class CallableEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
         region_system = str(region_system_id).strip()
         if not region_system:
             raise ValueError("region_system_id must be non-empty.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         self.evaluator = evaluator
         self.declared_provider_id = provider
         self.region_system_id = region_system
@@ -527,9 +525,8 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
     unit_system_id: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: NativeRHFPlan, /) -> None:
-        if not isinstance(plan, NativeRHFPlan):
-            raise TypeError("plan must be NativeRHFPlan.")
         self.plan = plan
         self.region_system_id = plan.system.system_id
         self.unit_system_id = plan.system.units.unit_system_id
@@ -633,6 +630,7 @@ class ElectrostaticEmbeddingQMMMSurface(AbstractPreparedPotentialEnergySurface):
     surface_id: str = eqx.field(static=True)
     capabilities: PotentialEnergySurfaceCapabilities
 
+    @checked
     def __init__(
         self,
         region: PreparedQuantumRegion,
@@ -641,16 +639,6 @@ class ElectrostaticEmbeddingQMMMSurface(AbstractPreparedPotentialEnergySurface):
         classical_partition_id: str,
         /,
     ) -> None:
-        if not isinstance(region, PreparedQuantumRegion):
-            raise TypeError("region must be PreparedQuantumRegion.")
-        if not isinstance(classical_partition, AbstractPreparedPotentialEnergySurface):
-            raise TypeError(
-                "classical_partition must be a prepared potential-energy surface."
-            )
-        if not isinstance(quantum_provider, AbstractEmbeddedRegionProvider):
-            raise TypeError(
-                "quantum_provider must implement AbstractEmbeddedRegionProvider."
-            )
         if quantum_provider.region_system_id != region.region_system.system_id:
             raise ValueError(
                 "Embedded provider belongs to another quantum-region system."

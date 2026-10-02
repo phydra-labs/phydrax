@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
+from ...typing import checked
 from ._anti_trapping import AntiTrappingCurrentEvaluation, AntiTrappingCurrentPlan
 from ._coupling_graph import PhaseFieldCouplingGraph
 from ._electrostatic import (
@@ -187,6 +188,7 @@ class CoupledMultiphysicsPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def initialize(
         self,
         thermal: NonisothermalSolidificationState,
@@ -198,8 +200,6 @@ class CoupledMultiphysicsPlan(StrictModule, NonTrainableState):
         component_inventory: ArrayLike,
         thermal_reservoir: ArrayLike,
     ) -> CoupledMultiphysicsState:
-        if not isinstance(thermal, NonisothermalSolidificationState):
-            raise TypeError("thermal must be NonisothermalSolidificationState.")
         scalars = tuple(
             jnp.asarray(value, dtype=thermal.temperature.dtype)
             for value in (

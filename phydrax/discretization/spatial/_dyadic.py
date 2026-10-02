@@ -15,6 +15,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
+from ...typing import checked
 from ._morton import (
     _morton_decode_host,
     _morton_encode_host,
@@ -145,6 +146,7 @@ class AdaptiveDyadicGridPlan(StrictModule):
             raise ValueError("Leaf keys violate the requested dyadic invariants.")
         return topology
 
+    @checked
     def adapt(
         self,
         previous: DyadicCellTopology,
@@ -153,8 +155,6 @@ class AdaptiveDyadicGridPlan(StrictModule):
         refine_mask: jax.Array | None = None,
         coarsen_mask: jax.Array | None = None,
     ) -> DyadicTopologyTransition:
-        if not isinstance(previous, DyadicCellTopology):
-            raise TypeError("previous must be DyadicCellTopology.")
         expected = (self.cell_capacity,)
         refine = (
             np.zeros(expected, dtype=np.bool_)

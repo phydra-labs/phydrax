@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._regulators import FunctionalRGStatus
 from ._wetterich import _volume_factor
 
@@ -223,6 +223,7 @@ class GrossNeveuYukawaFlowPlan(StrictModule, NonTrainableState):
     volume_factor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fermion_flavors: int,
@@ -236,8 +237,6 @@ class GrossNeveuYukawaFlowPlan(StrictModule, NonTrainableState):
         flavors = int(fermion_flavors)
         scalars = int(scalar_components)
         dimension_ = float(dimension)
-        if not isinstance(matsubara, MatsubaraThresholdPlan):
-            raise TypeError("matsubara must be MatsubaraThresholdPlan.")
         if flavors <= 0 or scalars <= 0 or not 2.0 < dimension_ <= 4.0:
             raise ValueError("Gross--Neveu/Yukawa truncation data are invalid.")
         representation = parse(
@@ -261,14 +260,13 @@ class GrossNeveuYukawaFlowPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         state: FermionBosonTruncationState,
         temperature_over_scale: ArrayLike = 0.0,
         /,
     ) -> FermionBosonFlowEvaluation:
-        if not isinstance(state, FermionBosonTruncationState):
-            raise TypeError("state must be FermionBosonTruncationState.")
         thresholds = self.matsubara.evaluate(
             temperature_over_scale, state.scalar_mass_squared, 0.0
         )

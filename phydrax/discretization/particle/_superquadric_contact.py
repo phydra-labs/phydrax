@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleDiscretization
 from ._rigid_body import quaternion_rotation_matrix, RigidBodySetPlan
 
@@ -131,13 +132,10 @@ class PreparedSuperquadricSet(StrictModule, NonTrainableState):
     material_ids: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: SuperquadricSetPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, SuperquadricSetPlan):
-            raise TypeError("plan must be a SuperquadricSetPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if particles.ambient_dimension != 3 or plan.semi_axes.shape != (
             particles.capacity,
             3,

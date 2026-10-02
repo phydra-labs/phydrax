@@ -32,6 +32,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...typing import checked
 
 
 class WaveFiniteDifferenceState(StrictModule):
@@ -285,13 +286,10 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
     action_convention: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: PeriodicWaveFiniteDifferencePlan, grid: PreparedTensorGrid, /
     ) -> None:
-        if not isinstance(plan, PeriodicWaveFiniteDifferencePlan):
-            raise TypeError("plan must be PeriodicWaveFiniteDifferencePlan.")
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be PreparedTensorGrid.")
         if not 1 <= len(grid.shape) <= 3:
             raise ValueError("Periodic FD wave grids support one to three dimensions.")
         if any(axis.primary_entity != "interval" for axis in grid.structured_axes):
@@ -430,11 +428,10 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
     def reduced_planck_constant(self) -> float:
         return self.plan.reduced_planck_constant
 
+    @checked
     def _validate_state(
         self, state: WaveFiniteDifferenceState, /
     ) -> WaveFiniteDifferenceState:
-        if not isinstance(state, WaveFiniteDifferenceState):
-            raise TypeError("state must be WaveFiniteDifferenceState.")
         psi = jnp.asarray(state.psi)
         time = jnp.asarray(state.coordinate_time, dtype=self.real_dtype)
         if psi.shape != self.grid.shape or np.dtype(psi.dtype) != self.dtype:

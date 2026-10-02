@@ -19,6 +19,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization.lattice_boltzmann import LatticeBoltzmannDiscretization
+from ....typing import checked
 from .._quantities import cardiovascular_quantity
 from ..circulation._components import PressureFlowComponent
 from ._domain import FixedWallLumenRegion
@@ -88,14 +89,13 @@ class CirculationPortBinding(StrictModule, NonTrainableState):
     qualified_port_id: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: PressureFlowComponent,
         component_port_name: str,
         /,
     ) -> None:
-        if not isinstance(component, PressureFlowComponent):
-            raise TypeError("component must be a circulation PressureFlowComponent.")
         port_name = str(component_port_name)
         port = component.port(port_name)
         if len(port.potentials) != 1 or len(port.flows) != 1:
@@ -129,6 +129,7 @@ class PressureTerminalPort(StrictModule, NonTrainableState):
     terminal_id: str = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         terminal_id: str,
@@ -142,10 +143,6 @@ class PressureTerminalPort(StrictModule, NonTrainableState):
         reference = float(pressure_reference_kpa)
         if not identifier:
             raise ValueError("terminal_id must be nonempty.")
-        if not isinstance(face, TerminalFace):
-            raise TypeError("face must be TerminalFace.")
-        if not isinstance(circulation, CirculationPortBinding):
-            raise TypeError("circulation must be CirculationPortBinding.")
         if not np.isfinite(reference):
             raise ValueError("pressure_reference_kpa must be finite.")
         self.face = face
@@ -174,6 +171,7 @@ class FlowTerminalPort(StrictModule, NonTrainableState):
     terminal_id: str = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         terminal_id: str,
@@ -187,10 +185,6 @@ class FlowTerminalPort(StrictModule, NonTrainableState):
         reference = float(pressure_reference_kpa)
         if not identifier:
             raise ValueError("terminal_id must be nonempty.")
-        if not isinstance(face, TerminalFace):
-            raise TypeError("face must be TerminalFace.")
-        if not isinstance(circulation, CirculationPortBinding):
-            raise TypeError("circulation must be CirculationPortBinding.")
         if not np.isfinite(reference):
             raise ValueError("pressure_reference_kpa must be finite.")
         self.face = face
@@ -448,9 +442,8 @@ class PreparedTerminalMeasurements(StrictModule, NonTrainableState):
             self.terminal_ids,
         )
 
+    @checked
     def validate_values(self, values: TerminalPortValues, /) -> TerminalPortValues:
-        if not isinstance(values, TerminalPortValues):
-            raise TypeError("values must be TerminalPortValues.")
         if values.pressure_kpa.shape != (self.terminal_count,):
             raise ValueError("Terminal values do not match the prepared terminal order.")
         return values

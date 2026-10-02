@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from .._strict import StrictModule
 from ..linalg import HermitianSpectrum, solve_matrix_equation, sylvester_equation
 from ..metrix import FermionicGaussianState
+from ..typing import checked
 
 
 class FermionicGaussianProblem(StrictModule):
@@ -20,6 +21,7 @@ class FermionicGaussianProblem(StrictModule):
     initial_state: FermionicGaussianState
     problem_id: str
 
+    @checked
     def __init__(
         self,
         drift: ArrayLike,
@@ -29,8 +31,6 @@ class FermionicGaussianProblem(StrictModule):
         *,
         problem_id: str = "fermionic-gaussian",
     ) -> None:
-        if not isinstance(initial_state, FermionicGaussianState):
-            raise TypeError("initial_state must be FermionicGaussianState.")
         drift_ = jnp.asarray(drift, dtype=jnp.float64)
         diffusion_ = jnp.asarray(diffusion, dtype=jnp.float64)
         if (

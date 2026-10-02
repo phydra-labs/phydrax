@@ -21,6 +21,7 @@ from ..discretization import (
     DiscretizationRole,
     PreparedStencilProgram,
 )
+from ..typing import checked
 
 
 class StencilStateLayout(StrictModule):
@@ -81,9 +82,8 @@ class CompiledStencilDynamics(StrictModule):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, program: PreparedStencilProgram, /) -> None:
-        if not isinstance(program, PreparedStencilProgram):
-            raise TypeError("program must be a PreparedStencilProgram.")
         layout = StencilStateLayout(
             program.plan.field_names,
             program.plan.discretization.grid.shape,

@@ -22,6 +22,7 @@ from ...linalg import (
     FunctionLinearOperator,
     LinearSolvePolicy,
 )
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ class CoordinateObservation(StrictModule, NonTrainableState):
     operator: FunctionLinearOperator
     observation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_space: AbstractVectorSpace,
@@ -46,8 +48,6 @@ class CoordinateObservation(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         observation_id: str = "coordinate-observation",
     ) -> None:
-        if not isinstance(state_space, AbstractVectorSpace):
-            raise TypeError("state_space must be AbstractVectorSpace.")
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         if indices_.ndim != 1 or indices_.size == 0:
             raise ValueError("Observation indices must be one non-empty rank-1 array.")
@@ -107,6 +107,7 @@ class FiniteElementLeastSquaresObjective(StrictModule, NonTrainableState):
     precision: Array
     objective_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observation: CoordinateObservation,
@@ -116,8 +117,6 @@ class FiniteElementLeastSquaresObjective(StrictModule, NonTrainableState):
         precision: ArrayLike = 1.0,
         objective_id: str = "finite-element-least-squares",
     ) -> None:
-        if not isinstance(observation, CoordinateObservation):
-            raise TypeError("observation must be CoordinateObservation.")
         target_ = jnp.asarray(target)
         precision_ = jnp.asarray(precision)
         if target_.shape != observation.weights.shape:

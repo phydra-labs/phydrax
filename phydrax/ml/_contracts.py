@@ -22,6 +22,7 @@ from .._differentiation import (
 )
 from .._model import AbstractArrayModel, FrozenModel, ModelPorts, PortProvider
 from .._strict import StrictModule
+from ..typing import checked
 from ._batch import MLBatch
 from ._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
@@ -118,6 +119,7 @@ class FitResult(StrictModule):
     derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -129,8 +131,6 @@ class FitResult(StrictModule):
         method: str,
         derivative_contract: DerivativeContract,
     ) -> None:
-        if not isinstance(derivative_contract, DerivativeContract):
-            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.model = model if isinstance(model, FrozenModel) else FrozenModel(model)
         self.diagnostics = diagnostics
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)

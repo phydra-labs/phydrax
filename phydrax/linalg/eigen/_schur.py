@@ -17,6 +17,7 @@ from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
@@ -43,6 +44,7 @@ class SchurEigenproblem(StrictModule):
     operator: AbstractLinearOperator
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -50,8 +52,6 @@ class SchurEigenproblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
             raise ValueError("Schur eigenproblems require an unbatched endomorphism.")
         if not jnp.issubdtype(_coordinate_dtype(operator.source), jnp.inexact):

@@ -34,6 +34,7 @@ from ..linalg import (
     PreparedLinearization,
     PyTreeSpace,
 )
+from ..typing import checked
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._temporal_method import (
@@ -108,6 +109,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
     atol: float = eqx.field(static=True)
     max_steps: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: ContinuousSystem,
@@ -126,8 +128,6 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         max_steps: int | None = 4096,
         evolution_id: str | None = None,
     ) -> None:
-        if not isinstance(system, ContinuousSystem):
-            raise TypeError("DiffraxEvolution system must be a ContinuousSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
             raise TypeError("input_policy must be an AbstractInputPolicy or None.")
         if (system.input_layout is None) != (input_policy is None):

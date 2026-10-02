@@ -9,6 +9,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import AbstractFiniteRealAlgebraSpec
 
 
@@ -21,6 +22,7 @@ class AlgebraElementLayout(StrictModule, NonTrainableState):
     algebra_axis: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: AbstractFiniteRealAlgebraSpec,
@@ -28,8 +30,6 @@ class AlgebraElementLayout(StrictModule, NonTrainableState):
         *,
         algebra_axis: int = -1,
     ) -> None:
-        if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
-            raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         axis = int(algebra_axis)
         self.algebra = algebra
         self.basis_indices = tuple(range(algebra.coordinate_dimension))

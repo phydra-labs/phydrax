@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CochainDiscretization
+from ..typing import checked
 
 
 class CochainRatePartition(StrictModule, NonTrainableState):
@@ -88,6 +89,7 @@ class CochainMultiratePlan(StrictModule):
     energy: Callable[[Any], ArrayLike] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: CochainRatePartition,
@@ -95,8 +97,6 @@ class CochainMultiratePlan(StrictModule):
         energy: Callable[[Any], ArrayLike],
         /,
     ) -> None:
-        if not isinstance(partition, CochainRatePartition):
-            raise TypeError("partition must be CochainRatePartition.")
         if not callable(update) or not callable(energy):
             raise TypeError("Multirate update/energy must be callable.")
         self.partition = partition

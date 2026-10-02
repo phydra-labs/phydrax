@@ -34,7 +34,7 @@ from ...discretization.particle import ParticleDiscretization
 from ...discretization.spectral import PeriodicFourierShellPlan
 from ...discretization.splatting import PreparedParticleGridSplat
 from ...observation import LinearObservationPlan, TheoryVector
-from ...typing import parse
+from ...typing import checked, parse
 from ._halo_finder import FoFFinderResult, PeriodicFoFFinderPlan
 from ._mixed_matter import MixedCosmologyDiagnostics
 from ._nonlinear_closure import LensingPlanePlan, LightConePlan, LightConeResult
@@ -239,6 +239,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
     valid_shell_indices: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wave: PreparedPeriodicWaveDarkMatter,
@@ -248,10 +249,6 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
         *,
         relative_phase_amplitude_floor: float = 1.0e-10,
     ) -> None:
-        if not isinstance(wave, PreparedPeriodicWaveDarkMatter):
-            raise TypeError("wave must be PreparedPeriodicWaveDarkMatter.")
-        if not isinstance(shells, PeriodicFourierShellPlan):
-            raise TypeError("shells must be PeriodicFourierShellPlan.")
         if shells.source_shape != wave.discretization.physical_shape:
             raise ValueError("Wave and Fourier-shell physical shapes disagree.")
         lengths = tuple(
@@ -462,6 +459,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
             "physical-peculiar-velocity circulation around comoving plaquettes",
         )
 
+    @checked
     def evaluate(
         self,
         state: WaveDarkMatterState,
@@ -470,8 +468,6 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
         source_product_id: str,
     ) -> WaveDarkMatterObservableProduct:
         source = _identifier(source_product_id, "source_product_id")
-        if not isinstance(state, WaveDarkMatterState):
-            raise TypeError("state must be WaveDarkMatterState.")
         psi = jnp.asarray(state.psi)
         if psi.shape != self.shells.source_shape:
             raise ValueError("Wave state does not match the observable grid.")
@@ -805,6 +801,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
     box_lengths: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedParticleGridSplat,
@@ -812,8 +809,6 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         radial_edges: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(transfer, PreparedParticleGridSplat):
-            raise TypeError("transfer must be PreparedParticleGridSplat.")
         dimension = transfer.particles.ambient_dimension
         if dimension != 3:
             raise ValueError(
@@ -1059,6 +1054,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
             global_anisotropy_identified,
         )
 
+    @checked
     def evaluate(
         self,
         state: CosmologicalParticleState,
@@ -1067,8 +1063,6 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         statistical_weights: ArrayLike | None = None,
         source_product_id: str,
     ) -> ParticleDarkMatterObservableProduct:
-        if not isinstance(state, CosmologicalParticleState):
-            raise TypeError("state must be CosmologicalParticleState.")
         source = _identifier(source_product_id, "source_product_id")
         particles = self.transfer.particles
         if (
@@ -1483,6 +1477,7 @@ class MixedComponentSpectrumPlan(StrictModule, NonTrainableState):
     imaginary_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         shells: PeriodicFourierShellPlan,
@@ -1494,8 +1489,6 @@ class MixedComponentSpectrumPlan(StrictModule, NonTrainableState):
         closure_relative_tolerance: float = 1.0e-8,
         imaginary_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(shells, PeriodicFourierShellPlan):
-            raise TypeError("shells must be PeriodicFourierShellPlan.")
         names = tuple(_identifier(value, "component name") for value in component_names)
         if len(names) < 2 or len(set(names)) != len(names):
             raise ValueError("Mixed spectra require at least two unique components.")
@@ -2006,6 +1999,7 @@ class DarkMatterSurfaceDensityProduct(StrictModule, NonTrainableState):
     source_product_id: str = eqx.field(static=True)
     product_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface_density: ArrayLike,
@@ -2018,14 +2012,10 @@ class DarkMatterSurfaceDensityProduct(StrictModule, NonTrainableState):
         density_coordinate_kind: Literal["comoving", "physical"],
         source_product_id: str,
     ) -> None:
-        if not isinstance(spatial, DarkMatterSpatialContract):
-            raise TypeError("spatial must be DarkMatterSpatialContract.")
         if len(spatial.box_lengths) != 2:
             raise ValueError(
                 "Lensing surface density requires a two-dimensional contract."
             )
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be ScientificArtifactEnvelope.")
         if artifact.status != "complete":
             raise ValueError("Lensing input artifact must be complete.")
         if (

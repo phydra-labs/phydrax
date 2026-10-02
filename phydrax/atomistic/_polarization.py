@@ -23,6 +23,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_finite_float
+from ..typing import checked
 from ._sites import AtomisticInteractionSiteState
 
 
@@ -223,6 +224,7 @@ class PolarizationOperatorPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         multipoles: PermanentMultipoleSiteData,
@@ -231,8 +233,6 @@ class PolarizationOperatorPlan(StrictModule, NonTrainableState):
         scaling: PolarizationScaleData | None = None,
         active_mask: ArrayLike | None = None,
     ) -> PreparedPolarizationOperator:
-        if not isinstance(multipoles, PermanentMultipoleSiteData):
-            raise TypeError("multipoles must be PermanentMultipoleSiteData.")
         capacity = multipoles.site_capacity
         scale = PolarizationScaleData.unscaled(capacity) if scaling is None else scaling
         if not isinstance(scale, PolarizationScaleData):
@@ -343,11 +343,10 @@ class PolarizationPreconditionerPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self, operator: PreparedPolarizationOperator, /
     ) -> PreparedPolarizationPreconditioner:
-        if not isinstance(operator, PreparedPolarizationOperator):
-            raise TypeError("operator must be PreparedPolarizationOperator.")
         return PreparedPolarizationPreconditioner(self, operator)
 
 
@@ -481,6 +480,7 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         operator: PreparedPolarizationOperator,
@@ -489,10 +489,6 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
         *,
         predictor: PolarizationPredictorPlan | None = None,
     ) -> PreparedPolarizationSolver:
-        if not isinstance(operator, PreparedPolarizationOperator):
-            raise TypeError("operator must be PreparedPolarizationOperator.")
-        if not isinstance(preconditioner, PreparedPolarizationPreconditioner):
-            raise TypeError("preconditioner must be PreparedPolarizationPreconditioner.")
         if preconditioner.operator.prepared_id != operator.prepared_id:
             raise ValueError("Preconditioner and operator preparations differ.")
         predictor_ = PolarizationPredictorPlan() if predictor is None else predictor

@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
 from ._chemical_thermodynamics import (
     AbstractSpeciesThermodynamicsPlan,
@@ -99,18 +100,13 @@ class IdealGasReferenceHelmholtzTerm(AbstractMolarHelmholtzTerm):
     thermodynamics: AbstractSpeciesThermodynamicsPlan
     standard_pressure: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
         thermodynamics: AbstractSpeciesThermodynamicsPlan,
         /,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be ChemicalSpeciesSchema.")
-        if not isinstance(thermodynamics, AbstractSpeciesThermodynamicsPlan):
-            raise TypeError(
-                "thermodynamics must implement AbstractSpeciesThermodynamicsPlan."
-            )
         if thermodynamics.schema.schema_id != schema.schema_id:
             raise ValueError("Species thermodynamics and schema must match exactly.")
         if any(phase is not ChemicalPhaseKind.GAS for phase in schema.phases):
@@ -179,9 +175,8 @@ class IdealGasReferenceHelmholtzTerm(AbstractMolarHelmholtzTerm):
 class ZeroResidualHelmholtzTerm(AbstractMolarHelmholtzTerm):
     """Zero residual term for ideal mixtures."""
 
+    @checked
     def __init__(self, schema: ChemicalSpeciesSchema, /) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be ChemicalSpeciesSchema.")
         self.schema = schema
         self.term_id = canonical_fingerprint(
             {"kind": "zero-residual-helmholtz", "schema": schema.schema_id}
@@ -217,6 +212,7 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
     composition_tolerance: float = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ideal: IdealGasReferenceHelmholtzTerm,
@@ -227,10 +223,6 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
         maximum_molar_density: float = 1.0e8,
         composition_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(ideal, IdealGasReferenceHelmholtzTerm):
-            raise TypeError("ideal must be IdealGasReferenceHelmholtzTerm.")
-        if not isinstance(residual, AbstractMolarHelmholtzTerm):
-            raise TypeError("residual must implement AbstractMolarHelmholtzTerm.")
         if ideal.schema.schema_id != residual.schema.schema_id:
             raise ValueError("Ideal and residual Helmholtz schemas must match exactly.")
         lower = float(minimum_molar_density)

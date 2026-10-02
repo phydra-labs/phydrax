@@ -20,6 +20,7 @@ from ...solver import (
     MultiTerminalCoherentResult,
     solve_multiterminal_coherent,
 )
+from ...typing import checked
 
 
 _ELEMENTARY_CHARGE_SI = float(ElectromagneticScaleContract.si().elementary_charge)
@@ -34,6 +35,7 @@ class HallBarPlan(StrictModule, NonTrainableState):
     current_floor_ampere: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: MultiTerminalCoherentProblem,
@@ -45,8 +47,6 @@ class HallBarPlan(StrictModule, NonTrainableState):
         *,
         current_floor_ampere: float = 1.0e-18,
     ) -> None:
-        if not isinstance(problem, MultiTerminalCoherentProblem):
-            raise TypeError("problem must be MultiTerminalCoherentProblem.")
         source = int(source_contact)
         drain = int(drain_contact)
         hall = tuple(int(value) for value in hall_contacts)

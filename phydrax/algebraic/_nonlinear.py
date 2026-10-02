@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import ArraySpace, ComplexCartesianCoordinates, DenseLinearOperator
 from ..nonlinear import NonlinearSystemProblem
+from ..typing import checked
 from ._system import SparsePolynomialSystem
 
 
@@ -84,6 +85,7 @@ class ComplexPolynomialRootLowering(StrictModule):
     equation_coordinates: ComplexCartesianCoordinates
     lowering_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: SparsePolynomialSystem,
@@ -91,8 +93,6 @@ class ComplexPolynomialRootLowering(StrictModule):
         *,
         complex_dtype: Any | None = None,
     ) -> None:
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be SparsePolynomialSystem.")
         if system.support.equation_count != system.support.variable_count:
             raise ValueError("Complex polynomial root lowering requires a square system.")
         dtype = (

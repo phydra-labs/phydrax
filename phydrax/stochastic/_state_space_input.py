@@ -19,7 +19,7 @@ from .._interpolation._bspline_grid import BSplineGrid
 from .._interpolation._stencil import apply_gather_stencil
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
-from ..typing import parse
+from ..typing import checked, parse
 
 
 SampledInputInterpolation: TypeAlias = Literal["zero-order-hold", "linear"]
@@ -222,6 +222,7 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
     grid: BSplineGrid
     coefficients: Array
 
+    @checked
     def __init__(
         self,
         grid: BSplineGrid,
@@ -231,8 +232,6 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
         case_shape: tuple[int, ...] = (),
         input_id: str,
     ) -> None:
-        if not isinstance(grid, BSplineGrid):
-            raise TypeError("grid must be a BSplineGrid.")
         cases = _shape(tuple(case_shape), owner="case_shape")
         coefficients_raw = jnp.asarray(coefficients)
         coefficient_axis = len(cases)

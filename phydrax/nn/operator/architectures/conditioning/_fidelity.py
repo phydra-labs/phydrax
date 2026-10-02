@@ -24,6 +24,8 @@ from phydrax.nn.operator.capabilities import (
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import checked
+
 
 _T = TypeVar("_T")
 
@@ -266,6 +268,7 @@ class FidelityCorrectionOperator(AbstractOperatorModel):
     in_size: int | tuple[int, ...] | str
     out_size: int | tuple[int, ...] | str
 
+    @checked
     def __init__(
         self,
         baseline_operator: AbstractOperatorModel,
@@ -282,8 +285,6 @@ class FidelityCorrectionOperator(AbstractOperatorModel):
             raise TypeError(
                 "baseline_operator and correction_operator must be operator models."
             )
-        if not isinstance(path, FidelityPath):
-            raise TypeError("path must be a FidelityPath.")
         source = (
             path.levels[0].level_id if source_level_id is None else str(source_level_id)
         )

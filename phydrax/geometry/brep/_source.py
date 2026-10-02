@@ -12,6 +12,7 @@ import jax.random as jr
 from jax import Array
 
 from ..._physical import SpatialCoordinateContract
+from ...typing import checked
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -89,9 +90,8 @@ class BRepSource(GeometrySource):
 
     model: BRepModel
 
+    @checked
     def __init__(self, model: BRepModel) -> None:
-        if not isinstance(model, BRepModel):
-            raise TypeError("model must be a BRepModel.")
         _require_watertight_query_mesh(model)
         self.model = model
 

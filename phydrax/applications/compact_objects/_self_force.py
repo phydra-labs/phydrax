@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class ModeSumRegularizationParameters(StrictModule, NonTrainableState):
@@ -134,6 +135,7 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
     maximum_tail_fraction: float = eqx.field(static=True)
     calculator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         regularization: ModeSumRegularizationParameters,
@@ -144,8 +146,6 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
         tail_fit_tolerance: float = 5.0e-3,
         maximum_tail_fraction: float = 0.25,
     ) -> None:
-        if not isinstance(regularization, ModeSumRegularizationParameters):
-            raise TypeError("regularization must be ModeSumRegularizationParameters.")
         ell_max_value = int(ell_max)
         tail_window_value = int(tail_window)
         if ell_max_value < 3 or not 3 <= tail_window_value <= ell_max_value + 1:

@@ -28,6 +28,7 @@ from ...nonlinear import (
     VariationalInequalityProblem,
     VariationalInequalityResult,
 )
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -439,6 +440,7 @@ class PreparedCapstanTendonFriction(StrictModule, NonTrainableState):
         self.route_id = route_id
         self.prepared_id = prepared_id
 
+    @checked
     def evaluate(
         self,
         state: CapstanTendonFrictionState,
@@ -454,8 +456,6 @@ class PreparedCapstanTendonFriction(StrictModule, NonTrainableState):
         explicit separates this constitutive VI from native or reduced rod
         state representations.
         """
-        if not isinstance(state, CapstanTendonFrictionState):
-            raise TypeError("state must be CapstanTendonFrictionState.")
         span_count = self.plan.span_count
         if state.tensions.shape != (span_count,):
             raise ValueError("State and prepared capstan span counts must match.")

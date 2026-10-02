@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...measurement import ExposureKind, ExposureRecord
+from ...typing import checked
 from ._oscillation import OscillationProbabilityResult
 
 
@@ -103,6 +104,7 @@ class NeutrinoRatePlan(StrictModule, NonTrainableState):
     target_count: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         flux: NeutrinoFlux,
@@ -114,8 +116,6 @@ class NeutrinoRatePlan(StrictModule, NonTrainableState):
         target_count: float,
         provider_id: str,
     ) -> None:
-        if not isinstance(flux, NeutrinoFlux):
-            raise TypeError("flux must be NeutrinoFlux.")
         cross = np.asarray(cross_sections, dtype=np.float64)
         efficiency = np.asarray(efficiencies, dtype=np.float64)
         migration_ = np.asarray(migration, dtype=np.float64)

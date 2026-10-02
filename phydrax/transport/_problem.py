@@ -18,6 +18,7 @@ from ..integration._targets import (
     DiscreteMeasureTarget,
     WeightedSampleTarget,
 )
+from ..typing import checked
 from ._costs import AbstractGroundCost, GroundCost, PrecomputedCost
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
 
@@ -45,6 +46,7 @@ class DiscreteTransportProblem(StrictModule):
     provenance: TransportProblemProvenance
     mass_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: _FiniteTransportMeasure,
@@ -54,10 +56,6 @@ class DiscreteTransportProblem(StrictModule):
         *,
         mass_tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(source, _FiniteTransportMeasure):
-            raise TypeError("source must be a canonical finite transport measure.")
-        if not isinstance(target, _FiniteTransportMeasure):
-            raise TypeError("target must be a canonical finite transport measure.")
         if not isinstance(cost, (AbstractGroundCost, PrecomputedCost)):
             raise TypeError("cost must be an AbstractGroundCost or PrecomputedCost.")
         tolerance = float(mass_tolerance)

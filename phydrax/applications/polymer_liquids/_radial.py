@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import RealTrigonometricTransform
+from ...typing import checked
 
 
 class IsotropicRadialTransformPlan(StrictModule, NonTrainableState):
@@ -82,9 +83,8 @@ class PreparedIsotropicRadialTransform(StrictModule, NonTrainableState):
     transform: RealTrigonometricTransform
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: IsotropicRadialTransformPlan, /) -> None:
-        if not isinstance(plan, IsotropicRadialTransformPlan):
-            raise TypeError("plan must be IsotropicRadialTransformPlan.")
         dtype = np.dtype(plan.dtype_name)
         spacing = plan.maximum_radius / (plan.count + 1)
         wave_spacing = math.pi / plan.maximum_radius

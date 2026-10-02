@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._strict import StrictModule
 from .._trainable import ParameterOwner
 from ..discretization import SpectralDecomposition
+from ..typing import checked
 from ._base import _as_point, _as_points
 from ._finite_feature import AbstractFiniteFeatureKernel
 
@@ -120,6 +121,7 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
     multiplier: AbstractSpectralMultiplier
     normalize: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eigenbasis: SpectralDecomposition,
@@ -128,16 +130,10 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
         *,
         normalize: bool = True,
     ) -> None:
-        if not isinstance(eigenbasis, SpectralDecomposition):
-            raise TypeError(
-                "eigenbasis must be a Laplacian-provenance SpectralDecomposition."
-            )
         if eigenbasis.report is None or eigenbasis.spectral_dimension is None:
             raise ValueError(
                 "SpectralFeatureKernel requires Laplacian provenance and dimension."
             )
-        if not isinstance(multiplier, AbstractSpectralMultiplier):
-            raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         self.eigenbasis = eigenbasis
         self.multiplier = multiplier
         self.normalize = bool(normalize)

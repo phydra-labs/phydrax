@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
-from .typing import parse
+from .typing import checked, parse
 from .units import (
     CHARGE,
     COULOMB,
@@ -47,6 +47,7 @@ class SpatialCoordinateContract(StrictModule, NonTrainableState):
     reference_frame: str = eqx.field(static=True)
     spatial_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         length_unit: UnitDefinition,
@@ -56,8 +57,6 @@ class SpatialCoordinateContract(StrictModule, NonTrainableState):
         coordinate_system: str = "cartesian",
         reference_frame: str = "world",
     ) -> None:
-        if not isinstance(length_unit, UnitDefinition):
-            raise TypeError("length_unit must be a UnitDefinition.")
         if length_unit.dimension != LENGTH:
             raise ValueError("Spatial coordinate length_unit must have length dimension.")
         kind = str(length_coordinate_kind).strip()
@@ -368,6 +367,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
     entropy_unit: UnitDefinition = eqx.field(static=True)
     scale_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dimensional_scale: DimensionalScaleContract,
@@ -377,8 +377,6 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         boltzmann_constant: PhysicalConstant,
         quantum_constants_explicit: bool = True,
     ) -> None:
-        if not isinstance(dimensional_scale, DimensionalScaleContract):
-            raise TypeError("dimensional_scale must be a DimensionalScaleContract.")
         if not isinstance(quantum_constants_explicit, bool):
             raise TypeError("quantum_constants_explicit must be a bool.")
         gravitational = _positive_constant(
@@ -480,14 +478,13 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_si(
         cls,
         dimensional_scale: DimensionalScaleContract,
         /,
     ) -> RelativityScaleContract:
         """Express the declared SI constants exactly in another SI-referenced scale."""
-        if not isinstance(dimensional_scale, DimensionalScaleContract):
-            raise TypeError("dimensional_scale must be a DimensionalScaleContract.")
         if dimensional_scale.length_unit.reference_system_id != "si":
             raise ValueError("from_si requires units referenced to the SI system.")
         length_scale = dimensional_scale.length_unit.scale_to_reference
@@ -506,14 +503,13 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def geometric(
         cls,
         mass_unit: UnitDefinition,
         /,
     ) -> RelativityScaleContract:
         """Return ``G=c=1`` units anchored by one SI-referenced mass unit."""
-        if not isinstance(mass_unit, UnitDefinition):
-            raise TypeError("mass_unit must be a UnitDefinition.")
         if mass_unit.dimension != MASS:
             raise ValueError("Geometric relativity mass_unit must have mass dimension.")
         if mass_unit.reference_system_id != "si":
@@ -719,6 +715,7 @@ class ElectromagneticScaleContract(StrictModule, NonTrainableState):
     constant_set_id: str = eqx.field(static=True)
     scale_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relativity: RelativityScaleContract,
@@ -730,14 +727,10 @@ class ElectromagneticScaleContract(StrictModule, NonTrainableState):
         *,
         constant_set_id: str,
     ) -> None:
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         if not relativity.quantum_constants_explicit:
             raise ValueError(
                 "Electromagnetic scales require explicitly declared hbar and k_B."
             )
-        if not isinstance(charge_unit, UnitDefinition):
-            raise TypeError("charge_unit must be a UnitDefinition.")
         if charge_unit.dimension != CHARGE:
             raise ValueError("charge_unit must have charge dimension.")
         reference_system_id = relativity.dimensional_scale.length_unit.reference_system_id

@@ -40,6 +40,7 @@ from ...interchange._report import (
     AdapterStatus,
 )
 from ...qualification._reference import ReferenceArtifactManifest
+from ...typing import checked
 from ...units import derived_unit, UnitDefinition
 from ._linear_theory import CosmologyModelRequest
 from ._products import (
@@ -222,6 +223,7 @@ class MatterPowerEvaluationRequest(StrictModule, NonTrainableState):
     scale_factor_unit: str = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cosmology: CosmologyModelRequest,
@@ -230,10 +232,6 @@ class MatterPowerEvaluationRequest(StrictModule, NonTrainableState):
         descriptor: MatterPowerDescriptor,
         /,
     ) -> None:
-        if not isinstance(cosmology, CosmologyModelRequest):
-            raise TypeError("cosmology must be CosmologyModelRequest.")
-        if not isinstance(descriptor, MatterPowerDescriptor):
-            raise TypeError("descriptor must be MatterPowerDescriptor.")
         if descriptor.gauge != cosmology.gauge:
             raise ValueError(
                 "Matter-power descriptor gauge must match the cosmology request gauge."
@@ -429,6 +427,7 @@ class ExternalMatterPowerResult(StrictModule, NonTrainableState):
     support: EmulatorSupportEvidence
     reference_manifest: ReferenceArtifactManifest
 
+    @checked
     def __init__(
         self,
         table: MatterPowerTable,
@@ -439,18 +438,6 @@ class ExternalMatterPowerResult(StrictModule, NonTrainableState):
         reference_manifest: ReferenceArtifactManifest,
         /,
     ) -> None:
-        if not isinstance(table, MatterPowerTable):
-            raise TypeError("table must be MatterPowerTable.")
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be ScientificArtifactEnvelope.")
-        if not isinstance(report, AdapterReport):
-            raise TypeError("report must be AdapterReport.")
-        if not isinstance(process, MatterPowerProcessEvidence):
-            raise TypeError("process must be MatterPowerProcessEvidence.")
-        if not isinstance(support, EmulatorSupportEvidence):
-            raise TypeError("support must be EmulatorSupportEvidence.")
-        if not isinstance(reference_manifest, ReferenceArtifactManifest):
-            raise TypeError("reference_manifest must be ReferenceArtifactManifest.")
         product_id = cosmology_product_content_id(table)
         if (
             artifact.status != "complete"
@@ -516,6 +503,7 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
     training_use: bool = eqx.field(static=True)
     export: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         application: str,
@@ -554,8 +542,6 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
                 (export, "export"),
             )
         )
-        if not isinstance(reference_manifest, ReferenceArtifactManifest):
-            raise TypeError("reference_manifest must be ReferenceArtifactManifest.")
         if (
             not executable
             or not arguments_
@@ -988,9 +974,8 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
             capabilities=capabilities,
         )
 
+    @checked
     def run(self, request: MatterPowerEvaluationRequest, /) -> ExternalMatterPowerResult:
-        if not isinstance(request, MatterPowerEvaluationRequest):
-            raise TypeError("request must be MatterPowerEvaluationRequest.")
         availability = self.availability()
         if not availability.available:
             raise RuntimeError(

@@ -21,6 +21,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, FactorizationPolicy, factorize
+from ..typing import checked
 
 
 class HybridGuardPlan(StrictModule, NonTrainableState):
@@ -83,6 +84,7 @@ class HybridEventPlan(StrictModule, NonTrainableState):
     max_dense_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         guard_plan: HybridGuardPlan,
@@ -99,8 +101,6 @@ class HybridEventPlan(StrictModule, NonTrainableState):
         max_dense_dimension: int = 32,
         plan_id: str,
     ) -> None:
-        if not isinstance(guard_plan, HybridGuardPlan):
-            raise TypeError("guard_plan must be a HybridGuardPlan.")
         callables = (reset, vector_field_before, vector_field_after)
         if any(not callable(value) for value in callables):
             raise TypeError("Hybrid reset/vector fields must be callable.")

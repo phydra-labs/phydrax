@@ -42,6 +42,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, parameter_field
+from ...typing import checked
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._incompressible import FaceVelocity, PreparedMACOperators
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
@@ -634,6 +635,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
     condition_limit: float = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -643,20 +645,14 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         curvature_tolerance: float = 1.0e-6,
         condition_limit: float = 1.0e8,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Balanced capillarity requires unstructured FV geometry.")
         if discretization.cell_dimension != 2:
             raise ValueError("Balanced capillarity currently requires 2-D PLIC geometry.")
-        if not isinstance(gradient, PreparedCellPolynomialReconstruction):
-            raise TypeError("gradient must be PreparedCellPolynomialReconstruction.")
         if gradient.basis.degree != 1:
             raise ValueError("Capillary curvature requires a degree-one gradient.")
         if gradient.discretization.prepared_id != discretization.prepared_id:
             raise CurvatureGeometryError(
                 "Capillary gradient belongs to different geometry."
             )
-        if not isinstance(policy, SurfaceTensionPolicy):
-            raise TypeError("policy must be SurfaceTensionPolicy.")
         tolerance = float(curvature_tolerance)
         condition = float(condition_limit)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
@@ -1135,6 +1131,7 @@ class MACBalancedCapillaryOperator(StrictModule):
     jump_tolerance: float = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -1143,8 +1140,6 @@ class MACBalancedCapillaryOperator(StrictModule):
         *,
         jump_tolerance: float | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(policy, SurfaceTensionPolicy | VariableSurfaceTensionPolicy):
             raise TypeError(
                 "policy must be SurfaceTensionPolicy or VariableSurfaceTensionPolicy."

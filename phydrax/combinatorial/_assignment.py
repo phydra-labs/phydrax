@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 from .._assignment_core import hungarian_assignment_one
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._method import (
     AbstractBoundableLinearCombinatorialMethod,
     CombinatorialPlan,
@@ -119,9 +120,8 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
             dtype=jnp.bool_,
         )
 
+    @checked
     def canonicalize(self, decision: AssignmentDecision, /) -> AssignmentDecision:
-        if not isinstance(decision, AssignmentDecision):
-            raise TypeError("assignment decisions must be AssignmentDecision values.")
         columns = jnp.asarray(decision.columns, dtype=jnp.int32)
         if columns.shape[-1:] != (self.num_rows,):
             raise ValueError(

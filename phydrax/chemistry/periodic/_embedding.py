@@ -36,6 +36,7 @@ from ...solver._impurity import (
     ImpuritySolveRequest,
     ImpuritySolveResult,
 )
+from ...typing import checked
 
 
 def _positive_int(value: int, name: str, /) -> int:
@@ -67,6 +68,7 @@ class SingleSiteDMFTPlan(StrictModule, NonTrainableState):
     bath_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lattice_energies: ArrayLike,
@@ -115,8 +117,6 @@ class SingleSiteDMFTPlan(StrictModule, NonTrainableState):
             or not jnp.issubdtype(labels.dtype, jnp.integer)
         ):
             raise TypeError("indices must be one nonempty rank-one integer array.")
-        if not isinstance(bath_fit, AndersonBathFitPlan):
-            raise TypeError("bath_fit must be AndersonBathFitPlan.")
         policy = EDImpurityPolicy() if impurity_policy is None else impurity_policy
         if not isinstance(policy, EDImpurityPolicy):
             raise TypeError("impurity_policy must be EDImpurityPolicy or None.")
@@ -197,13 +197,10 @@ class DMFTResidualArguments(StrictModule):
     plan: SingleSiteDMFTPlan
     provider: AbstractImpurityProvider
 
+    @checked
     def __init__(
         self, plan: SingleSiteDMFTPlan, provider: AbstractImpurityProvider, /
     ) -> None:
-        if not isinstance(plan, SingleSiteDMFTPlan):
-            raise TypeError("plan must be SingleSiteDMFTPlan.")
-        if not isinstance(provider, AbstractImpurityProvider):
-            raise TypeError("provider must be AbstractImpurityProvider.")
         self.plan = plan
         self.provider = provider
 

@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._operators import AbstractLinearOperator, adjoint
 from ._spaces import _coordinate_dtype
 
@@ -82,6 +82,7 @@ class KernelCertificate(StrictModule):
     structure_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -96,8 +97,6 @@ class KernelCertificate(StrictModule):
     ) -> None:
         from ._subspaces import LinearSubspace
 
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("Kernel certificates require an unbatched operator.")
         if not isinstance(right, LinearSubspace):
@@ -198,6 +197,7 @@ class SpectralInterval(StrictModule):
     structure_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -208,8 +208,6 @@ class SpectralInterval(StrictModule):
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         coordinate_dtype = _coordinate_dtype(operator.source)
         real_dtype = jnp.empty((), dtype=coordinate_dtype).real.dtype
         lower_ = jnp.asarray(lower, dtype=real_dtype)
@@ -272,6 +270,7 @@ class StabilityLowerBound(StrictModule):
     numeric_fingerprint: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -281,8 +280,6 @@ class StabilityLowerBound(StrictModule):
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         coordinate_dtype = _coordinate_dtype(operator.source)
         real_dtype = jnp.empty((), dtype=coordinate_dtype).real.dtype
         bound = jnp.asarray(lower_bound, dtype=real_dtype)

@@ -28,6 +28,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....measurement import SampleTimeAxis
 from ....observation import CoordinateLayout, LinearObservationPlan, ObservationRecord
+from ....typing import checked
 from ....units import MILLISECOND
 
 
@@ -782,11 +783,8 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def observe(self, source: ExtracellularSourceDensity, /) -> ElectricalTraceResult:
-        if not isinstance(source, ExtracellularSourceDensity):
-            raise TypeError(
-                "ElectrogramPlan requires ExtracellularSourceDensity, not sampled Vm."
-            )
         if not _same_timebase(source.timebase, self.timebase):
             raise ValueError("Extracellular source and electrogram time bases differ.")
         if source.source_labels != self.source_labels:
@@ -891,9 +889,8 @@ class TorsoObservationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def observe(self, source: ExtracellularSourceDensity, /) -> TorsoPotentialResult:
-        if not isinstance(source, ExtracellularSourceDensity):
-            raise TypeError("TorsoObservationPlan requires ExtracellularSourceDensity.")
         if not _same_timebase(source.timebase, self.timebase):
             raise ValueError("Extracellular source and torso time bases differ.")
         if source.source_labels != self.source_labels:
@@ -1022,9 +1019,8 @@ class ECGLeadFieldPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def observe(self, source: ExtracellularSourceDensity, /) -> ECGLeadResult:
-        if not isinstance(source, ExtracellularSourceDensity):
-            raise TypeError("ECGLeadFieldPlan requires ExtracellularSourceDensity.")
         if not _same_timebase(source.timebase, self.timebase):
             raise ValueError("Extracellular source and ECG time bases differ.")
         if source.source_labels != self.torso.source_labels:

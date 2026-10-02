@@ -12,6 +12,7 @@ from ..._identity import SemanticProvenance
 from ..._model import AbstractArrayModel, FrozenModel
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class ConversionError(ValueError):
@@ -90,14 +91,13 @@ class ConversionResult(StrictModule):
     model: FrozenModel
     provenance: ConversionProvenance
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
         provenance: ConversionProvenance,
         /,
     ) -> None:
-        if not isinstance(provenance, ConversionProvenance):
-            raise TypeError("provenance must be ConversionProvenance.")
         self.model = model if isinstance(model, FrozenModel) else FrozenModel(model)
         self.provenance = provenance
 

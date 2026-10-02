@@ -20,7 +20,7 @@ from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
-from ...typing import parse
+from ...typing import checked, parse
 from ._fields import (
     _angular_frequency,
     _complex_field_values,
@@ -430,6 +430,7 @@ class AnalyticPulseField(StrictModule):
     longitudinal_coordinate: Array
     polarization: AnalyticPulsePolarization = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -441,10 +442,6 @@ class AnalyticPulseField(StrictModule):
         *,
         polarization: AnalyticPulsePolarization = "scalar",
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
-        if not isinstance(time_space, PulseTimeSpace):
-            raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
             raise ValueError("An analytic pulse requires periodic-cell pulse time.")
         polarization = parse(polarization, AnalyticPulsePolarization, "polarization")

@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ._dtype_names import complex_precision_dtype, real_precision_dtype_name
+from .typing import checked
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -200,14 +201,13 @@ class _GradientAccumulationState:
             accumulation_dtype=dtype,
         )
 
+    @checked
     def add(
         self,
         numerator_gradient: Any,
         contribution: _ObjectiveContribution,
         /,
     ) -> _GradientAccumulationState:
-        if not isinstance(contribution, _ObjectiveContribution):
-            raise TypeError("contribution must be an _ObjectiveContribution.")
         support = contribution.support.astype(self.support.dtype)
         incoming_scale = contribution.log_scale.astype(self.support.dtype)
         current_active = self.support > 0.0

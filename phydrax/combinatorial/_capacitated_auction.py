@@ -89,6 +89,7 @@ from ..typing import (
     as_array,
     as_host_array,
     Bool,
+    checked,
     ConvertibleToArray,
     Dim,
     Float,
@@ -367,9 +368,8 @@ class PreparedCapacitatedAuction(StrictModule):
     candidates: RowRelation
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CapacitatedAuctionPlan, candidates: RowRelation, /) -> None:
-        if not isinstance(plan, CapacitatedAuctionPlan):
-            raise TypeError("plan must be a CapacitatedAuctionPlan.")
         sites, width, labels = _validated_candidates(candidates)
         if (sites, width, labels) != (
             plan.site_count,
@@ -1196,13 +1196,10 @@ class CapacitatedAssignmentSpace(AbstractCombinatorialSpace):
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.site_count, self.candidate_width), jnp.float32)
 
+    @checked
     def canonicalize(
         self, decision: CapacitatedAssignmentDecision, /
     ) -> CapacitatedAssignmentDecision:
-        if not isinstance(decision, CapacitatedAssignmentDecision):
-            raise TypeError(
-                "capacitated decisions must be CapacitatedAssignmentDecision values."
-            )
         slots = jnp.asarray(decision.slots)
         if not jnp.issubdtype(slots.dtype, jnp.integer):
             raise TypeError("capacitated decision slots must have an integer dtype.")

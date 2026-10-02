@@ -40,6 +40,7 @@ from ...nonlinear import (
     VariationalInequalityProblem,
     VariationalInequalityResult,
 )
+from ...typing import checked
 from .._dynamics import DiscreteControlDynamics
 from .._trajectory_optimization import TrajectoryOptimizationView
 from ._constraints import (
@@ -104,6 +105,7 @@ class NonlinearOpenLoopGameProblem(StrictModule):
     dynamics_id: str = eqx.field(static=True)
     stage_cost_semantics: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: DiscreteControlDynamics,
@@ -118,12 +120,6 @@ class NonlinearOpenLoopGameProblem(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> None:
-        if not isinstance(dynamics, DiscreteControlDynamics):
-            raise TypeError("dynamics must be DiscreteControlDynamics.")
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         if len(dynamics.state_shape) != 1:
             raise ValueError("Nonlinear open-loop games require rank-one states.")
         if len(dynamics.control_shape) != 1:

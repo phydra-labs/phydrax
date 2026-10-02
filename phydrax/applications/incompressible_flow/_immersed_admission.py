@@ -22,7 +22,7 @@ from ...discretization.finite_volume._distributed_marker_transfer import (
 )
 from ...qualification._evidence import QualificationCoverageReport
 from ...solver._marker_flow_runtime import HydrodynamicLoadRecord
-from ...typing import parse
+from ...typing import checked, parse
 from ._immersed_profile import ImmersedDNSQualificationProfile
 from ._immersed_support import (
     ImmersedBodyRegimePlan,
@@ -115,6 +115,7 @@ class ImmersedRuntimePreflightEvidence(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_coverage(
         cls,
         regime: ImmersedBodyRegimePlan,
@@ -129,10 +130,6 @@ class ImmersedRuntimePreflightEvidence(StrictModule, NonTrainableState):
     ) -> ImmersedRuntimePreflightEvidence:
         """Bind preflight to a governed campaign report without another solve."""
 
-        if not isinstance(regime, ImmersedBodyRegimePlan):
-            raise TypeError("regime must be ImmersedBodyRegimePlan.")
-        if not isinstance(coverage, QualificationCoverageReport):
-            raise TypeError("coverage must be QualificationCoverageReport.")
         return cls(
             regime.owner_plan_id,
             regime.support_tuple.support_tuple_id,
@@ -302,6 +299,7 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
     require_load_record: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: ImmersedDNSQualificationProfile,
@@ -314,10 +312,6 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
         distributed_tolerance: float = 1.0e-9,
         require_load_record: bool = False,
     ) -> None:
-        if not isinstance(profile, ImmersedDNSQualificationProfile):
-            raise TypeError("profile must be ImmersedDNSQualificationProfile.")
-        if not isinstance(regime, ImmersedBodyRegimePlan):
-            raise TypeError("regime must be ImmersedBodyRegimePlan.")
         if not profile.supports(regime.support_tuple):
             raise ValueError("regime is outside the immersed qualification profile.")
         resources = int(maximum_resource_bytes)
@@ -373,11 +367,10 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
             return not self.regime.contact_capable
         return False
 
+    @checked
     def prepare(
         self, evidence: ImmersedRuntimePreflightEvidence, /
     ) -> PreparedImmersedRuntimeAdmission:
-        if not isinstance(evidence, ImmersedRuntimePreflightEvidence):
-            raise TypeError("evidence must be ImmersedRuntimePreflightEvidence.")
         owner = (
             evidence.owner_plan_id == self.regime.owner_plan_id
             and evidence.support_tuple_id == self.regime.support_tuple.support_tuple_id
@@ -459,14 +452,13 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
     ) -> ImmersedRuntimeAdmissionResult:
         return self.prepare(preflight).admit(runtime)
 
+    @checked
     def _admit(
         self,
         prepared: PreparedImmersedRuntimeAdmission,
         evidence: ImmersedRuntimeEvidence,
         /,
     ) -> ImmersedRuntimeAdmissionResult:
-        if not isinstance(evidence, ImmersedRuntimeEvidence):
-            raise TypeError("evidence must be ImmersedRuntimeEvidence.")
         if prepared.plan.plan_id != self.plan_id:
             raise ValueError("Prepared admission belongs to another plan.")
         regime = self.regime

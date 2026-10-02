@@ -49,7 +49,7 @@ from ..nonlinear import (
     ScalarRootProblem,
     TOMS748,
 )
-from ..typing import Bool, Dim, Float64, Identifier, Int32, parse, Scalar, Scope
+from ..typing import Bool, checked, Dim, Float64, Identifier, Int32, parse, Scalar, Scope
 from ._trajectory_radiation import _float64_array, _hermite_basis, ChargedTrajectory
 
 
@@ -212,6 +212,7 @@ class LienardWiechertFieldPlan(StrictModule, NonTrainableState):
     resources: LienardWiechertResources
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -222,8 +223,6 @@ class LienardWiechertFieldPlan(StrictModule, NonTrainableState):
         interpolation: LienardWiechertInterpolation,
         resources: LienardWiechertResources | None = None,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         history_ = parse(history, LienardWiechertHistory, "history")
         interpolation_ = parse(
             interpolation, LienardWiechertInterpolation, "interpolation"
@@ -825,9 +824,8 @@ class PreparedLienardWiechertField(StrictModule, NonTrainableState):
     termination: NonlinearTermination
     speed_of_light: float = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: LienardWiechertFieldPlan, /) -> None:
-        if not isinstance(plan, LienardWiechertFieldPlan):
-            raise TypeError("plan must be a LienardWiechertFieldPlan.")
         self.plan = plan
         self.speed_of_light = float(plan.scale.speed_of_light)
         self.field_prefactor = jnp.asarray(
@@ -940,12 +938,11 @@ class PreparedLienardWiechertField(StrictModule, NonTrainableState):
             events, Float64[_ObserverDim, Literal[4]], "observer_events", scope=Scope()
         )
 
+    @checked
     def evaluate(
         self, trajectory: ChargedTrajectory, observer_events: ArrayLike, /
     ) -> LienardWiechertFieldResult:
         """Fields of every lane of ``trajectory`` at ``observer_events``."""
-        if not isinstance(trajectory, ChargedTrajectory):
-            raise TypeError("trajectory must be a ChargedTrajectory.")
         if trajectory.sample_count < 2:
             raise ValueError(
                 "Liénard–Wiechert fields need at least two samples per lane."

@@ -33,6 +33,7 @@ from ..lifecycle import (
     create as create_lifecycle_archive,
     open as open_lifecycle_archive,
 )
+from ..typing import checked
 from ._finite_element_checkpoint import FiniteElementCheckpoint
 from ._schedule import TimeLaw
 
@@ -232,6 +233,7 @@ class FiniteElementAcceptedStepSchedule(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def advance(
         self,
         accepted: FiniteElementAcceptedState,
@@ -240,10 +242,6 @@ class FiniteElementAcceptedStepSchedule(StrictModule, NonTrainableState):
         args: object = None,
         /,
     ) -> tuple[FiniteElementAcceptedState, FiniteElementStepDiagnostics]:
-        if not isinstance(accepted, FiniteElementAcceptedState):
-            raise TypeError("accepted must be FiniteElementAcceptedState.")
-        if not isinstance(time_law, TimeLaw):
-            raise TypeError("time_law must be TimeLaw.")
         target = float(jnp.asarray(end_time))
         start = float(accepted.time)
         if not jnp.isfinite(target) or target <= start:
@@ -318,6 +316,7 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
     integrator_state: tuple[tuple[str, Array], ...]
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: FiniteElementAcceptedState,
@@ -326,8 +325,6 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
         auxiliary_state: Sequence[tuple[str, ArrayLike]] = (),
         integrator_state: Sequence[tuple[str, ArrayLike]] = (),
     ) -> None:
-        if not isinstance(state, FiniteElementAcceptedState):
-            raise TypeError("state must be FiniteElementAcceptedState.")
 
         def named(
             values: Sequence[tuple[str, ArrayLike]],

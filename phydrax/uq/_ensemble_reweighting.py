@@ -42,7 +42,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..observation import CholeskyCovarianceAction, PrecisionCovarianceAction
-from ..typing import parse
+from ..typing import checked, parse
 from ..units import (
     conversion_factor,
     convert_value,
@@ -1008,6 +1008,7 @@ class TwoStateEquilibriumStateAssignment(StrictModule, NonTrainableState):
     assignment_evidence_id: str = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: EnsembleSupport,
@@ -1019,8 +1020,6 @@ class TwoStateEquilibriumStateAssignment(StrictModule, NonTrainableState):
         assignment_evidence_id: str,
         /,
     ) -> None:
-        if not isinstance(support, EnsembleSupport):
-            raise TypeError("support must be EnsembleSupport.")
         condition = _identifier(condition_id, "Condition ID")
         states = _identifiers(state_ids, "State IDs", minimum_size=2)
         if len(states) != 2:
@@ -1095,6 +1094,7 @@ class TwoStateEquilibriumRecord(StrictModule, NonTrainableState):
     population_aggregation: str = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         result: EnsembleReweightingResult,
@@ -1108,10 +1108,6 @@ class TwoStateEquilibriumRecord(StrictModule, NonTrainableState):
         observation_id: str,
         source_ids: Sequence[str],
     ) -> None:
-        if not isinstance(result, EnsembleReweightingResult):
-            raise TypeError("result must be EnsembleReweightingResult.")
-        if not isinstance(assignment, TwoStateEquilibriumStateAssignment):
-            raise TypeError("assignment must be TwoStateEquilibriumStateAssignment.")
         condition = _identifier(condition_id, "Condition ID")
         states = _identifiers(state_ids, "State IDs", minimum_size=2)
         replicas = _identifiers(replica_ids, "Replica IDs", minimum_size=2)

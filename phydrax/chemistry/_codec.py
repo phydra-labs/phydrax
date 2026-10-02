@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..lifecycle import LifecycleArchive, ResultManifest
+from ..typing import checked
 from ._production_lifecycle import ProductionChemistryArchivePlan
 
 
@@ -35,6 +36,7 @@ class ChemistryResultCodec(StrictModule, NonTrainableState):
     decoder_id: str = eqx.field(static=True)
     codec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         result_type: type,
@@ -48,8 +50,6 @@ class ChemistryResultCodec(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(result_type, type):
             raise TypeError("result_type must be a concrete type.")
-        if not isinstance(archive, ProductionChemistryArchivePlan):
-            raise TypeError("archive must be ProductionChemistryArchivePlan.")
         if not callable(encoder) or not callable(decoder):
             raise TypeError("encoder and decoder must be callable.")
         encoder_id_ = str(encoder_id).strip()

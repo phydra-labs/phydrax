@@ -15,7 +15,7 @@ from jax import Array
 from .._frozendict import frozendict
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._bsde import (
     BSDEControlMode,
     BSDEEvaluation,
@@ -38,6 +38,7 @@ class JumpBSDEProblem(StrictModule):
     jump_process_ids: frozendict[str, str] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: BSDEProblem,
@@ -47,8 +48,6 @@ class JumpBSDEProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(base, BSDEProblem):
-            raise TypeError("base must be a BSDEProblem.")
         if not callable(compensator_rate):
             raise TypeError("compensator_rate must be callable.")
         process_ids = frozendict(jump_process_ids)

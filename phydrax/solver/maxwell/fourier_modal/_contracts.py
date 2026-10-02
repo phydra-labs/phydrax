@@ -19,7 +19,16 @@ from ...._numerics._quadrature_rules import gauss_kronrod_data
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization.spectral import LatticeHarmonicDiscretization
-from ....typing import Complex128, ConvertibleToArray, Dim, Float64, parse, Scalar, Scope
+from ....typing import (
+    checked,
+    Complex128,
+    ConvertibleToArray,
+    Dim,
+    Float64,
+    parse,
+    Scalar,
+    Scope,
+)
 
 
 class AbstractFourierFactorizationPlan(StrictModule, NonTrainableState):
@@ -116,6 +125,7 @@ class HomogeneousMaxwellPort(AbstractFourierModalPort):
     reference_distance: Array
     port_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: FrequencyMaxwellMaterial,
@@ -124,8 +134,6 @@ class HomogeneousMaxwellPort(AbstractFourierModalPort):
         reference_distance: ArrayLike = 0.0,
         port_id: str,
     ) -> None:
-        if not isinstance(material, FrequencyMaxwellMaterial):
-            raise TypeError("material must be a FrequencyMaxwellMaterial.")
         identifier = str(port_id)
         if not identifier:
             raise ValueError("port_id must be non-empty.")
@@ -140,6 +148,7 @@ class PeriodicMaxwellPort(AbstractFourierModalPort):
     factorization: AbstractFourierFactorizationPlan
     mode_policy: Literal["frozen", "spectral-subspace"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: FrequencyMaxwellMaterial,
@@ -150,10 +159,6 @@ class PeriodicMaxwellPort(AbstractFourierModalPort):
         mode_policy: Literal["frozen", "spectral-subspace"] = "frozen",
         port_id: str,
     ) -> None:
-        if not isinstance(material, FrequencyMaxwellMaterial):
-            raise TypeError("material must be FrequencyMaxwellMaterial.")
-        if not isinstance(factorization, AbstractFourierFactorizationPlan):
-            raise TypeError("factorization must be AbstractFourierFactorizationPlan.")
         if mode_policy not in ("frozen", "spectral-subspace"):
             raise ValueError("Unknown periodic Maxwell port mode policy.")
         identifier = str(port_id)
@@ -175,6 +180,7 @@ class FourierModalLayer(StrictModule):
     translation: Array
     layer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: FrequencyMaxwellMaterial,
@@ -185,10 +191,6 @@ class FourierModalLayer(StrictModule):
         translation: ArrayLike | Sequence[float] = (0.0, 0.0),
         layer_id: str,
     ) -> None:
-        if not isinstance(material, FrequencyMaxwellMaterial):
-            raise TypeError("material must be a FrequencyMaxwellMaterial.")
-        if not isinstance(factorization, AbstractFourierFactorizationPlan):
-            raise TypeError("factorization must be an AbstractFourierFactorizationPlan.")
         identifier = str(layer_id)
         if not identifier:
             raise ValueError("layer_id must be non-empty.")
@@ -261,6 +263,7 @@ class ContinuousFourierModalLayer(StrictModule):
     integration_policy: ContinuousZIntegrationPolicy
     layer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material_profile: Callable[[Array], FrequencyMaxwellMaterial],
@@ -273,10 +276,6 @@ class ContinuousFourierModalLayer(StrictModule):
     ) -> None:
         if not callable(material_profile):
             raise TypeError("material_profile must be callable.")
-        if not isinstance(factorization, AbstractFourierFactorizationPlan):
-            raise TypeError("factorization must be AbstractFourierFactorizationPlan.")
-        if not isinstance(integration_policy, ContinuousZIntegrationPolicy):
-            raise TypeError("integration_policy must be ContinuousZIntegrationPolicy.")
         thickness_ = jnp.asarray(thickness)
         if thickness_.ndim:
             raise ValueError("Continuous layer thickness must be scalar.")
@@ -319,6 +318,7 @@ class FourierModalMaxwellProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         harmonics: LatticeHarmonicDiscretization,
@@ -331,8 +331,6 @@ class FourierModalMaxwellProblem(StrictModule):
         *,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(harmonics, LatticeHarmonicDiscretization):
-            raise TypeError("harmonics must be a LatticeHarmonicDiscretization.")
         if not isinstance(superstrate, AbstractFourierModalPort) or not isinstance(
             substrate, AbstractFourierModalPort
         ):
@@ -504,6 +502,7 @@ class MovingLineChargeSource(StrictModule, NonTrainableState):
         normal = jnp.stack((-self.direction[1], self.direction[0]))
         return omega / self.speed * self.direction + self.transverse_wavenumber * normal
 
+    @checked
     def surface_current(
         self,
         harmonics: LatticeHarmonicDiscretization,
@@ -511,8 +510,6 @@ class MovingLineChargeSource(StrictModule, NonTrainableState):
         /,
     ) -> Complex128[Literal[3], _HarmonicDim]:
         """Electric sheet coefficients ``(3, harmonic_count)``: harmonic zero only."""
-        if not isinstance(harmonics, LatticeHarmonicDiscretization):
-            raise TypeError("harmonics must be a LatticeHarmonicDiscretization.")
         amplitude = self.charge * jnp.exp(
             -1j * jnp.dot(self.bloch_wavevector(angular_frequency), self.position)
         )

@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...metrix import AbstractGeodesicManifold
+from ...typing import checked
 from ._interpolant import AbstractEndpointInterpolant, EndpointInterpolantEvaluation
 
 
@@ -26,6 +27,7 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
     target_coordinate: Array
     interpolant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: AbstractGeodesicManifold,
@@ -35,8 +37,6 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
         target_coordinate: ArrayLike = 1.0,
         interpolant_id: str | None = None,
     ) -> None:
-        if not isinstance(geometry, AbstractGeodesicManifold):
-            raise TypeError("geometry must be an AbstractGeodesicManifold.")
         source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())
         target = jnp.asarray(target_coordinate, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(source) & jnp.isfinite(target) & (target > source)):

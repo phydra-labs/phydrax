@@ -15,6 +15,7 @@ from ..._differentiation import (
     DerivativeRegularity,
 )
 from ..._model import AbstractArrayModel, ModelBinding, ValuePort
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -291,9 +292,8 @@ class FittedColumnTransformer(AbstractFittedModel):
             outputs.append(("remainder", _select_values(x, self.remainder_indices)))
         return _join_feature_values(outputs)
 
+    @checked
     def transform_batch(self, batch: MLBatch, /, *, key: Any = None) -> MLBatch:
-        if not isinstance(batch, MLBatch):
-            raise TypeError("transform_batch requires an MLBatch.")
         keys = _split_key(key, len(self.transformers))
         outputs: list[tuple[str, MLBatch]] = []
         for (name, model, columns), branch_key in zip(
@@ -324,11 +324,8 @@ class ColumnTransformer(AbstractRecipe):
         self.transformers = _normalize_transformers(transformers)
         self.remainder = remainder
 
+    @checked
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        if not isinstance(batch, MLBatch):
-            raise TypeError(
-                "ColumnTransformer.fit_batch requires an already-selected MLBatch."
-            )
         resolved = tuple(
             (name, recipe, _resolve_columns(selector, batch.feature_schema))
             for name, recipe, selector in self.transformers

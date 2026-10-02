@@ -50,6 +50,7 @@ from ..geometry.brep._projection import (
     BRepProjectionStatus,
     PreparedBRepProjection,
 )
+from ..typing import checked
 from ._scope import resolve_mesh_scope
 
 
@@ -263,10 +264,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         residuals = np.asarray(self.residuals)[resolved]
         return float(np.max(residuals)) if residuals.size else 0.0
 
+    @checked
     def validate_target(self, entity_set: EntitySet, /) -> None:
         """Require an exact target binding, not merely resolved row statuses."""
-        if not isinstance(entity_set, EntitySet):
-            raise TypeError("entity_set must be EntitySet.")
         if self.target_entity_set_id != entity_set.entity_set_id:
             raise ValueError("Geometry association targets a different entity set.")
         if not np.all(
@@ -1499,6 +1499,7 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
     policy: AssociationPropagationPolicy
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         projection: PreparedBRepProjection,
@@ -1506,8 +1507,6 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         *,
         policy: AssociationPropagationPolicy | None = None,
     ) -> None:
-        if not isinstance(projection, PreparedBRepProjection):
-            raise TypeError("projection must be PreparedBRepProjection.")
         policy_ = AssociationPropagationPolicy() if policy is None else _policy(policy)
         self.projection = projection
         self.policy = policy_

@@ -34,7 +34,7 @@ from ...solver._channel_flow import (
     ChannelSBDF2State,
     PreparedChannelSBDF2Method,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 InflowSpatialMode: TypeAlias = Literal["compact", "spectral"]
@@ -224,11 +224,10 @@ class PreparedVectorEquilibriumWallStress(StrictModule, NonTrainableState):
     roughness_support: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: VectorEquilibriumWallStressPlan, spatial_dimension: int, /
     ) -> None:
-        if not isinstance(plan, VectorEquilibriumWallStressPlan):
-            raise TypeError("plan must be a VectorEquilibriumWallStressPlan.")
         dimension = int(spatial_dimension)
         if dimension not in (2, 3):
             raise ValueError(
@@ -1022,9 +1021,8 @@ class PreparedStochasticTurbulentInflow(StrictModule, NonTrainableState):
             prepared_id=self.prepared_id,
         )
 
+    @checked
     def _validate_state(self, state: StochasticTurbulentInflowState, /) -> None:
-        if not isinstance(state, StochasticTurbulentInflowState):
-            raise TypeError("state must be a StochasticTurbulentInflowState.")
         reference = jr.key(0)
         if state.prepared_id != self.prepared_id:
             raise ValueError("Inflow state belongs to another prepared plan.")
@@ -1213,6 +1211,7 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
     roughness_heights: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wall_stress: PreparedVectorEquilibriumWallStress,
@@ -1225,12 +1224,8 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
         roughness_height: ArrayLike = 0.0,
         method: ChannelSBDF2Method | None = None,
     ) -> None:
-        if not isinstance(wall_stress, PreparedVectorEquilibriumWallStress):
-            raise TypeError("wall_stress must be a PreparedVectorEquilibriumWallStress.")
         if wall_stress.spatial_dimension != 3:
             raise ValueError("Channel wall stress must be prepared in three dimensions.")
-        if not isinstance(dynamics, CompiledChannelLESDynamics):
-            raise TypeError("Channel wall stress requires CompiledChannelLESDynamics.")
         stokes = dynamics.stokes_plan
         if stokes.tangential_boundary != "traction":
             raise ValueError(
@@ -1367,9 +1362,8 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
         )
         return lower, upper
 
+    @checked
     def _validate_state(self, state: VectorEquilibriumWallStressChannelState, /) -> None:
-        if not isinstance(state, VectorEquilibriumWallStressChannelState):
-            raise TypeError("state must be a VectorEquilibriumWallStressChannelState.")
         if (
             state.prepared_id != self.prepared_id
             or state.channel.current_velocity.shape != self.dynamics.state_shape
@@ -1554,6 +1548,7 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
     side: Literal["lower", "upper"] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         inflow: PreparedStochasticTurbulentInflow,
@@ -1562,8 +1557,6 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
         boundary_shape: tuple[int, ...],
         /,
     ) -> None:
-        if not isinstance(inflow, PreparedStochasticTurbulentInflow):
-            raise TypeError("inflow must be a PreparedStochasticTurbulentInflow.")
         axis_ = str(axis)
         if not axis_:
             raise ValueError("Structured-MAC inflow axis must be non-empty.")
@@ -1602,11 +1595,10 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
             }
         )
 
+    @checked
     def _validate_state(
         self, state: StochasticTurbulentInflowMACBoundaryState, /
     ) -> None:
-        if not isinstance(state, StochasticTurbulentInflowMACBoundaryState):
-            raise TypeError("state must be a StochasticTurbulentInflowMACBoundaryState.")
         self.inflow._validate_state(state.inflow_state)
         count = self.inflow.coordinates.shape[0]
         if (

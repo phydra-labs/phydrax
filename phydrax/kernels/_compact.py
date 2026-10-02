@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from .._dtype_names import inexact_result_type
 from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
+from ..typing import checked
 from ._base import _as_real_array, AbstractPositiveDefiniteKernel
 from ._spectral import AbstractSpectralMultiplier
 
@@ -116,6 +117,7 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
     normalize: bool = eqx.field(static=True)
     membership_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dimension: int,
@@ -127,8 +129,6 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
     ) -> None:
-        if not isinstance(multiplier, AbstractSpectralMultiplier):
-            raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         radius_ = float(radius)
         if not math.isfinite(radius_) or radius_ <= 0.0:
             raise ValueError("radius must be finite and positive.")
@@ -143,6 +143,7 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
         self.membership_tolerance = float(membership_tolerance)
 
     @classmethod
+    @checked
     def from_discretization(
         cls,
         discretization: SphericalSpectralDiscretization,
@@ -152,8 +153,6 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
     ) -> "SphereSpectralKernel":
-        if not isinstance(discretization, SphericalSpectralDiscretization):
-            raise TypeError("discretization must be a SphericalSpectralDiscretization.")
         if discretization.layout.spin != 0:
             raise ValueError("Sphere spectral kernels require a spin-zero space.")
         return cls(
@@ -326,6 +325,7 @@ class AbstractHomogeneousPolynomialKernel(AbstractPositiveDefiniteKernel):
     normalize: bool = eqx.field(static=True)
     membership_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         multiplier: AbstractSpectralMultiplier,
@@ -337,8 +337,6 @@ class AbstractHomogeneousPolynomialKernel(AbstractPositiveDefiniteKernel):
         normalize: bool,
         membership_tolerance: float,
     ) -> None:
-        if not isinstance(multiplier, AbstractSpectralMultiplier):
-            raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         if int(max_level) < 0:
             raise ValueError("max_level must be nonnegative.")
         if float(spectral_dimension) <= 0.0 or float(casimir_shift) < 0.0:

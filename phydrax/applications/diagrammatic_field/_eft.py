@@ -26,6 +26,7 @@ from ...linalg import (
     PreparedLinearSolve,
     solve,
 )
+from ...typing import checked
 from ._core import FieldSpec
 
 
@@ -242,6 +243,7 @@ class EFTMatchingPlan(StrictModule, NonTrainableState):
     maximum_matrix_elements: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: EFTOperatorBasis,
@@ -250,8 +252,6 @@ class EFTMatchingPlan(StrictModule, NonTrainableState):
         *,
         maximum_matrix_elements: int = 1_000_000,
     ) -> None:
-        if not isinstance(basis, EFTOperatorBasis):
-            raise TypeError("basis must be an EFTOperatorBasis.")
         matrix = np.asarray(matching_matrix, dtype=np.complex128)
         maximum = int(maximum_matrix_elements)
         if matrix.shape != (basis.size, basis.size):
@@ -408,6 +408,7 @@ class RGFlowPlan(StrictModule, NonTrainableState):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: EFTOperatorBasis,
@@ -416,8 +417,6 @@ class RGFlowPlan(StrictModule, NonTrainableState):
         *,
         maximum_steps: int = 65_536,
     ) -> None:
-        if not isinstance(basis, EFTOperatorBasis):
-            raise TypeError("basis must be an EFTOperatorBasis.")
         gamma = np.asarray(anomalous_dimension, dtype=np.complex128)
         maximum = int(maximum_steps)
         if gamma.shape != (basis.size, basis.size) or not np.all(np.isfinite(gamma)):

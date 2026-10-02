@@ -27,6 +27,7 @@ from ...solver._dsmc_runtime import DSMCProductionPlan
 from ...solver._plasma_electrostatic import ElectrostaticPlasmaCouplingPlan
 from ...solver._radiation_balance_law import MultigroupRadiationMatterProcessPlan
 from ...solver._thermochemical_source import FixedWorkThermochemicalSourcePlan
+from ...typing import checked
 from ._wall import ReactingPlasmaWallPlan
 
 
@@ -159,9 +160,8 @@ class RarefiedDSMCProfile(StrictModule, NonTrainableState):
     dsmc: DSMCProductionPlan
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, dsmc: DSMCProductionPlan, /) -> None:
-        if not isinstance(dsmc, DSMCProductionPlan):
-            raise TypeError("Rarefied profile requires DSMCProductionPlan.")
         self.dsmc = dsmc
         self.profile_id = canonical_fingerprint(
             {"kind": "rarefied-dsmc-profile", "dsmc": dsmc.plan_id}

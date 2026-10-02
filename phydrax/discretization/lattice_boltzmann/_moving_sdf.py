@@ -15,6 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._discretization import LatticeBoltzmannDiscretization
 from ._geometry import (
     LatticeBoltzmannGeometryEpoch,
@@ -60,6 +61,7 @@ class MovingSDFGeometryPlan(StrictModule, NonTrainableState):
     sdf_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -69,8 +71,6 @@ class MovingSDFGeometryPlan(StrictModule, NonTrainableState):
         sdf_id: str,
         body_names: Sequence[str] = ("body",),
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if not callable(signed_distance):
             raise TypeError("signed_distance must be callable.")
         names = tuple(str(value) for value in body_names)
@@ -201,6 +201,7 @@ class MovingSDFGeometryPlan(StrictModule, NonTrainableState):
         )
         return epoch, evaluation
 
+    @checked
     def update(
         self,
         accepted: LatticeBoltzmannGeometryEpoch,
@@ -209,8 +210,6 @@ class MovingSDFGeometryPlan(StrictModule, NonTrainableState):
         parameters: Any = None,
         /,
     ) -> MovingSDFUpdate:
-        if not isinstance(accepted, LatticeBoltzmannGeometryEpoch):
-            raise TypeError("accepted must be LatticeBoltzmannGeometryEpoch.")
         if accepted.discretization.prepared_id != self.discretization.prepared_id:
             raise ValueError("Accepted geometry belongs to a different discretization.")
         evaluation = self.evaluate(time, parameters)

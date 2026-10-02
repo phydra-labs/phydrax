@@ -36,7 +36,7 @@ from ...optim import (
     OptimizationStatus,
     OptimizationTermination,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._model import CameraModel, project_points
 from ._rig import CameraRig
 
@@ -66,6 +66,7 @@ class CameraCalibrationProblem(StrictModule, NonTrainableState):
     observation_capacity: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_rig: CameraRig,
@@ -76,8 +77,6 @@ class CameraCalibrationProblem(StrictModule, NonTrainableState):
         observation_weights: ArrayLike | None = None,
         holdout: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(initial_rig, CameraRig):
-            raise TypeError("initial_rig must be a CameraRig.")
         points_host = np.asarray(world_points, dtype=np.float64)
         pixels_host = np.asarray(observed_pixels, dtype=np.float64)
         valid_host = np.asarray(observation_valid, dtype=np.bool_)

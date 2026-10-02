@@ -34,6 +34,7 @@ from ..linalg import (
     LinearSystem,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
@@ -218,6 +219,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             ),
         )
 
+    @checked
     def step(
         self,
         residual_function: _ResidualFunction,
@@ -229,8 +231,6 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
     ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
         if not callable(residual_function):
             raise TypeError("residual_function must be callable.")
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         _, static_state = eqx.partition(state, eqx.is_array)
         flat_parameters, unravel = ravel_pytree(parameters)
         model_cost = jnp.asarray(1 + 2 * flat_parameters.size, dtype=jnp.int32)
@@ -459,11 +459,11 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
         )
         return next_parameters, eqx.combine(dynamic, static_state), objective
 
+    @checked
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         return state.metrics
 
+    @checked
     def solve(
         self,
         problem: NonlinearLeastSquaresProblem,
@@ -473,14 +473,10 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> LeastSquaresResult:
-        if not isinstance(problem, NonlinearLeastSquaresProblem):
-            raise TypeError("problem must be a NonlinearLeastSquaresProblem.")
         if problem.bounds is not None:
             raise ValueError(
                 "FiniteDifferenceGaussNewton does not silently ignore bounds; use a bounded least-squares method."
             )
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be an OptimizationTermination.")
         parameters = self.precision.state(
             _validate_real_inexact_tree(
                 initial_parameters,

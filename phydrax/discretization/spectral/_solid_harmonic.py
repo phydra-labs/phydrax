@@ -19,7 +19,7 @@ from ...special._solid_harmonic import (
     _solid_harmonic_synthesis,
     SolidHarmonicKind,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._core import DiscretizationCapability, PreparationReport
 from ._spherical_layout import SphericalModeLayout
 
@@ -82,9 +82,8 @@ class PreparedSolidHarmonicSynthesis(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SolidHarmonicPlan, /) -> None:
-        if not isinstance(plan, SolidHarmonicPlan):
-            raise TypeError("plan must be a SolidHarmonicPlan.")
         layout = plan.layout
         preparation = PreparationReport(
             capabilities=plan.capabilities,

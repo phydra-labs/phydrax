@@ -32,6 +32,7 @@ from ...stochastic import (
     realization_path_labels,
     StochasticRealization,
 )
+from ...typing import checked
 
 
 CoverageMethod: TypeAlias = Literal["none", "asymptotic-normal", "hoeffding"]
@@ -148,6 +149,7 @@ class ControlledTransitionProblem(StrictModule):
     noise_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transition: ControlledTransition,
@@ -165,8 +167,6 @@ class ControlledTransitionProblem(StrictModule):
     ) -> None:
         if not callable(transition):
             raise TypeError("transition must be callable.")
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         if not callable(stage_cost):
             raise TypeError("stage_cost must be callable.")
         if not callable(terminal_cost):
@@ -206,6 +206,7 @@ class PreparedControlledNoise(StrictModule):
     num_paths: int = eqx.field(static=True)
     num_steps: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         increments: ArrayLike,
@@ -218,8 +219,6 @@ class PreparedControlledNoise(StrictModule):
         noise_shape: Sequence[int],
         time_grid: TimeGrid,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         noises = _shape(noise_shape, "noise_shape")
         values = _real_inexact(increments, "increments")
         expected_rank = 2 + len(noises)
@@ -339,6 +338,7 @@ class ControlledPathBatch(StrictModule):
     action_shape: tuple[int, ...] = eqx.field(static=True)
     noise_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -353,10 +353,6 @@ class ControlledPathBatch(StrictModule):
         returns: ArrayLike,
         policy_id: str,
     ) -> None:
-        if not isinstance(problem, ControlledTransitionProblem):
-            raise TypeError("problem must be a ControlledTransitionProblem.")
-        if not isinstance(prepared_noise, PreparedControlledNoise):
-            raise TypeError("prepared_noise must be PreparedControlledNoise.")
         if prepared_noise.noise_shape != problem.noise_shape:
             raise ValueError("prepared_noise noise_shape does not match the problem.")
         if prepared_noise.num_steps != problem.time_grid.num_steps:

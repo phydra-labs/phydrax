@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field
 from .._tree_math import validate_inexact_tree
 from ..linalg import PyTreeSpace
+from ..typing import checked
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -86,6 +87,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
     maximum_search_steps: int = eqx.field(static=True)
     precision: NonlinearPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         update: AbstractNonlinearUpdate,
@@ -100,8 +102,6 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
-        if not isinstance(update, AbstractNonlinearUpdate):
-            raise TypeError("update must be AbstractNonlinearUpdate.")
         decrease = float(sufficient_decrease)
         contraction_ = float(contraction)
         minimum = float(minimum_rate)
@@ -136,6 +136,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             nonlinear_preconditioning=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -145,10 +146,6 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
         initial = validate_inexact_tree(initial_state, name="initial Richardson state")
         residual, auxiliary = problem.evaluate(initial, args)
         source = PyTreeSpace(initial)

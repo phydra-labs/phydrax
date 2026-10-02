@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._spaces import ArraySpace
 
 
@@ -278,14 +278,13 @@ class SimilarityScaledLinearTransform(AbstractLinearTransform):
     modal_space: ArraySpace
     transform_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractLinearTransform,
         scaling: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(base, AbstractLinearTransform):
-            raise TypeError("base must be an AbstractLinearTransform.")
         if not isinstance(base.physical_space, ArraySpace):
             raise TypeError("Similarity scaling currently requires an ArraySpace.")
         scaling_ = jnp.asarray(scaling, dtype=base.physical_space.dtype)

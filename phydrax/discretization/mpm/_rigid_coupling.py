@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
+from ...typing import checked
 from ..particle._rigid_body import (
     PreparedRigidBodySet,
     quaternion_rotation_matrix,
@@ -394,6 +395,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RigidMPMCouplingPlan,
@@ -401,12 +403,6 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
         bodies: PreparedRigidBodySet,
         /,
     ) -> None:
-        if not isinstance(plan, RigidMPMCouplingPlan):
-            raise TypeError("plan must be RigidMPMCouplingPlan.")
-        if not isinstance(dynamics, PreparedMPMDynamics):
-            raise TypeError("dynamics must be PreparedMPMDynamics.")
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be PreparedRigidBodySet.")
         if (
             dynamics.dimension != plan.ambient_dimension
             or bodies.ambient_dimension != plan.ambient_dimension
@@ -466,15 +462,13 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def _require_state(self, state: RigidMPMCouplingState, /) -> None:
-        if not isinstance(state, RigidMPMCouplingState):
-            raise TypeError("coupling_state must be RigidMPMCouplingState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("coupling_state belongs to a different prepared coupling.")
 
+    @checked
     def _require_kinematics(self, kinematics: RigidBodyKinematics, /) -> None:
-        if not isinstance(kinematics, RigidBodyKinematics):
-            raise TypeError("rigid_kinematics must be RigidBodyKinematics.")
         expected_vector = (self.bodies.capacity, self.ambient_dimension)
         if (
             kinematics.position.shape != expected_vector
@@ -546,6 +540,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
             self.certificate_id,
         )
 
+    @checked
     def evaluate(
         self,
         mpm_state: MPMRuntimeState,
@@ -554,8 +549,6 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         /,
     ) -> RigidMPMCouplingEvaluation:
-        if not isinstance(mpm_state, MPMRuntimeState):
-            raise TypeError("mpm_state must be MPMRuntimeState.")
         self._require_kinematics(rigid_kinematics)
         self._require_state(coupling_state)
         position = mpm_state.particles.position
@@ -868,6 +861,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def step_detailed(
         self,
         coupling_state: RigidMPMCouplingState,
@@ -880,8 +874,6 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
         """Advance MPM authority, then transactionally refresh coupling state/output."""
         self._require_state(coupling_state)
         self._require_kinematics(rigid_kinematics)
-        if not isinstance(mpm_state, MPMRuntimeState):
-            raise TypeError("mpm_state must be MPMRuntimeState.")
         mpm_result = self.dynamics.step_detailed(mpm_state, step_size, arguments)
         evaluation = self.evaluate(
             mpm_result.candidate_state,

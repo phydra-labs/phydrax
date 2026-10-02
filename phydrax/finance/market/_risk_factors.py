@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._quotes import QuoteKey
 from ._status import MarketStatus
 
@@ -27,11 +28,10 @@ class RiskFactorKey(StrictModule, NonTrainableState):
     quote_key: QuoteKey
     factor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, name: str, quote_key: QuoteKey, /) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("A risk-factor name must be a non-empty string.")
-        if not isinstance(quote_key, QuoteKey):
-            raise TypeError("quote_key must be a QuoteKey.")
         normalized = name.strip()
         self.name = normalized
         self.quote_key = quote_key
@@ -120,6 +120,7 @@ class MarketState(StrictModule, NonTrainableState):
     observation_ids: tuple[str, ...] = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: RiskFactorLayout,
@@ -133,8 +134,6 @@ class MarketState(StrictModule, NonTrainableState):
         decision_time_ns: int,
         observation_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
         count = layout.factor_count
         values_host = np.asarray(values)
         valid_host = np.asarray(valid_mask, dtype=np.bool_)
@@ -204,11 +203,10 @@ class MarketState(StrictModule, NonTrainableState):
             raise ValueError(f"Risk factor {self.layout.names[index]!r} is not accepted.")
         return self.values[index]
 
+    @checked
     def reorder(self, layout: RiskFactorLayout, /) -> MarketState:
         """Reindex by semantic factor identity; never rely on array position."""
 
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
         source = {
             identifier: index for index, identifier in enumerate(self.layout.factor_ids)
         }

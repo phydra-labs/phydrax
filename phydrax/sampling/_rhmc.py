@@ -37,7 +37,7 @@ from ..operators.path_integral._pseudofermion import (
     refresh_pseudofermion,
     TwoFlavorPseudofermionTerm,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -248,6 +248,7 @@ class RHMCPlan(StrictModule):
     force_evaluations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -261,8 +262,6 @@ class RHMCPlan(StrictModule):
         steps = int(trajectory_steps)
         threshold = float(divergence_threshold)
         policy = RHMCResourcePolicy() if resources is None else resources
-        if not isinstance(force_plan, NestedForcePlan):
-            raise TypeError("force_plan must be a NestedForcePlan.")
         if not isinstance(policy, RHMCResourcePolicy):
             raise TypeError("resources must be RHMCResourcePolicy or None.")
         if not math.isfinite(size) or size <= 0.0:

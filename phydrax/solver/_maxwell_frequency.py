@@ -37,7 +37,7 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..sparse import compile_sparse_jacobian, SparseColoring, SparseDerivativePlan
-from ..typing import parse
+from ..typing import checked, parse
 from ._maxwell import (
     _apply_hodge_metric,
     AbstractMaxwellFrequencyResponse,
@@ -252,6 +252,7 @@ class FrequencyMaxwellOperator(StrictModule):
     admittance: Array
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: AbstractCellDeRhamComplex,
@@ -274,10 +275,6 @@ class FrequencyMaxwellOperator(StrictModule):
             cochain = discretization
         else:
             raise TypeError("Frequency Maxwell requires an AbstractCellDeRhamComplex.")
-        if not isinstance(layout, MaxwellCochainLayout):
-            raise TypeError("Frequency Maxwell requires a MaxwellCochainLayout.")
-        if not isinstance(constitutive, AbstractPreparedMaxwellConstitutive):
-            raise TypeError("constitutive must be prepared Maxwell material data.")
         if not constitutive.capabilities.frequency_domain:
             raise ValueError("Constitutive law does not support frequency-domain use.")
         if constitutive.layout_id != layout.layout_id:

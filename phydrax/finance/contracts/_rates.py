@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core import (
     Currency,
     DayCount,
@@ -114,6 +115,7 @@ class ResolvedRateSchedule(StrictModule):
     valuation_date: FinanceDate = eqx.field(static=True)
     curve_time_day_count: DayCount = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schedule: ResolvedSchedule,
@@ -125,10 +127,6 @@ class ResolvedRateSchedule(StrictModule):
         valuation_date: FinanceDate,
         curve_time_day_count: DayCount,
     ) -> None:
-        if not isinstance(schedule, ResolvedSchedule):
-            raise TypeError("schedule must be a ResolvedSchedule.")
-        if not isinstance(valuation_date, FinanceDate):
-            raise TypeError("valuation_date must be a FinanceDate.")
         if not isinstance(curve_time_day_count, DayCount):
             raise TypeError("curve_time_day_count must be a DayCount.")
         start = jnp.asarray(accrual_start_times)
@@ -163,6 +161,7 @@ class ResolvedRateSchedule(StrictModule):
         self.curve_time_day_count = curve_time_day_count
 
     @classmethod
+    @checked
     def from_schedule(
         cls,
         schedule: ResolvedSchedule,
@@ -170,8 +169,6 @@ class ResolvedRateSchedule(StrictModule):
         curve_time_day_count: DayCount,
         /,
     ) -> ResolvedRateSchedule:
-        if not isinstance(schedule, ResolvedSchedule):
-            raise TypeError("schedule must be a ResolvedSchedule.")
         mask = np.asarray(schedule.valid, dtype=np.bool_)
 
         def converted(ordinals: Array) -> Array:
@@ -305,9 +302,8 @@ class DeterministicCashflowReplay(StrictModule):
     def active_count(self) -> Array:
         return jnp.sum(self.valid_mask, dtype=jnp.int32)
 
+    @checked
     def present_value(self, currency: Currency, /) -> Array:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         identifiers = tuple(value.currency_id for value in self.currencies)
         if currency.currency_id not in identifiers:
             return jnp.asarray(0.0, dtype=self.present_values.dtype)
@@ -509,6 +505,7 @@ class ResolvedFixedLeg(AbstractResolvedContract):
     exchange_initial: bool = eqx.field(static=True)
     exchange_final: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -522,10 +519,6 @@ class ResolvedFixedLeg(AbstractResolvedContract):
         exchange_initial: bool,
         exchange_final: bool,
     ) -> None:
-        if not isinstance(schedule, ResolvedRateSchedule):
-            raise TypeError("schedule must be a ResolvedRateSchedule.")
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if type(exchange_initial) is not bool or type(exchange_final) is not bool:
             raise TypeError("Notional-exchange flags must be bool values.")
         contract = _identifier(contract_id, "contract_id")
@@ -675,6 +668,7 @@ class ResolvedFloatingLeg(AbstractResolvedContract):
     exchange_initial: bool = eqx.field(static=True)
     exchange_final: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -692,10 +686,6 @@ class ResolvedFloatingLeg(AbstractResolvedContract):
         exchange_initial: bool,
         exchange_final: bool,
     ) -> None:
-        if not isinstance(schedule, ResolvedRateSchedule):
-            raise TypeError("schedule must be a ResolvedRateSchedule.")
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if type(exchange_initial) is not bool or type(exchange_final) is not bool:
             raise TypeError("Notional-exchange flags must be bool values.")
         values = jnp.asarray(fixing_values)
@@ -901,6 +891,7 @@ class ResolvedDeposit(AbstractResolvedContract):
     notional: float = eqx.field(static=True)
     rate: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -911,11 +902,7 @@ class ResolvedDeposit(AbstractResolvedContract):
         notional: float,
         rate: float,
     ) -> None:
-        if not isinstance(schedule, ResolvedRateSchedule):
-            raise TypeError("schedule must be a ResolvedRateSchedule.")
         _require_single_period(schedule)
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         contract = _identifier(contract_id, "contract_id")
         discount_id = _identifier(discount_curve_id, "discount_curve_id")
         self.schedule = schedule
@@ -1017,6 +1004,7 @@ class ResolvedForwardRateAgreement(AbstractResolvedContract):
     settlement: FRASettlement = eqx.field(static=True)
     fixing_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -1032,11 +1020,7 @@ class ResolvedForwardRateAgreement(AbstractResolvedContract):
         fixing_value: ArrayLike = 0.0,
         fixing_known: bool,
     ) -> None:
-        if not isinstance(schedule, ResolvedRateSchedule):
-            raise TypeError("schedule must be a ResolvedRateSchedule.")
         _require_single_period(schedule)
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if type(fixing_known) is not bool:
             raise TypeError("fixing_known must be bool.")
         fixing = jnp.asarray(fixing_value)
@@ -1174,6 +1158,7 @@ class ResolvedInterestRateFuture(AbstractResolvedContract):
     quote_convention: FuturesQuoteConvention = eqx.field(static=True)
     fixing_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -1189,11 +1174,7 @@ class ResolvedInterestRateFuture(AbstractResolvedContract):
         fixing_value: ArrayLike = 0.0,
         fixing_known: bool,
     ) -> None:
-        if not isinstance(schedule, ResolvedRateSchedule):
-            raise TypeError("schedule must be a ResolvedRateSchedule.")
         _require_single_period(schedule)
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if type(fixing_known) is not bool:
             raise TypeError("fixing_known must be bool.")
         fixing = jnp.asarray(fixing_value)
@@ -1338,6 +1319,7 @@ class ResolvedInflationLeg(AbstractResolvedContract):
     pay_receive: PayReceive = eqx.field(static=True)
     style: InflationLegStyle = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -1357,10 +1339,6 @@ class ResolvedInflationLeg(AbstractResolvedContract):
         start_fixing_mask: ArrayLike,
         end_fixing_mask: ArrayLike,
     ) -> None:
-        if not isinstance(schedule, ResolvedRateSchedule):
-            raise TypeError("schedule must be a ResolvedRateSchedule.")
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         expected = (schedule.schedule.capacity,)
         observation_start = jnp.asarray(observation_start_times)
         observation_end = jnp.asarray(observation_end_times)
@@ -1727,6 +1705,7 @@ class ResolvedCrossCurrencySwap(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         contract_id: str,
@@ -1739,8 +1718,6 @@ class ResolvedCrossCurrencySwap(AbstractResolvedContract):
             quote_leg, ResolvedFloatingLeg
         ):
             raise TypeError("Cross-currency legs must be ResolvedFloatingLeg values.")
-        if not isinstance(fx_pair, FXPair):
-            raise TypeError("fx_pair must be an FXPair.")
         if base_leg.currency.currency_id != fx_pair.base.currency_id:
             raise ValueError("base_leg currency must match fx_pair.base.")
         if quote_leg.currency.currency_id != fx_pair.quote.currency_id:

@@ -19,7 +19,7 @@ from ..linalg import (
     sparse_provider_capabilities,
     SparseLDLT,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._filter_ipm import (
     FilterInteriorPoint as _DenseFilterInteriorPoint,
     FilterInteriorPointEvidence,
@@ -392,6 +392,7 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
         )
         return eqx.tree_at(lambda value: value.provenance, result, provenance)
 
+    @checked
     def solve_structured(
         self,
         prepared: PreparedStructuredNonlinearProgram,
@@ -401,8 +402,6 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
         termination: OptimizationTermination,
         warm_start: StructuredNonlinearWarmStart | None,
     ) -> StructuredNonlinearResult:
-        if not isinstance(prepared, PreparedStructuredNonlinearProgram):
-            raise TypeError("prepared must be a PreparedStructuredNonlinearProgram.")
         if self.mode != "sparse-augmented" and warm_start is not None:
             raise ValueError(
                 f"{self.mode} does not support structured dual warm starts; "

@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleSetPlan
 from ._rigid_body import (
     PreparedRigidBodySet,
@@ -332,6 +333,7 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
     requires_repreparation: bool = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: RigidInertialParameters,
@@ -342,10 +344,6 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
         positive_floor: float,
         finite_ceiling: float,
     ) -> None:
-        if not isinstance(parameters, RigidInertialParameters):
-            raise TypeError("parameters must be RigidInertialParameters.")
-        if not isinstance(source, PreparedRigidBodySet):
-            raise TypeError("source must be a PreparedRigidBodySet.")
         masses = np.asarray(parameters.masses)
         offsets = np.asarray(parameters.center_of_mass_offsets)
         inertia_com = np.asarray(parameters.inertia_com)
@@ -516,6 +514,7 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
     finite_ceiling: float = eqx.field(static=True)
     parameterization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: PreparedRigidBodySet,
@@ -523,8 +522,6 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
         *,
         parameterization_id: str | None = None,
     ) -> None:
-        if not isinstance(source, PreparedRigidBodySet):
-            raise TypeError("source must be a PreparedRigidBodySet.")
         if source.ambient_dimension != _SPATIAL_DIMENSION:
             raise ValueError("Rigid inertial parameterization requires three dimensions.")
         source_masses = np.asarray(source.mass_properties.masses)
@@ -650,13 +647,12 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
 
         return self.coordinates_from_prepared(center_of_mass_offsets)
 
+    @checked
     def evaluate(
         self,
         coordinates: RigidInertialCoordinates,
         /,
     ) -> RigidInertialEvaluation:
-        if not isinstance(coordinates, RigidInertialCoordinates):
-            raise TypeError("coordinates must be RigidInertialCoordinates.")
         if coordinates.parameterization_id != self.parameterization_id:
             raise ValueError("Coordinates belong to a different parameterization.")
         if (
@@ -733,6 +729,7 @@ class RigidInertialRealization(StrictModule, NonTrainableState):
     rebase_id: str = eqx.field(static=True)
     realization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_plan: ParticleSetPlan,
@@ -741,16 +738,6 @@ class RigidInertialRealization(StrictModule, NonTrainableState):
         reference_frame_rebase: RigidBodyReferenceFrameRebase,
         /,
     ) -> None:
-        if not isinstance(particle_plan, ParticleSetPlan):
-            raise TypeError("particle_plan must be a ParticleSetPlan.")
-        if not isinstance(rigid_body_plan, RigidBodySetPlan):
-            raise TypeError("rigid_body_plan must be a RigidBodySetPlan.")
-        if not isinstance(evaluation, RigidInertialEvaluation):
-            raise TypeError("evaluation must be a RigidInertialEvaluation.")
-        if not isinstance(reference_frame_rebase, RigidBodyReferenceFrameRebase):
-            raise TypeError(
-                "reference_frame_rebase must be RigidBodyReferenceFrameRebase."
-            )
         if (
             reference_frame_rebase.source_prepared_id != evaluation.source_prepared_id
             or reference_frame_rebase.target_particle_plan_id != particle_plan.plan_id

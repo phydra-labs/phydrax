@@ -29,6 +29,7 @@ from ...discretization.contact import (
 )
 from ...discretization.particle._rigid_contact import RigidContactGeometry
 from ...linalg import ArraySpace
+from ...typing import checked
 
 
 class ShellMaterialParameters(StrictModule, NonTrainableState):
@@ -275,6 +276,7 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
     contact_distance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         triangles: ArrayLike,
@@ -308,8 +310,6 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("A triangle cannot repeat a node.")
         triangle_count = topology.shape[0]
-        if not isinstance(material, ShellMaterialParameters):
-            raise TypeError("material must be ShellMaterialParameters.")
         thickness_values = _constant_triangle_array(
             thickness, triangle_count, "thickness", positive=True
         )
@@ -1186,6 +1186,7 @@ class ShellDynamicsPlan(StrictModule, NonTrainableState):
     fixed_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         shell: TriangularShellPlan,
@@ -1198,8 +1199,6 @@ class ShellDynamicsPlan(StrictModule, NonTrainableState):
         fixed_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(shell, TriangularShellPlan):
-            raise TypeError("shell must be a TriangularShellPlan.")
         damping_ = float(damping)
         maximum_step = float(maximum_step_size)
         safety = float(stability_safety)
@@ -1302,6 +1301,7 @@ class PreparedShellDynamics(StrictModule, NonTrainableState):
         velocity_values = jnp.where(fixed, 0.0, velocity_values)
         return ShellState(position_values, velocity_values)
 
+    @checked
     def step(
         self,
         state: ShellState,
@@ -1310,8 +1310,6 @@ class PreparedShellDynamics(StrictModule, NonTrainableState):
         external_force: ArrayLike | None = None,
         /,
     ) -> ShellStepResult:
-        if not isinstance(state, ShellState):
-            raise TypeError("state must be a ShellState.")
         if state.positions.shape != self.shell.reference_positions.shape or (
             state.velocities.shape != self.shell.reference_positions.shape
         ):

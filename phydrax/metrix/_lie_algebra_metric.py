@@ -23,7 +23,7 @@ from ..linalg import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._lie_group import AbstractLieGroup
 
 
@@ -40,9 +40,8 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, group: AbstractLieGroup, /) -> None:
-        if not isinstance(group, AbstractLieGroup):
-            raise TypeError("group must implement AbstractLieGroup.")
         if len(group.algebra_shape) != 1:
             raise ValueError("Lie-algebra coordinate metrics require vector coordinates.")
         dimension = group.algebra_shape[0]

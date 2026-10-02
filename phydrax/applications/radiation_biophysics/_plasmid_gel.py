@@ -18,6 +18,7 @@ from phydrax import ein
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
 
+from ...typing import checked
 from ._interactions import _text
 from .interchange._history_profile import TimedRadiationHistoryProfile
 
@@ -40,6 +41,7 @@ class PlasmidGelAssay:
     calibration: ReferenceArtifactManifest
     assay_id: str
 
+    @checked
     def __init__(
         self,
         response_matrix: ArrayLike,
@@ -66,8 +68,6 @@ class PlasmidGelAssay:
             or np.any(offset < 0.0)
         ):
             raise ValueError("Gel background must contain three nonnegative intensities.")
-        if not isinstance(calibration, ReferenceArtifactManifest):
-            raise TypeError("Gel calibration must be a ReferenceArtifactManifest.")
         calibration.require_rights()
         calibration.require_uncertainty()
         covariance = (
@@ -201,6 +201,7 @@ class PlasmidGelObservations:
     source: ReferenceArtifactManifest
     observation_id: str
 
+    @checked
     def __init__(
         self,
         observation_ids: tuple[str, ...],
@@ -293,8 +294,6 @@ class PlasmidGelObservations:
                 "Gel observation covariance must be finite positive-semidefinite "
                 "with diagonal matching the reported band standard errors."
             )
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("Gel observations require a ReferenceArtifactManifest.")
         source.require_rights()
         source.require_uncertainty()
         object.__setattr__(self, "observation_ids", identifiers)
@@ -354,6 +353,7 @@ class PlasmidFormPrediction:
     form_fraction_covariance: Array | None
     prediction_id: str
 
+    @checked
     def __init__(
         self,
         history_profile: TimedRadiationHistoryProfile,
@@ -370,8 +370,6 @@ class PlasmidFormPrediction:
         fit_preparation_ids: tuple[str, ...],
         form_fraction_covariance: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(history_profile, TimedRadiationHistoryProfile):
-            raise TypeError("history_profile must be TimedRadiationHistoryProfile.")
         for value, name in (
             (campaign_id, "prediction campaign ID"),
             (model_id, "prediction model ID"),

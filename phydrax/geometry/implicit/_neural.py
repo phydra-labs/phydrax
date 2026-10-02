@@ -24,7 +24,7 @@ from ..._model._array import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, partition_parameters
 from ..._validation import positive_finite_float
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -1059,6 +1059,7 @@ class NeuralImplicitRegion(GeometrySource):
     feature_id: str = eqx.field(static=True)
     certificate: NeuralImplicitCertificate
 
+    @checked
     def __init__(
         self,
         network: AbstractArrayModel,
@@ -1118,8 +1119,6 @@ class NeuralImplicitRegion(GeometrySource):
         )
         if topology is not None and not isinstance(topology, ImplicitRegionTopology):
             raise TypeError("topology must be an ImplicitRegionTopology or None.")
-        if not isinstance(policy, ImplicitSurfacePolicy):
-            raise TypeError("policy must be an ImplicitSurfacePolicy.")
         identifier = _feature_id(feature_id, "neural_implicit")
         region_bounds = jnp.asarray(bounds_)
         certificate = _certify(
@@ -1155,6 +1154,7 @@ class NeuralImplicitRegion(GeometrySource):
         names, _, _, _, _ = _network_parts(self.network)
         return tuple(ParameterId(self.feature_id, name) for name in names)
 
+    @checked
     def recertify(self, state: DesignState, /) -> NeuralImplicitRegion:
         """Recheck the sampled evidence at the weights held by `state`.
 
@@ -1164,8 +1164,6 @@ class NeuralImplicitRegion(GeometrySource):
         sampled topology differs from the recorded sampled topology. `state`
         may belong to any compiled geometry containing this region.
         """
-        if not isinstance(state, DesignState):
-            raise TypeError("state must be a DesignState.")
         _, _, treedef, fixed, static = _network_parts(self.network)
         leaves = [state.values[state.schema.index(item)] for item in self.parameter_ids]
         network = _assemble_network(treedef, leaves, fixed, static)

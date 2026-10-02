@@ -19,6 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._lorentz import FourMomentum, LorentzFrame, minkowski_dot
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class Particle(StrictModule, NonTrainableState):
@@ -80,10 +81,9 @@ class MassShell(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     shell_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, particle: Particle, /, *, tolerance: float = 1.0e-9) -> None:
         tolerance_ = float(tolerance)
-        if not isinstance(particle, Particle):
-            raise TypeError("MassShell requires a Particle.")
         if not math.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Mass-shell tolerance must be finite and positive.")
         self.particle = particle

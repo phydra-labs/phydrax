@@ -80,8 +80,15 @@ uv run --extra qa python tools/check_typing.py check
 ```
 
 Phydrax does not install a test-only annotation hook. Opted-in StrictModules validate
-construction in production. Tests call `phydrax.typing.validate` explicitly after a
+construction in production, and `phydrax.typing.checked` boundaries check their
+arguments in production. Tests call `phydrax.typing.validate` explicitly after a
 tree transformation or reconstruction.
+
+`tests/unit/typing/test_signature.py` owns the semantics of checked signatures. The
+repository declaration test compiles every checked boundary, so a consumer test of a
+migrated constructor or method asserts its scientific behavior and the refusal
+category (`TypeError` naming the argument), not the wording of a removed hand-written
+guard.
 
 ## Hypothesis and JAX
 

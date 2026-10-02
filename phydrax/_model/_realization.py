@@ -13,6 +13,7 @@ from jax import Array
 
 from .._differentiation import _identifier
 from .._trainable import fixed_field
+from ..typing import checked
 from ._array import AbstractArrayModel
 from ._component import ModelExecutionContract, RandomnessContract
 
@@ -48,6 +49,7 @@ class FrozenRealization(AbstractArrayModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = staticmethod(lambda wrapper: wrapper.model.input_binding())
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -56,8 +58,6 @@ class FrozenRealization(AbstractArrayModel):
         *,
         realization_id: str,
     ) -> None:
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("FrozenRealization requires an AbstractArrayModel.")
         self.model = model
         self.key = _prng_key(key)
         self.realization_id = _identifier(realization_id, "realization_id")
