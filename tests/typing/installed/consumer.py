@@ -28,6 +28,19 @@ from phydrax.linalg.svd import (
     SVDSolveResult,
 )
 from phydrax.precision import precision_dtype_name, ScalarPrecisionDType
+from phydrax.solver import (
+    analyze_projector_monte_carlo,
+    initialize_projector_monte_carlo,
+    PreparedProjectorMonteCarlo,
+    ProjectorEstimatorPolicy,
+    ProjectorMonteCarloAnalysis,
+    ProjectorMonteCarloResult,
+    ProjectorMonteCarloState,
+    ProjectorMonteCarloStepResult,
+    solve_projector_monte_carlo,
+    step_projector_monte_carlo,
+)
+from phydrax.uq import CorrelatedRatioResult
 
 
 class ComponentDim(pt.Dim, minimum=1):
@@ -88,3 +101,27 @@ def singular_subspaces(problem: SVDProblem, key: pt.PRNGKey, probe: jax.Array) -
         projector_action(result.right_coordinates, result.right_response, probe),
         jax.Array,
     )
+
+
+def projector_consumer(
+    prepared: PreparedProjectorMonteCarlo,
+    key: pt.PRNGKey,
+    result: ProjectorMonteCarloResult,
+) -> None:
+    state = initialize_projector_monte_carlo(prepared, key)
+    assert_type(state, ProjectorMonteCarloState)
+    assert_type(state.support_keys, jax.Array)
+    assert_type(state.root_key, jax.Array)
+    assert_type(
+        step_projector_monte_carlo(prepared, state), ProjectorMonteCarloStepResult
+    )
+    assert_type(
+        solve_projector_monte_carlo(prepared, state, steps=1), ProjectorMonteCarloResult
+    )
+    analysis = analyze_projector_monte_carlo(
+        prepared, result, policy=ProjectorEstimatorPolicy()
+    )
+    assert_type(analysis, ProjectorMonteCarloAnalysis)
+    assert_type(analysis.projected, CorrelatedRatioResult)
+    assert_type(analysis.projected.mean_covariance, jax.Array)
+    initialize_projector_monte_carlo(prepared, 1)  # ty: ignore[invalid-argument-type]

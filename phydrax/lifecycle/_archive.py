@@ -442,6 +442,7 @@ def create(
     manifest: LifecycleRecord,
     arrays: Mapping[str, Any],
     parent: LifecycleArchive | None = None,
+    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> LifecycleArchive:
     """Atomically create and reopen one checksum-bound lifecycle archive."""
 
@@ -482,8 +483,9 @@ def create(
             "archive_id": archive_id,
         },
         arrays=arrays_,
+        limits=limits,
     )
-    archive = open(path, allow_incomplete=True, limits=None, parent=parent)
+    archive = open(path, allow_incomplete=True, limits=limits, parent=parent)
     emit(
         "INFO",
         "lifecycle.archive.created",

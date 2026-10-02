@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `3a8bfbb146c430b39435068b819f3e0a4b592fde5ee34909779a711860cdd174`
+Catalog ID: `e2c92c63b301abe5b4084228768ab2d64f5f8295eec3ad7b97f1aa2541684856`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 278 |
+| candidate | 281 |
 | research | 171 |
 | internal | 5 |
 | retired | 0 |
@@ -380,8 +380,11 @@ Catalog ID: `3a8bfbb146c430b39435068b819f3e0a4b592fde5ee34909779a711860cdd174`
 | `protein-coordinate-proposal` | `phydrax.applications` | candidate | candidate | 1 |
 | `protein.mutation-stability-prediction` | `phydrax.applications` | candidate | candidate | 1 |
 | `qft.frontier-platform` | `phydrax.applications.lattice_field` | research | research | 0 |
+| `quantum-lattice.configuration-columns` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.fixed-sector` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.orbit-sector` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
+| `quantum-lattice.positive-guide` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
+| `quantum-lattice.projector-monte-carlo` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.response` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.stochastic-sign-free` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.tpq` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |

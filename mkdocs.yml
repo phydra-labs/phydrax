@@ -143,6 +143,7 @@ nav:
         - Circuit-QED design and control: "cookbook/circuit_qed_design_and_control.md"
         - Open-system amplitude damping: "cookbook/quantum_open_system.md"
         - Variational Monte Carlo: "cookbook/quantum_vmc.md"
+        - Projector Monte Carlo: "cookbook/projector_monte_carlo.md"
     - Guides:
         - Structured logging and observability: "guides_logging.md"
         - File resources and interchange: "guides_file_interchange.md"
@@ -508,6 +509,7 @@ nav:
         - Machine learning interoperability: "guides_ml_interoperability.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
+        - Native projector Monte Carlo: "guides_projector_monte_carlo.md"
         - Local quantum programs: "guides_quantum_programs.md"
         - Circuit-QED device modeling: "guides_circuit_qed.md"
         - Einstein operations: "guides_ein.md"
@@ -894,6 +896,7 @@ nav:
             - Functional domain decomposition: "api/solver/functional_decomposition.md"
             - Solver objectives and component training: "api/solver/component_training.md"
             - Variational Monte Carlo: "api/solver/variational_monte_carlo.md"
+            - Projector Monte Carlo: "api/solver/projector_monte_carlo.md"
             - Variational TDVP: "api/solver/variational_tdvp.md"
             - Exact enforcement: "api/solver/enforcement.md"
             - Geometry-preserving solvers: "api/solver/geometric.md"
@@ -908,6 +911,7 @@ nav:
             - Propagation and polynomial chaos: "api/uq/propagation.md"
             - Global sensitivity: "api/uq/sensitivity.md"
             - Targeted free energy: "api/uq/targeted_free_energy.md"
+            - Joint correlated ratios: "api/uq/correlated_ratios.md"
         - Export: "api/export.md"
     - Project operations:
         - Capability lifecycle: "CAPABILITY_LIFECYCLE.md"

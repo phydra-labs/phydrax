@@ -54,3 +54,4 @@ covariances and spectra use conjugate adjoints.
 - [Neural-operator uncertainty](operator.md)
 - [Uncertain-input propagation](propagation.md)
 - [Global and local sensitivity, information actions, and design](sensitivity.md)
+- [Joint correlated ratios of means](correlated_ratios.md)
