@@ -48,6 +48,15 @@ Equinox filtering. Do not mark an array-bearing callback `static=True` or hide i
 inside a closure to suppress the static-array warning. Compiled evaluation must
 receive updated callback arrays as data.
 
+This correction changes the `PosteriorProblem` PyTree partition, compilation
+structure, and whole-problem numeric fingerprint. It is not an identity-preserving
+serialization migration, even when optional callbacks are `None`. Callback
+objects and the coordinates declared by `ParameterSpace` are unchanged; making
+callback arrays visible does not add them to those optimization coordinates.
+Generic whole-tree training still requires the owning explicit array roles.
+Reconstruct live posterior problems under the current representation rather than
+reusing an old whole-problem fingerprint or tree template.
+
 
 ### Stochastic likelihood contracts
 

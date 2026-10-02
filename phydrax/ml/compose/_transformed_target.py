@@ -375,7 +375,10 @@ class TransformedTargetRegressor(AbstractRecipe):
             )
         target_batch, target_shape = _targets_as_feature_batch(batch)
         transform_fit_key, transform_key, regressor_key = _split_key(key, 3)
-        transform_result = self.transformer.fit_batch(target_batch, key=transform_fit_key)
+        transform_result = self.transformer.fit_batch(
+            target_batch,
+            key=transform_fit_key if self.transformer.accepts_fit_key else None,
+        )
         if not isinstance(transform_result, FitResult):
             raise TypeError("Target transformer did not return a FitResult.")
         transform_model = transform_result.as_trainable()
@@ -389,7 +392,10 @@ class TransformedTargetRegressor(AbstractRecipe):
             transformed,
             scalar_target=(target_shape == ()),
         )
-        regressor_result = self.regressor.fit_batch(regression_batch, key=regressor_key)
+        regressor_result = self.regressor.fit_batch(
+            regression_batch,
+            key=regressor_key if self.regressor.accepts_fit_key else None,
+        )
         if not isinstance(regressor_result, FitResult):
             raise TypeError("Regressor did not return a FitResult.")
         regressor_model = regressor_result.as_trainable()

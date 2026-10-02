@@ -732,6 +732,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 ),
             ),
         )
+        numerical_rank = svd_linalg.require_exact_svd_rank(rank_result)
         singular_values = rank_result.singular_values
         smallest = jnp.min(singular_values)
         condition = jnp.max(singular_values) / jnp.maximum(
@@ -739,7 +740,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         )
         rank_valid = (
             rank_result.successful
-            & (rank_result.numerical_rank == graph.constraint_count)
+            & (numerical_rank == graph.constraint_count)
             & jnp.isfinite(condition)
         )
         return (
@@ -748,7 +749,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             _residuals_to_multipliers(dual),
             graph.current_velocity_residuals(projected),
             rank_valid,
-            rank_result.numerical_rank,
+            numerical_rank,
             condition,
         )
 

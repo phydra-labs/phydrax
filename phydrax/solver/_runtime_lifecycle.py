@@ -681,9 +681,10 @@ def verify_runtime_checkpoint_envelope(
     return expected_checkpoint
 
 
-def write_runtime_checkpoint(
-    path: str | os.PathLike[str], envelope: RuntimeCheckpointEnvelope, /
-) -> Path:
+def _runtime_checkpoint_manifest(
+    envelope: RuntimeCheckpointEnvelope, /
+) -> dict[str, object]:
+    """Bind verified logical arrays to the canonical checkpoint record."""
     if not isinstance(envelope, RuntimeCheckpointEnvelope):
         raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
     verify_runtime_checkpoint_envelope(envelope)
@@ -700,6 +701,13 @@ def write_runtime_checkpoint(
         "partition_id": envelope.partition_id,
         **envelope.tree_specs_record(),
     }
+    return manifest
+
+
+def write_runtime_checkpoint(
+    path: str | os.PathLike[str], envelope: RuntimeCheckpointEnvelope, /
+) -> Path:
+    manifest = _runtime_checkpoint_manifest(envelope)
     return write_array_archive(path, manifest=manifest, arrays=envelope.archive_arrays)
 
 

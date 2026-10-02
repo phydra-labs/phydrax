@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -77,7 +78,10 @@ def test_linalg_svd_scenario_1() -> None:
         jnp.linalg.svd(matrix, compute_uv=False),
     )
     assert jnp.allclose(compiled.singular_values, result.singular_values)
-    assert int(result.numerical_rank) == 2
+    assert int(svd.require_exact_svd_rank(result)) == 2
+    assert result.rank_evidence.full_spectrum
+    assert result.rank_evidence.deterministic_exact
+    assert int(result.rank_evidence.lower_bound) == int(result.rank_evidence.upper_bound)
     assert jnp.max(result.diagnostics.left_residual_norms) < 1e-12
     assert jnp.max(result.diagnostics.right_residual_norms) < 1e-12
 
@@ -107,7 +111,7 @@ def test_linalg_svd_scenario_1() -> None:
                 expected_values = expected_values[::-1]
 
             assert bool(result.successful)
-            assert int(result.numerical_rank) == expected_rank
+            assert int(svd.require_exact_svd_rank(result)) == expected_rank
             assert jnp.allclose(result.singular_values, expected_values, atol=1e-12)
             assert jnp.allclose(
                 (result.left_vectors * result.singular_values) @ result.right_vectors.T,
@@ -207,7 +211,7 @@ def test_singular_value_derivatives_require_nonzero_isolated_values() -> None:
         ),
     )
     assert rank_deficient.status == int(svd.SVDSolveStatus.RANK_DEFICIENT)
-    assert int(rank_deficient.numerical_rank) == 1
+    assert int(svd.require_exact_svd_rank(rank_deficient)) == 1
 
     with pytest.raises(ValueError, match="materialization limit"):
         svd.plan_svd(
@@ -248,3 +252,85 @@ def test_matrix_free_singular_value_gradient_supports_closure_converted_operator
     gradient = jax.jit(jax.grad(nuclear_norm))(jnp.asarray(1.25))
 
     assert jnp.allclose(gradient, 1.0, atol=1e-8)
+
+
+def test_dense_general_spd_pairing_remains_supported_randomized_refuses() -> None:
+    source_metric = jnp.asarray([[2.0, 0.3], [0.3, 1.5]], dtype=jnp.float64)
+    target_metric = jnp.asarray(
+        [[1.5, 0.2, -0.1], [0.2, 2.0, 0.4], [-0.1, 0.4, 1.8]], dtype=jnp.float64
+    )
+    source = la.ArraySpace((2,), dtype=jnp.float64, pairing=_DensePairing(source_metric))
+    target = la.ArraySpace((3,), dtype=jnp.float64, pairing=_DensePairing(target_metric))
+    matrix = jnp.asarray([[2.0, -0.3], [0.4, 1.5], [-0.2, 0.6]], dtype=jnp.float64)
+    problem = svd.SVDProblem(la.DenseLinearOperator(matrix, source=source, target=target))
+    prepared = svd.prepare_svd(problem, svd.SVDSolvePolicy(count=2))
+    assert isinstance(prepared.state, svd.DenseSVDState)
+    result = svd.svd(prepared)
+    assert not prepared.state.diagonal
+    assert bool(result.successful)
+    assert jnp.allclose(
+        matrix @ result.right_coordinates,
+        result.left_coordinates * result.singular_values,
+        atol=1e-12,
+    )
+    assert jnp.allclose(
+        result.right_coordinates.T @ source_metric @ result.right_coordinates,
+        jnp.eye(2),
+        atol=1e-12,
+    )
+    assert jnp.allclose(
+        result.left_coordinates.T @ target_metric @ result.left_coordinates,
+        jnp.eye(2),
+        atol=1e-12,
+    )
+    with pytest.raises(TypeError, match="coordinate-diagonal"):
+        svd.plan_svd(problem, svd.SVDSolvePolicy(svd.RandomizedSVD(), count=1))
+
+
+def test_dense_compact_pairing_factors_do_not_require_square_metric_budgets() -> None:
+    matrix = jnp.asarray(
+        [[3.0, -0.2], [0.4, 1.7], [0.6, -0.1], [-0.3, 0.5]], dtype=jnp.float64
+    )
+    prepared = svd.prepare_svd(
+        svd.SVDProblem(la.DenseLinearOperator(matrix)),
+        svd.SVDSolvePolicy(
+            count=1, materialization=la.MaterializationPolicy(max_entries=8, max_bytes=64)
+        ),
+    )
+    assert isinstance(prepared.state, svd.DenseSVDState)
+    assert prepared.state.diagonal
+    assert prepared.state.source_factor.shape == (2,)
+    assert prepared.state.target_factor.shape == (4,)
+    assert int(svd.require_exact_svd_rank(svd.svd(prepared))) == 2
+
+
+def test_smallest_selection_reports_its_actual_factor_residual_and_no_leading_claim() -> (
+    None
+):
+    matrix = jnp.diag(jnp.asarray([9.0, 4.0, 1.0], dtype=jnp.float64))
+    result = svd.svd(
+        svd.SVDProblem(la.DenseLinearOperator(matrix)),
+        policy=svd.SVDSolvePolicy(count=1, which="smallest"),
+    )
+    approximation = result.left_coordinates @ (
+        result.singular_values[:, None] * result.right_coordinates.conj().T
+    )
+    residual = np.linalg.norm(np.asarray(matrix - approximation), ord=2)
+    assert bool(result.successful)
+    assert np.allclose(result.singular_values, np.asarray([1.0], dtype=np.float64))
+    assert result.range_evidence.factor_residual_upper_bound >= residual
+    assert not bool(result.leading_evidence.certified)
+    assert result.leading_evidence.gap_lower_bound <= 0.0
+
+
+def test_partial_smallest_selection_refuses_a_required_leading_certificate() -> None:
+    matrix = jnp.diag(jnp.asarray([9.0, 4.0, 1.0], dtype=jnp.float64))
+    with pytest.raises(ValueError):
+        svd.plan_svd(
+            svd.SVDProblem(la.DenseLinearOperator(matrix)),
+            svd.SVDSolvePolicy(
+                count=1,
+                which="smallest",
+                approximation=svd.SVDApproximationPolicy(require_leading=True),
+            ),
+        )

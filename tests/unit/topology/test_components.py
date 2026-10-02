@@ -349,3 +349,33 @@ def test_transition_reports_pair_capacity_overflow() -> None:
     result = _transition(left + right, bridge, _WEIGHT, pair_capacity=1)
     assert bool(result.pair_overflow)
     assert not bool(result.successful)
+
+
+@pytest.mark.parametrize(
+    ("old_capacity", "new_capacity", "dtype"),
+    [(2, 3, np.int32), (2**32, 2**31, np.int64)],
+    ids=["narrow-pairs", "int64-maximum-pair"],
+)
+def test_component_pair_key_dtype_remains_scalar_at_integer_boundaries(
+    old_capacity: int, new_capacity: int, dtype: type[np.int32] | type[np.int64]
+) -> None:
+    plan = phx.topology.ComponentTransitionPlan(
+        1, old_capacity=old_capacity, new_capacity=new_capacity, pair_capacity=1
+    )
+    assert np.dtype(plan.key_dtype) == np.dtype(dtype)
+    maximum_pair = old_capacity * new_capacity - 1
+    groups = jax.jit(plan.grouping.build)(
+        np.asarray([maximum_pair], dtype=dtype), np.asarray([True], dtype=np.bool_)
+    )
+    assert bool(groups.evidence.successful)
+    np.testing.assert_array_equal(groups.group_keys, [maximum_pair])
+    lookup = groups.lookup(np.asarray([maximum_pair], dtype=dtype))
+    np.testing.assert_array_equal(lookup.supported, [True])
+    np.testing.assert_array_equal(lookup.group_slots, [0])
+
+
+def test_component_pair_key_overflow_is_refused_before_grouping() -> None:
+    with pytest.raises(ValueError, match="int64 key range"):
+        phx.topology.ComponentTransitionPlan(
+            1, old_capacity=2**32, new_capacity=2**32, pair_capacity=1
+        )

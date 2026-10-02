@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `27b0dfba9df4a8251a93f9788d7921218028075715bf913729af51c4e2f4f6d7`
+Catalog ID: `e2c92c63b301abe5b4084228768ab2d64f5f8295eec3ad7b97f1aa2541684856`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 277 |
+| candidate | 281 |
 | research | 171 |
 | internal | 5 |
 | retired | 0 |
@@ -247,6 +247,7 @@ Catalog ID: `27b0dfba9df4a8251a93f9788d7921218028075715bf913729af51c4e2f4f6d7`
 | `interfacial-transport.symmetric-film-surfactant` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
 | `kinetic.compressible-entropic` | `phydrax.discretization` | research | research-production-closure | 0 |
 | `lattice-boltzmann.n-color-emulsion` | `phydrax.discretization.lattice_boltzmann` | candidate | candidate | 1 |
+| `linalg.singular-subspaces` | `phydrax.linalg` | candidate | candidate | 4 |
 | `magnetic-resonance.epr.exact-single-crystal` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `magnetic-resonance.musr.exact-static-site` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `magnetic-resonance.nmr.exact-single-crystal` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
@@ -379,8 +380,11 @@ Catalog ID: `27b0dfba9df4a8251a93f9788d7921218028075715bf913729af51c4e2f4f6d7`
 | `protein-coordinate-proposal` | `phydrax.applications` | candidate | candidate | 1 |
 | `protein.mutation-stability-prediction` | `phydrax.applications` | candidate | candidate | 1 |
 | `qft.frontier-platform` | `phydrax.applications.lattice_field` | research | research | 0 |
+| `quantum-lattice.configuration-columns` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.fixed-sector` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.orbit-sector` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
+| `quantum-lattice.positive-guide` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
+| `quantum-lattice.projector-monte-carlo` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.response` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.stochastic-sign-free` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |
 | `quantum-lattice.tpq` | `phydrax.operators.quantum.lattice` | candidate | candidate | 1 |

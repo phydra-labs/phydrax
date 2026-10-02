@@ -4,16 +4,184 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from benchmarks._runtime import (
+    compiler_evidence,
+    logical_array_bytes,
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+)
+from phydrax.sparse import (
+    KeyGroupAccumulation,
+    KeyGroupLookup,
+    KeyGroupPlan,
+    KeyGroupReductionEvidence,
+    KeyGroupState,
+    reduce_key_groups,
+)
+
+
+@eqx.filter_jit
+def _seeded_reduce(
+    groups: KeyGroupState,
+    values: jax.Array,
+    initial: KeyGroupAccumulation,
+    accumulation: Literal["deterministic", "compensated"],
+) -> tuple[KeyGroupAccumulation, KeyGroupReductionEvidence]:
+    return reduce_key_groups(groups, values, accumulation=accumulation, initial=initial)
+
+
+@eqx.filter_jit
+def _wordkey_build(
+    plan: KeyGroupPlan, keys: jax.Array, stable_ids: jax.Array
+) -> KeyGroupState:
+    return plan.build(
+        keys, jnp.ones((keys.shape[0],), dtype=jnp.bool_), stable_ids=stable_ids
+    )
+
+
+@eqx.filter_jit
+def _wordkey_lookup(groups: KeyGroupState, keys: jax.Array) -> KeyGroupLookup:
+    return groups.lookup(keys)
+
+
+def _wordkey_skew_case() -> dict[str, Any]:
+    count = 512
+    tails = jnp.where(
+        jnp.arange(count, dtype=jnp.uint32) < 256,
+        jnp.uint32(0),
+        jnp.arange(count, dtype=jnp.uint32) % jnp.uint32(64),
+    )
+    keys = jnp.full((count, 4), 2**32 - 1, dtype=jnp.uint32).at[:, -1].set(tails)
+    plan = KeyGroupPlan(count, 64, (2**32 - 1,) * 4)
+    ids = jnp.arange(count, dtype=jnp.int64) - jnp.int64(2**40)
+    compiled, timing = measure_lower_and_compile(
+        lambda: _wordkey_build.lower(plan, keys, ids),  # ty: ignore[unresolved-attribute]
+        lambda lowered: lowered.compile(),
+    )
+    groups, first_seconds = measure_synchronized(lambda: compiled(plan, keys, ids))
+    groups, warm = measure_repeated(
+        lambda: compiled(plan, keys, ids), warmup=1, repeats=3
+    )
+    lookup, lookup_warm = measure_repeated(
+        lambda: _wordkey_lookup(groups, keys), warmup=1, repeats=3
+    )
+    slots = np.asarray(lookup.group_slots)
+    reconstructed = np.asarray(groups.group_keys)[np.maximum(slots, 0)]
+    identity = bool(np.all(np.asarray(lookup.supported))) and bool(
+        np.array_equal(reconstructed, np.asarray(keys))
+    )
+    executable = compiled.compiled
+    return {
+        "word_count": 4,
+        "items": count,
+        "groups": int(groups.evidence.required_groups),
+        "maximum_contention": int(groups.evidence.maximum_group_size),
+        "uneven_target_occupancy": True,
+        "lookup_identity": identity,
+        "successful": bool(groups.evidence.successful) and identity,
+        "lowering_seconds": timing.lowering_seconds,
+        "compilation_seconds": timing.compilation_seconds,
+        "first_synchronized_seconds": first_seconds,
+        "warm": warm.to_seconds_dict(),
+        "lookup_warm": lookup_warm.to_seconds_dict(),
+        "compiler": compiler_evidence(
+            executable.cost_analysis(),
+            executable.memory_analysis(),
+            source="jax-compiled-skew-wordkeys",
+            unavailable_reason="backend compiler fields unavailable",
+        ),
+        "logical_retained_bytes": logical_array_bytes(groups),
+    }
+
+
+def _wordkey_seeded_case(
+    *, words: int, accumulation: Literal["deterministic", "compensated"]
+) -> dict[str, Any]:
+    """Same-prefix exact identities and signed complex cancellation across seeds."""
+    count = 128
+    keys = jnp.full((count, words), 2**32 - 1, dtype=jnp.uint32)
+    keys = keys.at[:, -1].set(jnp.arange(count, dtype=jnp.uint32))
+    groups = KeyGroupPlan(count, count, (2**32 - 1,) * words).build(
+        keys,
+        jnp.ones((count,), dtype=jnp.bool_),
+        stable_ids=jnp.arange(count, dtype=jnp.int64) - jnp.int64(2**40),
+    )
+    initial = KeyGroupAccumulation(
+        jnp.full((count,), 1e16 + 1e16j, dtype=jnp.complex128),
+        jnp.full((count,), 1 + 1j, dtype=jnp.complex128),
+    )
+    negative = jnp.full((count,), -1e16 - 1e16j, dtype=jnp.complex128)
+    compiled, timing = measure_lower_and_compile(
+        lambda: _seeded_reduce.lower(groups, negative, initial, accumulation),  # ty: ignore[unresolved-attribute]
+        lambda lowered: lowered.compile(),
+    )
+    _, first_seconds = measure_synchronized(
+        lambda: compiled(groups, negative, initial, accumulation)
+    )
+    (result, evidence), warm = measure_repeated(
+        lambda: compiled(groups, negative, initial, accumulation), warmup=1, repeats=3
+    )
+    final, final_evidence = _seeded_reduce(
+        groups, jnp.full((count,), 3 + 3j, dtype=jnp.complex128), result, accumulation
+    )
+    lookup = groups.lookup(keys)
+    expected = 4 + 4j
+    defect = float(jnp.max(jnp.abs(final.value - expected)))
+    executable = compiled.compiled
+    return {
+        "word_count": words,
+        "items": count,
+        "same_prefix_different_tail": True,
+        "accumulation": accumulation,
+        "signed_stable_ids": True,
+        "seeded_cancellation_defect": defect,
+        "lookup_identity": bool(
+            jnp.all(
+                lookup.supported
+                & (lookup.group_slots == jnp.arange(count, dtype=jnp.int32))
+            )
+        ),
+        "lowering_seconds": timing.lowering_seconds,
+        "compilation_seconds": timing.compilation_seconds,
+        "first_synchronized_seconds": first_seconds,
+        "warm": warm.to_seconds_dict(),
+        "compiler": compiler_evidence(
+            executable.cost_analysis(),
+            executable.memory_analysis(),
+            source="jax-compiled-seeded-wordkeys",
+            unavailable_reason="backend compiler fields unavailable",
+        ),
+        "logical_retained_bytes": logical_array_bytes((groups, initial, result)),
+        "successful": bool(evidence.successful & final_evidence.successful),
+        "expected": {"real": 4.0, "imag": 4.0},
+        "finite_control_passed": defect == 0.0,
+    }
+
+
+def projector_cases() -> dict[str, Any]:
+    """Run only the new controls, without raster/fluid benchmark side effects."""
+    cases = {
+        f"wordkeys-{words}-{accumulation}": _wordkey_seeded_case(
+            words=words, accumulation=accumulation
+        )
+        for words in (1, 4, 8)
+        for accumulation in ("deterministic", "compensated")
+    }
+    cases["wordkeys-uneven-occupancy"] = _wordkey_skew_case()
+    return cases
 
 
 def _ready(value: Any) -> Any:
@@ -306,20 +474,29 @@ def _flip_case() -> Any:
     }
 
 
-def run(output: Path) -> None:
-    cases = {
-        "key_groups": _group_case(),
-        "relation_execution": _relation_case(),
-        "gaussian_raster": _raster_case(),
-        "sparse_lbm": _lbm_case(),
-        "sparse_mpm": _mpm_case(),
-        "sparse_flip": _flip_case(),
-    }
+def run(output: Path, *, projector_only: bool = False) -> None:
+    cases = (
+        {}
+        if projector_only
+        else {
+            "key_groups": _group_case(),
+            "relation_execution": _relation_case(),
+            "gaussian_raster": _raster_case(),
+            "sparse_lbm": _lbm_case(),
+            "sparse_mpm": _mpm_case(),
+            "sparse_flip": _flip_case(),
+        }
+    )
+    cases.update(projector_cases())
     passed = all(case.get("successful", True) for case in cases.values()) and all(
         np.isfinite(value)
         for case in cases.values()
         for key, value in case.items()
         if key.endswith("_ms") or key.endswith("_defect")
+    )
+    passed = passed and all(
+        case.get("finite_control_passed", True) and case.get("lookup_identity", True)
+        for case in cases.values()
     )
     payload = {
         "device": str(jax.devices()[0]),
@@ -327,11 +504,19 @@ def run(output: Path) -> None:
         "passed": bool(passed),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2) + "\n")
-    print(json.dumps(payload, indent=2))
+    from tools.projector_monte_carlo_qualification import _json
+
+    output.write_text(json.dumps(_json(payload), indent=2, allow_nan=False) + "\n")
+    print(json.dumps(_json(payload), indent=2, allow_nan=False))
     if not passed:
         raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    run(Path("benchmarks/sparse_execution.json"))
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output", type=Path, default=Path("benchmarks/sparse_execution.json")
+    )
+    parser.add_argument("--projector-only", action="store_true")
+    arguments = parser.parse_args()
+    run(arguments.output, projector_only=arguments.projector_only)

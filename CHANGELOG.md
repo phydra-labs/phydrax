@@ -25,6 +25,21 @@
   leaves. Array-bearing bound methods no longer trigger a static-array warning,
   and updated callback data remains visible under compiled evaluation and
   differentiation.
+  This corrects the callback PyTree partition and intentionally changes the
+  whole-problem numeric fingerprint, including problems whose optional callbacks
+  are `None`; prior whole-problem fingerprints are not compatibility aliases.
+- Native single-device complex128 projector quantum Monte Carlo: packed rank-free
+  configuration addresses, prepared sparse outgoing columns, probability-corrected
+  raw-route sampling, adaptive semistochastic application, and complete signed
+  annihilation before late threshold compression.
+- Frozen positive guide similarities with original physical metrics, joint
+  correlated projected/replica ratios with denominator refusal, explicit
+  finite-history population-control assumptions, and transactional checkpoint,
+  continuation, and same-draw resource-only replay. These bounded candidate
+  workflows are not generic sign-cure or unbiased stationary-energy claims.
+- Native compact multiword key grouping and seeded deterministic/compensated
+  signed reduction, preserving existing scalar consumers; explicit lifecycle
+  archive limits support the complete retained projector statistical records.
 - Prepared meshfree approximation in `phydrax.discretization.meshfree`: bounded
   certified neighborhoods, batched GMLS/PHS-RBF-FD, enforced stencil admission,
   sparse point-cloud elliptic solves, explicit hyperviscosity, and native
@@ -46,6 +61,16 @@
   conormal/distribution metadata and compatibility names are removed.
 - Negative-offset positive transforms are refused when they cannot certify
   input-convex constitutive potentials.
+- Native randomized leading SVD with explicit typed keys, refresh-addressed sketches
+  and independent audits, bounded QR refinement, original-operator residuals,
+  approximation/leading-subspace certificates, and global rank uncertainty.
+- Compact first-order singular projector and retained-covariance responses, including
+  repeated retained clusters, rectangular null complements, moving Hilbert metrics,
+  and fixed-sketch randomized algorithm differentiation. Weighted PCA/POD,
+  incremental covariance merges, and operator POD share the native owner.
+- Operation-specific ML derivative admission with resolved numerical evidence.
+  Stopped fit basis representatives remain independently trainable; projection
+  responses and current-basis encoder/decoder behavior remain distinct.
 - Native exterior calculus in `phydrax.exterior`: explicit form degree, twist, fiber,
   and proxy semantics; shared exterior algebra; de Rham integration, Whitney chains,
   induced boundary traces, numerical form products, and coefficient systems.

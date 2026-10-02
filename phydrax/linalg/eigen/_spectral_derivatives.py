@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
 
-from .._spaces import _coordinate_pairing_matrix
+from .._operators import AbstractLinearOperator
+from .._spaces import _coordinate_pairing_matrix, ArraySpace
 from ._problems import Eigenproblem, EigenproblemLike
 
 
@@ -40,7 +39,7 @@ def density_from_projector(projector: Array, paired_metric: Array, /) -> Array:
 
 def projector_tangent(
     problem: EigenproblemLike,
-    problem_tangent: Any,
+    problem_tangent: EigenproblemLike | None,
     eigenvalues: Array,
     eigenvectors: Array,
     inverse_basis: Array,
@@ -54,17 +53,8 @@ def projector_tangent(
         eigenvalues,
         eigenvectors,
     )
-    selected = jnp.asarray(selected_mask, dtype=eigenvectors.dtype)
-    membership_difference = selected[:, None] - selected[None, :]
-    eigenvalue_difference = eigenvalues[..., :, None].astype(
-        eigenvectors.dtype
-    ) - eigenvalues[..., None, :].astype(eigenvectors.dtype)
-    cross_block = membership_difference != 0
-    safe_difference = jnp.where(cross_block, eigenvalue_difference, 1)
-    derivative_in_basis = jnp.where(
-        cross_block,
-        membership_difference * perturbation / safe_difference,
-        0,
+    derivative_in_basis = isolated_projector_divided_difference(
+        eigenvalues, perturbation, selected_mask
     )
     derivative = eigenvectors @ derivative_in_basis @ inverse_basis
     return derivative, derivative_in_basis, paired_metric_tangent
@@ -93,7 +83,7 @@ def density_tangent(
 
 def perturbation_in_eigenbasis(
     problem: EigenproblemLike,
-    problem_tangent: Any,
+    problem_tangent: EigenproblemLike | None,
     eigenvalues: Array,
     eigenvectors: Array,
     /,
@@ -216,7 +206,7 @@ def _attach_projector_derivative_jvp(
         Array,
     ],
     tangents: tuple[
-        Any,
+        EigenproblemLike | None,
         Array | None,
         Array | None,
         Array | None,
@@ -292,7 +282,7 @@ def _attach_density_derivative_jvp(
         Array,
     ],
     tangents: tuple[
-        Any,
+        EigenproblemLike | None,
         Array | None,
         Array | None,
         Array | None,
@@ -354,9 +344,13 @@ def _paired_metric(problem: EigenproblemLike, /) -> Array:
     return pairing @ metric
 
 
-def _operator_coordinate_columns(operator: Any, block: Array, /) -> Array:
+def _operator_coordinate_columns(
+    operator: AbstractLinearOperator, block: Array, /
+) -> Array:
     space = operator.source
     if operator.batch_shape:
+        if not isinstance(space, ArraySpace):
+            raise TypeError("Batched spectral actions require an ArraySpace.")
         width = block.shape[-1]
         structured = block.reshape(operator.batch_shape + space.shape + (width,))
         images = operator.mv(structured)
@@ -368,6 +362,68 @@ def _operator_coordinate_columns(operator: Any, block: Array, /) -> Array:
     return jax.vmap(apply, in_axes=1, out_axes=1)(block)
 
 
+def isolated_projector_divided_difference(
+    eigenvalues: Array, perturbation: Array, selected_mask: Array, /
+) -> Array:
+    """Cross-membership divided difference; internal repetitions never divide."""
+    selected = selected_mask.astype(perturbation.dtype)
+    difference = selected[..., :, None] - selected[..., None, :]
+    cross = difference != 0
+    gaps = eigenvalues[..., :, None] - eigenvalues[..., None, :]
+    return jnp.where(
+        cross,
+        difference * perturbation / jnp.where(cross, gaps, 1).astype(perturbation.dtype),
+        0,
+    )
+
+
+def singular_cross_block_responses(
+    forward_block: Array,
+    adjoint_block: Array,
+    singular_values: Array,
+    selected_values: Array,
+    cross_mask: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Thin left/right responses using only admitted cross-cluster gaps."""
+    ambient_values = singular_values.astype(forward_block.dtype)[:, None]
+    retained_values = selected_values.astype(forward_block.dtype)[None, :]
+    gaps = selected_values[None, :] ** 2 - singular_values[:, None] ** 2
+    denominator = jnp.where(cross_mask, gaps, 1).astype(forward_block.dtype)
+    left = (
+        forward_block * retained_values + adjoint_block * ambient_values
+    ) / denominator
+    right = (
+        forward_block * ambient_values + adjoint_block * retained_values
+    ) / denominator
+    return jnp.where(cross_mask, left, 0), jnp.where(cross_mask, right, 0)
+
+
+def selected_covariance_perturbations(
+    perturbation: Array, singular_values: Array, /
+) -> tuple[Array, Array]:
+    """Return selected left/right covariance cores, including internal repeats."""
+    adjoint = jnp.conj(perturbation.T)
+    values = singular_values.astype(perturbation.dtype)
+    left = perturbation * values[None, :] + values[:, None] * adjoint
+    right = values[:, None] * perturbation + adjoint * values[None, :]
+    return left, right
+
+
+def covariance_square_root_tangent(
+    frame: Array,
+    singular_values: Array,
+    horizontal_tangent: Array,
+    core_tangent: Array,
+    /,
+) -> Array:
+    """Smooth factor response for positive selected covariance, not an eigengauge."""
+    sums = singular_values[:, None] + singular_values[None, :]
+    return horizontal_tangent * singular_values.astype(horizontal_tangent.dtype)[
+        None, :
+    ] + frame @ (core_tangent / sums.astype(core_tangent.dtype))
+
+
 __all__ = [
     "attach_density_derivative",
     "attach_projector_derivative",
@@ -377,4 +433,8 @@ __all__ = [
     "projector_derivative_residuals",
     "projector_from_selection",
     "projector_tangent",
+    "covariance_square_root_tangent",
+    "isolated_projector_divided_difference",
+    "selected_covariance_perturbations",
+    "singular_cross_block_responses",
 ]

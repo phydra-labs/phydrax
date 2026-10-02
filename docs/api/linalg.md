@@ -1257,22 +1257,178 @@ retained storage, workspace, materialization, and action counts by the batch
 cardinality. Iterative `LOBPCG` and `RestartedLanczos` routes continue to reject
 operator batches during planning.
 
-### Pairing-aware singular values
+### Pairing-aware exact and randomized singular subspaces
 
-`phydrax.linalg.svd` exposes `SVDProblem`, `SVDSolvePolicy`, and the same
-plan/prepare/refresh/result lifecycle for an unbatched map between possibly
-different source and target Hilbert spaces. Dense preparation applies the
-declared Riesz maps, computes the requested largest or smallest triplets, maps
-the vectors back to their spaces, and reports both residual directions and both
-pairing-orthogonality errors. Singular-value-only differentiation requires
-isolated retained values; vector derivatives are not exposed.
+`phydrax.linalg.svd` owns `SVDProblem`, `SVDSolvePolicy`, `plan_svd`,
+`prepare_svd`, `refresh_svd`, and `svd`. These are unbatched native maps between
+declared source and target Hilbert spaces; equal dimensions never identify those
+spaces. `linalg.svd.DenseSVD` is distinct from the linear-solve `linalg.DenseSVD`.
 
-Triplet certification uses normwise backward error in the declared Hilbert spaces:
-the forward residual is scaled by ‖A‖‖v‖ + σ‖u‖, and the adjoint residual by
-‖A‖‖u‖ + σ‖v‖. The full reduced spectrum supplies ‖A‖ even when the smallest
-triplets are selected. Accurate null modes can therefore succeed without changing
-the residual tolerance; rank requirements and derivative isolation remain separate
-gates.
+| Method | Spectrum and pairing support | Preparation |
+| --- | --- | --- |
+| `DenseSVD()` (default) | Complete economy spectrum; largest or smallest selection; diagonal or bounded general SPD metrics | Compact vector scales for Euclidean/diagonal pairings; bounded Cholesky factors for general pairings |
+| `RandomizedSVD(oversampling=8, power_iterations=2, probe_refresh="reuse")` | Leading approximation only; admitted Euclidean/diagonal and supported composite pairings | Source sketch, QR in both directions of each fixed power step, retained range `Q` and compressed `B=(C*Q)*`; no materialization or dense fallback |
+
+For `m` target and `n` source coordinates, the fixed width is
+`ell=min(count+oversampling,m,n)`. Requested and effective oversampling are
+separate plan facts. A full-size compressed route remains the requested
+randomized algorithm, not a fallback. Arbitrary non-diagonal randomized metrics
+and `which="smallest"` are refused before work. Boolean and fractional capacities
+are refused rather than coerced.
+
+#### Keys, refresh, and stage resources
+
+Randomized preparation/direct execution requires an explicit scalar typed
+`jax.random.key`; legacy `uint32[2]` keys are refused. Planning draws nothing.
+Dense preparation refuses an extraneous key, prepared execution refuses a
+replacement key, and refresh preserves the root key and symbolic plan. `reuse`
+addresses the construction sketch at version zero; `redraw` uses the current
+numeric version. Both rebuild `Q/B` after coefficient changes. Independent audits
+always use the current version and a distinct semantic `SampleAddress`.
+Root key, numerical version, sketch version, and audit version remain numerical
+provenance, not host-hashed callable identity. Version overflow is refused.
+
+`plan.cost` reports original operator residency separately from added retained
+storage, preparation/refresh workspace, and solve/output workspace. It reports
+forward/adjoint column-equivalent work, fused block call counts, deterministic
+residual-scan entries, and provider workspace exactness. An opaque provider's
+unknown scratch estimate stays inexact. With `q` power iterations, construction
+uses `(q+1)ell` forward and adjoint columns, shell auditing adds `audit_probes`
+forward columns, and triplet diagnostics add `count` forward and adjoint columns.
+Retained randomized state contains only `Q/B`, vector scales, keys/versions, and
+small evidence; neither sketches/iterates nor square projectors are retained.
+Requested randomized differentiation also reserves its fixed-pass reverse tape in
+the stage workspace budgets; it is not retained fitted state. Diagnostic action
+counts describe the admitted nominal route; a failed preparation skips work.
+
+#### Approximation, leading ordering, and global rank
+
+Triplet acceptance uses unchanged `SVDTolerancePolicy`: forward residuals are
+scaled by an operator-norm bound times `||v||` plus `sigma||u||`, with the analogous
+adjoint scale. Both metric-orthogonality errors remain visible. Accurate null
+modes can succeed in primal mode without fabricated rank or derivative claims.
+
+`SVDApproximationPolicy(audit_probes=8, failure_probability=1e-6,
+numerical_allowance=64.0, require_leading=False)` owns independent range evidence.
+The numerical allowance multiplies dimension-scaled machine roundoff and the
+measured action/operator scale; it is reported separately, not hidden in the
+triplet tolerance. The residual allowance and `spectrum_numerical_allowance` are
+separate evidence; the latter expands compressed-spectrum intervals
+conservatively. Resident dense data uses direct tiled Frobenius residual
+accumulation of `(I-QQ*)C`, never cancellation of total/captured energies or a
+duplicate full transformed matrix. A shell uses fresh unnormalized independent
+Gaussian audit columns. For audit maximum `z`, count `s`, and version allowance
+`delta_v`, the real bound is `sqrt(2/pi)*delta_v**(-1/s)*z`; the circular-complex
+bound is `z/sqrt(-log1p(-delta_v**(1/s)))`, with numerical allowances included.
+The lifetime schedule is `delta/((v+1)(v+2))` with conservative representable
+roundoff; repeated execution of unchanged preparation is not another confidence
+event. The independence assumption and unknown provider action error remain
+explicit. Deterministic replay does not establish independence for an adversarial
+operator chosen from its audit key.
+
+`range_evidence` reports represented singular intervals, omitted-spectrum and
+factor-residual bounds, certificate kind, allowance, confidence, and optional
+known total energy. Shell total energy is `None`, not a fake zero/NaN fraction.
+`leading_evidence` separately reports a strict selected/discarded gap lower bound
+and certification. `require_leading=True` refuses an uncertified requested
+leading cluster even if its triplets have tiny residuals. Numerical approximation
+acceptance, strict leading certification, and derivative admission are distinct.
+No universal small rank-`k` reconstruction-tail tolerance is imposed.
+Smallest-mode dense selections are not leading-subspace certificates; a partial
+smallest request cannot set `require_leading=True`. Their factor-residual bound
+uses the largest actually discarded value, not the leading-selection tail.
+Audit and original-triplet norms use scaled coordinates so small or large
+representable real/complex amplitudes cannot turn omitted energy into false
+zero-residual or exact-rank evidence.
+
+
+`rank_evidence: SVDRankEvidence` replaces the obsolete native `numerical_rank`
+scalar. It reports global lower/upper bounds, threshold intervals, coverage,
+availability, and deterministic exact availability. The threshold remains
+`absolute + relative*largest_value`. Partial bounds account for uncertainty in
+both the largest value and unobserved modes; a positive compressed spectrum
+never proves full global rank. Coincident probabilistic bounds remain
+confidence-qualified. `require_exact_svd_rank(result_or_evidence)` consumes only
+available deterministic complete equal bounds, independently of a policy
+`RANK_DEFICIENT` or derivative refusal. It refuses unavailable/partial or merely
+probabilistic evidence. Full-rank randomized planning requires full coverage and
+an admitted deterministic route; numerical interval resolution is still checked.
+
+Native factor energy describes `Q B_k`. `diagnostics.projection_energies` instead
+measures `||C v_i||²` by original actions, as required by ML's actual right-basis
+encoder/decoder. These need not equal compressed singular values squared.
+
+#### First-order modes and compact actions
+
+`differentiation` is one canonical selector:
+
+| Mode | Fit outputs and response |
+| --- | --- |
+| `none` | All fit-derived numerical outputs stopped |
+| `singular-values` | Positive individually isolated selected values differentiate; frames stopped |
+| `projector` | Raw representatives/individual values stopped; compact invariant frame and covariance corrections differentiate across selected/discarded blocks; internal retained/discarded repetitions allowed |
+| `basis` | Canonical selected triplets differentiate with positive isolation and measured unique right-pivot margins |
+
+Exact dense responses include ambient null complements and moving source/target
+metric terms without normal matrices or Hermitian dilation. The right-vector
+pivot in caller coordinates determines a shared phase for both frames, preserving
+`A V = U Sigma`. A full square ambient projector is identity, including zero
+selected values. Tall/wide side-specific null complements remain explicit.
+
+Randomized responses differentiate the fixed finite QR/power algorithm and its
+compressed rectangular decomposition, not an exact-original-operator formula.
+Provenance uses `DerivativeRoute.UNROLLED`; every QR needs a measured
+full-column-rank/conditioning margin for differentiation. A deficient sketch may
+still give a useful finite primal result; no redraw, jitter, clipping, or retry
+silently repairs its derivative. First-order finite differences must reuse the
+same key, address/version, and pass count. No higher-order guarantee is made.
+
+`left_coordinates`/`right_coordinates` and their `SingularSubspaceResponse`
+carriers are compact columns **in caller coordinates**. Each correction has
+identically zero primal and carries the admitted invariant tangent.
+`projector_action(frame, response, covector)` and
+`covariance_action(frame, values, response, covector)` avoid full projectors.
+The caller applies its metric Riesz map: a native source projection is
+`projector_action(result.right_coordinates, result.right_response,
+operator.source.riesz(probe))`, not an unweighted Euclidean dot for a weighted
+space. Independent prediction-input/current-basis derivatives remain ordinary;
+fit-through-basis-reparameterization is not certified.
+
+#### Status and an explicit approximation example
+
+`primal_status`, `derivative_status`, `derivative_valid`, and aggregate `status`
+remain distinct. Status-mode failed numerical preparation skips unavailable
+decompositions and keeps fixed-shaped NaN fit payloads with unavailable evidence
+under eager/JIT execution. It never sanitizes failure into a successful zero
+solution. `FailurePolicy("error")` attaches native JIT-safe errors to consumed
+status/numerical roots. Wrong kinds, shapes, selectors, capabilities, missing keys,
+and resource budgets always remain contract errors.
+
+```python
+import jax
+import jax.numpy as jnp
+import phydrax as phx
+
+native = phx.linalg.svd
+problem = native.SVDProblem(phx.linalg.DenseLinearOperator(jnp.eye(16)))
+policy = native.SVDSolvePolicy(
+    native.RandomizedSVD(oversampling=4, power_iterations=1),
+    count=3,
+    tolerance=native.SVDTolerancePolicy(residual=0.1, orthogonality=1e-5),
+    approximation=native.SVDApproximationPolicy(require_leading=True),
+    failure=phx.linalg.FailurePolicy("status"),
+)
+result = native.svd(problem, policy=policy, key=jax.random.key(7))
+# An identity has no strict partial leading cluster: inspect refusal, do not
+# infer a leading-subspace certificate from finite triplets.
+assert not result.leading_evidence.certified
+assert result.status == native.SVDSolveStatus.LEADING_UNCERTIFIED
+```
+
+The range algorithm is an independent native implementation of the mathematics
+in [Halko, Martinsson, and Tropp](https://arxiv.org/abs/0909.4061) and the audit
+theorem in [Halko, Martinsson, Shkolnisky, and Tygert](https://arxiv.org/abs/1007.5510),
+not copied upstream implementation code.
 
 ### General dense Schur problems and spectral projectors
 
@@ -3471,6 +3627,38 @@ authoritative eigensolver.
 ---
 
 ::: phydrax.linalg.svd.DenseSVD
+
+---
+
+::: phydrax.linalg.svd.RandomizedSVD
+
+---
+
+::: phydrax.linalg.svd.SVDApproximationPolicy
+
+---
+
+::: phydrax.linalg.svd.SVDRankEvidence
+
+---
+
+::: phydrax.linalg.svd.SVDRangeEvidence
+
+---
+
+::: phydrax.linalg.svd.SVDLeadingEvidence
+
+---
+
+::: phydrax.linalg.svd.require_exact_svd_rank
+
+---
+
+::: phydrax.linalg.svd.projector_action
+
+---
+
+::: phydrax.linalg.svd.covariance_action
 
 ---
 

@@ -4,33 +4,34 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._differentiation import (
-    DerivativeContract,
-    DerivativeRoute,
-    DerivativeSurface,
-    GradientLevel,
-    SurfaceDerivative,
-)
+from ..._differentiation import DerivativeContract
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
+from ..._validation import positive_integer
+from ...linalg._singular_subspaces import covariance_factor, SingularSubspaceResponse
+from ...typing import PRNGKey
 from .._batch import MLBatch, WeightPolicy
-from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
+from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel
-from ._subspace import _fit_subspace, SubspaceModel
+from ._subspace import _fit_subspace, _operation_derivatives, SubspaceModel
 
 
+@final
 class IncrementalPCAModel(AbstractFittedModel):
     """Principal subspace summary that can be immutably merged with later batches."""
 
     subspace: SubspaceModel
     total_weight: Array = fixed_field()
+    valid: Array = fixed_field()
+    status: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -45,13 +46,30 @@ class IncrementalPCAModel(AbstractFittedModel):
         *,
         total_weight: ArrayLike,
         chunks_seen: int,
+        valid: ArrayLike,
+        status: ArrayLike,
     ) -> None:
+        if not isinstance(model, SubspaceModel):
+            raise TypeError("Incremental PCA state requires a SubspaceModel.")
+        weight = jnp.asarray(total_weight)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
+        status_ = jnp.asarray(status, dtype=jnp.int32)
+        chunks = positive_integer(chunks_seen, "chunks_seen")
+        if (
+            weight.shape != model.case_shape
+            or valid_.shape != model.case_shape
+            or status_.shape != model.case_shape
+        ):
+            raise ValueError(
+                "Incremental mass and evidence must match the model case shape."
+            )
         self.subspace = model
-        self.total_weight = jnp.asarray(total_weight)
+        self.total_weight = weight
+        self.valid, self.status = valid_, status_
         self.in_size = model.in_size
         self.out_size = model.out_size
         self.case_shape = model.case_shape
-        self.chunks_seen = int(chunks_seen)
+        self.chunks_seen = chunks
 
     @property
     def offset(self) -> Array:
@@ -107,8 +125,10 @@ class IncrementalPCAModel(AbstractFittedModel):
     def transform(self, x: ArrayLike, /) -> Array:
         return self.subspace.transform(x)
 
-    def inverse_transform(self, scores: ArrayLike, /) -> Array:
-        return self.subspace.inverse_transform(scores)
+    def inverse_transform(
+        self, scores: ArrayLike, /, *, key: PRNGKey | None = None
+    ) -> Array:
+        return self.subspace.inverse_transform(scores, key=key)
 
     def project(self, x: ArrayLike, /) -> Array:
         return self.subspace.project(x)
@@ -116,7 +136,7 @@ class IncrementalPCAModel(AbstractFittedModel):
     def projector(self, /) -> Array:
         return self.subspace.projector()
 
-    def __call__(self, x: Any, /, *, key: Any = None) -> Array:
+    def __call__(self, x: ArrayLike, /, *, key: PRNGKey | None = None) -> Array:
         del key
         return self.transform(x)
 
@@ -149,6 +169,8 @@ def _wrap_incremental(
         base,
         total_weight=total_weight,
         chunks_seen=chunks_seen,
+        valid=result.valid,
+        status=result.status,
     )
     return FitResult(
         model,
@@ -156,23 +178,9 @@ def _wrap_incremental(
         valid=result.valid,
         status=result.status,
         method="incremental-pca-merge-svd",
-        derivative_contract=prediction_fit_contract(
-            model._prediction_contract(),
-            (
-                SurfaceDerivative(
-                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                ),
-            ),
-            route=DerivativeRoute.SPECTRAL,
-            conditions=(
-                "each merge differentiates through its rank-truncated covariance summary",
-                "projector gradients require retained/discarded spectral separation at every merge",
-                "basis gradients additionally require non-repeated retained spectra",
-            ),
-        ),
+        derivative_contract=result.derivative_contract,
+        operation_derivatives=result.operation_derivatives,
+        default_operation=result.default_operation,
     )
 
 
@@ -216,10 +224,27 @@ def _merge_fit(
         raise ValueError("Incremental PCA updates must preserve feature width.")
     rank = previous.out_size
     repeated_mean = previous.offset[..., None, :]
-    scaled_modes = (
-        previous.weighted_components
-        * (previous.singular_values * jnp.sqrt(float(rank)))[..., :, None]
-    )
+    frame = jnp.swapaxes(jnp.conj(previous.weighted_components), -1, -2)
+    horizontal = jnp.swapaxes(jnp.conj(previous.subspace.frame_correction), -1, -2)
+    cases = frame.size // (previous.in_size * rank)
+
+    def factor_case(data: tuple[Array, Array, Array, Array]) -> Array:
+        basis, values, correction, core = data
+        return covariance_factor(
+            basis, values, SingularSubspaceResponse(correction, core)
+        )
+
+    factor = jax.lax.map(
+        factor_case,
+        (
+            frame.reshape((cases, previous.in_size, rank)),
+            previous.singular_values.reshape((cases, rank)),
+            horizontal.reshape((cases, previous.in_size, rank)),
+            previous.subspace.covariance_correction.reshape((cases, rank, rank)),
+        ),
+        batch_size=1,
+    ).reshape(frame.shape)
+    scaled_modes = jnp.swapaxes(jnp.conj(factor), -1, -2) * jnp.sqrt(float(rank))
     plus = repeated_mean + scaled_modes
     minus = repeated_mean - scaled_modes
     pseudo_values = jnp.concatenate((plus, minus), axis=-2)
@@ -259,6 +284,32 @@ def _merge_fit(
         method="incremental-pca-merge-svd",
         query_layout_provenance=(),
     )
+    base = result.as_trainable()
+    if not isinstance(base, SubspaceModel):
+        raise TypeError("Incremental merge expected a fitted SubspaceModel.")
+    merge_valid = base.fit_response_valid & previous.subspace.fit_response_valid
+    merge_status = jnp.where(
+        previous.subspace.fit_response_valid,
+        base.fit_response_status,
+        previous.subspace.fit_response_status,
+    )
+    base = eqx.tree_at(
+        lambda model: (model.fit_response_valid, model.fit_response_status),
+        base,
+        (merge_valid, merge_status),
+    )
+    result = FitResult(
+        base,
+        result.diagnostics,
+        valid=result.valid & previous.valid,
+        status=jnp.where(previous.valid, result.status, previous.status),
+        method=result.method,
+        derivative_contract=result.derivative_contract,
+        operation_derivatives=_operation_derivatives(
+            "projector", merge_valid, merge_status
+        ),
+        default_operation="transform",
+    )
     return _wrap_incremental(
         result,
         total_weight=previous.total_weight + jnp.sum(current_weight, axis=-1),
@@ -266,6 +317,7 @@ def _merge_fit(
     )
 
 
+@final
 class IncrementalPCA(AbstractRecipe):
     """Chunked immutable PCA using rank-truncated moment-preserving SVD merges."""
 
@@ -295,11 +347,16 @@ class IncrementalPCA(AbstractRecipe):
             raise ValueError("previous model rank must match n_components.")
 
     @property
+    def accepts_fit_key(self) -> bool:
+        return False
+
+    @property
     def is_fresh_fit(self) -> bool:
         return self.previous is None
 
-    def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        del key
+    def fit_batch(self, batch: MLBatch, /, *, key: PRNGKey | None = None) -> FitResult:
+        if key is not None:
+            raise ValueError("Incremental PCA dense merges do not consume a random key.")
         chunk = batch.sample_count if self.chunk_size is None else self.chunk_size
         start = 0
         current = self.previous

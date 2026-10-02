@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 import pytest
+from jax.typing import DTypeLike
 
 import phydrax as phx
 from phydrax.linalg import ArraySpace, DiagonalPairing
@@ -553,3 +554,347 @@ def test_compile_time_sparse_pattern_admission_preserves_metric_action() -> None
     np.testing.assert_allclose(
         jax.jit(action)(vector), metric @ np.asarray(vector), atol=1e-13
     )
+
+
+def test_packed_key_groups_compare_every_word_and_int64_event_order() -> None:
+    maximum = 2**32 - 1
+    keys = jnp.asarray(
+        [
+            [maximum, 0, 3, 1],
+            [0, maximum, 3, 1],
+            [0, maximum, 3, 2],
+            [maximum, 0, 3, 1],
+            [maximum, maximum, maximum, maximum],
+        ],
+        dtype=jnp.uint32,
+    )
+    groups = jax.jit(phx.sparse.KeyGroupPlan(5, 5, (maximum,) * 4).build)(
+        keys,
+        jnp.ones((5,), dtype=jnp.bool_),
+        stable_ids=jnp.asarray(
+            [2**40 + 5, 2**40 + 4, 2**40 + 3, 2**40 + 1, 2**40 + 2], dtype=jnp.int64
+        ),
+    )
+    assert bool(groups.evidence.successful)
+    np.testing.assert_array_equal(groups.storage_to_logical, [1, 2, 3, 0, 4])
+    np.testing.assert_array_equal(groups.group_keys[:4], np.asarray(keys)[[1, 2, 0, 4]])
+    np.testing.assert_array_equal(groups.group_counts, [1, 1, 2, 1, 0])
+    query = jnp.asarray(
+        [
+            [maximum, maximum, maximum, maximum],
+            [maximum, 0, 3, 2],
+            [0, maximum, 3, 1],
+            [0, maximum, 4, 1],
+        ],
+        dtype=jnp.uint32,
+    )
+    lookup = eqx.filter_jit(groups.lookup)(query)
+    np.testing.assert_array_equal(lookup.supported, [True, False, True, False])
+    np.testing.assert_array_equal(lookup.group_slots, [3, 0, 0, 0])
+
+
+def test_packed_key_alignment_uses_identity_across_changed_capacities() -> None:
+    bound = (2**32 - 1,) * 2
+    previous = phx.sparse.KeyGroupPlan(3, 3, bound).build(
+        jnp.asarray([[1, 7], [1, 8], [9, 0]], dtype=jnp.uint32),
+        jnp.ones((3,), dtype=jnp.bool_),
+    )
+    candidate = phx.sparse.KeyGroupPlan(3, 4, bound).build(
+        jnp.asarray([[9, 0], [1, 7], [2, 8]], dtype=jnp.uint32),
+        jnp.ones((3,), dtype=jnp.bool_),
+    )
+    transition = phx.sparse.align_key_groups(previous, candidate)
+    np.testing.assert_array_equal(transition.previous_retained, [True, False, True])
+    np.testing.assert_array_equal(transition.previous_to_candidate, [0, 0, 2])
+    np.testing.assert_array_equal(
+        transition.candidate_retained, [True, False, True, False]
+    )
+    np.testing.assert_array_equal(transition.candidate_to_previous, [0, 0, 2, 0])
+    assert bool(transition.topology_changed)
+    assert bool(transition.successful)
+
+
+def test_packed_key_case_lookup_preserves_query_mask_without_word_axis() -> None:
+    plan = phx.sparse.KeyGroupPlan(2, 2, (2**32 - 1,) * 2, case_shape=(2,))
+    groups = plan.build(
+        jnp.asarray([[[1, 2], [3, 4]], [[3, 4], [5, 6]]], dtype=jnp.uint32),
+        jnp.ones((2, 2), dtype=jnp.bool_),
+    )
+    lookup = groups.lookup(
+        jnp.asarray([[[3, 4], [1, 2]], [[3, 4], [1, 2]]], dtype=jnp.uint32),
+        valid=jnp.asarray([[True, False], [True, True]], dtype=jnp.bool_),
+    )
+    np.testing.assert_array_equal(lookup.supported, [[True, False], [True, False]])
+    np.testing.assert_array_equal(lookup.group_slots, [[1, 0], [0, 0]])
+
+
+@pytest.mark.parametrize("empty", [True, False], ids=["zero-items", "all-padding"])
+def test_packed_key_empty_support_does_not_match_zero_padding(empty: bool) -> None:
+    capacity = 0 if empty else 2
+    groups = phx.sparse.KeyGroupPlan(capacity, 2, (2**32 - 1,) * 2).build(
+        jnp.zeros((capacity, 2), dtype=jnp.uint32),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
+    )
+    lookup = groups.lookup(jnp.zeros((3, 2), dtype=jnp.uint32))
+    assert bool(groups.evidence.successful)
+    np.testing.assert_array_equal(lookup.supported, [False, False, False])
+    result, evidence = phx.sparse.reduce_key_groups(
+        groups, jnp.full((capacity,), jnp.nan, dtype=jnp.float64)
+    )
+    np.testing.assert_array_equal(result.value, [0.0, 0.0])
+    assert bool(evidence.successful)
+
+
+def test_seeded_group_reduction_preserves_complex_cancellation() -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32), jnp.ones((2,), dtype=jnp.bool_)
+    )
+    initial = phx.sparse.KeyGroupAccumulation(
+        jnp.asarray([1e16 + 1e16j], dtype=jnp.complex128),
+        jnp.asarray([0.25 + 0.5j], dtype=jnp.complex128),
+    )
+    result, evidence = jax.jit(phx.sparse.reduce_key_groups)(
+        groups,
+        jnp.asarray([1 + 2j, -1e16 - 1e16j], dtype=jnp.complex128),
+        initial=initial,
+    )
+    np.testing.assert_array_equal(result.high, [2j])
+    np.testing.assert_array_equal(result.correction, [1.25 + 0.5j])
+    np.testing.assert_array_equal(result.value, [1.25 + 2.5j])
+    assert bool(evidence.successful)
+
+
+@pytest.mark.parametrize("width", [1, 2, 4, 6], ids=["single", "pairs", "four", "whole"])
+def test_seeded_group_reduction_replays_identically_across_chunk_width(
+    width: int,
+) -> None:
+    bound = (2**32 - 1,) * 2
+    event_keys = jnp.asarray(
+        [[1, 9], [2, 8], [1, 9], [1, 9], [2, 8], [1, 9]], dtype=jnp.uint32
+    )
+    values = jnp.asarray(
+        [1e16 + 1e16j, 5j, 1 + 2j, -1e16 - 1e16j, -2j, 4 + 8j], dtype=jnp.complex128
+    )
+    whole_groups = phx.sparse.KeyGroupPlan(6, 3, bound).build(
+        event_keys,
+        jnp.ones((6,), dtype=jnp.bool_),
+        stable_ids=jnp.arange(6, dtype=jnp.int64),
+    )
+    whole, whole_evidence = phx.sparse.reduce_key_groups(whole_groups, values)
+    previous = phx.sparse.KeyGroupPlan(0, 3, bound).build(
+        jnp.zeros((0, 2), dtype=jnp.uint32), jnp.zeros((0,), dtype=jnp.bool_)
+    )
+    carry = phx.sparse.KeyGroupAccumulation(
+        jnp.zeros((3,), dtype=jnp.complex128), jnp.zeros((3,), dtype=jnp.complex128)
+    )
+    for start in range(0, 6, width):
+        count = min(width, 6 - start)
+        candidate = phx.sparse.KeyGroupPlan(3 + count, 3, bound).build(
+            jnp.concatenate((previous.group_keys, event_keys[start : start + count])),
+            jnp.concatenate((previous.group_active, jnp.ones((count,), dtype=jnp.bool_))),
+            stable_ids=jnp.concatenate(
+                (
+                    jnp.arange(-3, 0, dtype=jnp.int64),
+                    jnp.arange(start, start + count, dtype=jnp.int64),
+                )
+            ),
+        )
+        lookup = previous.lookup(candidate.group_keys, valid=candidate.group_active)
+        seed = phx.sparse.KeyGroupAccumulation(
+            jnp.where(lookup.supported, carry.high[lookup.group_slots], 0j),
+            jnp.where(lookup.supported, carry.correction[lookup.group_slots], 0j),
+        )
+        carry, evidence = phx.sparse.reduce_key_groups(
+            candidate,
+            jnp.concatenate(
+                (
+                    jnp.full((3,), jnp.nan + 0j, dtype=jnp.complex128),
+                    values[start : start + count],
+                )
+            ),
+            initial=seed,
+            value_valid=jnp.concatenate(
+                (jnp.zeros((3,), dtype=jnp.bool_), jnp.ones((count,), dtype=jnp.bool_))
+            ),
+        )
+        assert bool(evidence.successful), start
+        previous = candidate
+    assert bool(whole_evidence.successful)
+    np.testing.assert_array_equal(carry.high, whole.high)
+    np.testing.assert_array_equal(carry.correction, whole.correction)
+    np.testing.assert_array_equal(carry.value, [5 + 10j, 3j, 0j])
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+def test_group_reduction_masks_nan_and_keeps_zero_seed_components(
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    groups = phx.sparse.KeyGroupPlan(3, 2, 1, case_shape=(2,)).build(
+        jnp.asarray([[0, 1, 0], [0, 1, 0]], dtype=jnp.int32),
+        jnp.asarray([[True, True, False], [True, True, False]], dtype=jnp.bool_),
+    )
+    high = jnp.asarray(
+        [[[-0.0, 7.0], [2.0, 3.0]], [[4.0, -0.0], [5.0, 6.0]]], dtype=jnp.float64
+    )
+    correction = jnp.asarray(
+        [[[-0.0, 0.25], [0.5, 0.75]], [[1.0, -0.0], [1.25, 1.5]]], dtype=jnp.float64
+    )
+    result, evidence = phx.sparse.reduce_key_groups(
+        groups,
+        jnp.asarray(
+            [
+                [[0.0, 0.0], [jnp.nan, jnp.nan], [jnp.nan, jnp.nan]],
+                [[0.0, 0.0], [jnp.nan, jnp.nan], [jnp.nan, jnp.nan]],
+            ],
+            dtype=jnp.float64,
+        ),
+        accumulation=accumulation,
+        initial=phx.sparse.KeyGroupAccumulation(high, correction),
+        value_valid=jnp.asarray(
+            [[True, False, True], [True, False, True]], dtype=jnp.bool_
+        ),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(result.high).view(np.uint64), np.asarray(high).view(np.uint64)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(result.correction).view(np.uint64),
+        np.asarray(correction).view(np.uint64),
+    )
+    np.testing.assert_array_equal(evidence.finite, [True, True])
+    np.testing.assert_array_equal(evidence.successful, [True, True])
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_group_reduction_reports_active_nonfinite_values(value: float) -> None:
+    groups = phx.sparse.KeyGroupPlan(1, 1, 0).build(
+        jnp.asarray([0], dtype=jnp.int32), jnp.asarray([True], dtype=jnp.bool_)
+    )
+    _, evidence = phx.sparse.reduce_key_groups(
+        groups, jnp.asarray([value], dtype=jnp.float64)
+    )
+    assert not bool(evidence.finite)
+    assert not bool(evidence.successful)
+
+
+@pytest.mark.parametrize("member_limit", [None, 1], ids=["groups", "members"])
+def test_packed_group_capacity_failure_reaches_reduction_boundary(
+    member_limit: int | None,
+) -> None:
+    keys = [[1, 0], [2, 0]] if member_limit is None else [[1, 0], [1, 0]]
+    groups = phx.sparse.KeyGroupPlan(
+        2, 1, (2**32 - 1,) * 2, maximum_group_size=member_limit
+    ).build(jnp.asarray(keys, dtype=jnp.uint32), jnp.ones((2,), dtype=jnp.bool_))
+    _, evidence = phx.sparse.reduce_key_groups(
+        groups, jnp.asarray([2.0, 3.0], dtype=jnp.float64)
+    )
+    assert not bool(evidence.successful)
+    assert bool(groups.evidence.group_overflow) == (member_limit is None)
+    assert bool(groups.evidence.member_overflow) == (member_limit is not None)
+
+
+@pytest.mark.parametrize("dtype", [jnp.int32, jnp.int64, jnp.uint32])
+def test_scalar_key_dtype_maximum_does_not_overflow_padding(dtype: DTypeLike) -> None:
+    maximum = np.iinfo(dtype).max
+    groups = phx.sparse.KeyGroupPlan(3, 3, int(maximum)).build(
+        jnp.asarray([maximum, 0, maximum], dtype=dtype),
+        jnp.asarray([True, True, False], dtype=jnp.bool_),
+    )
+    assert bool(groups.evidence.successful)
+    lookup = groups.lookup(jnp.asarray([maximum, 1, 0], dtype=dtype))
+    np.testing.assert_array_equal(lookup.supported, [True, False, True])
+    np.testing.assert_array_equal(lookup.group_slots, [1, 0, 0])
+    result, evidence = phx.sparse.reduce_key_groups(
+        groups, jnp.asarray([7.0, 2.0, jnp.nan], dtype=jnp.float64)
+    )
+    np.testing.assert_array_equal(result.value, [2.0, 7.0, 0.0])
+    assert bool(evidence.successful)
+
+
+def test_packed_key_domain_and_stable_id_refusals_are_explicit() -> None:
+    with pytest.raises(ValueError, match="nonempty"):
+        phx.sparse.KeyGroupPlan(1, 1, ())
+    with pytest.raises(ValueError, match="uint32"):
+        phx.sparse.KeyGroupPlan(1, 1, (2**32,))
+    plan = phx.sparse.KeyGroupPlan(2, 2, (3, 7))
+    with pytest.raises(TypeError, match="uint32"):
+        plan.build(jnp.zeros((2, 2), dtype=jnp.int64), jnp.ones((2,), dtype=jnp.bool_))
+    with pytest.raises(ValueError, match="shape"):
+        plan.build(jnp.zeros((2,), dtype=jnp.uint32), jnp.ones((2,), dtype=jnp.bool_))
+    invalid = plan.build(
+        jnp.asarray([[3, 7], [3, 8]], dtype=jnp.uint32), jnp.ones((2,), dtype=jnp.bool_)
+    )
+    assert int(invalid.evidence.invalid_keys) == 1
+    assert not bool(invalid.evidence.successful)
+    duplicate_ids = plan.build(
+        jnp.asarray([[0, 0], [1, 0]], dtype=jnp.uint32),
+        jnp.ones((2,), dtype=jnp.bool_),
+        stable_ids=jnp.asarray([2**40, 2**40], dtype=jnp.int64),
+    )
+    assert int(duplicate_ids.evidence.duplicate_stable_ids) == 1
+    assert not bool(duplicate_ids.evidence.successful)
+
+
+def test_group_reduction_adds_case_batched_trailing_values_to_each_seed() -> None:
+    groups = phx.sparse.KeyGroupPlan(4, 2, 1, case_shape=(2,)).build(
+        jnp.asarray([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=jnp.int32),
+        jnp.ones((2, 4), dtype=jnp.bool_),
+    )
+    high = jnp.asarray(
+        [[[10.0, 20.0], [30.0, 40.0]], [[50.0, 60.0], [70.0, 80.0]]], dtype=jnp.float64
+    )
+    values = jnp.asarray(
+        [
+            [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]],
+            [[9.0, 10.0], [11.0, 12.0], [13.0, 14.0], [15.0, 16.0]],
+        ],
+        dtype=jnp.float64,
+    )
+    result, evidence = jax.jit(phx.sparse.reduce_key_groups)(
+        groups,
+        values,
+        initial=phx.sparse.KeyGroupAccumulation(high, jnp.zeros_like(high)),
+    )
+    np.testing.assert_array_equal(
+        result.value, [[[20.0, 32.0], [36.0, 48.0]], [[72.0, 84.0], [96.0, 108.0]]]
+    )
+    np.testing.assert_array_equal(evidence.successful, [True, True])
+
+
+def test_group_reduction_refuses_seed_layout_and_value_mask_mismatch() -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32), jnp.ones((2,), dtype=jnp.bool_)
+    )
+    values = jnp.asarray([1.0, 2.0], dtype=jnp.float64)
+    with pytest.raises(ValueError, match="initial"):
+        phx.sparse.reduce_key_groups(
+            groups,
+            values,
+            initial=phx.sparse.KeyGroupAccumulation(
+                jnp.zeros((2,), dtype=jnp.float64), jnp.zeros((2,), dtype=jnp.float64)
+            ),
+        )
+    with pytest.raises(TypeError, match="same dtype"):
+        phx.sparse.reduce_key_groups(
+            groups,
+            values,
+            initial=phx.sparse.KeyGroupAccumulation(
+                jnp.zeros((1,), dtype=jnp.float32), jnp.zeros((1,), dtype=jnp.float32)
+            ),
+        )
+    with pytest.raises(ValueError, match="value_valid"):
+        phx.sparse.reduce_key_groups(
+            groups, values, value_valid=jnp.ones((2, 1), dtype=jnp.bool_)
+        )
+
+
+def test_group_reduction_reports_finite_input_arithmetic_overflow() -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32), jnp.ones((2,), dtype=jnp.bool_)
+    )
+    maximum = np.finfo(np.float64).max
+    _, evidence = phx.sparse.reduce_key_groups(
+        groups, jnp.asarray([maximum, maximum], dtype=jnp.float64)
+    )
+    assert not bool(evidence.finite)
+    assert not bool(evidence.successful)

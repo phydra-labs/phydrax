@@ -46,7 +46,7 @@ class KeyGroupPlan(StrictModule):
     item_capacity: int = eqx.field(static=True)
     group_capacity: int = eqx.field(static=True)
     maximum_group_size: int | None = eqx.field(static=True)
-    key_upper_bound: int = eqx.field(static=True)
+    key_upper_bound: int | tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -54,7 +54,7 @@ class KeyGroupPlan(StrictModule):
         self,
         item_capacity: int,
         group_capacity: int,
-        key_upper_bound: int,
+        key_upper_bound: int | tuple[int, ...],
         *,
         maximum_group_size: int | None = None,
         case_shape: tuple[int, ...] = (),
@@ -63,7 +63,17 @@ class KeyGroupPlan(StrictModule):
             raise ValueError("item_capacity must be nonnegative.")
         if group_capacity <= 0:
             raise ValueError("group_capacity must be positive.")
-        if key_upper_bound < 0:
+        if isinstance(key_upper_bound, tuple):
+            if not key_upper_bound:
+                raise ValueError("key_upper_bound must be a nonempty tuple.")
+            if any(
+                not isinstance(bound, int) or isinstance(bound, bool)
+                for bound in key_upper_bound
+            ):
+                raise TypeError("Vector key bounds must be integers.")
+            if any(bound < 0 or bound > 2**32 - 1 for bound in key_upper_bound):
+                raise ValueError("Vector key bounds must fit uint32.")
+        elif key_upper_bound < 0:
             raise ValueError("key_upper_bound must be nonnegative.")
         if maximum_group_size is not None and maximum_group_size <= 0:
             raise ValueError("maximum_group_size must be positive when provided.")
@@ -74,7 +84,11 @@ class KeyGroupPlan(StrictModule):
         self.maximum_group_size = (
             None if maximum_group_size is None else int(maximum_group_size)
         )
-        self.key_upper_bound = int(key_upper_bound)
+        self.key_upper_bound = (
+            key_upper_bound
+            if isinstance(key_upper_bound, tuple)
+            else int(key_upper_bound)
+        )
         self.case_shape = tuple(case_shape)
         self.plan_id = canonical_fingerprint(
             {
@@ -99,9 +113,16 @@ class KeyGroupPlan(StrictModule):
         if not jnp.issubdtype(key_array.dtype, jnp.integer):
             raise TypeError("keys must have an integer dtype.")
         expected_shape = self.case_shape + (self.item_capacity,)
-        if key_array.shape != expected_shape:
+        key_tail = (
+            (len(self.key_upper_bound),)
+            if isinstance(self.key_upper_bound, tuple)
+            else ()
+        )
+        if key_tail and key_array.dtype != jnp.dtype(jnp.uint32):
+            raise TypeError("Vector keys must have dtype uint32.")
+        if key_array.shape != expected_shape + key_tail:
             raise ValueError(
-                f"keys must have shape {expected_shape}; got {key_array.shape}."
+                f"keys must have shape {expected_shape + key_tail}; got {key_array.shape}."
             )
         valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         if valid_array.shape != expected_shape:
@@ -124,7 +145,7 @@ class KeyGroupPlan(StrictModule):
         batch_size = 1
         for size in self.case_shape:
             batch_size *= size
-        flat_keys = key_array.reshape((batch_size, self.item_capacity))
+        flat_keys = key_array.reshape((batch_size, self.item_capacity) + key_tail)
         flat_valid = valid_array.reshape((batch_size, self.item_capacity))
         flat_ids = ids.reshape((batch_size, self.item_capacity))
         grouped = jax.vmap(
@@ -148,10 +169,10 @@ class KeyGroupPlan(StrictModule):
             stable_ids=ids,
             storage_to_logical=grouped.storage_to_logical.reshape(item_shape),
             logical_to_storage=grouped.logical_to_storage.reshape(item_shape),
-            sorted_keys=grouped.sorted_keys.reshape(item_shape),
+            sorted_keys=grouped.sorted_keys.reshape(item_shape + key_tail),
             sorted_item_valid=grouped.sorted_item_valid.reshape(item_shape),
             item_group_slots=grouped.item_group_slots.reshape(item_shape),
-            group_keys=grouped.group_keys.reshape(group_shape),
+            group_keys=grouped.group_keys.reshape(group_shape + key_tail),
             group_active=grouped.group_active.reshape(group_shape),
             group_starts=grouped.group_starts.reshape(group_shape),
             group_counts=grouped.group_counts.reshape(group_shape),
@@ -209,22 +230,39 @@ class KeyGroupState(NonTrainableState, StrictModule):
             raise ValueError(
                 f"lookup keys must begin with the grouping case shape {self.plan.case_shape}; got {query.shape}."
             )
+        vector = isinstance(self.plan.key_upper_bound, tuple)
+        if isinstance(self.plan.key_upper_bound, tuple):
+            if query.dtype != jnp.dtype(jnp.uint32):
+                raise TypeError("Vector lookup keys must have dtype uint32.")
+            if query.ndim <= len(self.plan.case_shape) or query.shape[-1] != len(
+                self.plan.key_upper_bound
+            ):
+                raise ValueError(
+                    "Vector lookup keys must end with the declared word axis."
+                )
+        query_shape = query.shape[:-1] if vector else query.shape
         if valid is None:
-            query_valid = jnp.ones(query.shape, dtype=jnp.bool_)
+            query_valid = jnp.ones(query_shape, dtype=jnp.bool_)
         else:
             query_valid = jnp.asarray(valid, dtype=jnp.bool_)
-            if query_valid.shape != query.shape:
+            if query_valid.shape != query_shape:
                 raise ValueError(
-                    f"lookup valid must have shape {query.shape}; got {query_valid.shape}."
+                    f"lookup valid must have shape {query_shape}; got {query_valid.shape}."
                 )
 
         batch_size = 1
         for size in self.plan.case_shape:
             batch_size *= size
-        query_tail = query.shape[len(self.plan.case_shape) :]
-        flat_query = query.reshape((batch_size, -1))
-        flat_valid = query_valid.reshape((batch_size, -1))
-        flat_group_keys = self.group_keys.reshape((batch_size, self.plan.group_capacity))
+        query_tail = query_shape[len(self.plan.case_shape) :]
+        key_tail = (query.shape[-1],) if vector else ()
+        query_count = 1
+        for size in query_tail:
+            query_count *= size
+        flat_query = query.reshape((batch_size, query_count) + key_tail)
+        flat_valid = query_valid.reshape((batch_size, query_count))
+        flat_group_keys = self.group_keys.reshape(
+            (batch_size, self.plan.group_capacity) + key_tail
+        )
         flat_group_active = self.group_active.reshape(
             (batch_size, self.plan.group_capacity)
         )
@@ -270,19 +308,28 @@ def align_key_groups(
     """Align group slots by key without treating storage position as identity."""
     if previous.plan.case_shape != candidate.plan.case_shape:
         raise ValueError("previous and candidate case shapes must match.")
+    if isinstance(previous.plan.key_upper_bound, tuple) != isinstance(
+        candidate.plan.key_upper_bound, tuple
+    ):
+        raise ValueError("previous and candidate key representations must match.")
     previous_lookup = candidate.lookup(previous.group_keys, valid=previous.group_active)
     candidate_lookup = previous.lookup(candidate.group_keys, valid=candidate.group_active)
-    changed = (
-        previous.evidence.required_groups != candidate.evidence.required_groups
-    ) | jnp.any(
-        (previous.group_active != candidate.group_active)
-        | (
-            previous.group_active
-            & candidate.group_active
-            & (previous.group_keys != candidate.group_keys)
-        ),
-        axis=-1,
-    )
+    changed = previous.evidence.required_groups != candidate.evidence.required_groups
+    if previous.plan.group_capacity == candidate.plan.group_capacity:
+        different_keys = previous.group_keys != candidate.group_keys
+        if isinstance(previous.plan.key_upper_bound, tuple):
+            different_keys = jnp.any(different_keys, axis=-1)
+        changed = changed | jnp.any(
+            (previous.group_active != candidate.group_active)
+            | (previous.group_active & candidate.group_active & different_keys),
+            axis=-1,
+        )
+    else:
+        changed = (
+            changed
+            | jnp.any(previous.group_active & (~previous_lookup.supported), axis=-1)
+            | jnp.any(candidate.group_active & (~candidate_lookup.supported), axis=-1)
+        )
     return KeyGroupTransition(
         previous=previous,
         candidate=candidate,
@@ -316,6 +363,30 @@ class _GroupedArrays(NamedTuple):
     successful: Array
 
 
+def _empty_groups(keys: Array, group_capacity: int, padding_key: Array) -> _GroupedArrays:
+    group_shape = (group_capacity,)
+    return _GroupedArrays(
+        storage_to_logical=jnp.zeros((0,), dtype=jnp.int32),
+        logical_to_storage=jnp.zeros((0,), dtype=jnp.int32),
+        sorted_keys=jnp.zeros((0,) + keys.shape[1:], dtype=keys.dtype),
+        sorted_item_valid=jnp.zeros((0,), dtype=jnp.bool_),
+        item_group_slots=jnp.zeros((0,), dtype=jnp.int32),
+        group_keys=jnp.broadcast_to(padding_key, group_shape + keys.shape[1:]),
+        group_active=jnp.zeros(group_shape, dtype=jnp.bool_),
+        group_starts=jnp.zeros(group_shape, dtype=jnp.int32),
+        group_counts=jnp.zeros(group_shape, dtype=jnp.int32),
+        requested_items=jnp.asarray(0, dtype=jnp.int32),
+        active_items=jnp.asarray(0, dtype=jnp.int32),
+        invalid_keys=jnp.asarray(0, dtype=jnp.int32),
+        duplicate_stable_ids=jnp.asarray(0, dtype=jnp.int32),
+        required_groups=jnp.asarray(0, dtype=jnp.int32),
+        maximum_group_size=jnp.asarray(0, dtype=jnp.int32),
+        group_overflow=jnp.asarray(False),
+        member_overflow=jnp.asarray(False),
+        successful=jnp.asarray(True),
+    )
+
+
 def _build_one(
     keys: Array,
     valid: Array,
@@ -323,40 +394,34 @@ def _build_one(
     *,
     group_capacity: int,
     maximum_group_size: int | None,
-    key_upper_bound: int,
+    key_upper_bound: int | tuple[int, ...],
 ) -> _GroupedArrays:
     item_capacity = keys.shape[0]
-    sentinel = jnp.asarray(key_upper_bound + 1, dtype=keys.dtype)
-    if item_capacity == 0:
-        group_shape = (group_capacity,)
-        return _GroupedArrays(
-            storage_to_logical=jnp.zeros((0,), dtype=jnp.int32),
-            logical_to_storage=jnp.zeros((0,), dtype=jnp.int32),
-            sorted_keys=jnp.zeros((0,), dtype=keys.dtype),
-            sorted_item_valid=jnp.zeros((0,), dtype=jnp.bool_),
-            item_group_slots=jnp.zeros((0,), dtype=jnp.int32),
-            group_keys=jnp.full(group_shape, sentinel),
-            group_active=jnp.zeros(group_shape, dtype=jnp.bool_),
-            group_starts=jnp.zeros(group_shape, dtype=jnp.int32),
-            group_counts=jnp.zeros(group_shape, dtype=jnp.int32),
-            requested_items=jnp.asarray(0, dtype=jnp.int32),
-            active_items=jnp.asarray(0, dtype=jnp.int32),
-            invalid_keys=jnp.asarray(0, dtype=jnp.int32),
-            duplicate_stable_ids=jnp.asarray(0, dtype=jnp.int32),
-            required_groups=jnp.asarray(0, dtype=jnp.int32),
-            maximum_group_size=jnp.asarray(0, dtype=jnp.int32),
-            group_overflow=jnp.asarray(False),
-            member_overflow=jnp.asarray(False),
-            successful=jnp.asarray(True),
+    vector = isinstance(key_upper_bound, tuple)
+    key_tail = keys.shape[1:]
+    sentinel = (
+        jnp.zeros(key_tail, dtype=keys.dtype)
+        if isinstance(key_upper_bound, tuple)
+        else jnp.asarray(
+            min(key_upper_bound + 1, jnp.iinfo(keys.dtype).max), dtype=keys.dtype
         )
-    key_valid = valid & (keys >= 0) & (keys <= key_upper_bound)
-    safe_keys = jnp.where(key_valid, keys, sentinel)
+    )
+    if item_capacity == 0:
+        return _empty_groups(keys, group_capacity, sentinel)
+    key_valid = valid & _keys_in_domain(keys, key_upper_bound)
+    key_mask = key_valid[:, None] if vector else key_valid
+    safe_keys = jnp.where(key_mask, keys, sentinel)
+    word_order = (
+        tuple(safe_keys[:, word] for word in reversed(range(keys.shape[-1])))
+        if vector
+        else (safe_keys,)
+    )
     original = jnp.arange(item_capacity, dtype=jnp.int32)
     order = jnp.lexsort(
         (
             original,
             stable_ids,
-            safe_keys,
+            *word_order,
             (~key_valid).astype(jnp.int32),
         )
     ).astype(jnp.int32)
@@ -366,8 +431,11 @@ def _build_one(
     previous_valid = jnp.concatenate(
         (jnp.zeros((1,), dtype=jnp.bool_), sorted_valid[:-1])
     )
-    previous_keys = jnp.concatenate((jnp.full((1,), sentinel), sorted_keys[:-1]))
-    group_start_mask = sorted_valid & ((~previous_valid) | (sorted_keys != previous_keys))
+    previous_keys = jnp.concatenate((sentinel[None], sorted_keys[:-1]))
+    same_keys = sorted_keys == previous_keys
+    if vector:
+        same_keys = jnp.all(same_keys, axis=-1)
+    group_start_mask = sorted_valid & ((~previous_valid) | (~same_keys))
     sorted_group_slots = jnp.cumsum(group_start_mask.astype(jnp.int32)) - 1
     sorted_group_slots = jnp.where(sorted_valid, sorted_group_slots, -1)
     required_groups = jnp.sum(group_start_mask, dtype=jnp.int32)
@@ -376,7 +444,8 @@ def _build_one(
         0
     ].astype(jnp.int32)
     group_active = jnp.arange(group_capacity, dtype=jnp.int32) < required_groups
-    group_keys = jnp.where(group_active, sorted_keys[start_positions], sentinel)
+    group_key_mask = group_active[:, None] if vector else group_active
+    group_keys = jnp.where(group_key_mask, sorted_keys[start_positions], sentinel)
     group_starts = jnp.where(group_active, start_positions, 0)
     following_starts = jnp.concatenate((group_starts[1:], active_items[None]))
     following_active = jnp.concatenate(
@@ -444,18 +513,61 @@ def _lookup_one(
     query: Array,
     query_valid: Array,
     *,
-    key_upper_bound: int,
+    key_upper_bound: int | tuple[int, ...],
 ) -> tuple[Array, Array]:
-    positions = jnp.searchsorted(group_keys, query, side="left").astype(jnp.int32)
+    if isinstance(key_upper_bound, tuple):
+        positions = _lexicographic_positions(group_keys, group_active, query)
+        equal_keys = jnp.all(
+            group_keys[jnp.clip(positions, 0, group_keys.shape[0] - 1)] == query,
+            axis=-1,
+        )
+    else:
+        positions = jnp.searchsorted(group_keys, query, side="left").astype(jnp.int32)
+        equal_keys = group_keys[jnp.clip(positions, 0, group_keys.shape[0] - 1)] == query
     safe_positions = jnp.clip(positions, 0, group_keys.shape[0] - 1)
-    valid_keys = query_valid & (query >= 0) & (query <= key_upper_bound)
+    valid_keys = query_valid & _keys_in_domain(query, key_upper_bound)
     supported = (
         valid_keys
         & (positions < group_keys.shape[0])
         & group_active[safe_positions]
-        & (group_keys[safe_positions] == query)
+        & equal_keys
     )
     return jnp.where(supported, safe_positions, 0), supported
+
+
+def _keys_in_domain(keys: Array, bound: int | tuple[int, ...]) -> Array:
+    if isinstance(bound, tuple):
+        upper = jnp.broadcast_to(jnp.asarray(bound, dtype=jnp.uint32), keys.shape)
+        return jnp.all(keys <= upper, axis=-1)
+    return (keys >= 0) & (keys <= min(bound, jnp.iinfo(keys.dtype).max))
+
+
+def _lexicographic_positions(
+    group_keys: Array, group_active: Array, query: Array
+) -> Array:
+    """Bounded binary search with inactive slots ordered after every packed key."""
+    query_count = query.shape[0]
+    low = jnp.zeros((query_count,), dtype=jnp.int32)
+    high = jnp.full((query_count,), group_keys.shape[0], dtype=jnp.int32)
+
+    def search(_: int, interval: tuple[Array, Array]) -> tuple[Array, Array]:
+        left, right = interval
+        middle = (left + right) // 2
+        safe_middle = jnp.minimum(middle, group_keys.shape[0] - 1)
+        candidate = group_keys[safe_middle]
+        equal_prefix = jnp.ones((query_count,), dtype=jnp.bool_)
+        less = jnp.zeros((query_count,), dtype=jnp.bool_)
+        for word in range(group_keys.shape[-1]):
+            less = less | (equal_prefix & (candidate[:, word] < query[:, word]))
+            equal_prefix = equal_prefix & (candidate[:, word] == query[:, word])
+        less = less & group_active[safe_middle] & (middle < group_keys.shape[0])
+        moving = left < right
+        return (
+            jnp.where(moving & less, middle + 1, left),
+            jnp.where(moving & (~less), middle, right),
+        )
+
+    return jax.lax.fori_loop(0, group_keys.shape[0].bit_length(), search, (low, high))[0]
 
 
 __all__ = [

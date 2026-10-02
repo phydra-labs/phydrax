@@ -11,6 +11,8 @@ from enum import StrEnum
 from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
+import jax.numpy as jnp
+from jax import Array
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
@@ -599,14 +601,39 @@ class DifferentiationRequest(StrictModule, NonTrainableState):
         self.authority = authority
 
 
+def _runtime_derivative_evidence(
+    valid: Array | None, status: Array | None, surface_count: int, /
+) -> tuple[Array | None, Array | None]:
+    if (valid is None) != (status is None):
+        raise ValueError("runtime_valid and runtime_status must be supplied together.")
+    if valid is None:
+        return None, None
+    if status is None:
+        raise RuntimeError("Validated derivative evidence is missing its status array.")
+    valid_ = jnp.asarray(valid)
+    status_ = jnp.asarray(status)
+    if valid_.dtype != jnp.bool_:
+        raise TypeError("runtime_valid must have boolean dtype.")
+    if not jnp.issubdtype(status_.dtype, jnp.integer):
+        raise TypeError("runtime_status must have integer dtype.")
+    if valid_.shape != status_.shape:
+        raise ValueError("Runtime derivative evidence must have matching case shapes.")
+    if valid_.ndim < 1 or valid_.shape[-1] != surface_count:
+        raise ValueError(
+            "Runtime derivative evidence must align with requested surfaces."
+        )
+    return valid_, status_
+
+
 class DerivativeAdmission(StrictModule, NonTrainableState):
     """Audited answer to one differentiation request.
 
-    `levels` align with `request.surfaces`. The admission is supported exactly
-    when no requested level is `NONE`; a `STOPPED` route admits no level. An
-    unsupported admission names its rejection `reasons`, and a supported
-    admission carries none. `conditions` qualify every admitted level (resolve
-    them with `gradient_level_at_least`).
+    `levels` align with `request.surfaces`. `supported` and string `status` report
+    static declaration eligibility, not resolution of numerical conditions.
+    No requested level may be `NONE` for eligibility; a `STOPPED` route admits
+    no level. `conditions` qualify every admitted level (resolve them with
+    `gradient_level_at_least`). Paired dynamic `runtime_valid`/`runtime_status`
+    arrays carry separately resolved evidence; `None` remains unresolved.
     """
 
     request: DifferentiationRequest
@@ -617,6 +644,8 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
     conditions: tuple[str, ...] = eqx.field(static=True)
     reasons: tuple[str, ...] = eqx.field(static=True)
     nondifferentiable_outputs: tuple[str, ...] = eqx.field(static=True)
+    runtime_valid: Array | None
+    runtime_status: Array | None
 
     @checked
     def __init__(
@@ -629,6 +658,8 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         conditions: Iterable[str] = (),
         reasons: Iterable[str] = (),
         nondifferentiable_outputs: Iterable[str] = (),
+        runtime_valid: Array | None = None,
+        runtime_status: Array | None = None,
     ) -> None:
         levels_ = tuple(_require_level(level) for level in levels)
         if len(levels_) != len(request.surfaces):
@@ -646,6 +677,9 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
             raise ValueError("An unsupported admission must name its reasons.")
         conditions_ = _identifier_set(conditions, "conditions")
         outputs = _identifier_set(nondifferentiable_outputs, "nondifferentiable_outputs")
+        valid_, status_ = _runtime_derivative_evidence(
+            runtime_valid, runtime_status, len(request.surfaces)
+        )
         self.request = request
         self.levels = levels_
         self.route = route_
@@ -654,6 +688,8 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         self.conditions = conditions_
         self.reasons = reasons_
         self.nondifferentiable_outputs = outputs
+        self.runtime_valid = valid_
+        self.runtime_status = status_
 
     def level(self, surface: DerivativeSurface, /) -> GradientLevel:
         """Return the admitted level of one requested surface."""
@@ -661,6 +697,38 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         if surface_ not in self.request.surfaces:
             raise ValueError(f"Surface {surface_.value!r} was not requested.")
         return self.levels[self.request.surfaces.index(surface_)]
+
+    def with_runtime_evidence(
+        self, runtime_valid: Array, runtime_status: Array, /
+    ) -> DerivativeAdmission:
+        """Resolve numerical evidence without changing declaration eligibility.
+
+        Both arrays have shape ``(*case_shape, len(request.surfaces))``.
+        Boolean validity and integer cause codes are dynamic PyTree leaves.
+        """
+        return DerivativeAdmission(
+            self.request,
+            self.levels,
+            route=self.route,
+            conditions=self.conditions,
+            reasons=self.reasons,
+            nondifferentiable_outputs=self.nondifferentiable_outputs,
+            runtime_valid=runtime_valid,
+            runtime_status=runtime_status,
+        )
+
+    def require_runtime(self, /) -> DerivativeAdmission:
+        """Return checked numerical evidence; unresolved evidence stays unresolved."""
+        if self.runtime_valid is None:
+            return self
+        if self.runtime_status is None:
+            raise RuntimeError("Resolved derivative evidence is missing its status array.")
+        checked = eqx.error_if(
+            self.runtime_valid,
+            ~self.runtime_valid,
+            f"{DERIVATIVE_UNSUPPORTED}: resolved numerical derivative conditions failed.",
+        )
+        return self.with_runtime_evidence(checked, self.runtime_status)
 
 
 class RegularityPolicy(StrictModule, NonTrainableState):

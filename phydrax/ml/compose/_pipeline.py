@@ -150,7 +150,9 @@ class Pipeline(AbstractRecipe):
         output_schemas: list[FeatureSchema] = []
         for index, (name, recipe) in enumerate(self.steps):
             input_schemas.append(current.feature_schema)
-            result = recipe.fit_batch(current, key=keys[2 * index])
+            result = recipe.fit_batch(
+                current, key=keys[2 * index] if recipe.accepts_fit_key else None
+            )
             if not isinstance(result, FitResult):
                 raise TypeError(f"Pipeline stage {name!r} did not return a FitResult.")
             model = result.as_trainable()

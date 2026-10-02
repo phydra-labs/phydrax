@@ -25,6 +25,9 @@ from ._derivative import (
 )
 from ._execution import (
     canonical_row_route_ids,
+    KeyGroupAccumulation,
+    KeyGroupReductionEvidence,
+    reduce_key_groups,
     RelationAccumulation,
     RelationExecutionPlan,
     RelationExecutionState,
@@ -63,6 +66,8 @@ __all__ = [
     "block_linear_apply",
     "block_linear_transpose_apply",
     "KeyGroupEvidence",
+    "KeyGroupAccumulation",
+    "KeyGroupReductionEvidence",
     "KeyGroupLookup",
     "KeyGroupPlan",
     "KeyGroupState",
@@ -106,5 +111,6 @@ __all__ = [
     "prepare_sparse_linearization",
     "scatter_local",
     "route_reduce",
+    "reduce_key_groups",
     "verify_sparse_derivative",
 ]

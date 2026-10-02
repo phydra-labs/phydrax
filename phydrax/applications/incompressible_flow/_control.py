@@ -34,7 +34,12 @@ from ...linalg import (
     LinearSystem,
     solve as solve_linear,
 )
-from ...linalg.svd import svd as solve_svd, SVDProblem, SVDSolvePolicy
+from ...linalg.svd import (
+    require_exact_svd_rank,
+    svd as solve_svd,
+    SVDProblem,
+    SVDSolvePolicy,
+)
 from ...solver._fixed_step import AbstractSSPRKFixedStepMethod
 from ...solver._mac_viscous import (
     MACIMEXEulerMethod,
@@ -969,6 +974,7 @@ class PreparedMACFlowControl(StrictModule):
                 failure=FailurePolicy("status"),
             ),
         )
+        numerical_rank = require_exact_svd_rank(spectrum)
         linear = solve_linear(
             LinearSystem(operator, problem_id=f"{self.prepared_id}:response-system"),
             right_hand_side,
@@ -983,9 +989,7 @@ class PreparedMACFlowControl(StrictModule):
             dtype=singular_values.dtype,
         )
         full_rank = (
-            spectrum.successful
-            & (spectrum.numerical_rank == count)
-            & (minimum > singular_floor)
+            spectrum.successful & (numerical_rank == count) & (minimum > singular_floor)
         )
         accepted = (
             full_rank
@@ -1000,7 +1004,7 @@ class PreparedMACFlowControl(StrictModule):
             minimum_singular_value=minimum,
             singular_value_floor=singular_floor,
             condition_number=condition,
-            numerical_rank=spectrum.numerical_rank,
+            numerical_rank=numerical_rank,
             solve_status=linear.status,
             full_rank=full_rank,
             accepted=accepted,
