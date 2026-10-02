@@ -22,6 +22,7 @@ from phydrax.domain import (
     AbstractScalarDomain,
     Boundary,
     ComponentSum,
+    CoordinateFace,
     DomainComponent,
     Fixed,
     FixedEnd,
@@ -32,6 +33,7 @@ from phydrax.domain import (
     open_unit_interval,
     PointBatch,
     ProbabilityDomain,
+    reference_transport,
     require_exact_mass,
     SampleLayout,
 )
@@ -284,6 +286,8 @@ def _coord_weights(
     weights: dict[str, cx.AxisArray] = {}
     for label, coordinate_axes in points.coord_axes_by_label.items():
         factor = component.domain.factor(label)
+        selection = component.spec.selection_for(label)
+        face_axis = selection.axis if isinstance(selection, CoordinateFace) else None
 
         for coordinate_index, axis in enumerate(coordinate_axes):
             if axis not in axes:
@@ -291,7 +295,10 @@ def _coord_weights(
             field = first_field_leaf(points.points[label][coordinate_index])
             count = int(field.named_shape[axis])
             discretization = points.axis_discretization_by_axis.get(axis)
-            if discretization is not None and discretization.quad_weights is not None:
+            if coordinate_index == face_axis:
+                # The fixed face coordinate is a Dirac node: counting weight one.
+                values = jnp.ones((count,), dtype=jnp.float64)
+            elif discretization is not None and discretization.quad_weights is not None:
                 values = discretization.quad_weights
             elif isinstance(factor, AbstractGeometry):
                 bounds = jnp.asarray(factor.mesh_bounds, dtype=jnp.float64)
@@ -676,12 +683,48 @@ def _materialize_boundary_atlas(
     )
 
 
+def _coordinate_face_cubature_data(
+    factor: Any,
+    face: CoordinateFace,
+    rule: CubatureRule,
+    /,
+) -> tuple[Array, Array]:
+    """Map a unit-cube tensor rule onto the tangential box of one Cartesian face."""
+    if not isinstance(factor, AbstractGeometry):
+        raise TypeError("CoordinateFace cubature requires a geometry factor.")
+    mass = require_exact_mass(
+        factor.coordinate_face_mass(face),
+        operation="coordinate-face cubature weight construction",
+    )
+    tangential = factor.spatial_dim - 1
+    if tangential == 0:
+        point = jnp.reshape(factor.coordinate_face_value(face), (1, 1))
+        return point.astype(jnp.float64), jnp.ones((1,), dtype=jnp.float64)
+    if (
+        rule.reference_domain != "tensor"
+        or rule.prepared.reference_dimension != tangential
+    ):
+        raise ValueError(
+            f"CoordinateFace cubature requires a {tangential}-dimensional tensor rule; "
+            f"got reference {rule.reference_domain!r} of dimension "
+            f"{rule.prepared.reference_dimension}."
+        )
+    transport = reference_transport(factor, face)
+    if transport is None or transport.reference_dimension != tangential:
+        raise TypeError(f"{type(factor).__name__} has no exact coordinate-face map.")
+    reference_data = rule.materialize()
+    points = jnp.asarray(transport.map(reference_data.points), dtype=jnp.float64)
+    return points, mass * reference_data.weights
+
+
 def _cubature_factor_data(
     factor: Any,
     selector: Any,
     rule: CubatureRule,
     /,
 ) -> tuple[Array, Array]:
+    if isinstance(selector, CoordinateFace):
+        return _coordinate_face_cubature_data(factor, selector, rule)
     if not isinstance(factor, CubatureAtlasProvider):
         raise TypeError("The selected geometry does not expose native cubature.")
     if isinstance(selector, Interior):
@@ -689,7 +732,9 @@ def _cubature_factor_data(
     elif isinstance(selector, Boundary):
         component_kind = "boundary"
     else:
-        raise TypeError("Native cubature requires Interior() or Boundary().")
+        raise TypeError(
+            "Native cubature requires Interior(), Boundary(), or CoordinateFace(...)."
+        )
     atlas = factor.cubature_atlas(component_kind)
     if isinstance(selector, Boundary) and (
         selector.tags is not None or selector.entity_ids is not None
@@ -821,11 +866,15 @@ def materialize_fixed_component(
         selector = component.spec.selection_for(label)
         if isinstance(selector, (Fixed, FixedStart, FixedEnd)):
             continue
+        factor = component.domain.factor(label)
+        if isinstance(selector, CoordinateFace) and isinstance(factor, AbstractGeometry):
+            # Reduced tangential tensor rule; the face coordinate is a Dirac node.
+            coord_separable[label] = spec
+            continue
         if not isinstance(selector, Interior):
             raise ValueError(
                 f"Unsupported fixed component selector {type(selector).__name__}."
             )
-        factor = component.domain.factor(label)
 
         if isinstance(factor, AbstractGeometry):
             coord_separable[label] = (spec,) * int(factor.spatial_dim)

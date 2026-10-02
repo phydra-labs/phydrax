@@ -187,6 +187,33 @@ def test_functional_decomposition_advanced_scenario_1() -> None:
     np.testing.assert_allclose(nitsche.loss(smooth.solver_functions()), 0.0)
 
 
+def test_point_interface_mortar_preserves_vector_value_axes_without_sample_axis() -> None:
+    cover = phx.domain.cartesian_subdomain_cover(phx.domain.Interval1d(0.0, 1.0), "x", 2)
+    left, right = cover.patches
+    family = phx.domain.LocalFieldFamily(
+        "vector",
+        cover,
+        {
+            left.patch_id: left.domain.Function()(jnp.zeros((2,), dtype=jnp.float64)),
+            right.patch_id: right.domain.Function()(
+                jnp.asarray([3.0, 4.0], dtype=jnp.float64)
+            ),
+        },
+    )
+    pairing = cover.pairings[0]
+    points = pairing.component.sample(phx.domain.PointSampling(6))
+    term = phx.terms.MortarInterfacePenalty(
+        family.ref(left.patch_id),
+        family.ref(right.patch_id),
+        pairing,
+        points,
+        jnp.ones((3, 1), dtype=jnp.float64),
+        weights=jnp.asarray([0.2, 0.3, 0.5], dtype=jnp.float64),
+    )
+    assert points.structure.blocks == ()
+    assert eqx.filter_jit(term.loss)(family.solver_functions()) == pytest.approx(25.0)
+
+
 def test_functional_decomposition_advanced_scenario_2() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(

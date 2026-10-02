@@ -134,13 +134,18 @@ class MortarInterfacePenalty(AbstractScalarTerm):
         del iter_, kwargs
         left = self.pairing.trace(functions[self.fields[0]], side="left")(
             self.points, key=key
-        ).data
+        )
         right = self.pairing.trace(functions[self.fields[1]], side="right")(
             self.points, key=key
-        ).data
-        jump = jnp.asarray(right) - jnp.asarray(left) - self.target
+        )
+        jump = jnp.asarray(right.data) - jnp.asarray(left.data) - self.target
+        # A point interface has value axes but no sampling axis. Integrate its
+        # constant trace against the authored basis without inventing one.
+        equation = (
+            "nm,n...,n->m..." if left.named_dims or right.named_dims else "nm,...,n->m..."
+        )
         moments = ein.contract(
-            "nm,n...,n->m...",
+            equation,
             self.basis_values,
             jump,
             self.weights,

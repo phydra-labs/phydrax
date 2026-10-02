@@ -218,7 +218,11 @@ class PointSampling(StrictModule):
         layout: SampleLayout | None = None,
         design: DesignLike = "latin_hypercube",
     ) -> None:
-        counts = (int(count),) if isinstance(count, int) else tuple(count)
+        if isinstance(count, bool):
+            raise TypeError("PointSampling counts must be integers.")
+        counts = (count,) if isinstance(count, int) else tuple(count)
+        if any(isinstance(n, bool) or not isinstance(n, int) for n in counts):
+            raise TypeError("PointSampling counts must be integers.")
         if any(n < 0 for n in counts):
             raise ValueError("PointSampling counts must be non-negative.")
         if layout is not None and not isinstance(layout, SampleLayout):
@@ -253,14 +257,18 @@ class GridSampling(StrictModule):
         normalized: dict[str, AxisSampling] = {}
         for label, request in axes.items():
             _validate_label(label)
+            if isinstance(request, bool):
+                raise TypeError("GridSampling counts must be integers.")
+            if isinstance(request, int) and request <= 0:
+                raise ValueError("GridSampling counts must be positive.")
             if isinstance(request, (int, AbstractAxisSpec, TensorGridPlan)):
                 normalized[label] = request
             else:
                 values = tuple(request)
-                if not values:
-                    raise ValueError(
-                        f"GridSampling axis request for {label!r} must be non-empty."
-                    )
+                if any(isinstance(value, bool) for value in values):
+                    raise TypeError("GridSampling counts must be integers.")
+                if any(isinstance(value, int) and value <= 0 for value in values):
+                    raise ValueError("GridSampling counts must be positive.")
                 normalized[label] = values
         if not normalized:
             raise ValueError("GridSampling.axes must be non-empty.")

@@ -484,7 +484,7 @@ def _materialize_prepared_pseudoinverse(
     )
     reciprocal = jnp.where(state.retained, 1.0 / safe, 0.0)
     right = jnp.conj(jnp.swapaxes(state.vh, -1, -2))
-    reduced_value = (right * reciprocal[..., None, :]) @ jnp.conj(
+    reduced_value = (right * reciprocal.astype(right.dtype)[..., None, :]) @ jnp.conj(
         jnp.swapaxes(state.u, -1, -2)
     )
     reduced_value = fixed_rank_pseudoinverse_value(
@@ -494,9 +494,9 @@ def _materialize_prepared_pseudoinverse(
     )
     value = reduced_value
     if state.source_inverse_square_root is not None:
-        value = state.source_inverse_square_root[..., :, None] * value
+        value = state.source_inverse_square_root.astype(value.dtype)[..., :, None] * value
     if state.square_root_weights is not None:
-        value = value * state.square_root_weights[..., None, :]
+        value = value * state.square_root_weights.astype(value.dtype)[..., None, :]
 
     matrix = state.original_matrix
     residual = matrix @ value @ matrix - matrix
@@ -890,14 +890,16 @@ def _metric_orthonormalize(
 ) -> Array:
     batch_shape = basis.shape[:-2]
     capacity = basis.shape[-1]
-    active = jnp.arange(capacity) < dimension[..., None]
+    active = jnp.arange(capacity, dtype=dimension.dtype) < dimension[..., None]
     masked = jnp.where(active[..., None, :], basis, 0)
     batch_count = prod(batch_shape) if batch_shape else 1
     flattened = masked.reshape((batch_count, space.size, capacity))
     dimensions = dimension.reshape((batch_count,))
 
     def orthonormalize_one(columns: Array, active_dimension: Array) -> Array:
-        active_columns = jnp.arange(capacity) < active_dimension
+        active_columns = (
+            jnp.arange(capacity, dtype=active_dimension.dtype) < active_dimension
+        )
 
         def inner(left: Array, right: Array) -> Array:
             return space.inner(space.unflatten(left), space.unflatten(right))

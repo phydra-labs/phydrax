@@ -4,12 +4,15 @@
 
 
 import math
+from collections.abc import Callable
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 from phydrax._interpolation import (
     barycentric_differentiation_matrix,
@@ -24,6 +27,7 @@ from phydrax._polynomial._cubature import (
     radial_disk_rule_data,
     xiao_gimbutas_rule_data,
 )
+from phydrax._polynomial._endpoint import EndpointJetBasis
 from phydrax._polynomial._lebedev_cubature_data import LEBEDEV_RULES
 from phydrax._polynomial._orthogonal import (
     legendre_rule_data,
@@ -243,3 +247,90 @@ def test_polynomial_numerics_scenario_3() -> None:
             source_id="test",
             maximum_rule_bytes=1,
         )
+
+
+@pytest.mark.strict_jax
+def test_endpoint_basis_integer_coordinates_keep_fractional_bernoulli_values() -> None:
+    basis = EndpointJetBasis(2, 2.0)
+    points = np.asarray([[0, 1], [1, 0]], dtype=np.int64)
+    observed = eqx.filter_jit(basis.values)(points)
+    expected = np.asarray(
+        [
+            [[1.0, -0.5, 1.0 / 6.0, 0.0], [1.0, 0.5, 1.0 / 6.0, 0.0]],
+            [[1.0, 0.5, 1.0 / 6.0, 0.0], [1.0, -0.5, 1.0 / 6.0, 0.0]],
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_allclose(observed, expected, rtol=0.0, atol=1e-15)
+    assert observed.dtype == jnp.float64
+
+
+@pytest.mark.parametrize("length", (0.125, 8.0), ids=("short", "long"))
+@pytest.mark.strict_jax
+def test_endpoint_horner_derivatives_match_physical_endpoint_jet_jumps(
+    length: float,
+) -> None:
+    basis = EndpointJetBasis(3, length)
+    evaluate: Callable[[Array], Array] = lambda x: basis.values(x / length)
+    endpoints = jnp.asarray((0.0, length), dtype=jnp.float64)
+    expected_jumps = np.eye(4, 5, k=1, dtype=np.float64)
+    for order in range(4):
+        actual = np.asarray(jax.vmap(evaluate)(endpoints))
+        np.testing.assert_allclose(
+            actual,
+            basis.endpoint_jets(length)[:, order, :],
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            actual[1] - actual[0], expected_jumps[order], rtol=0.0, atol=1e-12
+        )
+        evaluate = jax.jacfwd(evaluate)
+
+
+@pytest.mark.parametrize("order", (1.5, True), ids=("fractional", "boolean"))
+def test_endpoint_basis_refuses_noninteger_order(order: float) -> None:
+    with pytest.raises(TypeError, match="max_order must be an integer"):
+        # ty: ignore[invalid-argument-type]
+        EndpointJetBasis(order, 1.0)
+
+
+@pytest.mark.parametrize("limit", (1.5, True), ids=("fractional", "boolean"))
+def test_endpoint_basis_refuses_noninteger_order_limit(limit: float) -> None:
+    with pytest.raises(TypeError, match="maximum_order must be an integer"):
+        # ty: ignore[invalid-argument-type]
+        EndpointJetBasis(0, 1.0, maximum_order=limit)
+
+
+@pytest.mark.parametrize("length", (1e-200, 1e200), ids=("underflow", "overflow"))
+def test_endpoint_basis_refuses_unrepresentable_interval_scales(length: float) -> None:
+    with pytest.raises(ValueError, match="not representable"):
+        EndpointJetBasis(2, length)
+
+
+def test_endpoint_jets_are_bound_to_the_prepared_interval() -> None:
+    basis = EndpointJetBasis(2, 2.0)
+    with pytest.raises(ValueError, match="prepared interval length"):
+        basis.endpoint_jets(4.0)
+
+
+def test_endpoint_basis_refuses_boolean_coordinates() -> None:
+    with pytest.raises(TypeError, match="non-boolean"):
+        EndpointJetBasis(1, 1.0).values(jnp.asarray(True))
+
+
+@pytest.mark.parametrize("length", (1e-100, 1e100), ids=("underflow", "overflow"))
+@pytest.mark.strict_jax
+def test_endpoint_basis_refuses_unrepresentable_evaluation_precision(
+    length: float,
+) -> None:
+    basis = EndpointJetBasis(1, length)
+    evaluate = eqx.filter_jit(basis.values)
+    with pytest.raises(eqx.EquinoxRuntimeError, match="coordinate dtype"):
+        evaluate(jnp.asarray(0.5, dtype=jnp.float32))
+
+
+def test_endpoint_coefficients_cannot_underflow_in_adopted_precision() -> None:
+    basis = EndpointJetBasis(16, 1.0)
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        basis.values(jnp.asarray(0.25, dtype=jnp.float16))

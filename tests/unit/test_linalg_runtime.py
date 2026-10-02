@@ -2340,3 +2340,23 @@ def test_kronecker_sum_structured_direct_is_differentiable_and_reports_singulari
 
     assert singular_result.status == int(la.LinearSolveStatus.SINGULAR)
     assert not bool(singular_result.successful)
+
+
+@pytest.mark.strict_jax
+def test_regularized_complex_svd_respects_rank_cutoff_and_native_status() -> None:
+    matrix = jnp.asarray([[1.0 + 1.0j, 0.0], [0.0, 1e-6 - 1e-6j]], dtype=jnp.complex128)
+    regularizer = la.DenseLinearOperator(0.1 * jnp.eye(2, dtype=jnp.complex128))
+    result = la.solve(
+        la.LeastSquaresProblem(la.DenseLinearOperator(matrix), regularizer=regularizer),
+        jnp.ones((2,), dtype=jnp.complex128),
+        policy=la.LinearSolvePolicy(
+            la.DenseSVD(), rank=la.RankPolicy(relative_cutoff=1e-3)
+        ),
+    )
+    # The discarded coordinate is zero; the active diagonal ridge problem has
+    # the scalar minimizer conj(a) / (abs(a)**2 + lambda**2).
+    expected = np.asarray([(1.0 - 1.0j) / 2.01, 0.0j], dtype=np.complex128)
+    np.testing.assert_allclose(result.value, expected, rtol=1e-12, atol=1e-12)
+    assert bool(result.successful)
+    assert int(result.status) == int(la.LinearSolveStatus.SUCCESS)
+    assert int(result.diagnostics.rank) == 1

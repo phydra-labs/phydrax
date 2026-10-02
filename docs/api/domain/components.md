@@ -40,6 +40,13 @@ fixed-time slices, etc.) and wrap these into `DomainComponent` objects.
 
 ---
 
+::: phydrax.domain.CoordinateFace
+    options:
+        members:
+            - __init__
+
+---
+
 ::: phydrax.domain.SelectionSpec
     options:
         members:

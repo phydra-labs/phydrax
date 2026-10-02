@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -525,3 +526,28 @@ def test_factorization_refresh_and_batched_capabilities_remain_truthful() -> Non
     assert refreshed.factorization_id != prepared.factorization_id
     assert int(refreshed.prepared_solve.numeric_version) == 1
     assert not refreshed.capabilities.nullspaces
+
+
+@pytest.mark.parametrize("dtype", ("complex64", "complex128"))
+@pytest.mark.strict_jax
+def test_complex_pseudoinverse_preserves_dtype_and_moore_penrose_action(
+    dtype: str,
+) -> None:
+    matrix = jnp.asarray(
+        [[1.0 + 1.0j, 0.0], [0.0, 2.0 - 1.0j], [1.0 - 1.0j, 1.0j]], dtype=dtype
+    )
+    tolerance = 2e-6 if dtype == "complex64" else 1e-12
+    result = la.pseudoinverse(
+        matrix,
+        la.FactorizationPolicy(
+            "svd",
+            tolerance=la.TolerancePolicy(absolute=tolerance, relative=tolerance),
+        ),
+    )
+    expected = np.linalg.pinv(np.asarray(matrix))
+    assert result.value.dtype == matrix.dtype
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.value, expected, rtol=tolerance, atol=tolerance)
+    np.testing.assert_allclose(
+        matrix @ result.value @ matrix, matrix, rtol=tolerance, atol=tolerance
+    )

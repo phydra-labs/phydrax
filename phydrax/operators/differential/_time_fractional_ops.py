@@ -18,7 +18,7 @@ from ..._doc import DOC_KEY0
 from ...integration import GaussLegendreRule
 from ...typing import PRNGKey
 from .._causal_quadrature import causal_reference_rule
-from ._domain_ops import _unwrap_factor
+from ._domain_ops import _derivative_metadata, _unwrap_factor
 
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ def caputo_time_fractional(
         return derivative
 
     def with_metadata(function: Callable[..., Array], *, method: str) -> DomainFunction:
-        metadata = dict(u.metadata)
+        metadata = dict(_derivative_metadata(u.metadata))
         metadata.update(
             {
                 "differential_operator": "caputo-time-fractional",

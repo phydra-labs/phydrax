@@ -93,6 +93,101 @@ The prepared projector exposes rank, nullity, right-inverse/range defects,
 numeric-version, provider, and exactness-scope evidence. Factorization happens
 during preparation or explicit refresh, never during field queries.
 
+### Periodic seam projection
+
+`prepare_periodic_projection(functions, conditions, route=...)` prepares every
+`phydrax.conditions.Periodic` declaration of the program as one realization and
+exposes its joint typed `condition`; compile it with
+`EnforcementSpec(prepared.condition, realization=prepared)`. The route is
+explicit and never falls back:
+
+- `"analytic"` lifts the seam residual with the centered Bernoulli endpoint
+  basis of each identified coordinate. The endpoint system of the declared jets,
+  transports, and targets is prepared once through the native constraint operator;
+  linearly dependent declarations, jet orders, rows, axes, and endpoint
+  evaluations above `PeriodicResourcePolicy` are refused at preparation. Several
+  coordinates of one field compose sequentially, which is exact when their event
+  transports commute and constant targets agree at seam intersections; other
+  compositions are refused. The pairing must be `PeriodicIdentification.pairing()`.
+- `"coefficient"` assembles the joint condition on an explicit
+  `AbstractLinearRepresentation` and eliminates it with `CoefficientElimination`.
+- `"construction"` admits fields whose model carries a matching
+  `PeriodicInputCertificate` (see [Embeddings](nn/embeddings.md)) and leaves them
+  unchanged; it covers homogeneous identity-transport seams only and re-checks the
+  certificate of the fields it realizes.
+
+`PeriodicProjectionEvidence` reports the route, equality scope (`continuum`,
+`finite-representation`, or `structural`), constituent condition identities,
+per-coordinate `PeriodicAxisEvidence` (endpoint rows, rank, basis size, condition
+number, maximum jet order), the derivative regularity each field must have, the
+endpoint evaluations per query, and the `PeriodicPreservationRecord` of every
+earlier wall or initial contract bound by the compiler. Only `"certified"` records
+enter the admission's `preserves`; `"probed"` records are observations. `seam_defect`
+samples the seam residual; it is diagnostic evidence, not a proof.
+
+Endpoint work counts each declared source and target jet, not just distinct
+geometric images: the bound is `product(1 + jets_per_axis)` per field before
+compiler reuse. Two axes with value and slope requests require a bound of 25;
+three require 125. Explicit tighter capacities refuse before numerical preparation.
+Value-only preparation permits `maximum_order=0`.
+
+Conditions on the same actual coordinate are fused even when identifications
+have different diagnostic IDs. Geometric revisions and fixed targets participate
+in prepared identity; source support and event layout must agree at preparation
+and realization. Rejected attempts retain accepted lifecycle coordinates and stamps.
+Construction admission checks the current native evaluator's evidence and input
+packing, not just metadata copied from an earlier model.
+
+For a local operator `B u = g` and affine seam target `J u = h`, compatibility
+requires `J g = B h`. Normal/time derivative walls therefore annihilate a
+constant `h`, while a Robin wall includes its value coefficient. The compiler
+checks this complete operator relation rather than equating `J g` with `h`.
+
+Polynomial and right-inverse casts must remain representable at the actual field
+precision. Invalid casts or nonfinite lift values refuse during lazy field
+evaluation; this is not a global finiteness certificate for an arbitrary field.
+
+
+Every `AbstractFieldRealization` publishes a `RealizationAdmission` listing the
+fields it reads, the fields it may write, the conditions it establishes, and the
+conditions it preserves; a correction chart that may replace any field it
+receives sets `writes_unknown` and counts as writing every field. The compiler
+refuses a typed realization that may write a periodically enforced field without
+preserving its seams, interior anchors on a periodic field, and walls that select
+an identified face. The analytic route also refuses certified exact-PDE trial
+fields, whose trial space the lift would leave.
+
+::: phydrax.enforcement.prepare_periodic_projection
+
+---
+
+::: phydrax.enforcement.PreparedPeriodicProjection
+    options:
+        members:
+            - realize
+            - admission
+            - seam_defect
+
+---
+
+::: phydrax.enforcement.PeriodicResourcePolicy
+
+---
+
+::: phydrax.enforcement.PeriodicProjectionEvidence
+
+---
+
+::: phydrax.enforcement.PeriodicAxisEvidence
+
+---
+
+::: phydrax.enforcement.PeriodicPreservationRecord
+
+---
+
+::: phydrax.enforcement.RealizationAdmission
+
 ### Realization lifecycle
 
 `EnforcementProgram.prepare_step` creates an all-or-nothing transaction over

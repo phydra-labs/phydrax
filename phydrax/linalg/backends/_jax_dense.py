@@ -448,9 +448,13 @@ def _least_squares_design(
     if isinstance(method, DenseSVD):
         source_metric = _metric_diagonal(problem.operator.source)
         source_inverse_square_root = jax.lax.rsqrt(source_metric)
-    design = square_root_weights[..., :, None] * matrix
+    # Metric factors are real: cast them to the operator dtype and give them the
+    # operator rank so strict promotion never mixes ranks or dtype kinds.
+    design = square_root_weights.astype(matrix.dtype)[..., :, None] * matrix
     if source_inverse_square_root is not None:
-        design = design * source_inverse_square_root
+        column = source_inverse_square_root.astype(matrix.dtype)[..., None, :]
+        column = column.reshape((1,) * (matrix.ndim - column.ndim) + column.shape)
+        design = design * column
 
     if isinstance(problem, MinimumNormProblem):
         return design, square_root_weights, source_inverse_square_root, None
@@ -461,9 +465,16 @@ def _least_squares_design(
     if problem.regularizer is not None:
         regularizer = materialize(problem.regularizer, plan.policy.materialization)
         regularizer_metric = _metric_diagonal(problem.regularizer.target)
-        regularizer = jnp.sqrt(regularizer_metric)[..., :, None] * regularizer
+        regularizer = (
+            jnp.sqrt(regularizer_metric).astype(regularizer.dtype)[..., :, None]
+            * regularizer
+        )
         if source_inverse_square_root is not None:
-            regularizer = regularizer * source_inverse_square_root
+            column = source_inverse_square_root.astype(regularizer.dtype)[..., None, :]
+            column = column.reshape(
+                (1,) * (regularizer.ndim - column.ndim) + column.shape
+            )
+            regularizer = regularizer * column
         design = jnp.concatenate((design, regularizer), axis=-2)
     rank_cutoff_requested = (
         plan.policy.rank.relative_cutoff is not None
@@ -566,7 +577,8 @@ def _prepare_svd(
             plan,
         )
         source_projection = (
-            jnp.conj(jnp.swapaxes(rank_vh, -1, -2)) * rank_retained[..., None, :]
+            jnp.conj(jnp.swapaxes(rank_vh, -1, -2))
+            * rank_retained.astype(rank_vh.dtype)[..., None, :]
         )
         factor_design = jnp.matmul(design, source_projection)
         u, singular_values, vh = jnp.linalg.svd(factor_design, full_matrices=False)
@@ -761,7 +773,7 @@ def _transformed_rhs(
 ) -> Array:
     target = rhs[..., : state.target_size, :]
     if state.square_root_weights is not None:
-        target = state.square_root_weights[..., :, None] * target
+        target = state.square_root_weights.astype(target.dtype)[..., :, None] * target
     extra_rows = state.design.shape[-2] - state.target_size
     if extra_rows:
         zeros = jnp.zeros(rhs.shape[:-2] + (extra_rows, rhs.shape[-1]), dtype=rhs.dtype)
@@ -834,13 +846,13 @@ def _solve_svd(
             state.singular_values / (state.singular_values**2 + squared_damping),
             0.0,
         )
-    scaled = filter_factors[..., :, None] * projected
+    scaled = filter_factors.astype(projected.dtype)[..., :, None] * projected
     value = jnp.matmul(jnp.conj(jnp.swapaxes(state.vh, -1, -2)), scaled)
     if state.source_projection is not None:
         value = jnp.matmul(state.source_projection, value)
     design_value = value
     if state.source_inverse_square_root is not None:
-        value = state.source_inverse_square_root[..., :, None] * value
+        value = state.source_inverse_square_root.astype(value.dtype)[..., :, None] * value
     required_rank = min(state.original_matrix.shape[-2], state.original_matrix.shape[-1])
     rank_deficient = state.rank < required_rank
     status = _rectangular_status(

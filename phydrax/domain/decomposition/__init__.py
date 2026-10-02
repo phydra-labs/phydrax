@@ -42,6 +42,7 @@ from ._ownership import (
     IntegrationOwnership,
     IntegrationOwnershipEvidence,
 )
+from ._periodic import PeriodicIdentification, physical_boundary
 from ._routing import prepare_field_routing, PreparedFieldRouting
 
 
@@ -60,6 +61,7 @@ __all__ = [
     "PairedSupport",
     "PairedSupportEvidence",
     "PairingTopology",
+    "PeriodicIdentification",
     "PreparedFieldRouting",
     "SubdomainCover",
     "SubdomainCoverEvidence",
@@ -73,6 +75,7 @@ __all__ = [
     "normalized_patch_coordinate",
     "partition_of_unity_field",
     "partition_of_unity_family",
+    "physical_boundary",
     "prepare_field_routing",
     "validate_mapped_cover",
     "validate_atlas_cover_adapter",

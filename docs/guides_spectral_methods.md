@@ -979,6 +979,46 @@ Constraint nullspaces, minimum-norm lifts, and Galerkin solves route through
 from the homogeneous unknown. Galerkin mass and stiffness actions remain tensor
 products; the dense Poisson path is an explicitly budgeted reference solve.
 
+### Paired periodic seam rows
+
+`periodic_trace_row` gives the exact coefficient row of a paired seam relation
+`T[u](upper) - transport * S[u](lower)` on one prepared axis:
+
+```python
+axis = phx.discretization.ChebyshevBasisPlan(32).prepare(
+    phx.discretization.AxisDomain.interval(0.0, 2.0),
+    precision=phx.discretization.SpectralPrecisionPolicy(),
+)
+antiperiodic_slope = phx.discretization.periodic_trace_row(
+    axis,
+    source_terms={1: 1.0},
+    target_terms={1: 1.0},
+    transport=-1.0,
+)
+```
+
+The row uses the axis' synthesis coefficients and physical-coordinate derivatives.
+Tensor-product representations apply `kron(row, I_transverse)` so the relation holds
+for every transverse coefficient, and
+`phydrax.enforcement.prepare_periodic_projection(..., route="coefficient",
+representation=...)` eliminates an independent set of rows exactly. On a Fourier
+axis an identity-transport row with equal source and target actions is exactly
+zero because the basis is already periodic; transported (antiperiodic or Bloch)
+relations generally produce nonzero rows. Coefficient elimination requires full
+row rank, so structurally zero or redundant rows must not be supplied as
+independent constraints.
+
+Rows are prepared in host `float64` or `complex128`, independently of the axis'
+storage precision. Sine value traces, cosine slope traces, and polynomial
+derivatives above the retained degree preserve their structural zeros exactly.
+Trace or transport arithmetic that cannot be represented in the host dtype is
+refused rather than returned as a nonfinite coefficient row.
+
+Native constraint preparation probes matrix-free operators one canonical
+coordinate at a time, without a source-square identity allocation. A failed
+right-inverse solve is refused with its native status and residual diagnostics;
+a finite candidate alone is not a successful preparation.
+
 ## Generalized tau systems
 
 `GeneralizedTauPlan` augments an existing square linear operator with explicit lift

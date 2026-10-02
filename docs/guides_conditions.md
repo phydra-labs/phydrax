@@ -251,6 +251,118 @@ For the enforcement compiler and its options, see
 [Exact enforcement](api/solver/enforcement.md). For solver evaluation
 and optimization, see [Functional solver](api/solver/functional_solver.md).
 
+## Periodic seams
+
+Periodicity is a relation between two traces of a field, not a boundary value.
+The domain stays the closed fundamental box; a `PeriodicIdentification` glues the
+lower face of one coordinate (the source) to its upper face (the target), and its
+`pairing()` is the seam on which `Periodic` declarations are stated:
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+
+box = phx.domain.HyperRectangle([0.0, 0.0], [1.0, 1.0])
+domain = box @ phx.domain.TimeInterval(0.0, 0.2)
+periodic_x = phx.domain.PeriodicIdentification(domain, "x", component=0)
+seam = periodic_x.pairing()
+
+model = phx.nn.models.MLP(
+    in_size=3, out_size="scalar", width_size=32, depth=2, key=jr.key(0)
+)
+functions = {"u": domain.Model("x", "t")(model)}
+seam_conditions = (
+    phx.conditions.Periodic("u", seam, label="seam-value"),
+    phx.conditions.Periodic("u", seam, order=1, label="seam-flux"),
+)
+```
+
+Each declaration owns one trace order. `transport=-1.0` states antiperiodicity, a
+unit complex phase states Bloch matching, and `target=-dp` states the affine jump
+`u(upper) - u(lower) = -dp`; see [Boundary and initial conditions](api/conditions/boundary.md).
+
+**Soft.** The same declarations are ordinary residual conditions; integrate them
+over the seam with `ResidualPenalty(condition, source)`, where the source samples
+`seam.component`.
+
+**Hard.** Prepare all declarations of a field together, then compile the joint
+condition with the walls and initial data. `physical_boundary` returns the faces
+that are not identified; the identified `x` faces are seams, not walls:
+
+```python
+prepared = phx.enforcement.prepare_periodic_projection(
+    functions, seam_conditions, route="analytic", data_compatibility="probed"
+)
+walls = tuple(
+    face
+    for face in phx.domain.physical_boundary(domain, (periodic_x,))
+    if isinstance(face.spec.selection_for("x"), phx.domain.CoordinateFace)
+)
+initial = phx.conditions.Initial(
+    "u",
+    domain.component({"t": phx.domain.FixedStart()}),
+    target=domain.Function("x")(
+        lambda x: jnp.sin(2.0 * jnp.pi * x[0]) * jnp.sin(jnp.pi * x[1])
+    ),
+)
+program = phx.enforcement.compile(
+    functions,
+    (
+        *(
+            phx.enforcement.EnforcementSpec(
+                phx.conditions.Dirichlet("u", wall, target=0.0)
+            )
+            for wall in walls
+        ),
+        phx.enforcement.EnforcementSpec(initial),
+        phx.enforcement.EnforcementSpec(prepared.condition, realization=prepared),
+    ),
+)
+```
+
+For a space-time domain `physical_boundary` also returns the two time slices,
+which is why the walls above are filtered to the `CoordinateFace` pieces. Hard
+walls on `CoordinateFace` supports take Dirichlet values without field
+dependencies and use exact transfinite interpolation along the wall coordinate.
+The analytic seam lift then adds a polynomial in the identified coordinate times
+the seam residual of the walled field, so wall and initial data that satisfy the
+seam relations stay satisfied. The compiler records, per earlier wall or
+initial contract, whether it is preserved exactly (`"certified"`: constant data,
+data independent of every identified coordinate on a homogeneous seam whose
+action annihilates it, or data carrying a matching `PeriodicInputCertificate`) or
+only showed no seam defect on probe points (`"probed"`). By default
+(`data_compatibility="certified"`) the compiler refuses function data whose seam
+compatibility it cannot prove; the example above opts in with
+`data_compatibility="probed"` because `sin(2πx)` is a generic callable. Probed
+contracts are reported but never listed as preserved in the realization's
+`RealizationAdmission`. The compiler refuses a wall that selects an
+identified face, interior anchors on a periodic field, a second typed realization
+that may write the field without preserving its seams, Neumann/Robin/absorbing
+walls whose coefficients or normals depend on an identified coordinate, data that
+contradicts the seam relation, and local hard contracts combined with the
+`"coefficient"` or `"construction"` route.
+
+Affine jumps require the complete wall relation: for `B u = g` and seam
+`J u = h`, preservation checks `J g = B h`. A constant affine jump has zero
+normal derivative, so it can coexist with homogeneous Neumann walls; Robin
+compatibility also includes the wall's value coefficient.
+
+
+| Route | Scope | Equality claimed |
+| --- | --- | --- |
+| `"analytic"` | `continuum` | every declared jet on the whole seam, by an exact centered Bernoulli endpoint lift; requires the model to have the declared derivative regularity |
+| `"coefficient"` | `finite-representation` | the declarations on a supplied finite linear representation, by `CoefficientElimination` |
+| `"construction"` | `structural` | homogeneous identity-transport seams of a model certified periodic by construction; the field is left unchanged |
+
+Several identified coordinates of one field compose exactly when their event
+transports commute (scalar transports always do) and constant affine targets
+agree at seam intersections; noncommuting transports and incompatible corner data
+are refused. Hard preparation requires the pairing from
+`PeriodicIdentification.pairing()`, whose face maps define the endpoint system. The
+analytic route corrects one field across its own seam: a declaration coupling two
+distinct fields is soft-only, and seams between decomposition patches are coupled
+by their decomposition solver.
+
 ## Joint linear conditions without pivots
 
 Typed finite conditions can couple several fields and are projected jointly:

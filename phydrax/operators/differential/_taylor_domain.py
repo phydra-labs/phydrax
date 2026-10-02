@@ -21,6 +21,7 @@ from ...domain import (
     DomainFunction,
 )
 from ...domain._derivative import DerivativeRuleProvider
+from ...domain._function import _drop_model_construction_certificates
 from ...typing import PRNGKey
 from ._requests import _EAGER_REGULARITY_POLICY, DerivativeStep, field_regularity
 from ._runtime import get_partial_eval_cache
@@ -254,6 +255,6 @@ def make_taylor_partial(
     return DomainFunction(
         domain=source.domain,
         deps=source.deps,
-        metadata=source.metadata,
+        metadata=_drop_model_construction_certificates(source.metadata),
         func=_TaylorPartialEvaluator(source, steps, plan),
     )

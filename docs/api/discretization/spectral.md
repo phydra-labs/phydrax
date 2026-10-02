@@ -683,6 +683,38 @@ equilibrium-traction owner retains a separate restart state. See
 
 ::: phydrax.discretization.PreparedTauSystem
 
+### Paired periodic seam rows
+
+`periodic_trace_row(prepared, /, *, source_terms, target_terms, transport=1.0)`
+returns the exact host coefficient row `r` of one seam relation on a prepared
+axis: for `u = sum_n c_n phi_n` in the axis' own coefficient convention,
+`r @ c = sum_k t_k d^k u(upper) - transport * sum_k s_k d^k u(lower)`, with
+physical-coordinate derivatives. This is the one-axis form of the
+`phydrax.conditions.Periodic` relation `T[u](upper) - Gamma S[u](lower) = g`.
+
+- Chebyshev (`T_n`) and Legendre (orthonormal `sqrt((2n + 1) / L) P_n`) rows reuse
+  the owner endpoint traces; sine and cosine rows use the orthonormal
+  point-synthesis rows.
+- Fourier modes are `exp(2 pi i m_n (x - lower) / L) / sqrt(L)` in FFT order
+  (complex packing; the even-count Nyquist mode uses `m = -N/2`). Both seam faces
+  share these values, so the row is `(T_n - Gamma S_n) / sqrt(L)` with the exact
+  modal jet multipliers. Identity transport with equal actions gives an exactly
+  zero row: ordinary Fourier periodicity is structural, while antiperiodic, Bloch,
+  and unequal-action relations yield nonzero transported rows.
+- Rows are `float64` for real terms on real-synthesis bases and `complex128` for
+  Fourier axes or any complex coefficient or transport. Rational axes (no finite
+  seam endpoints) and constrained axes (nullspace coordinates) are refused with
+  `ValueError`.
+
+A tensor-product coefficient representation assembles the complete seam relation
+as `kron(r, I_transverse)` along the identified axis, so every transverse
+coefficient participates; no transverse sampling is involved. The hard coefficient
+route consumes these rows through
+`phydrax.enforcement.prepare_periodic_projection(..., route="coefficient",
+representation=...)`.
+
+::: phydrax.discretization.periodic_trace_row
+
 ## Precision
 
 ::: phydrax.discretization.SpectralPrecisionPolicy

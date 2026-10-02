@@ -735,3 +735,18 @@ def test_mapped_target_requires_scalar_positive_mass() -> None:
             lambda reference: jnp.ones(reference.shape[0]),
             target_mass=jnp.ones((2,)),
         )
+
+
+def test_coordinate_face_quadrature_integrates_transverse_moment_without_normal_width() -> (
+    None
+):
+    domain = phx.domain.HyperRectangle(
+        jnp.asarray([0.0, -1.0, 2.0], dtype=jnp.float64),
+        jnp.asarray([2.0, 3.0, 5.0], dtype=jnp.float64),
+    )
+    face = domain.component({"x": phx.domain.CoordinateFace(1, "upper")})
+    field = domain.Function("x")(lambda x: x[0] * x[2])
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4))
+    estimate = phx.integration.integrate(field, phx.integration.over(face), plan)
+    # Integral_0^2 x dx * Integral_2^5 z dz = 2 * 10.5; no y-width factor.
+    assert estimate.value.data == pytest.approx(21.0, abs=1.0e-12)

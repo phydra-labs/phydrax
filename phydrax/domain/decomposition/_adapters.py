@@ -114,6 +114,7 @@ def validate_atlas_cover_adapter(
     cover_edges = {
         frozenset((pairing.left_patch_id, pairing.right_patch_id))
         for pairing in cover.pairings
+        if pairing.left_patch_id != pairing.right_patch_id
     }
     transition_edges = {
         frozenset((mapping[overlap.source_index], mapping[overlap.target_index]))

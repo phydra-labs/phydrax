@@ -14,7 +14,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from .._sampling import UnitCubeTransport
-from ._components import Boundary, Interior, Selection
+from ._components import Boundary, CoordinateFace, Interior, Selection
 from ._dataset import DatasetDomain
 from ._hyperrectangle import HyperRectangle
 from ._probability import open_unit_interval, ProbabilityDomain
@@ -78,6 +78,12 @@ def _interval_geometry_transport(
                 factor.end,
             ),
         )
+    if isinstance(component, CoordinateFace):
+        value = factor.coordinate_face_value(component)
+        return _ExactReferenceTransport(
+            1,
+            lambda unit: jnp.full((unit.shape[0], 1), value, dtype=jnp.float64),
+        )
     return None
 
 
@@ -128,6 +134,19 @@ def _box_transport(
         return _ExactReferenceTransport(
             dimension,
             lambda unit: _box_boundary(factor, unit),
+        )
+    if isinstance(component, CoordinateFace):
+        value = factor.coordinate_face_value(component)
+        if dimension == 1:
+            return _ExactReferenceTransport(
+                1,
+                lambda unit: jnp.full((unit.shape[0], 1), value, dtype=jnp.float64),
+            )
+        widths = jnp.delete(factor.upper - factor.lower, component.axis)
+        lower = jnp.delete(factor.lower, component.axis)
+        return _ExactReferenceTransport(
+            dimension - 1,
+            lambda unit: jnp.insert(lower + unit * widths, component.axis, value, axis=1),
         )
     return None
 
