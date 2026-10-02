@@ -24,6 +24,7 @@ from ...atomistic import (
     AtomisticUnitSystem,
     single_system_energy_to_molar_factor,
 )
+from ...typing import checked
 from ...units import AMOUNT, derived_unit, ENERGY, TEMPERATURE, UnitDefinition
 from .._optimization import _require_structure_matches_system
 from .._units import ChemistryPhysicalConstants
@@ -50,6 +51,7 @@ class MolecularThermochemistryResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component_internal_energies: ArrayLike,
@@ -82,8 +84,6 @@ class MolecularThermochemistryResult(StrictModule, NonTrainableState):
                 pressure,
             )
         )
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.component_internal_energies = energies
         self.component_entropies = entropies
@@ -132,14 +132,13 @@ class MolarThermochemistryResult(StrictModule, NonTrainableState):
     source_result_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MolecularThermochemistryResult,
         energy_unit: UnitDefinition,
         /,
     ) -> None:
-        if not isinstance(source, MolecularThermochemistryResult):
-            raise TypeError("source must be MolecularThermochemistryResult.")
         if (
             not isinstance(energy_unit, UnitDefinition)
             or energy_unit.dimension != ENERGY / AMOUNT
@@ -186,6 +185,7 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
     electronic_degeneracy: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -196,8 +196,6 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         symmetry_number: int,
         electronic_degeneracy: int,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         temperature_ = float(temperature)
         pressure_ = float(pressure)
         if any(
@@ -236,6 +234,7 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         structure: AtomicStructure,
@@ -243,10 +242,6 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         electronic_energy: ArrayLike,
         /,
     ) -> MolecularThermochemistryResult:
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be AtomicStructure.")
-        if not isinstance(vibration, VibrationalAnalysisResult):
-            raise TypeError("vibration must be VibrationalAnalysisResult.")
         _require_structure_matches_system(structure, self.system)
         if vibration.units.unit_system_id != self.system.units.unit_system_id:
             raise ValueError("Vibration and thermochemistry unit systems differ.")

@@ -23,6 +23,7 @@ from ..._tree_math import tree_allfinite
 from ...linalg import DualSpace, PyTreeSpace
 from ...metrix._quaternion_state_geometry import ScalarFirstQuaternionStateGeometry
 from ...metrix._state_geometry import AbstractStateGeometry
+from ...typing import checked
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
 from ._core import ParticleDiscretization, ParticleSetPlan
 
@@ -187,13 +188,10 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, RigidBodySetPlan):
-            raise TypeError("plan must be a RigidBodySetPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         mass_properties = RigidBodyMassProperties(plan, particles)
         active = particles.active_mask
         fixed = plan.fixed_mask & active
@@ -317,6 +315,7 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
     target_body_plan_id: str = eqx.field(static=True)
     rebase_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: PreparedRigidBodySet,
@@ -325,12 +324,6 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         center_of_mass_offsets: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(source, PreparedRigidBodySet):
-            raise TypeError("source must be a PreparedRigidBodySet.")
-        if not isinstance(target_particles, ParticleSetPlan):
-            raise TypeError("target_particles must be a ParticleSetPlan.")
-        if not isinstance(target_bodies, RigidBodySetPlan):
-            raise TypeError("target_bodies must be a RigidBodySetPlan.")
         if source.ambient_dimension != 3 or target_particles.ambient_dimension != 3:
             raise ValueError("Rigid-body reference-frame rebasing requires 3-D bodies.")
         offsets = np.asarray(center_of_mass_offsets)
@@ -376,16 +369,13 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _require_owners(
         self,
         source: PreparedRigidBodySet,
         target: PreparedRigidBodySet,
         /,
     ) -> None:
-        if not isinstance(source, PreparedRigidBodySet):
-            raise TypeError("source must be a PreparedRigidBodySet.")
-        if not isinstance(target, PreparedRigidBodySet):
-            raise TypeError("target must be a PreparedRigidBodySet.")
         if (
             source.prepared_id != self.source_prepared_id
             or source.particles.plan.plan_id != self.source_particle_plan_id
@@ -407,6 +397,7 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         ):
             raise ValueError("Rebase owners have incompatible body support.")
 
+    @checked
     def rebase_kinematics(
         self,
         reference: RigidBodyKinematics,
@@ -417,8 +408,6 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         """Shift an old-origin pose/twist to the target center of mass."""
 
         self._require_owners(source, target)
-        if not isinstance(reference, RigidBodyKinematics):
-            raise TypeError("reference must be RigidBodyKinematics.")
         expected_vector = (source.capacity, 3)
         if (
             reference.position.shape != expected_vector
@@ -768,9 +757,8 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, bodies: PreparedRigidBodySet, /) -> None:
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be a PreparedRigidBodySet.")
         identifier = f"state-geometry:rigid-body:{bodies.prepared_id}"
         dtype = bodies.particles.safe_masses.dtype
         linear = jnp.zeros(

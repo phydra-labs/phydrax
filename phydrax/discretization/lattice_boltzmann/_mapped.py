@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..finite_difference._mapped_grid import PreparedMappedTensorGrid
 from ._discretization import LatticeBoltzmannDiscretization
 from ._geometry import LatticeBoltzmannGeometryKind
@@ -53,6 +54,7 @@ class MappedLatticeBoltzmannPlan(StrictModule, NonTrainableState):
     geometry_kind: LatticeBoltzmannGeometryKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: LatticeBoltzmannDiscretization,
@@ -63,10 +65,6 @@ class MappedLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         source_id: str,
         metric_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(reference, LatticeBoltzmannDiscretization):
-            raise TypeError("reference must be LatticeBoltzmannDiscretization.")
-        if not isinstance(mapped_grid, PreparedMappedTensorGrid):
-            raise TypeError("mapped_grid must be PreparedMappedTensorGrid.")
         if mapped_grid.reference_grid.shape != reference.grid.shape:
             raise ValueError("Mapped and LBM reference grids must have equal shapes.")
         mapped_points = np.asarray(mapped_grid.reference_grid.points)

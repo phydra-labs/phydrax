@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ...linalg import FactorizationPolicy, inverse, OperatorProperties
 from ...metrix import KahlerPotentialGeometry
+from ...typing import checked
 from ._hypersurface import ProjectiveHypersurface
 from ._hypersurface_patch import HypersurfacePatchGeometry
 
@@ -63,6 +64,7 @@ class HypersurfaceKahlerGeometry(StrictModule):
     normalization: Array
     positivity_floor: float
 
+    @checked
     def __init__(
         self,
         hypersurface: ProjectiveHypersurface,
@@ -72,8 +74,6 @@ class HypersurfaceKahlerGeometry(StrictModule):
         normalization: ArrayLike = 0.0,
         positivity_floor: float = 1e-8,
     ) -> None:
-        if not isinstance(hypersurface, ProjectiveHypersurface):
-            raise TypeError("hypersurface must be a ProjectiveHypersurface.")
         if not callable(potential):
             raise TypeError("potential must be callable.")
         self.hypersurface = hypersurface

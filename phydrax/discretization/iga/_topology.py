@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._topology import TensorTopology
 from ._identity import BaseSpanId, InterfaceId
 
@@ -171,11 +172,10 @@ class CellComplex(StrictModule, NonTrainableState):
     interfaces: tuple[InterfaceId, ...]
     complex_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, atlas: PatchAtlas, interfaces: Sequence[InterfaceId] = (), /
     ) -> None:
-        if not isinstance(atlas, PatchAtlas):
-            raise TypeError("atlas must be a PatchAtlas.")
         interface_values = tuple(interfaces)
         if not all(isinstance(interface, InterfaceId) for interface in interface_values):
             raise TypeError("interfaces must contain InterfaceId values.")

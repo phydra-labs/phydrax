@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -125,6 +126,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
     resource_evidence: MPMPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -142,14 +144,6 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         external_acceleration_id: str | None = None,
         resource_policy: MPMResourcePolicy | None = None,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
-        if not isinstance(splat, PreparedParticleGridSplat):
-            raise TypeError("splat must be PreparedParticleGridSplat.")
-        if not isinstance(method, ExplicitMPMMethodPlan):
-            raise TypeError("method must be ExplicitMPMMethodPlan.")
-        if not isinstance(particle_domain, MPMParticleDomainPlan):
-            raise TypeError("particle_domain must be MPMParticleDomainPlan.")
         if boundary is not None and not isinstance(boundary, PrescribedGridVelocityPlan):
             raise TypeError("boundary must be PrescribedGridVelocityPlan or None.")
         if contact is not None and not isinstance(contact, RigidMPMContactPlan):
@@ -796,6 +790,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             restriction_.suggested_step,
         )
 
+    @checked
     def step_detailed(
         self,
         state: MPMRuntimeState,
@@ -803,8 +798,6 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         arguments: Any,
         /,
     ) -> MPMStepResult:
-        if not isinstance(state, MPMRuntimeState):
-            raise TypeError("state must be MPMRuntimeState.")
         dt = jnp.asarray(step_size, dtype=state.particles.position.dtype).reshape(())
         active = (
             self.particles.active_mask

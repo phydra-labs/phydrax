@@ -18,7 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..imaging import ImagePlaneSupport
 from ..sparse import EdgeRelation, RelationExecutionPlan
-from ..typing import parse
+from ..typing import checked, parse
 
 
 RASTER_INACTIVE = 0
@@ -155,6 +155,7 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _routes(
         self,
         geometry: ImagePlaneSupport,
@@ -164,8 +165,6 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         active: ArrayLike | None,
         /,
     ) -> tuple[_GaussianRoutes, Array, Array, Array]:
-        if not isinstance(geometry, ImagePlaneSupport):
-            raise TypeError("geometry must be ImagePlaneSupport.")
         coordinates = jnp.asarray(row_column)
         if coordinates.ndim != 2 or coordinates.shape[1] != 2:
             raise ValueError("row_column must have shape (particle_capacity, 2).")

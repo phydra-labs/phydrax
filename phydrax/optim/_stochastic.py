@@ -24,7 +24,7 @@ from .._tree_math import (
     tree_norm as _tree_norm,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._adam import adam
 from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
@@ -315,9 +315,8 @@ class ChanceConstraint(StrictModule):
         ).real
         return empirical, smooth
 
+    @checked
     def bind(self, batch: SampleBatch, args: Any = None, /) -> NonlinearConstraint:
-        if not isinstance(batch, SampleBatch):
-            raise TypeError("batch must be a SampleBatch.")
         return NonlinearConstraint(
             lambda parameters, dynamic_args: self.probabilities(
                 parameters,
@@ -496,6 +495,7 @@ class StochasticProblem(StrictModule):
     chance_constraints: tuple[ChanceConstraint, ...]
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scenario_loss: Callable[[PyTree[Any], PyTree[Any], Any], Any],
@@ -509,8 +509,6 @@ class StochasticProblem(StrictModule):
     ) -> None:
         if not callable(scenario_loss):
             raise TypeError("scenario_loss must be callable.")
-        if not isinstance(sampling, AbstractSamplingPolicy):
-            raise TypeError("sampling must be an AbstractSamplingPolicy.")
         risk_ = ExpectationRisk() if risk is None else risk
         if not isinstance(risk_, AbstractRiskMeasure):
             raise TypeError("risk must be an AbstractRiskMeasure or None.")

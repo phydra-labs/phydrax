@@ -37,7 +37,7 @@ from ..linalg import (
     DualSpace,
     OperatorPairing,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 BoundaryTraceQuantity: TypeAlias = Literal[
@@ -285,6 +285,7 @@ class CauchyTraceCapability(StrictModule, NonTrainableState):
     convention_id: str = eqx.field(static=True)
     capability_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dirichlet: BoundaryTraceSpaceCapability,
@@ -305,8 +306,6 @@ class CauchyTraceCapability(StrictModule, NonTrainableState):
             raise ValueError("Cauchy traces must share one boundary geometry revision.")
         if dirichlet.ambient_dimension != neumann.ambient_dimension:
             raise ValueError("Cauchy traces must share one ambient dimension.")
-        if not isinstance(duality, AbstractLinearOperator):
-            raise TypeError("duality must be an AbstractLinearOperator.")
         if (
             not dirichlet.coefficient_space.compatible(duality.source)
             or not isinstance(duality.target, DualSpace)

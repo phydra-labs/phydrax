@@ -29,6 +29,7 @@ from ...geometry.multiregion_surface import (
     SurfaceEventPolicy,
 )
 from ...interfacial_transport import FilmStepStatus, SurfaceFilmEvidence
+from ...typing import checked
 
 
 class FoamRuptureStatus(IntEnum):
@@ -181,6 +182,7 @@ class FoamRupturePlan(StrictModule, ParameterOwner):
         )
         return accepted, geometry_matches
 
+    @checked
     def propose(
         self,
         topology: MultiRegionSurfaceTopology,
@@ -192,12 +194,6 @@ class FoamRupturePlan(StrictModule, ParameterOwner):
         /,
     ) -> tuple[BurstProposal, ...]:
         """Return canonically ordered proposals only from accepted B evidence."""
-        if not isinstance(topology, MultiRegionSurfaceTopology):
-            raise TypeError("topology must be MultiRegionSurfaceTopology.")
-        if not isinstance(state, MultiRegionSurfaceState):
-            raise TypeError("state must be MultiRegionSurfaceState.")
-        if not isinstance(film_evidence, SurfaceFilmEvidence):
-            raise TypeError("film_evidence must be SurfaceFilmEvidence.")
         state.require_topology(topology)
         thickness = np.asarray(thickness_m, dtype=np.float64)
         expected = (topology.vertex_capacity, topology.slot_width)

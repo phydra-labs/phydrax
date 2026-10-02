@@ -30,6 +30,7 @@ from ...linalg import (
     prepare,
     solve,
 )
+from ...typing import checked
 
 
 class PolynomialDefectPotential(StrictModule):
@@ -39,14 +40,13 @@ class PolynomialDefectPotential(StrictModule):
     source_id: str = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: SparsePolynomialSystem,
         source_id: str,
         /,
     ) -> None:
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be SparsePolynomialSystem.")
         source = str(source_id).strip()
         if system.support.equation_count != 1:
             raise ValueError("A defect potential requires exactly one polynomial.")
@@ -113,6 +113,7 @@ class MappedInfiniteDefectPlan(StrictModule):
     backtracking_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         potential: PolynomialDefectPotential,
@@ -127,8 +128,6 @@ class MappedInfiniteDefectPlan(StrictModule):
         maximum_iterations: int = 40,
         backtracking_steps: int = 12,
     ) -> None:
-        if not isinstance(potential, PolynomialDefectPotential):
-            raise TypeError("potential must be PolynomialDefectPotential.")
         gradient = np.asarray(gradient_matrix, dtype=np.float64)
         left = np.asarray(left_vacuum, dtype=np.float64)
         right = np.asarray(right_vacuum, dtype=np.float64)
@@ -373,6 +372,7 @@ class RadialDefectPlan(StrictModule):
     radial_points: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: MappedInfiniteDefectPlan,
@@ -381,8 +381,6 @@ class RadialDefectPlan(StrictModule):
         radial_points: int,
         /,
     ) -> None:
-        if not isinstance(base, MappedInfiniteDefectPlan):
-            raise TypeError("base must be MappedInfiniteDefectPlan.")
         dimension = int(spatial_dimension)
         radius = float(maximum_radius)
         points = int(radial_points)
@@ -551,6 +549,7 @@ class DefectScatteringPlan(StrictModule):
     damping: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         potential: PolynomialDefectPotential,
@@ -563,8 +562,6 @@ class DefectScatteringPlan(StrictModule):
         boundary_damping: float = 1.0,
         damping_fraction: float = 0.1,
     ) -> None:
-        if not isinstance(potential, PolynomialDefectPotential):
-            raise TypeError("potential must be PolynomialDefectPotential.")
         gradient = np.asarray(gradient_matrix, dtype=np.float64)
         points = np.asarray(spatial_points, dtype=np.float64)
         step = float(time_step)

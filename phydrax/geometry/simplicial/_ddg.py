@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._mesh import TriangleMesh
 
 
@@ -27,6 +28,7 @@ class DDGOperators(StrictModule):
     basis_gradients: Array
     boundary_vertices: Array
 
+    @checked
     def __init__(self, mesh: TriangleMesh, *, vertices: ArrayLike | None = None) -> None:
         """Assemble operators on ``mesh``.
 
@@ -34,8 +36,6 @@ class DDGOperators(StrictModule):
         connectivity of ``mesh`` is reused and only numerical coefficients are
         recomputed, so moving-surface consumers never rebuild topology.
         """
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("DDGOperators requires a TriangleMesh.")
         if vertices is None:
             vertices = mesh.vertices
         else:

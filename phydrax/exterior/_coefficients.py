@@ -31,7 +31,7 @@ from ..linalg import (
 )
 from ..linalg._spaces import _coordinate_dtype
 from ..sparse import EdgeRelation, route_reduce, SparseCoordinateOperator
-from ..typing import Bool, Dim, Float, Scalar
+from ..typing import Bool, checked, Dim, Float, Scalar
 
 
 class CurvatureDegreeDim(Dim):
@@ -221,6 +221,7 @@ class CoefficientSystem(StrictModule):
     fiber_ranks: tuple[int, ...] = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -230,8 +231,6 @@ class CoefficientSystem(StrictModule):
         spaces: Sequence[AbstractVectorSpace] | None = None,
         key: str | None = None,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be CellComplexTopology.")
         blocks = _transport_blocks(topology, transports)
         ranks, provided_spaces, identity, dtype = _coefficient_admission(
             topology, blocks, spaces, key

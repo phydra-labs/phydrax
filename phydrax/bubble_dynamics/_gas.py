@@ -20,6 +20,7 @@ from .._trainable import fixed_field, parameter_field
 from .._validation import positive_integer
 from ..equations import AbstractThermodynamicMaterial
 from ..nonlinear import LocalRootPlan
+from ..typing import checked
 from ._contracts import (
     AbstractBubbleCompartmentGasLaw,
     AbstractBubbleGasLaw,
@@ -941,11 +942,10 @@ class MaterialBubbleGasLaw(AbstractBubbleGasLaw):
     molar_mass: Array = parameter_field()
     law_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, material: AbstractThermodynamicMaterial, molar_mass: ArrayLike, /
     ) -> None:
-        if not isinstance(material, AbstractThermodynamicMaterial):
-            raise TypeError("material must be an AbstractThermodynamicMaterial.")
         mass = scalar_parameter(molar_mass, "molar_mass", lower=0.0)
         self.material = material
         self.molar_mass = mass

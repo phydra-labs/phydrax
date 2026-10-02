@@ -30,7 +30,7 @@ from .._tree_math import (
 )
 from ..ein import contract
 from ..linalg import FailurePolicy, SmallLinearSolvePlan, solve_small_linear
-from ..typing import parse
+from ..typing import checked, parse
 from ._programming import (
     ConvexSolvePolicy,
     ConvexTermination,
@@ -193,6 +193,7 @@ class ConflictFreeUpdateStatistics(StrictModule):
             zero_value,
         )
 
+    @checked
     def update(
         self,
         result: ConflictFreeUpdateResult,
@@ -201,8 +202,6 @@ class ConflictFreeUpdateStatistics(StrictModule):
         gradient_conflict: Any,
         constructed_conflict: Any,
     ) -> ConflictFreeUpdateStatistics:
-        if not isinstance(result, ConflictFreeUpdateResult):
-            raise TypeError("result must be a ConflictFreeUpdateResult.")
         integer = jnp.asarray(1, dtype=self.steps.dtype)
         gradient = jnp.asarray(gradient_conflict, dtype=jnp.bool_)
         constructed = jnp.asarray(constructed_conflict, dtype=jnp.bool_)

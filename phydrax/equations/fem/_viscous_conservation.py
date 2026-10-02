@@ -25,6 +25,7 @@ from ...discretization.fem._boundary import tensor_local_face
 from ...discretization.finite_volume._physical_boundaries import (
     PrescribedHeatFluxWallBoundary,
 )
+from ...typing import checked
 from .._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
 from .._hyperbolic_systems import (
     AbstractConservationSystem,
@@ -225,9 +226,8 @@ class PreparedViscousDGOperator(StrictModule):
     dynamics: Any
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ViscousDGPlan, dynamics: Any, /) -> None:
-        if not isinstance(plan, ViscousDGPlan):
-            raise TypeError("plan must be ViscousDGPlan.")
         if not isinstance(dynamics.system, AbstractEntropyDiffusionSystem):
             raise TypeError("Viscous DG requires AbstractEntropyDiffusionSystem.")
         if (

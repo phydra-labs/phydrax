@@ -43,7 +43,7 @@ from ..nonlinear._types import (
     NonlinearTermination,
 )
 from ..optim._programming._cones import SecondOrderCone
-from ..typing import parse
+from ..typing import checked, parse
 from ._feasibility import PositiveSemidefiniteProjection, SimplexProjection
 from ._lifecycle import (
     AbstractRealizationSource,
@@ -315,6 +315,7 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
             {source: fields[source] for source in condition.fields.sources},
         )
 
+    @checked
     def realize(
         self,
         fields: FieldMap,
@@ -324,8 +325,6 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
     ) -> FieldRealizationResult:
         if not isinstance(fields, Mapping):
             raise TypeError("fields must be a mapping.")
-        if not isinstance(context, ConditionEvaluationContext):
-            raise TypeError("context must be a ConditionEvaluationContext.")
         current = RealizationLifecycleState.initial() if state is None else state
         if not isinstance(current, RealizationLifecycleState):
             raise TypeError("state must be RealizationLifecycleState or None.")

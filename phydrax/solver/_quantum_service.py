@@ -24,6 +24,7 @@ from ..operators.quantum._operations import (
     QuantumStateKind,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
+from ..typing import checked
 from ._quantum_compilation import HardwareTopology
 from ._quantum_experiment import (
     QuantumExperimentExactResult,
@@ -45,9 +46,8 @@ class QuantumProgramInterchange(StrictModule, NonTrainableState):
     operation_targets: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, program: QuantumProgram, /) -> None:
-        if not isinstance(program, QuantumProgram):
-            raise TypeError("program must be QuantumProgram.")
         numerical: list[Array] = []
         kinds: list[str] = []
         targets: list[tuple[str, ...]] = []

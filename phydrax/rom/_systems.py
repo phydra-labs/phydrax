@@ -25,6 +25,7 @@ from ..linalg import (
     LinearSolveResult,
     solve,
 )
+from ..typing import checked
 from ._reduction import TrialTestReduction
 
 
@@ -33,6 +34,7 @@ class RectangularLinearROMProblem(StrictModule, NonTrainableState):
     operator: AbstractLinearOperator
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: TrialTestReduction,
@@ -41,8 +43,6 @@ class RectangularLinearROMProblem(StrictModule, NonTrainableState):
         *,
         problem_id: str,
     ) -> None:
-        if not isinstance(reduction, TrialTestReduction):
-            raise TypeError("reduction must be TrialTestReduction.")
         if reduction.test_rank < reduction.trial_rank:
             raise ValueError("Rectangular reduction requires test rank >= trial rank.")
         reduction.validate_operator(operator)

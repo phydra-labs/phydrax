@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg._compound import compound_matrix
+from ...typing import checked
 from ._blades import CliffordBladeLayout
 from ._isometries import MetricIsometryAction, MetricIsometryAuditSet
 from ._product import prepare_product
@@ -30,16 +31,13 @@ class CliffordOutermorphismPlan(StrictModule, NonTrainableState):
     representation: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action: MetricIsometryAction,
         layout: CliffordBladeLayout,
         /,
     ) -> None:
-        if not isinstance(action, MetricIsometryAction):
-            raise TypeError("action must be a MetricIsometryAction.")
-        if not isinstance(layout, CliffordBladeLayout):
-            raise TypeError("layout must be a CliffordBladeLayout.")
         action.algebra.require_compatible(layout.algebra)
         if not layout.complete_grades:
             raise ValueError(

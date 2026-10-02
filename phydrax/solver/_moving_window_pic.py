@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle import ParticleAllocationRequest
 from ..discretization.pic import PICChargeState, PICParticleState, PICSpeciesState
+from ..typing import checked
 from ._electromagnetic_pic import (
     ElectromagneticPICPlan,
     ElectromagneticPICState,
@@ -79,6 +80,7 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
     lower: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pic: ElectromagneticPICPlan,
@@ -87,8 +89,6 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
         *,
         shift_cells: int = 1,
     ) -> None:
-        if not isinstance(pic, ElectromagneticPICPlan):
-            raise TypeError("pic must be ElectromagneticPICPlan.")
         solver = pic.solver
         if not isinstance(solver, PICWindowShift):
             raise TypeError("The PIC field solver does not implement PICWindowShift.")

@@ -25,6 +25,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._operators import (
     _assemble_operator_diagonal,
     _generic_adjoint,
@@ -162,14 +163,13 @@ class CoordinateBlock(StrictModule):
     space: AbstractVectorSpace
     ranges: CoordinateRanges = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: AbstractVectorSpace,
         ranges: Sequence[CoordinateRange],
         /,
     ) -> None:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         parsed: list[CoordinateRange] = []
         for value in ranges:
             if not isinstance(value, tuple) or len(value) != 2:
@@ -233,14 +233,13 @@ class BlockSelection(StrictModule):
     member_paths: tuple[tuple[BlockPath, ...] | None, ...] = eqx.field(static=True)
     selection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: AbstractVectorSpace,
         members: Sequence[tuple[str, BlockMember]],
         /,
     ) -> None:
-        if not isinstance(source, AbstractVectorSpace):
-            raise TypeError("source must be an AbstractVectorSpace.")
         entries = tuple(members)
         if not entries:
             raise ValueError("A block selection requires at least one member.")
@@ -342,9 +341,8 @@ class BlockRestrictionLinearOperator(AbstractLinearOperator):
 
     selection: BlockSelection
 
+    @checked
     def __init__(self, selection: BlockSelection, /) -> None:
-        if not isinstance(selection, BlockSelection):
-            raise TypeError("selection must be a BlockSelection.")
         self.selection = selection
         self.source = selection.source
         self.target = selection.target
@@ -375,9 +373,8 @@ class BlockProlongationLinearOperator(AbstractLinearOperator):
 
     selection: BlockSelection
 
+    @checked
     def __init__(self, selection: BlockSelection, /) -> None:
-        if not isinstance(selection, BlockSelection):
-            raise TypeError("selection must be a BlockSelection.")
         self.selection = selection
         self.source = selection.target
         self.target = selection.source
@@ -575,9 +572,8 @@ class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
     operator: AbstractLinearOperator
     coordinate_space: ArraySpace
 
+    @checked
     def __init__(self, operator: AbstractLinearOperator, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("Coordinate rebasing requires an unbatched operator.")
         if operator.source.size != operator.target.size:
@@ -733,6 +729,7 @@ class MappedBlockLinearOperator(AbstractLinearOperator):
     column_map: BlockSelection
     identity_ordered: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         block_operator: AbstractLinearOperator,
@@ -741,8 +738,6 @@ class MappedBlockLinearOperator(AbstractLinearOperator):
         row_map: BlockSelection,
         column_map: BlockSelection,
     ) -> None:
-        if not isinstance(block_operator, AbstractLinearOperator):
-            raise TypeError("block_operator must be an AbstractLinearOperator.")
         row_map_ = _validate_coordinate_map(row_map, "row_map")
         column_map_ = _validate_coordinate_map(column_map, "column_map")
         if block_operator.batch_shape:

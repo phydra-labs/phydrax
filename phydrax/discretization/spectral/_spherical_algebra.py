@@ -21,6 +21,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._spherical import SphericalSpectralDiscretization
 from ._spherical_layout import SphericalModeLayout
 
@@ -153,9 +154,8 @@ class PreparedSphericalRotation(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     convention: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SphericalRotationPlan, /) -> None:
-        if not isinstance(plan, SphericalRotationPlan):
-            raise TypeError("plan must be a SphericalRotationPlan.")
         self.plan = plan
         self.convention = "active-ZYZ"
         self.prepared_id = canonical_fingerprint(
@@ -321,9 +321,8 @@ class PreparedSphericalClebschGordan(StrictModule, NonTrainableState):
     report: SphericalClebschGordanReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SphericalClebschGordanPlan, /) -> None:
-        if not isinstance(plan, SphericalClebschGordanPlan):
-            raise TypeError("plan must be a SphericalClebschGordanPlan.")
         left = plan.left_layout
         right = plan.right_layout
         output = plan.output_layout

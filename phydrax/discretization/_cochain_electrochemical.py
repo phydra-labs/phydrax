@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._structured_cochain import StructuredCochainBridge
 
 
@@ -86,14 +87,13 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
     species_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
         diffusivities: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         values = np.asarray(diffusivities, dtype=np.float64)
         if values.ndim != 1 or np.any(~np.isfinite(values)) or np.any(values <= 0.0):
             raise ValueError(

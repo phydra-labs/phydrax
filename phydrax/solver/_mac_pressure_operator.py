@@ -44,7 +44,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 MACPressureRouteRequest: TypeAlias = Literal[
@@ -379,6 +379,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
     operator_id: str = eqx.field(static=True)
     spec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -395,8 +396,6 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
         maximum_resource_bytes: int = 512 * 1024**2,
         geometry_epoch: int = 0,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
             MACBoundaryPlan(operators).prepare()
             if boundaries is None
@@ -584,9 +583,8 @@ class PreparedMACPressureOperator(StrictModule, NonTrainableState):
     preparation: MACPressurePreparationEvidence
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, spec: MACPressureOperatorSpec, /) -> None:
-        if not isinstance(spec, MACPressureOperatorSpec):
-            raise TypeError("spec must be MACPressureOperatorSpec.")
         action = MACWeightedPressureAction(
             spec.operators,
             spec.boundaries,

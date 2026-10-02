@@ -39,6 +39,7 @@ from ...equations._material_point import (
     CompiledMaterialPointProblem,
     MaterialPointArguments,
 )
+from ...typing import checked
 from ._backend import (
     ROBOTICS_OPERATIONS,
     RoboticsBackendProfile,
@@ -389,9 +390,8 @@ class MPMSoftResolutionEvidence(StrictModule, NonTrainableState):
     preparation_evidence_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, dynamics: PreparedMPMDynamics, /) -> None:
-        if not isinstance(dynamics, PreparedMPMDynamics):
-            raise TypeError("dynamics must be PreparedMPMDynamics.")
         particle_capacity = int(dynamics.particles.capacity)
         active_particle_count = int(
             np.sum(np.asarray(dynamics.particles.active_mask, dtype=np.int64))
@@ -429,11 +429,10 @@ class MPMSoftResolutionEvidence(StrictModule, NonTrainableState):
         self.preparation_evidence_id = preparation_evidence_id
         self.evidence_id = canonical_fingerprint(payload)
 
+    @checked
     def require(
         self, requirement: MPMSoftResolutionRequirement, /
     ) -> MPMSoftResolutionEvidence:
-        if not isinstance(requirement, MPMSoftResolutionRequirement):
-            raise TypeError("requirement must be MPMSoftResolutionRequirement.")
         checks = (
             ("particle capacity", requirement.particle_capacity, self.particle_capacity),
             ("grid shape", requirement.grid_shape, self.grid_shape),
@@ -561,6 +560,7 @@ class MPMSoftPlant(AbstractDiscretePlant):
     dtype: str = eqx.field(static=True)
     case_ndim: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         compiled: CompiledMaterialPointProblem,
@@ -572,12 +572,6 @@ class MPMSoftPlant(AbstractDiscretePlant):
         required_resolution: MPMSoftResolutionRequirement | None = None,
         required_features: Sequence[str] = (),
     ) -> None:
-        if not isinstance(compiled, CompiledMaterialPointProblem):
-            raise TypeError("compiled must be CompiledMaterialPointProblem.")
-        if not isinstance(initial_runtime, MPMRuntimeState):
-            raise TypeError("initial_runtime must be MPMRuntimeState.")
-        if not isinstance(arguments, MaterialPointArguments):
-            raise TypeError("arguments must be MaterialPointArguments.")
         dynamics = compiled.dynamics
         if dynamics.contact is not None:
             raise BackendUnavailableError(
@@ -776,9 +770,8 @@ class MPMSoftPlant(AbstractDiscretePlant):
     def require_features(self, features: Sequence[str], /) -> MPMSoftFeatureManifest:
         return self.features.require(features)
 
+    @checked
     def _state(self, state: PlantRuntimeState, /) -> tuple[MPMSoftState, tuple[int, ...]]:
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         observed = (
             state.semantic_provenance_id,
             state.numeric_revision_id,
@@ -840,6 +833,7 @@ class MPMSoftPlant(AbstractDiscretePlant):
             evidence,
         )
 
+    @checked
     def propose_step(
         self,
         context: PlantStepContext,
@@ -850,10 +844,6 @@ class MPMSoftPlant(AbstractDiscretePlant):
         /,
     ) -> PlantProposal:
         del keys
-        if not isinstance(source, MPMSoftState):
-            raise TypeError("source must be MPMSoftState.")
-        if not isinstance(parameters, MPMSoftParameters):
-            raise TypeError("parameters must be MPMSoftParameters.")
         case_shape = self.state_schema.validate(source)
         parameter_cases = _broadcast_tree(parameters, case_shape)
         if self.control_schema is None:
@@ -972,12 +962,11 @@ class MPMSoftPlant(AbstractDiscretePlant):
             evidence,
         )
 
+    @checked
     def observe(
         self, state: PlantRuntimeState, request: MPMSoftObservationRequest, /
     ) -> MPMSoftObservation:
         payload, case_shape = self._state(state)
-        if not isinstance(request, MPMSoftObservationRequest):
-            raise TypeError("request must be MPMSoftObservationRequest.")
         case_rank = len(case_shape)
         particles = payload.runtime.particles
         active_particles = self.dynamics.particles.active_mask

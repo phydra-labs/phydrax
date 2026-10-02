@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout
+from ...typing import checked
 from ._context import AstrodynamicsContext
 
 
@@ -23,6 +24,7 @@ class CartesianOrbitState(StrictModule):
     velocity: Array
     context: AstrodynamicsContext
 
+    @checked
     def __init__(
         self,
         position: ArrayLike,
@@ -30,8 +32,6 @@ class CartesianOrbitState(StrictModule):
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         position_ = jnp.asarray(position)
         velocity_ = jnp.asarray(velocity, dtype=position_.dtype)
         if position_.shape != (3,) or velocity_.shape != (3,):
@@ -65,6 +65,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
     context: AstrodynamicsContext
     trajectory_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         times: ArrayLike,
@@ -77,8 +78,6 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
         trajectory_id: str | None = None,
         provider_status: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         times_ = jnp.asarray(times)
         states_ = jnp.asarray(states)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)

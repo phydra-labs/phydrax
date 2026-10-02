@@ -42,6 +42,7 @@ from ..discretization.mpm._commercial import (
 )
 from ..discretization.particle import ParticleDiscretization
 from ..discretization.splatting import PreparedParticleGridSplat
+from ..typing import checked
 
 
 MPMKinematics: TypeAlias = Literal[
@@ -242,6 +243,7 @@ class MaterialPointProblemIR(StrictModule):
     claim: MPMClaimTuple | None
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -257,8 +259,6 @@ class MaterialPointProblemIR(StrictModule):
         name_ = str(name)
         if not name_:
             raise ValueError("Material-point problem name must be non-empty.")
-        if not isinstance(material, AbstractMPMConstitutivePlan):
-            raise TypeError("material must be AbstractMPMConstitutivePlan.")
         if external_acceleration is not None and not callable(external_acceleration):
             raise TypeError("external_acceleration must be callable or None.")
         if external_acceleration is None and external_acceleration_id is not None:
@@ -306,6 +306,7 @@ class CompiledMaterialPointProblem(StrictModule):
     support_decision_id: str | None = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: MaterialPointProblemIR,
@@ -315,12 +316,6 @@ class CompiledMaterialPointProblem(StrictModule):
         *,
         support_decision: MPMSupportDecision | None = None,
     ) -> None:
-        if not isinstance(problem, MaterialPointProblemIR):
-            raise TypeError("problem must be MaterialPointProblemIR.")
-        if not isinstance(dynamics, PreparedMPMDynamics):
-            raise TypeError("dynamics must be PreparedMPMDynamics.")
-        if not isinstance(discretization_bundle, DiscretizationBundle):
-            raise TypeError("discretization_bundle must be DiscretizationBundle.")
         if support_decision is not None:
             if not isinstance(support_decision, MPMSupportDecision):
                 raise TypeError("support_decision must be MPMSupportDecision or None.")
@@ -356,6 +351,7 @@ class CompiledMaterialPointProblem(StrictModule):
             }
         )
 
+    @checked
     def initialize_state(
         self,
         position: ArrayLike,
@@ -365,8 +361,6 @@ class CompiledMaterialPointProblem(StrictModule):
         /,
         **kwargs: Any,
     ) -> MPMRuntimeState:
-        if not isinstance(arguments, MaterialPointArguments):
-            raise TypeError("arguments must be MaterialPointArguments.")
         return self.dynamics.initialize_state(
             position,
             velocity,

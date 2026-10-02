@@ -14,6 +14,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import FaceVelocity
 from ..discretization.flip import MACFreeSurfaceGeometryState
+from ..typing import checked
 from ._mac_free_surface import (
     MACFreeSurfaceProjectionPlan,
     MACFreeSurfaceProjectionResult,
@@ -49,14 +50,14 @@ class MACGhostFluidProjectionPlan(StrictModule, NonTrainableState):
     projection: MACFreeSurfaceProjectionPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, projection: MACFreeSurfaceProjectionPlan, /) -> None:
-        if not isinstance(projection, MACFreeSurfaceProjectionPlan):
-            raise TypeError("projection must be MACFreeSurfaceProjectionPlan.")
         self.projection = projection
         self.plan_id = canonical_fingerprint(
             {"kind": "mac-ghost-fluid-projection", "projection": projection.plan_id}
         )
 
+    @checked
     def project(
         self,
         velocity: FaceVelocity,
@@ -68,8 +69,6 @@ class MACGhostFluidProjectionPlan(StrictModule, NonTrainableState):
         pressure: ArrayLike | None = None,
     ) -> MACGhostFluidProjectionResult:
         values = self.projection.operators.validate_velocity(velocity)
-        if not isinstance(geometry, MACFreeSurfaceGeometryState):
-            raise TypeError("geometry must be MACFreeSurfaceGeometryState.")
         jump = (
             jnp.zeros_like(geometry.signed_distance)
             if pressure_jump is None

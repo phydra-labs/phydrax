@@ -14,6 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver._photon_transport import PhotonTransportResult
+from ...typing import checked
 from ..detector._core import SensitiveHitBank
 
 
@@ -114,9 +115,8 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def score(self, transport: PhotonTransportResult, /) -> PlanarXRayDetectorResult:
-        if not isinstance(transport, PhotonTransportResult):
-            raise TypeError("transport must be PhotonTransportResult.")
         position = transport.terminal_position
         direction = transport.terminal_direction
         denominator = jnp.sum(direction * self.normal, axis=-1)

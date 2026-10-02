@@ -20,6 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..nuclear._provenance import NuclearDataProvenance
+from ..typing import checked
 from ..units import AREA, MASS, UnitDefinition
 
 
@@ -112,6 +113,7 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
     interpolation: DiagnosticPhotonInterpolationPolicy = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         role: DiagnosticPhotonCoefficientRole,
@@ -125,8 +127,6 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(role, DiagnosticPhotonCoefficientRole):
             raise TypeError("role must be DiagnosticPhotonCoefficientRole.")
-        if not isinstance(energy_grid, PhotonEnergyGrid):
-            raise TypeError("energy_grid must be PhotonEnergyGrid.")
         identifiers = tuple(_text(value, "material_id") for value in material_ids)
         if not identifiers:
             raise ValueError("material_ids must contain at least one material identity.")
@@ -141,14 +141,10 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
             raise ValueError(
                 "Diagnostic photon coefficients must be finite and nonnegative."
             )
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("unit must be UnitDefinition.")
         if unit.dimension != AREA / MASS:
             raise ValueError(
                 "Diagnostic photon mass coefficients require an area-per-mass unit."
             )
-        if not isinstance(provenance, NuclearDataProvenance):
-            raise TypeError("provenance must be NuclearDataProvenance.")
         if isinstance(interpolation, str):
             if interpolation not in {
                 value.value for value in DiagnosticPhotonInterpolationPolicy

@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import checked
 from ....uq import AbstractPosteriorTerm
 from ._data import DetectorNetworkData
 from ._detector import DetectorResponsePlan, DetectorResponseResult
@@ -102,6 +103,7 @@ class GravitationalWaveLikelihoodPlan(AbstractGravitationalWaveLikelihood):
     likelihood_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         network: DetectorNetworkData,
@@ -116,12 +118,6 @@ class GravitationalWaveLikelihoodPlan(AbstractGravitationalWaveLikelihood):
         calibration: Callable[[PyTree[Any], Array], Array] | None = None,
         approximation_id: str = "full-frequency",
     ) -> None:
-        if not isinstance(network, DetectorNetworkData):
-            raise TypeError("network must be DetectorNetworkData.")
-        if not isinstance(response, DetectorResponsePlan):
-            raise TypeError("response must be DetectorResponsePlan.")
-        if not isinstance(waveform, AbstractFrequencyDomainWaveform):
-            raise TypeError("waveform must implement AbstractFrequencyDomainWaveform.")
         if response.detector_ids != network.detector_ids:
             raise ValueError("Detector response and data network IDs disagree.")
         if waveform.capabilities.polarization_ids != ("plus", "cross"):
@@ -273,6 +269,7 @@ class GravitationalWavePosteriorTerm(AbstractPosteriorTerm):
 
     likelihood: AbstractGravitationalWaveLikelihood
 
+    @checked
     def __init__(
         self,
         likelihood: AbstractGravitationalWaveLikelihood,
@@ -280,10 +277,6 @@ class GravitationalWavePosteriorTerm(AbstractPosteriorTerm):
         *,
         label: str = "gravitational_wave_network",
     ) -> None:
-        if not isinstance(likelihood, AbstractGravitationalWaveLikelihood):
-            raise TypeError(
-                "likelihood must implement AbstractGravitationalWaveLikelihood."
-            )
         identifier = str(label).strip()
         if not identifier:
             raise ValueError("label must be non-empty.")

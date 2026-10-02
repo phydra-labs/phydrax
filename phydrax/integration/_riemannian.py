@@ -19,6 +19,7 @@ from ..metrix import (
     RiemannianMetric,
     WeightedRiemannianMeasure,
 )
+from ..typing import checked
 from ._precision import IntegrationPrecisionPolicy
 from ._rules import ReferenceRule
 from ._targets import MappedTarget
@@ -47,6 +48,7 @@ class MetricMeasureNormalization(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
     sample_count: int
 
+    @checked
     def __init__(
         self,
         *,
@@ -63,8 +65,6 @@ class MetricMeasureNormalization(StrictModule):
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.minimum_log_density = jnp.asarray(minimum_log_density)
         self.maximum_log_density = jnp.asarray(maximum_log_density)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
         self.sample_count = int(sample_count)
 

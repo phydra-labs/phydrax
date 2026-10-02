@@ -29,6 +29,7 @@ from ..linalg import (
     refresh as refresh_linear,
     solve as solve_linear,
 )
+from ..typing import checked
 
 
 class BorderedSolveStatus(IntEnum):
@@ -90,6 +91,7 @@ class BorderedLinearSystem(StrictModule):
     corner: Array
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -100,8 +102,6 @@ class BorderedLinearSystem(StrictModule):
         *,
         system_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("Bordered systems do not accept batched operators.")
         if operator.source.size != operator.target.size:
@@ -165,6 +165,7 @@ class BorderedSolvePlan(StrictModule):
     target_space_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         principal_plan: LinearSolvePlan,
@@ -176,8 +177,6 @@ class BorderedSolvePlan(StrictModule):
         target_space_id: str,
         plan_id: str,
     ) -> None:
-        if not isinstance(principal_plan, LinearSolvePlan):
-            raise TypeError("principal_plan must be a LinearSolvePlan.")
         tolerance = float(schur_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("schur_tolerance must be finite and non-negative.")
@@ -264,6 +263,7 @@ class PreparedBorderedSolve(StrictModule):
     numeric_version: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: BorderedLinearSystem,
@@ -279,12 +279,6 @@ class PreparedBorderedSolve(StrictModule):
         *,
         prepared_id: str,
     ) -> None:
-        if not isinstance(system, BorderedLinearSystem):
-            raise TypeError("system must be a BorderedLinearSystem.")
-        if not isinstance(plan, BorderedSolvePlan):
-            raise TypeError("plan must be a BorderedSolvePlan.")
-        if not isinstance(principal, PreparedLinearSolve):
-            raise TypeError("principal must be a PreparedLinearSolve.")
         if system.system_id != plan.system_id:
             raise ValueError("Bordered system and plan IDs must match.")
         inverse_column_ = system.operator.source.validate(inverse_column)
@@ -540,6 +534,7 @@ class BorderedSolveResult(StrictModule):
     diagnostics: BorderedSolveDiagnostics
     provenance: BorderedSolveProvenance
 
+    @checked
     def __init__(
         self,
         value: BorderedSolution,
@@ -548,12 +543,6 @@ class BorderedSolveResult(StrictModule):
         provenance: BorderedSolveProvenance,
         /,
     ) -> None:
-        if not isinstance(value, BorderedSolution):
-            raise TypeError("value must be a BorderedSolution.")
-        if not isinstance(diagnostics, BorderedSolveDiagnostics):
-            raise TypeError("diagnostics must be BorderedSolveDiagnostics.")
-        if not isinstance(provenance, BorderedSolveProvenance):
-            raise TypeError("provenance must be BorderedSolveProvenance.")
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics

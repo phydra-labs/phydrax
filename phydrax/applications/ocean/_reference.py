@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 if TYPE_CHECKING:
@@ -196,6 +197,7 @@ class LinearSeawaterReference(StrictModule, NonTrainableState):
     def temperature_flux_from_heat_flux(self, heat_flux: ArrayLike, /) -> Array:
         return jnp.asarray(heat_flux) / (self.reference_density * self.heat_capacity)
 
+    @checked
     def buoyancy_law(
         self,
         axes: OceanAxisConvention,
@@ -203,8 +205,6 @@ class LinearSeawaterReference(StrictModule, NonTrainableState):
     ) -> MACBuoyancyLaw:
         from ...equations import MACBuoyancyLaw
 
-        if not isinstance(axes, OceanAxisConvention):
-            raise TypeError("axes must be OceanAxisConvention.")
         return MACBuoyancyLaw(
             axes.gravity(self.gravity_magnitude),
             {

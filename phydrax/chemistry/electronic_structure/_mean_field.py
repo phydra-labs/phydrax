@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._model import ElectronicReferenceKind
 
 
@@ -325,6 +326,7 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
     owner_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         density: ArrayLike,
@@ -366,8 +368,6 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
             raise ValueError(
                 "Restricted mean-field arrays do not share one AO/orbital layout."
             )
-        if not isinstance(evidence, SCFConvergenceEvidence):
-            raise TypeError("evidence must be SCFConvergenceEvidence.")
         if reference not in (
             ElectronicReferenceKind.RESTRICTED,
             ElectronicReferenceKind.RESTRICTED_OPEN_SHELL,
@@ -438,6 +438,7 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
     owner_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         alpha_density: ArrayLike,
@@ -499,8 +500,6 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
             or occupations[1].shape != (beta_orbitals,)
         ):
             raise ValueError("Unrestricted mean-field arrays do not share one layout.")
-        if not isinstance(evidence, SCFConvergenceEvidence):
-            raise TypeError("evidence must be SCFConvergenceEvidence.")
         if reference not in (
             ElectronicReferenceKind.UNRESTRICTED,
             ElectronicReferenceKind.RESTRICTED_OPEN_SHELL,

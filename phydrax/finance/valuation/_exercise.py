@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, LinearSystem, solve
 from ...stochastic._bsde import BSDEPathBatch
 from ...stochastic._path_dependent_bsde import ReflectedPathDependentBSDEProblem
+from ...typing import checked
 from ..contracts._options import BermudanPayoff, OptionType
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
@@ -69,6 +70,7 @@ class LSMProblem(StrictModule):
     evidence_binding: FinanceEvidenceBinding | None
     pricing_law: PricingLaw | None
 
+    @checked
     def __init__(
         self,
         paths: MonteCarloPathBatch,
@@ -83,8 +85,6 @@ class LSMProblem(StrictModule):
     ) -> None:
         if not isinstance(paths, MonteCarloPathBatch) or paths.asset_count != 1:
             raise ValueError("LSM requires a one-asset MonteCarloPathBatch.")
-        if not isinstance(payoff, BermudanPayoff):
-            raise TypeError("payoff must be BermudanPayoff.")
         mask = jnp.asarray(exercise_mask, dtype=jnp.bool_)
         if mask.shape != (paths.time_count,):
             raise ValueError("exercise_mask must contain one flag per path time.")

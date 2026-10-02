@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
 
@@ -83,6 +84,7 @@ class PreparedMACOceanForcing(StrictModule, NonTrainableState):
     surface_stress_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -95,8 +97,6 @@ class PreparedMACOceanForcing(StrictModule, NonTrainableState):
         surface_stress: Sequence[float] | Any | None = None,
         surface_stress_id: str | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         dimension = len(operators.discretization.cell_shape)
         vertical = int(vertical_axis)
         if dimension != 3 or vertical not in range(dimension):

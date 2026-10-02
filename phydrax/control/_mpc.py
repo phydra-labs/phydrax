@@ -37,7 +37,7 @@ from ..optim._programming import (
     PreparedQPSensitivity,
     QuadraticProgram,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._qp_compiler import (
@@ -132,6 +132,7 @@ class RecedingHorizonMPC(StrictModule):
     cost_tolerance: float = eqx.field(static=True)
     controller_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         specification: LinearQuadraticControlProblem,
@@ -145,8 +146,6 @@ class RecedingHorizonMPC(StrictModule):
         warm_start_policy: MPCWarmStartPolicy | None = None,
         controller_id: str = "control:mpc:receding-horizon",
     ) -> None:
-        if not isinstance(specification, LinearQuadraticControlProblem):
-            raise TypeError("specification must be a LinearQuadraticControlProblem.")
         if (
             not isinstance(prediction_horizon, int)
             or not 1 <= prediction_horizon <= specification.horizon
@@ -891,6 +890,7 @@ class PreparedMPCSensitivity(StrictModule):
     def controls(self) -> Array:
         return self.result.controls
 
+    @checked
     def jvp(self, tangent: LinearQuadraticControlProblem, /) -> tuple[Array, Array]:
         """Push a specification tangent to state and applied-control tangents.
 
@@ -898,8 +898,6 @@ class PreparedMPCSensitivity(StrictModule):
         carries no derivative.
         """
         linearization = self._require_linearization()
-        if not isinstance(tangent, LinearQuadraticControlProblem):
-            raise TypeError("tangent must be LinearQuadraticControlProblem-shaped.")
         return linearization.jvp(_numeric_fields(tangent))
 
     def vjp(

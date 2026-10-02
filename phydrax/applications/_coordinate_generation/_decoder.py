@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._support import PreparedCoordinateSupport
 
 
@@ -87,9 +88,8 @@ class CartesianCoordinateDecoder(AbstractCoordinateDecoder):
     _representation_id: str = eqx.field(static=True)
     _coordinate_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, support: PreparedCoordinateSupport) -> None:
-        if not isinstance(support, PreparedCoordinateSupport):
-            raise TypeError("Cartesian decoding requires PreparedCoordinateSupport.")
         self.support = support
         self._support_id = support.support_id
         self._representation_id = "cartesian-mass-centered:" + support.support_id

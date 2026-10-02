@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._transfer import FieldTransfer
 
 
@@ -131,6 +132,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
     measure_defect_bound: Array
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: TopologyEpoch,
@@ -148,8 +150,6 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
             raise ValueError(
                 "Topology transitions must connect consecutive distinct epochs."
             )
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("Topology transition requires FieldTransfer.")
         if (
             not transfer.properties.conservative
             or not transfer.properties.adjoint_paired

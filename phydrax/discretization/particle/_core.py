@@ -17,6 +17,7 @@ from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ...linalg import ArraySpace, DiagonalPairing
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -160,9 +161,8 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ParticleSetPlan, /, *, numeric_version: str = "0") -> None:
-        if not isinstance(plan, ParticleSetPlan):
-            raise TypeError("plan must be a ParticleSetPlan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")

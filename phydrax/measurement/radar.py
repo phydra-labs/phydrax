@@ -25,6 +25,7 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import open_reference_artifact, ReferenceArtifactManifest
+from ..typing import checked
 from ..units import (
     ANGLE,
     AREA,
@@ -200,6 +201,7 @@ class FMCWTransformPlan(StrictModule, NonTrainableState):
     window_slow: Array
     propagation_speed: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         acquisition: FMCWAcquisition,
@@ -210,15 +212,11 @@ class FMCWTransformPlan(StrictModule, NonTrainableState):
         propagation_speed: float,
         propagation_speed_unit: UnitDefinition,
     ) -> None:
-        if not isinstance(acquisition, FMCWAcquisition):
-            raise TypeError("acquisition must be FMCWAcquisition.")
         for name, value in (("fast_samples", fast_samples), ("chirps", chirps)):
             if isinstance(value, bool) or not isinstance(value, Integral):
                 raise TypeError(f"{name} must be an integer.")
             if value < 1:
                 raise ValueError(f"{name} must be positive.")
-        if not isinstance(propagation_speed_unit, UnitDefinition):
-            raise TypeError("propagation_speed_unit must be UnitDefinition.")
         target_speed_unit = derived_unit(
             "fmcw-length-per-time",
             (

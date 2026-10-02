@@ -30,6 +30,7 @@ from ..discretization.finite_volume._mac_ale import (
     PreparedMappedMACGeometry,
 )
 from ..discretization.finite_volume._structured import FiniteVolumeDiscretization
+from ..typing import checked
 from ._mac_pressure_operator import execute_weighted_pressure_iteration
 
 
@@ -418,6 +419,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
     geometry_layout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: FiniteVolumeDiscretization,
@@ -430,8 +432,6 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         geometry_epoch: int = 0,
     ) -> None:
-        if not isinstance(reference, FiniteVolumeDiscretization):
-            raise TypeError("MAC ALE requires structured reference FV geometry.")
         if not callable(coordinate_map) or not callable(grid_velocity):
             raise TypeError("MAC ALE map and grid velocity must be callable.")
         mapping = str(mapping_id)

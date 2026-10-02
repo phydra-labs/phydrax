@@ -31,6 +31,7 @@ from ...nonlinear import (
     SensitivityEvidence,
     SensitivityPolicy,
 )
+from ...typing import checked
 from ._perturbation import SeparatedMode
 from ._radial_perturbation import (
     evaluate_kerr_teukolsky_radial,
@@ -158,6 +159,7 @@ class QnmReferenceMode(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     reference_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -170,8 +172,6 @@ class QnmReferenceMode(StrictModule, NonTrainableState):
         *,
         source_id: str,
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         spin = _real_scalar(dimensionless_spin, "dimensionless_spin")
         frequency = _complex_scalar(angular_frequency, "angular_frequency")
         separation = _complex_scalar(separation_constant, "separation_constant")
@@ -242,6 +242,7 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
     branch_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode: SeparatedMode,
@@ -260,16 +261,12 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
         *,
         branch_id: str,
     ) -> None:
-        if not isinstance(mode, SeparatedMode):
-            raise TypeError("mode must be a SeparatedMode.")
         if mode.family != "qnm":
             raise ValueError("QnmSolvePlan requires a mode with family='qnm'.")
         if mode.spin_weight not in (-2, -1, 0):
             raise ValueError(
                 "The Leaver radial recurrence supports spin_weight -2, -1, or 0."
             )
-        if not isinstance(angular_plan, SpheroidalAngularPlan):
-            raise TypeError("angular_plan must be a SpheroidalAngularPlan.")
         if angular_plan.mode.mode_id != mode.mode_id:
             raise ValueError("Angular plan and QNM mode identities do not match.")
         if not isinstance(
@@ -280,12 +277,6 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
             )
         if radial_plan.mode.mode_id != mode.mode_id:
             raise ValueError("Radial plan and QNM mode identities do not match.")
-        if not isinstance(nonlinear_method, AbstractNonlinearMethod):
-            raise TypeError("nonlinear_method must be an AbstractNonlinearMethod.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
-        if not isinstance(sensitivity, SensitivityPolicy):
-            raise TypeError("sensitivity must be a SensitivityPolicy.")
         if sensitivity.mode != "implicit-forward":
             raise ValueError("QNM spin derivatives require implicit-forward sensitivity.")
         for value, name in (

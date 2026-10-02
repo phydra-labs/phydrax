@@ -26,6 +26,7 @@ from ...atomistic import (
     PreparedThermodynamicStateTable,
 )
 from ...atomistic._thermal import BAOABLangevinPlan
+from ...typing import checked
 
 
 class KremerGrestProfilePlan(StrictModule, NonTrainableState):
@@ -88,6 +89,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
     lj_term_index: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: KremerGrestProfilePlan,
@@ -95,12 +97,6 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         chain_layout: PolymerChainLayoutPlan,
         /,
     ) -> None:
-        if not isinstance(plan, KremerGrestProfilePlan):
-            raise TypeError("plan must be KremerGrestProfilePlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(chain_layout, PolymerChainLayoutPlan):
-            raise TypeError("chain_layout must be PolymerChainLayoutPlan.")
         system = dynamics.system
         cell = system.cell
         active = np.empty((system.capacity,), dtype=np.bool_)

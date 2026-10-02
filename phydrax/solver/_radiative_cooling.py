@@ -24,6 +24,7 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ..typing import checked
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -57,6 +58,7 @@ class RadiativeCoolingProcessPlan(AbstractBalanceLawProcessPlan):
     maximum_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         curve: TabulatedCoolingCurve,
@@ -71,8 +73,6 @@ class RadiativeCoolingProcessPlan(AbstractBalanceLawProcessPlan):
         maximum_iterations: int = 20,
         tolerance: float = 1e-9,
     ) -> None:
-        if not isinstance(curve, TabulatedCoolingCurve):
-            raise TypeError("curve must be TabulatedCoolingCurve.")
         amplitude_ = float(amplitude)
         heating = float(heating_rate)
         heating_name = None if heating_argument is None else str(heating_argument)
@@ -153,14 +153,13 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
     magnetic_indices: tuple[int, ...] = eqx.field(static=True)
     cell_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RadiativeCoolingProcessPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
     ) -> None:
-        if not isinstance(plan, RadiativeCoolingProcessPlan):
-            raise TypeError("plan must be RadiativeCoolingProcessPlan.")
         if not isinstance(
             transport, AbstractPreparedBalanceLawTransport
         ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):

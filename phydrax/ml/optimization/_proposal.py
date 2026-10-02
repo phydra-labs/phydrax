@@ -26,6 +26,7 @@ from ...optim._programming._mixed_integer_audit import (
 from ...optim._programming._mixed_integer_policy import (
     MixedIntegerCertification,
 )
+from ...typing import checked
 
 
 class AdjacentLatticeMaterializer(StrictModule, NonTrainableState):
@@ -36,6 +37,7 @@ class AdjacentLatticeMaterializer(StrictModule, NonTrainableState):
     def __init__(self, *, tie_up: bool = True) -> None:
         self.tie_up = bool(tie_up)
 
+    @checked
     def materialize(
         self,
         program: MixedIntegerProgram,
@@ -43,8 +45,6 @@ class AdjacentLatticeMaterializer(StrictModule, NonTrainableState):
         thresholds: ArrayLike,
         /,
     ) -> Array:
-        if not isinstance(program, MixedIntegerProgram):
-            raise TypeError("program must be a MixedIntegerProgram.")
         value = jnp.asarray(latent, dtype=program.relaxation.linear.dtype)
         if value.shape != (program.relaxation.num_variables,):
             raise ValueError("latent proposal has the wrong shape.")
@@ -121,6 +121,7 @@ class ParametricMixedIntegerProposal(StrictModule):
     materializer: AdjacentLatticeMaterializer
     manifest: MixedIntegerProposalManifest
 
+    @checked
     def __init__(
         self,
         model: Callable[[Any], tuple[Array, Array]],
@@ -131,8 +132,6 @@ class ParametricMixedIntegerProposal(StrictModule):
     ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(manifest, MixedIntegerProposalManifest):
-            raise TypeError("manifest must be MixedIntegerProposalManifest.")
         selected = AdjacentLatticeMaterializer() if materializer is None else materializer
         if not isinstance(selected, AdjacentLatticeMaterializer):
             raise TypeError("materializer must be AdjacentLatticeMaterializer.")

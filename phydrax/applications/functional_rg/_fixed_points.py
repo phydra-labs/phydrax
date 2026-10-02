@@ -16,6 +16,7 @@ from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._regulators import FunctionalRGStatus, Regulator, ThresholdQuadraturePlan
 from ._wetterich import _volume_factor
 
@@ -202,11 +203,10 @@ class FixedPointSearchPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def search(
         self, flow: PolynomialONFlowPlan, initial_couplings: ArrayLike, /
     ) -> FixedPointResult:
-        if not isinstance(flow, PolynomialONFlowPlan):
-            raise TypeError("flow must be PolynomialONFlowPlan.")
         if flow.coupling_count != self.linear_solve.dimension:
             raise ValueError("Fixed-point search and flow coupling counts differ.")
         initial = jnp.asarray(initial_couplings)

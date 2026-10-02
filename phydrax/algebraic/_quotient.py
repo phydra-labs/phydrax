@@ -38,6 +38,7 @@ from ..linalg.eigen import (
     GeneralEigenTolerancePolicy,
 )
 from ..nonlinear import SmallRootKernel
+from ..typing import checked
 from ._system import SparsePolynomialSupport, SparsePolynomialSystem
 
 
@@ -356,11 +357,10 @@ class QuotientRootResult(StrictModule):
     def root_count(self) -> int:
         return self.roots.shape[0]
 
+    @checked
     def replay(self, system: SparsePolynomialSystem, /) -> Array:
         """Replay candidates through a coefficient-compatible original system."""
 
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be SparsePolynomialSystem.")
         if system.support.support_id != self.support_id:
             raise ValueError("Replay system support differs from the result support.")
         return system.evaluate(self.roots)

@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation, RelationExecutionPlan
+from ...typing import checked
 from .._periodic_cell import PeriodicCell
 from ._precision import ParticleAccumulation
 
@@ -103,6 +104,7 @@ class ParticlePairRelation(StrictModule, NonTrainableState):
     unordered: bool = eqx.field(static=True)
     relation_schema_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -116,8 +118,6 @@ class ParticlePairRelation(StrictModule, NonTrainableState):
         unordered: bool,
         relation_schema_id: str | None = None,
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be an EdgeRelation.")
         left_ids = jnp.asarray(left_particle_ids)
         right_ids = jnp.asarray(right_particle_ids)
         if (

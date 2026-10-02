@@ -20,6 +20,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._nonlinear_response import (
     _identifier,
     _nonnegative_finite_scalar,
@@ -644,6 +645,7 @@ class IonizingDrudeResponsePlan(AbstractCarrierResolvedResponse):
     maximum_workspace_bytes: int = eqx.field(static=True)
     _response_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ionization: MultiphotonIonizationRatePlan,
@@ -654,10 +656,6 @@ class IonizingDrudeResponsePlan(AbstractCarrierResolvedResponse):
         *,
         maximum_workspace_bytes: int = 1 << 30,
     ) -> None:
-        if not isinstance(ionization, MultiphotonIonizationRatePlan):
-            raise TypeError("ionization must be MultiphotonIonizationRatePlan.")
-        if not isinstance(drude, DrudePlasmaResponsePlan):
-            raise TypeError("drude must be DrudePlasmaResponsePlan.")
         density = _nonnegative_finite_scalar(
             "neutral_number_density", neutral_number_density
         )

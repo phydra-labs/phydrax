@@ -30,6 +30,7 @@ from ...discretization.particle import (
 )
 from ...discretization.splatting import ParticleGridSplatState, SplatDepositResult
 from ...solver import KDKCoefficients, KDKTransactionPlan
+from ...typing import checked
 from ._background import FLRWBackground
 from ._distances import FLRWDistancePlan
 from ._particle_mesh import CosmologicalParticleMeshPlan
@@ -344,6 +345,7 @@ class WeightedSIDMPlan(StrictModule):
     smoothing_length_comoving: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_mesh: CosmologicalParticleMeshPlan,
@@ -357,14 +359,6 @@ class WeightedSIDMPlan(StrictModule):
         angular_split: SmallAngleSplitPlan | None = None,
         time: FLRWDistancePlan | None = None,
     ) -> None:
-        if not isinstance(particle_mesh, CosmologicalParticleMeshPlan):
-            raise TypeError("particle_mesh must be CosmologicalParticleMeshPlan.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
-        if not isinstance(spatial_kernel, AbstractSPHSmoothingKernel):
-            raise TypeError("spatial_kernel must be an AbstractSPHSmoothingKernel.")
-        if not isinstance(differential_kernel, TwoBodyDifferentialKernelPlan):
-            raise TypeError("differential_kernel must be TwoBodyDifferentialKernelPlan.")
         if angular_split is not None and not isinstance(
             angular_split, SmallAngleSplitPlan
         ):
@@ -374,8 +368,6 @@ class WeightedSIDMPlan(StrictModule):
             and angular_split.kernel.kernel_id != differential_kernel.kernel_id
         ):
             raise ValueError("angular_split must partition differential_kernel.")
-        if not isinstance(policy, SIDMCollisionPolicy):
-            raise TypeError("policy must be SIDMCollisionPolicy.")
         particles = particle_mesh.kinematics.particles
         if neighborhood.particle_discretization_id != particles.prepared_id:
             raise ValueError("Weighted SIDM neighborhood and PM must share support.")
@@ -567,6 +559,7 @@ class WeightedSIDMPlan(StrictModule):
             successful,
         )
 
+    @checked
     def advance_particle_mesh(
         self,
         background: FLRWBackground,
@@ -576,8 +569,6 @@ class WeightedSIDMPlan(StrictModule):
         args: Any = None,
         /,
     ) -> WeightedPMIntervalResult:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         if background.scale.scale_id != self.particle_mesh.kinematics.scale.scale_id:
             raise ValueError("Background and weighted PM scale contracts disagree.")
         _shape_check(state, self.particles.capacity, self.particles.ambient_dimension)
@@ -1102,6 +1093,7 @@ class WeightedSIDMPlan(StrictModule):
             candidate, accepted, pairs, diagnostics, successful, self.plan_id
         )
 
+    @checked
     def rollout(
         self,
         background: FLRWBackground,
@@ -1110,8 +1102,6 @@ class WeightedSIDMPlan(StrictModule):
         args: Any = None,
         /,
     ) -> WeightedSIDMRolloutResult:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         if background.scale.scale_id != self.particle_mesh.kinematics.scale.scale_id:
             raise ValueError("Background and weighted SIDM scale contracts disagree.")
         state = eqx.tree_at(

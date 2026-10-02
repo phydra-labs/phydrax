@@ -107,7 +107,7 @@ from ..discretization.pic._distributed import (
     with_population_slot_leaves,
     with_species_slot_leaves,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._cochain_pic_field import CochainMaxwellPICFieldSolver
 from ._electromagnetic_pic import (
     ElectromagneticPICDiagnostics,
@@ -773,6 +773,7 @@ class AbstractDistributedPICFieldSolver(
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractPreparedPICFieldSolver,
@@ -783,10 +784,6 @@ class AbstractDistributedPICFieldSolver(
         particle_margin: float = 1.0,
         identity_tiles: Sequence[int] | None = None,
     ) -> None:
-        if not isinstance(base, AbstractPreparedPICFieldSolver):
-            raise TypeError("base must be an AbstractPreparedPICFieldSolver.")
-        if not isinstance(mesh, Mesh):
-            raise TypeError("mesh must be a jax.sharding.Mesh.")
         support = pic_distribution_support(base)
         route = support.route
         if route is None:
@@ -2158,6 +2155,7 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pic: ElectromagneticPICPlan,
@@ -2166,8 +2164,6 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
         packet_capacity: int,
         reach: int = 1,
     ) -> None:
-        if not isinstance(pic, ElectromagneticPICPlan):
-            raise TypeError("pic must be ElectromagneticPICPlan.")
         solver = pic.solver
         if not isinstance(solver, AbstractDistributedPICFieldSolver):
             raise TypeError(

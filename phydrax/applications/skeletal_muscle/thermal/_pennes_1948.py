@@ -66,6 +66,7 @@ from ....linalg import (
     TolerancePolicy,
 )
 from ....sparse import EdgeRelation, SparseLinearMap
+from ....typing import checked
 from ..energetics import RETAINED_HEAT_CATEGORIES, RetainedHeatLedger
 
 
@@ -416,6 +417,7 @@ class Pennes1948Plan(StrictModule):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -459,8 +461,6 @@ class Pennes1948Plan(StrictModule):
             )
         if projection.operator.target.size != count:
             raise ValueError("Retained projection targets another cell count.")
-        if not isinstance(evidence, Pennes1948EvidenceBundle):
-            raise TypeError("A complete caller evidence bundle is required.")
         tolerances = tuple(
             float(x)
             for x in (

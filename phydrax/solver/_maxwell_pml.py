@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
+from ..typing import checked
 
 
 class MaxwellCPMLState(StrictModule):
@@ -422,9 +423,8 @@ class PreparedMaxwellCPML(StrictModule):
             ),
         )
 
+    @checked
     def validate_state(self, state: MaxwellCPMLState, /) -> None:
-        if not isinstance(state, MaxwellCPMLState):
-            raise TypeError("CPML state must be MaxwellCPMLState.")
         expected_e = tuple(term.indices.shape for term in self.electric_terms)
         expected_m = tuple(term.indices.shape for term in self.magnetic_terms)
         if (

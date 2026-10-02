@@ -462,6 +462,43 @@ phase. NMF, dictionary learning, sparse coding, and ICA expose the finite
 unrolled fit actually executed. Energy-based rank selection and component
 permutations are discrete.
 
+Weighted PCA and physical array POD use the same native spectral owner:
+
+```python
+import jax
+import jax.numpy as jnp
+from phydrax.linalg.svd import RandomizedSVD, SVDTolerancePolicy
+from phydrax.ml import MLBatch
+from phydrax.ml.decomposition import PCA, POD
+
+batch = MLBatch(samples, sample_weight=sample_weights, feature_mask=observed)
+exact = PCA(3).fit_batch(batch)
+physical = POD(3, physical_weights=quadrature, centered=True).fit_batch(batch)
+approximate = PCA(
+    3,
+    method=RandomizedSVD(oversampling=8, power_iterations=2),
+    tolerance=SVDTolerancePolicy(residual=1e-2, orthogonality=1e-7),
+).fit_batch(batch, key=jax.random.key(7))
+accepted = approximate.valid & approximate.diagnostics.leading_certified
+projected = approximate.as_trainable().project(query)
+```
+
+The tolerance must match the scientific approximation, not this illustrative
+number. Inspect `valid`, native/derivative statuses, leading certification, and
+`rank_evidence` before consuming an approximation. `retained_energy` uses actual
+original-operator projection capture with normalized sample mass; it is not
+an approximation error certificate. Exact and randomized methods preserve the
+same masking, physical support, and affine offset semantics.
+
+Default projector-mode fits admit `project`/`projector`, not raw encoder/decoder
+fit-basis derivatives. Select the operation explicitly in derivative admission.
+Repeated values inside the retained cluster are allowed if the cutoff is
+separated; basis mode additionally needs individual isolation and unique phase
+pivots. Randomized derivatives differentiate the fixed-key QR/compressed finite
+algorithm, with QR rank/conditioning evidence, not the exact original spectral
+map. Independent prediction input and current basis parameter derivatives remain
+ordinary derivatives even when fitted outputs were stopped.
+
 ### Kernels, neighbors, density, and metric learning
 
 - `kernel_methods`: `KernelRidgeRecipe`, `LeastSquaresSVMRecipe`,

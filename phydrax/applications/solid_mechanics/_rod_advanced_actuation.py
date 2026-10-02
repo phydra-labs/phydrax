@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
 from ...linalg import ArraySpace, FunctionLinearOperator
+from ...typing import checked
 from ._rod_dynamics import RodState
 from ._rod_materials import (
     RodConstitutiveControl,
@@ -334,11 +335,8 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
     workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ReducedTubeChamberPlan, rod: PreparedReducedRod, /) -> None:
-        if not isinstance(plan, ReducedTubeChamberPlan):
-            raise TypeError("plan must be a ReducedTubeChamberPlan.")
-        if not isinstance(rod, PreparedReducedRod):
-            raise TypeError("Reduced tube pressure requires a PreparedReducedRod.")
         if rod.rod.plan.dimension != 3:
             raise ValueError("Reduced tube pressure supports spatial rods only.")
         segment_ids = np.asarray(
@@ -610,6 +608,7 @@ class RegulatedReducedTubePressurePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     excluded_capabilities: tuple[PressureExclusion, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chamber: ReducedTubeChamberPlan,
@@ -624,8 +623,6 @@ class RegulatedReducedTubePressurePlan(StrictModule, NonTrainableState):
         leakage: bool = False,
         thermal_networks: bool = False,
     ) -> None:
-        if not isinstance(chamber, ReducedTubeChamberPlan):
-            raise TypeError("chamber must be a ReducedTubeChamberPlan.")
         _reject_requested_exclusions(
             "RegulatedReducedTubePressurePlan",
             valves=valves,
@@ -709,6 +706,7 @@ class PreparedRegulatedReducedTubePressureActuation(StrictModule, NonTrainableSt
             raise TypeError("Pressure state dtype must match the reduced rod dtype.")
         return state
 
+    @checked
     def evaluate(
         self,
         rod_state: ReducedRodState,
@@ -717,10 +715,6 @@ class PreparedRegulatedReducedTubePressureActuation(StrictModule, NonTrainableSt
         time_step: ArrayLike,
         /,
     ) -> RegulatedTubePressureEvaluation:
-        if not isinstance(state, RegulatedTubePressureState):
-            raise TypeError("state must be a RegulatedTubePressureState.")
-        if not isinstance(command, RegulatedTubePressureCommand):
-            raise TypeError("command must be a RegulatedTubePressureCommand.")
         dtype = self.chamber.reduction.coefficient_space.dtype
         if (
             np.dtype(state.gauge_pressure.dtype) != dtype
@@ -902,6 +896,7 @@ class SealedReducedTubePressurePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     excluded_capabilities: tuple[PressureExclusion, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chamber: ReducedTubeChamberPlan,
@@ -916,8 +911,6 @@ class SealedReducedTubePressurePlan(StrictModule, NonTrainableState):
         leakage: bool = False,
         thermal_networks: bool = False,
     ) -> None:
-        if not isinstance(chamber, ReducedTubeChamberPlan):
-            raise TypeError("chamber must be a ReducedTubeChamberPlan.")
         _reject_requested_exclusions(
             "SealedReducedTubePressurePlan",
             valves=valves,
@@ -1003,11 +996,10 @@ class PreparedSealedReducedTubePressureActuation(StrictModule, NonTrainableState
             raise TypeError("Sealed gas state dtype must match the reduced rod dtype.")
         return state
 
+    @checked
     def evaluate(
         self, rod_state: ReducedRodState, state: SealedTubePressureState, /
     ) -> SealedTubePressureEvaluation:
-        if not isinstance(state, SealedTubePressureState):
-            raise TypeError("state must be a SealedTubePressureState.")
         dtype = self.chamber.reduction.coefficient_space.dtype
         if np.dtype(state.charge_scale.dtype) != dtype:
             raise TypeError("Sealed gas state dtype must match the reduced rod dtype.")
@@ -1279,11 +1271,10 @@ class PreparedIntrinsicStrainActuation(StrictModule, NonTrainableState):
     actuation_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: IntrinsicStrainActuationPlan, material: RodConstitutiveTrial, /
     ) -> None:
-        if not isinstance(material, RodConstitutiveTrial):
-            raise TypeError("material must be a prepared RodConstitutiveTrial.")
         expected = (
             material.workset.site_count,
             material.workset.component_count,
@@ -1327,6 +1318,7 @@ class PreparedIntrinsicStrainActuation(StrictModule, NonTrainableState):
         if value.dtype != self.plan.mode_shapes.dtype:
             raise TypeError(f"{owner} must match the intrinsic mode dtype.")
 
+    @checked
     def candidate_control(
         self,
         state: IntrinsicStrainActuationState,
@@ -1334,10 +1326,6 @@ class PreparedIntrinsicStrainActuation(StrictModule, NonTrainableState):
         time_step: ArrayLike,
         /,
     ) -> IntrinsicStrainCandidate:
-        if not isinstance(state, IntrinsicStrainActuationState):
-            raise TypeError("state must be an IntrinsicStrainActuationState.")
-        if not isinstance(command, IntrinsicStrainCommand):
-            raise TypeError("command must be an IntrinsicStrainCommand.")
         self._validate_state_command(state.activation, "activation")
         self._validate_state_command(command.target_activation, "target_activation")
         step = jnp.asarray(time_step, dtype=self.plan.mode_shapes.dtype)
@@ -1573,11 +1561,10 @@ class PreparedVariableStiffnessActuation(StrictModule, NonTrainableState):
     actuation_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: VariableStiffnessActuationPlan, material: RodConstitutiveTrial, /
     ) -> None:
-        if not isinstance(material, RodConstitutiveTrial):
-            raise TypeError("material must be a prepared RodConstitutiveTrial.")
         expected = (
             material.workset.site_count,
             material.workset.component_count,
@@ -1611,6 +1598,7 @@ class PreparedVariableStiffnessActuation(StrictModule, NonTrainableState):
             raise TypeError("Variable stiffness state must match the calibration dtype.")
         return state
 
+    @checked
     def candidate_control(
         self,
         state: VariableStiffnessState,
@@ -1618,10 +1606,6 @@ class PreparedVariableStiffnessActuation(StrictModule, NonTrainableState):
         time_step: ArrayLike,
         /,
     ) -> VariableStiffnessCandidate:
-        if not isinstance(state, VariableStiffnessState):
-            raise TypeError("state must be a VariableStiffnessState.")
-        if not isinstance(command, VariableStiffnessCommand):
-            raise TypeError("command must be a VariableStiffnessCommand.")
         dtype = self.plan.minimum_stiffness.dtype
         if state.activation.dtype != dtype or command.target_activation.dtype != dtype:
             raise TypeError("Variable stiffness state and command must match plan dtype.")
@@ -1977,11 +1961,10 @@ class PreparedAffineMagneticActuation(StrictModule, NonTrainableState):
     actuation_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: AffineMagneticActuationPlan, rod: PreparedReducedRod, /
     ) -> None:
-        if not isinstance(rod, PreparedReducedRod):
-            raise TypeError("Affine magnetic actuation requires a PreparedReducedRod.")
         if rod.rod.plan.dimension != 3:
             raise ValueError("Affine magnetic actuation supports spatial rods only.")
         if plan.segment_dipoles_material.shape != (rod.rod.plan.segment_count, 3):
@@ -2021,6 +2004,7 @@ class PreparedAffineMagneticActuation(StrictModule, NonTrainableState):
         if currents.dtype != self.plan.uniform_field_per_current.dtype:
             raise TypeError(f"{owner} must match the field calibration dtype.")
 
+    @checked
     def evaluate(
         self,
         rod_state: ReducedRodState,
@@ -2029,10 +2013,6 @@ class PreparedAffineMagneticActuation(StrictModule, NonTrainableState):
         time_step: ArrayLike,
         /,
     ) -> MagneticActuationEvaluation:
-        if not isinstance(state, MagneticCurrentState):
-            raise TypeError("state must be a MagneticCurrentState.")
-        if not isinstance(command, MagneticCurrentCommand):
-            raise TypeError("command must be a MagneticCurrentCommand.")
         self._validate_currents(state.currents, "currents")
         self._validate_currents(command.target_currents, "target_currents")
         self.reduction.validate_state(rod_state)

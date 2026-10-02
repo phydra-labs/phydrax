@@ -19,7 +19,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractVectorSpace
-from ..typing import parse
+from ..typing import checked, parse
 from ._partitioned_coupling_types import (
     AbstractCouplingSubsystem,
     CouplingPort,
@@ -235,6 +235,7 @@ class CouplingWaveform(StrictModule):
     values: Any
     space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: CouplingWaveformGrid,
@@ -242,10 +243,6 @@ class CouplingWaveform(StrictModule):
         space: AbstractVectorSpace,
         /,
     ) -> None:
-        if not isinstance(grid, CouplingWaveformGrid):
-            raise TypeError("Coupling waveform grid must be CouplingWaveformGrid.")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("Coupling waveform space must be AbstractVectorSpace.")
         leaves, treedef = jax.tree.flatten(values)
         structure_leaves, structure_def = jax.tree.flatten(space.structure())
         if treedef != structure_def or len(leaves) != len(structure_leaves):

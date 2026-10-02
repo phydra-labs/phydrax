@@ -34,6 +34,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...typing import checked
 from ._rod_loads import RodLoad, RodLoadLedger
 from ._rod_materials import (
     PreparedKelvinVoigtRodMaterial,
@@ -390,6 +391,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
     spectral_iterations: int = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: PreparedReducedRod,
@@ -400,8 +402,6 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         bend_twist_material: ReducedRodMaterial | None = None,
         gravity: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(reduction, PreparedReducedRod):
-            raise TypeError("reduction must be a PreparedReducedRod.")
         plan_ = ReducedRodDenseCholeskyPlan() if plan is None else plan
         if not isinstance(
             plan_, (ReducedRodDenseCholeskyPlan, ReducedRodMatrixFreeCGPlan)

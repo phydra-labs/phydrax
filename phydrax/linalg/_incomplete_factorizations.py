@@ -15,7 +15,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
@@ -40,6 +40,7 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
 
     factorization: PreparedSparseFactorization
 
+    @checked
     def __init__(
         self,
         operator: AbstractSparseLinearOperator,
@@ -49,10 +50,6 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         properties: PreconditionerProperties,
         preconditioner_id: str,
     ) -> None:
-        if not isinstance(operator, AbstractSparseLinearOperator):
-            raise TypeError("operator must be an AbstractSparseLinearOperator.")
-        if not isinstance(factorization, PreparedSparseFactorization):
-            raise TypeError("factorization must be PreparedSparseFactorization.")
         if not operator.source.compatible(operator.target):
             raise ValueError(
                 "Sparse factor preconditioning requires one compatible space."
@@ -60,8 +57,6 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         identifier = str(preconditioner_id)
         if not identifier:
             raise ValueError("preconditioner_id must be non-empty.")
-        if not isinstance(properties, PreconditionerProperties):
-            raise TypeError("properties must be PreconditionerProperties.")
         cholesky = factorization.plan.kind == "cholesky"
         expected_positive = cholesky and operator.properties.certifies(
             "positive_definite"
@@ -157,13 +152,12 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
     def default_refresh(self) -> str:
         return "numeric"
 
+    @checked
     def properties_for(
         self,
         setup_operator: AbstractLinearOperator,
         /,
     ) -> PreconditionerProperties:
-        if not isinstance(setup_operator, AbstractLinearOperator):
-            raise TypeError("setup_operator must be an AbstractLinearOperator.")
         if setup_operator.batch_shape or not setup_operator.source.compatible(
             setup_operator.target
         ):

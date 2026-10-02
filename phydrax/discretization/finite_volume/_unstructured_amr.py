@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_remap import UnstructuredConservativeRemapPlan
 
@@ -699,6 +700,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
     ) -> Array:
         return self.restrict_content(fine_fluid_volumes, **kwargs)
 
+    @checked
     def synchronize(
         self,
         coarse_cell_averages: ArrayLike,
@@ -712,8 +714,6 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
         lower: float = 0.0,
         upper: float = 1.0,
     ) -> Array:
-        if not isinstance(selection, UnstructuredAMRSelection):
-            raise TypeError("selection must be UnstructuredAMRSelection.")
         coarse = jnp.asarray(coarse_cell_averages)
         restricted = self.restrict(
             fine_cell_averages,
@@ -728,6 +728,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
         )
         return jnp.where(mask, restricted, coarse)
 
+    @checked
     def reflux(
         self,
         coarse_cell_averages: ArrayLike,
@@ -736,8 +737,6 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
         *,
         coarse_active_mask: ArrayLike | None = None,
     ) -> Array:
-        if not isinstance(register, UnstructuredAMRFluxRegister):
-            raise TypeError("register must be UnstructuredAMRFluxRegister.")
         if register.route_id not in (
             self.interface_route_id,
             "unstructured-amr-interface-route",

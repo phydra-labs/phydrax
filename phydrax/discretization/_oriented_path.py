@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._cell_complex import CubicalCellComplex
 from ._topology import CellComplexTopology
 
@@ -73,6 +74,7 @@ class OrientedEdgePathPlan(StrictModule, NonTrainableState):
     edge_entity_set_id: str = eqx.field(static=True)
     path_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -84,8 +86,6 @@ class OrientedEdgePathPlan(StrictModule, NonTrainableState):
         path_names: Sequence[str] | None = None,
         require_closed: bool = False,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be CellComplexTopology.")
         tails, heads = _edge_endpoints(topology)
         edges = np.asarray(edge_indices, dtype=np.int64)
         signs = np.asarray(orientations, dtype=np.int64)
@@ -170,14 +170,13 @@ class CellBoundaryPathPlan(StrictModule, NonTrainableState):
     cell_entity_set_id: str = eqx.field(static=True)
     boundary_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         paths: OrientedEdgePathPlan,
         cell_indices: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(paths, OrientedEdgePathPlan):
-            raise TypeError("paths must be OrientedEdgePathPlan.")
         if not paths.require_closed:
             raise ValueError("Cell boundary paths must require closed traversal.")
         topology = paths.topology

@@ -30,6 +30,7 @@ from ...linalg.eigen import (
     GeneralEigenSolvePolicy,
 )
 from ...sparse import EdgeRelation
+from ...typing import checked
 from ..periodic._family import (
     PeriodicTranslationFamilyPlan,
     PeriodicTranslationFamilyState,
@@ -118,6 +119,7 @@ class LinearSpinWavePlan(StrictModule):
     maximum_site_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: SpinWaveReferenceState,
@@ -132,10 +134,6 @@ class LinearSpinWavePlan(StrictModule):
         stability_tolerance: float = 1.0e-9,
         krein_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(reference, SpinWaveReferenceState):
-            raise TypeError("reference must be SpinWaveReferenceState.")
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
         minus = np.asarray(minus_q_indices)
         goldstone = np.asarray(declared_goldstone_counts)
         if (

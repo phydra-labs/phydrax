@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -20,7 +20,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._costs import PreconditionerCostEstimate
 from ._hermitian_spectral import HermitianSpectrum
 from ._materialization import MaterializationPolicy
@@ -29,10 +29,8 @@ from ._pairings import EuclideanPairing
 from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder
+from ._randomized import ProbeRefresh, random_probes
 from ._spaces import _coordinate_dtype, ArraySpace, PyTreeSpace
-
-
-ProbeRefresh: TypeAlias = Literal["reuse", "redraw"]
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -56,24 +54,6 @@ def _euclidean_space(operator: AbstractLinearOperator, /) -> ArraySpace | PyTree
             "Randomized Nyström setup requires certified positive semidefiniteness."
         )
     return space
-
-
-def _random_probes(
-    key: Array,
-    dimension: int,
-    count: int,
-    dtype: jnp.dtype,
-    /,
-) -> Array:
-    real_dtype = jnp.empty((), dtype=dtype).real.dtype
-    if jnp.issubdtype(dtype, jnp.complexfloating):
-        real_key, imag_key = jr.split(key)
-        probes = (
-            jr.normal(real_key, (dimension, count), dtype=real_dtype)
-            + 1j * jr.normal(imag_key, (dimension, count), dtype=real_dtype)
-        ) / jnp.sqrt(jnp.asarray(2.0, dtype=real_dtype))
-        return probes.astype(dtype)
-    return jr.normal(key, (dimension, count), dtype=dtype)
 
 
 def _operator_columns(
@@ -142,6 +122,7 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
     shift: Array
     diagnostics: RandomizedNystromDiagnostics
 
+    @checked
     def __init__(
         self,
         basis: Array,
@@ -162,8 +143,6 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
             )
         if values.shape != (basis_.shape[1],):
             raise ValueError("Randomized Nyström Ritz values must match basis rank.")
-        if not isinstance(diagnostics, RandomizedNystromDiagnostics):
-            raise TypeError("diagnostics must be RandomizedNystromDiagnostics.")
         self.space = space
         self.basis = jax.lax.stop_gradient(basis_)
         self.ritz_values = jax.lax.stop_gradient(values)
@@ -356,7 +335,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         sketch_size = self.rank + self.oversampling
         address = refresh_count if self.probe_refresh == "redraw" else 0
         key = jr.fold_in(jr.key(self.seed), address)
-        probes = _random_probes(key, space.size, sketch_size, dtype)
+        probes = random_probes(key, space.size, sketch_size, dtype)
         probes, _ = jnp.linalg.qr(probes, mode="reduced")
         images = _operator_columns(setup_operator, probes)
         core = 0.5 * (
@@ -446,6 +425,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             ),
         )
 
+    @checked
     def prepare(
         self,
         setup_operator: AbstractLinearOperator,
@@ -453,10 +433,9 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy,
     ) -> RandomizedNystromPreconditioner:
-        if not isinstance(materialization, MaterializationPolicy):
-            raise TypeError("materialization must be a MaterializationPolicy.")
         return self._prepare(setup_operator, refresh_count=0)
 
+    @checked
     def refresh(
         self,
         preconditioner: AbstractPreconditioner,
@@ -469,8 +448,6 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             raise TypeError(
                 "Randomized Nyström refresh requires a RandomizedNystromPreconditioner."
             )
-        if not isinstance(materialization, MaterializationPolicy):
-            raise TypeError("materialization must be a MaterializationPolicy.")
         return self._prepare(
             setup_operator,
             refresh_count=preconditioner.diagnostics.refresh_count + 1,
@@ -478,7 +455,6 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
 
 
 __all__ = [
-    "ProbeRefresh",
     "RandomizedNystromDiagnostics",
     "RandomizedNystromPreconditioner",
     "RandomizedNystromPreconditionerBuilder",

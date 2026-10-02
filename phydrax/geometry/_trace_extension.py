@@ -27,6 +27,7 @@ from phydrax.linalg import (
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class TraceExtensionExactness(str, Enum):
@@ -155,6 +156,7 @@ class PreparedTraceExtension(StrictModule, NonTrainableState):
     evidence: TraceExtensionEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trace_operator: AbstractLinearOperator,
@@ -166,14 +168,6 @@ class PreparedTraceExtension(StrictModule, NonTrainableState):
         preservation_operator: AbstractLinearOperator | None,
         evidence: TraceExtensionEvidence,
     ) -> None:
-        if not isinstance(trace_operator, AbstractLinearOperator):
-            raise TypeError("trace_operator must be an AbstractLinearOperator.")
-        if not isinstance(candidate_operator, AbstractLinearOperator):
-            raise TypeError("candidate_operator must be an AbstractLinearOperator.")
-        if not isinstance(response, PreparedConstraintOperator):
-            raise TypeError("response must be a PreparedConstraintOperator.")
-        if not isinstance(right_inverse_operator, AbstractLinearOperator):
-            raise TypeError("right_inverse_operator must be an AbstractLinearOperator.")
         if preservation_operator is not None and not isinstance(
             preservation_operator, AbstractLinearOperator
         ):
@@ -203,8 +197,6 @@ class PreparedTraceExtension(StrictModule, NonTrainableState):
             raise ValueError(
                 "Preservation operator must act on the extension field space."
             )
-        if not isinstance(evidence, TraceExtensionEvidence):
-            raise TypeError("evidence must be TraceExtensionEvidence.")
         if (
             evidence.trace_operator_id != trace_operator.operator_id
             or evidence.candidate_operator_id != candidate_operator.operator_id
@@ -269,6 +261,7 @@ class _TraceCorrectionProvider(StrictModule, NonTrainableState):
     stability_owner_ids: tuple[str, ...] = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trace_operator: AbstractLinearOperator,
@@ -287,8 +280,6 @@ class _TraceCorrectionProvider(StrictModule, NonTrainableState):
             candidate_operator, AbstractLinearOperator
         ):
             raise TypeError("Trace and candidate maps must be native linear operators.")
-        if not isinstance(cover, BoundaryCover):
-            raise TypeError("cover must be a BoundaryCover.")
         if not trace_operator.source.compatible(candidate_operator.target):
             raise ValueError("Candidate extensions must map into the trace source space.")
         exactness_ = TraceExtensionExactness(exactness)

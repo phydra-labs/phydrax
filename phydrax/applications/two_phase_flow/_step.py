@@ -54,6 +54,7 @@ from ...solver import (
     MACCompartmentProjectionResult,
     MACVariationalViscosityResult,
 )
+from ...typing import checked
 from ._bubbly_flow import (
     BubblyFlowEvidence,
     BubblyFlowPlan,
@@ -325,6 +326,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
     bubbles: BubblyFlowPlan | None
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         two_phase: PreparedIncompressibleTwoPhaseVOF,
@@ -333,8 +335,6 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
         body: TwoPhaseMovingBodyPlan | None = None,
         bubbles: BubblyFlowPlan | None = None,
     ) -> None:
-        if not isinstance(two_phase, PreparedIncompressibleTwoPhaseVOF):
-            raise TypeError("two_phase must be PreparedIncompressibleTwoPhaseVOF.")
         if body is not None and not isinstance(body, TwoPhaseMovingBodyPlan):
             raise TypeError("body must be TwoPhaseMovingBodyPlan or None.")
         if bubbles is not None and not isinstance(bubbles, BubblyFlowPlan):

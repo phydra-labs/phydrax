@@ -20,6 +20,7 @@ from .._trainable import NonTrainableState
 from ..discretization import AxisEntityKind
 from ..discretization._reduced_differences import backward_difference, forward_difference
 from ..discretization.pic import PICSpeciesPlan, ReducedPICTransferPlan
+from ..typing import checked
 from ._maxwell_reduced import (
     CompatibleMaxwell1DPlan,
     CompatibleMaxwell1DState,
@@ -67,13 +68,12 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, field: ReducedMaxwellPlan, transfer: ReducedPICTransferPlan, /
     ) -> None:
         if not isinstance(field, (CompatibleMaxwell1DPlan, CompatibleMaxwell2DPlan)):
             raise TypeError("field must be a compatible reduced Maxwell plan.")
-        if not isinstance(transfer, ReducedPICTransferPlan):
-            raise TypeError("transfer must be ReducedPICTransferPlan.")
         if transfer.grid.prepared_id != field.grid.prepared_id:
             raise ValueError("Reduced PIC field and transfer grids differ.")
         self.field = field

@@ -14,6 +14,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import PyTreeSpace
+from ..typing import checked
 from ._residual_graph import (
     prepare_residual_graph,
     PreparedResidualGraph,
@@ -43,6 +44,7 @@ class IncrementalResidualGraph(StrictModule):
     graph_version: Array
     relinearization_threshold: float
 
+    @checked
     def __init__(
         self,
         prepared: PreparedResidualGraph,
@@ -56,8 +58,6 @@ class IncrementalResidualGraph(StrictModule):
         *,
         relinearization_threshold: float,
     ) -> None:
-        if not isinstance(prepared, PreparedResidualGraph):
-            raise TypeError("prepared must be PreparedResidualGraph.")
         threshold = float(relinearization_threshold)
         if not isfinite(threshold) or threshold < 0.0:
             raise ValueError("relinearization_threshold must be finite and non-negative.")

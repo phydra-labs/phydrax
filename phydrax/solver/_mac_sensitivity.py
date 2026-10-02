@@ -19,7 +19,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
-from ..typing import parse
+from ..typing import checked, parse
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._mac_adaptive import (
     MACAcceptedGridTrace,
@@ -175,14 +175,13 @@ class MACFixedGridSensitivityPlan(StrictModule):
     ) -> MACFrozenGridReplayResult:
         return self.replay_plan.replay(initial_state, grid, args)
 
+    @checked
     def certify(
         self,
         replay: MACFrozenGridReplayResult,
         reference_final_state: Array | None = None,
         /,
     ) -> MACReplayCertification:
-        if not isinstance(replay, MACFrozenGridReplayResult):
-            raise TypeError("replay must be MACFrozenGridReplayResult.")
         if replay.replay_id != self.replay_plan.replay_id:
             raise ValueError("MAC replay plan identity changed before certification.")
         if reference_final_state is None:
@@ -352,6 +351,7 @@ class MACSegmentedShadowingPlan(StrictModule):
     convergence_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sensitivity_plan: MACFixedGridSensitivityPlan,
@@ -368,8 +368,6 @@ class MACSegmentedShadowingPlan(StrictModule):
         neutral_tolerance: float = 1e-12,
         convergence_tolerance: float = 1e-3,
     ) -> None:
-        if not isinstance(sensitivity_plan, MACFixedGridSensitivityPlan):
-            raise TypeError("sensitivity_plan must be MACFixedGridSensitivityPlan.")
         length = int(segment_length)
         dimension = int(tangent_dimension)
         state_size = sensitivity_plan.replay_plan.dynamics.state_shape[0]

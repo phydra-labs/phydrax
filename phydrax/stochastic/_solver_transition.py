@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from .._probability import _event_axes, _leading_shape
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._jump import AbstractJumpProcess
 from ._process import AbstractPathwiseTransition
 from ._state_space import (
@@ -901,6 +901,7 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
     approximation_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law: AbstractPathwiseTransition,
@@ -909,8 +910,6 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
         *,
         approximation_id: str = "sampled-pathwise-transition",
     ) -> None:
-        if not isinstance(law, AbstractPathwiseTransition):
-            raise TypeError("law must implement AbstractPathwiseTransition.")
         if not callable(driver_sampler):
             raise TypeError("driver_sampler must be callable.")
         self.law = law

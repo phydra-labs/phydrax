@@ -39,6 +39,7 @@ from ..lifecycle._event_graph_repository import (
     RunTip,
     WorkLease,
 )
+from ..typing import checked
 
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -338,6 +339,7 @@ class DarkSectorEpochState(StrictModule):
     conservation_out: Array
     status: Array
 
+    @checked
     def __init__(
         self,
         plan: DarkSectorEpochPlan,
@@ -373,8 +375,6 @@ class DarkSectorEpochState(StrictModule):
         conservation_out: ArrayLike,
         status: ArrayLike,
     ) -> None:
-        if not isinstance(plan, DarkSectorEpochPlan):
-            raise TypeError("plan must be DarkSectorEpochPlan.")
         epoch = _nonnegative(epoch_sequence, "epoch_sequence")
         parent = (
             None
@@ -462,6 +462,7 @@ class DarkSectorEpochResult(StrictModule):
     resident_high_water: Array
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: DarkSectorEpochState,
@@ -472,8 +473,6 @@ class DarkSectorEpochResult(StrictModule):
         rolled_back: ArrayLike,
         evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(state, DarkSectorEpochState):
-            raise TypeError("state must be DarkSectorEpochState.")
         complete_ = _scalar_bool(complete, "complete")
         backpressured_ = _scalar_bool(backpressured, "backpressured")
         rolled_back_ = _scalar_bool(rolled_back, "rolled_back")
@@ -804,6 +803,7 @@ def dark_sector_epoch_checkpoint(state: DarkSectorEpochState, /) -> bytes:
 class DarkSectorRunCoordinator:
     """Host transaction owner for epoch CAS, leases, resume, and repartitioning."""
 
+    @checked
     def __init__(
         self,
         graph_repository: EventGraphRepository,
@@ -814,10 +814,6 @@ class DarkSectorRunCoordinator:
         worker_id: str,
         eligible_worker_ids: Sequence[str] | None = None,
     ) -> None:
-        if not isinstance(graph_repository, EventGraphRepository):
-            raise TypeError("graph_repository must be EventGraphRepository.")
-        if not isinstance(plan, DarkSectorEpochPlan):
-            raise TypeError("plan must be DarkSectorEpochPlan.")
         self.graph_repository = graph_repository
         self.plan = plan
         self.run_id = _identifier(run_id, "run_id")
@@ -936,6 +932,7 @@ class DarkSectorRunCoordinator:
             expires_at=expires_at,
         )
 
+    @checked
     def commit_epoch(
         self,
         result: DarkSectorEpochResult,
@@ -951,8 +948,6 @@ class DarkSectorRunCoordinator:
     ) -> EpochCommitReceipt:
         """Publish graph records, immutable checkpoint, epoch slot, and CAS tip."""
 
-        if not isinstance(result, DarkSectorEpochResult):
-            raise TypeError("result must be DarkSectorEpochResult.")
         if result.state.plan.plan_id != self.plan.plan_id:
             raise ValueError("Epoch result was produced by a different plan.")
         if not bool(np.asarray(result.complete)):

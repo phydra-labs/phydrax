@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._laguerre import RadialLaguerrePlan
 from ._spherical import SphericalHarmonicPlan
 
@@ -25,16 +26,13 @@ class FourierLaguerrePlan(StrictModule, NonTrainableState):
     fingerprint: str
     layout_id: str
 
+    @checked
     def __init__(
         self,
         radial: RadialLaguerrePlan,
         angular: SphericalHarmonicPlan,
         /,
     ) -> None:
-        if not isinstance(radial, RadialLaguerrePlan):
-            raise TypeError("radial must be a RadialLaguerrePlan.")
-        if not isinstance(angular, SphericalHarmonicPlan):
-            raise TypeError("angular must be a SphericalHarmonicPlan.")
         self.radial = radial
         self.angular = angular
         self.sample_shape = (radial.radial_bandlimit, *angular.sample_shape)

@@ -23,6 +23,7 @@ from ...discretization.lattice_boltzmann import (
     LatticeBoltzmannRuntimeParameters,
     PreparedLatticeBoltzmannDynamics,
 )
+from ...typing import checked
 
 
 # (populations, velocity, residual, cumulative success, mass drift)
@@ -117,6 +118,7 @@ class DLDLatticeBoltzmannFlowPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def solve(
         self,
         initial_populations: ArrayLike,
@@ -126,8 +128,6 @@ class DLDLatticeBoltzmannFlowPlan(StrictModule, NonTrainableState):
         populations = self.dynamics.discretization.validate_populations(
             initial_populations
         )
-        if not isinstance(parameters, LatticeBoltzmannRuntimeParameters):
-            raise TypeError("parameters must be LatticeBoltzmannRuntimeParameters.")
         macro = self.dynamics.macroscopic_state(0.0, populations, parameters)
         velocity = macro.velocity
         residual = jnp.asarray(jnp.inf, dtype=populations.dtype)

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..electrophysiology._reaction import CardiacReactionEvaluation
 
 
@@ -105,6 +106,7 @@ class ContractionCheckpoint(StrictModule):
     step_index: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: ContractionState,
@@ -114,8 +116,6 @@ class ContractionCheckpoint(StrictModule):
         *,
         plan_id: str,
     ) -> None:
-        if not isinstance(state, ContractionState):
-            raise TypeError("Contraction checkpoint state must be ContractionState.")
         time_ = jnp.asarray(time)
         index = jnp.asarray(step_index, dtype=jnp.int32)
         if time_.shape != () or index.shape != ():
@@ -366,6 +366,7 @@ class PreparedContraction(StrictModule, NonTrainableState):
     dtype: np.dtype = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ContractionPlan, state: ContractionState, /) -> None:
         if not isinstance(
             plan,
@@ -377,8 +378,6 @@ class PreparedContraction(StrictModule, NonTrainableState):
             ),
         ):
             raise TypeError("Unknown contraction fidelity plan.")
-        if not isinstance(state, ContractionState):
-            raise TypeError("Prepared contraction requires a ContractionState.")
         dtype = np.dtype(state.activation.dtype)
         if not np.issubdtype(dtype, np.floating):
             raise TypeError("Contraction state must use a floating-point dtype.")
@@ -395,6 +394,7 @@ class PreparedContraction(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def candidate(
         self,
         state: ContractionState,
@@ -407,8 +407,6 @@ class PreparedContraction(StrictModule, NonTrainableState):
         ionic_model_id: str | None = None,
         calcium_unit: str | None = None,
     ) -> ContractionCandidate:
-        if not isinstance(state, ContractionState):
-            raise TypeError("Contraction candidate state must be ContractionState.")
         drive_ = jnp.asarray(drive, dtype=self.dtype)
         stretch_ = jnp.asarray(stretch, dtype=self.dtype)
         dt = jnp.asarray(time_step, dtype=self.dtype)
@@ -519,6 +517,7 @@ class PreparedContraction(StrictModule, NonTrainableState):
         )
         return ContractionCandidate(state, candidate, tension, evidence, self.prepared_id)
 
+    @checked
     def candidate_from_reaction(
         self,
         state: ContractionState,
@@ -531,8 +530,6 @@ class PreparedContraction(StrictModule, NonTrainableState):
     ) -> ContractionCandidate:
         """Consume live Ca from a concrete compatible ionic-model evaluation."""
 
-        if not isinstance(reaction, CardiacReactionEvaluation):
-            raise TypeError("Ca-driven contraction requires CardiacReactionEvaluation.")
         plan = self.plan
         if not isinstance(
             plan,
@@ -572,9 +569,8 @@ class PreparedContraction(StrictModule, NonTrainableState):
             candidate.plan_id,
         )
 
+    @checked
     def commit(self, candidate: ContractionCandidate, /) -> ContractionState:
-        if not isinstance(candidate, ContractionCandidate):
-            raise TypeError("commit requires ContractionCandidate evidence.")
         if candidate.plan_id != self.prepared_id:
             raise ValueError("Contraction candidate belongs to another prepared plan.")
         return _select_state(
@@ -590,9 +586,8 @@ class PreparedContraction(StrictModule, NonTrainableState):
             raise ValueError("Checkpoint state violates prepared contraction shape.")
         return ContractionCheckpoint(state, time, step_index, plan_id=self.prepared_id)
 
+    @checked
     def restore(self, checkpoint: ContractionCheckpoint, /) -> ContractionState:
-        if not isinstance(checkpoint, ContractionCheckpoint):
-            raise TypeError("restore requires ContractionCheckpoint.")
         if checkpoint.plan_id != self.prepared_id:
             raise ValueError("Contraction checkpoint belongs to another prepared plan.")
         if checkpoint.state.activation.shape != self.field_shape:

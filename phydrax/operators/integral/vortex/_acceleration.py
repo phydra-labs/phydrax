@@ -21,6 +21,7 @@ from ....discretization.vortex._interfaces import (
 )
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
+from ....typing import checked
 from ._gaussian2d import gaussian_vortex_velocity_2d
 
 
@@ -131,6 +132,7 @@ class FixedClusterVortexPlan2D(StrictModule):
             }
         )
 
+    @checked
     def evaluate(
         self,
         source: VortexSourceState,
@@ -139,10 +141,6 @@ class FixedClusterVortexPlan2D(StrictModule):
         *,
         request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> VortexVelocityEvaluation:
-        if not isinstance(source, VortexSourceState):
-            raise TypeError("source must be VortexSourceState.")
-        if not isinstance(target, VortexTargetState):
-            raise TypeError("target must be VortexTargetState.")
         if request.velocity_gradient or request.vorticity:
             raise ValueError(
                 "Fixed-cluster backend currently supports velocity requests only."

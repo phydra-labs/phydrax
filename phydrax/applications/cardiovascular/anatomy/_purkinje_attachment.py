@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 class PMJAttachmentEpoch(StrictModule, NonTrainableState):
@@ -44,9 +45,8 @@ class PMJAttachmentEpoch(StrictModule, NonTrainableState):
         self.graph_geometry = jnp.asarray(graph_host, dtype=jnp.int32)
         self.myocardial_geometry = jnp.asarray(myocardial_host, dtype=jnp.int32)
 
+    @checked
     def matches(self, other: PMJAttachmentEpoch, /) -> Array:
-        if not isinstance(other, PMJAttachmentEpoch):
-            raise TypeError("other must be a PMJAttachmentEpoch.")
         return (self.graph_geometry == other.graph_geometry) & (
             self.myocardial_geometry == other.myocardial_geometry
         )
@@ -110,6 +110,7 @@ class PurkinjeAttachmentPlan(StrictModule, NonTrainableState):
         self.maximum_distance_mm = maximum_distance
         self.plan_id = _resolved_id("plan_id", plan_id, payload)
 
+    @checked
     def prepare(
         self,
         graph_points_mm: ArrayLike,
@@ -124,8 +125,6 @@ class PurkinjeAttachmentPlan(StrictModule, NonTrainableState):
         epoch: PMJAttachmentEpoch,
         attachment_id: str | None = None,
     ) -> PreparedPurkinjeAttachment:
-        if not isinstance(epoch, PMJAttachmentEpoch):
-            raise TypeError("epoch must be a PMJAttachmentEpoch.")
         graph = _host_points(graph_points_mm, "graph_points_mm")
         myocardial = _host_points(
             myocardial_support_points_mm, "myocardial_support_points_mm"
@@ -221,6 +220,7 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
     myocardial_geometry_id: str = eqx.field(static=True)
     attachment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -235,8 +235,6 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         prepared_epoch: PMJAttachmentEpoch,
         attachment_id: str,
     ) -> None:
-        if not isinstance(plan, PurkinjeAttachmentPlan):
-            raise TypeError("plan must be a PurkinjeAttachmentPlan.")
         graph_capacity = int(graph_point_capacity)
         myocardial_capacity = int(myocardial_support_capacity)
         if graph_capacity <= 0 or myocardial_capacity <= 0:
@@ -277,8 +275,6 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
             raise ValueError(
                 "Inactive PMJ route indices must use canonical zero padding."
             )
-        if not isinstance(prepared_epoch, PMJAttachmentEpoch):
-            raise TypeError("prepared_epoch must be a PMJAttachmentEpoch.")
         graph_id = str(graph_geometry_id)
         myocardial_id = str(myocardial_geometry_id)
         identifier = str(attachment_id)
@@ -297,6 +293,7 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         self.prepared_epoch = prepared_epoch
         self.attachment_id = identifier
 
+    @checked
     def evaluate(
         self,
         graph_points_mm: ArrayLike,
@@ -304,8 +301,6 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         current_epoch: PMJAttachmentEpoch,
         /,
     ) -> PMJAttachmentCandidate:
-        if not isinstance(current_epoch, PMJAttachmentEpoch):
-            raise TypeError("current_epoch must be a PMJAttachmentEpoch.")
         graph = jnp.asarray(graph_points_mm)
         myocardial = jnp.asarray(myocardial_support_points_mm)
         if graph.shape != (self.graph_point_capacity, 3):

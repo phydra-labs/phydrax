@@ -41,6 +41,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._mac_stage_inverse_momentum import (
     MACDiagonalStageInverseMomentum,
     MACStageInverseMomentumDiagnostics,
@@ -323,6 +324,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
     stage_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         momentum: PreparedMACMomentumOperators,
@@ -336,8 +338,6 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         face_resistance: FaceVelocity | None = None,
         stage_id: str,
     ) -> None:
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         operators = momentum.operators
         density = operators.validate_velocity(face_density)
         coefficient = jnp.asarray(stage_coefficient)

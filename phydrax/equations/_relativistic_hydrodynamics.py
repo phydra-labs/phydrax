@@ -28,6 +28,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 from ._hyperbolic_systems import AbstractConservationSystem
 from ._relativistic_eos import AbstractRelativisticEOS, RelativisticEOSState
 
@@ -159,6 +160,7 @@ class ValenciaGeometrySource(StrictModule, NonTrainableState):
     spatial_metric_gradient: Array
     source_geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: ADMGridGeometry,
@@ -167,8 +169,6 @@ class ValenciaGeometrySource(StrictModule, NonTrainableState):
         spatial_metric_gradient: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         alpha = jnp.asarray(alpha_gradient, dtype=geometry.alpha.dtype)
         beta = jnp.asarray(beta_gradient, dtype=geometry.alpha.dtype)
         spatial = jnp.asarray(spatial_metric_gradient, dtype=geometry.alpha.dtype)
@@ -491,6 +491,7 @@ class SRHDSystem(AbstractConservationSystem, NonTrainableState):
     density_floor: float = eqx.field(static=True)
     pressure_floor: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eos: AbstractRelativisticEOS,
@@ -500,8 +501,6 @@ class SRHDSystem(AbstractConservationSystem, NonTrainableState):
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
     ) -> None:
-        if not isinstance(eos, AbstractRelativisticEOS):
-            raise TypeError("eos must be an AbstractRelativisticEOS.")
         if eos.scale.speed_of_light != 1:
             raise ValueError(
                 "SRHDSystem requires an EOS declared in geometric c=1 units."
@@ -729,6 +728,7 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
     component_names: tuple[str, ...] = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eos: AbstractRelativisticEOS,
@@ -739,8 +739,6 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
         pressure_floor: float = 1.0e-12,
         convention: RelativityConvention | None = None,
     ) -> None:
-        if not isinstance(eos, AbstractRelativisticEOS):
-            raise TypeError("eos must be an AbstractRelativisticEOS.")
         if eos.scale.speed_of_light != 1:
             raise ValueError(
                 "ValenciaGRHDSystem requires an EOS declared in geometric c=1 units."
@@ -787,11 +785,10 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
     def component_count(self) -> int:
         return self.layout.component_count
 
+    @checked
     def primitive_evaluation(
         self, primitive: ArrayLike, geometry: ADMGridGeometry, /
     ) -> RelativisticFluidEvaluation:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         if (
             geometry.scale_id != self.eos.scale.scale_id
             or geometry.convention_id != self.convention.convention_id

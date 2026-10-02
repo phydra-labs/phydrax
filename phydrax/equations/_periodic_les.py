@@ -23,6 +23,7 @@ from ..discretization.spectral import (
     PseudospectralMethodPlan,
     TensorSpectralDiscretization,
 )
+from ..typing import checked
 from ._les_closures import (
     AlgebraicLESInputs,
     AlgebraicLESResult,
@@ -42,9 +43,8 @@ class PeriodicFourierGridFilterPlan(StrictModule, NonTrainableState):
     resolved_filter: ResolvedLESFilter
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, resolved_filter: ResolvedLESFilter, /) -> None:
-        if not isinstance(resolved_filter, ResolvedLESFilter):
-            raise TypeError("resolved_filter must be a ResolvedLESFilter.")
         if (
             resolved_filter.family != "sharp-fourier-projection"
             or resolved_filter.topology != "tensor-product"
@@ -84,16 +84,13 @@ class PreparedPeriodicFourierGridFilter(StrictModule, NonTrainableState):
     live_mask: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicFourierGridFilterPlan,
         discretization: TensorSpectralDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, PeriodicFourierGridFilterPlan):
-            raise TypeError("plan must be a PeriodicFourierGridFilterPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if len(discretization.axes) != 3 or any(
             axis.family != "fourier" or not axis.periodic for axis in discretization.axes
         ):
@@ -160,6 +157,7 @@ class PeriodicAlgebraicLESPlan(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared_model: PreparedAlgebraicLESModel,
@@ -169,12 +167,6 @@ class PeriodicAlgebraicLESPlan(StrictModule, NonTrainableState):
         *,
         energy_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(prepared_model, PreparedAlgebraicLESModel):
-            raise TypeError("prepared_model must be a PreparedAlgebraicLESModel.")
-        if not isinstance(grid_filter, PeriodicFourierGridFilterPlan):
-            raise TypeError("grid_filter must be a PeriodicFourierGridFilterPlan.")
-        if not isinstance(closure_method, PseudospectralMethodPlan):
-            raise TypeError("closure_method must be a PseudospectralMethodPlan.")
         if not isinstance(closure_method.dealiasing, OversamplingDealiasingPlan):
             raise ValueError(
                 "Periodic algebraic LES requires OversamplingDealiasingPlan for its "
@@ -291,6 +283,7 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
     projector: PeriodicLerayProjector
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicAlgebraicLESPlan,
@@ -298,12 +291,6 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
         projector: PeriodicLerayProjector,
         /,
     ) -> None:
-        if not isinstance(plan, PeriodicAlgebraicLESPlan):
-            raise TypeError("plan must be a PeriodicAlgebraicLESPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be a PeriodicLerayProjector.")
         if projector.discretization.prepared_id != discretization.prepared_id:
             raise ValueError("LES projector and spectral discretization disagree.")
         if projector.spatial_dimension != 3:

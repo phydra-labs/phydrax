@@ -19,6 +19,7 @@ from .._trainable import fixed_field
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ..equations import CompressibleNavierStokesSystem, EulerSystem, IdealMHDSystem
 from ..stochastic import OrnsteinUhlenbeckRealization
+from ..typing import checked
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -136,14 +137,13 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SpectralOUForcingPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
     ) -> None:
-        if not isinstance(plan, SpectralOUForcingPlan):
-            raise TypeError("plan must be SpectralOUForcingPlan.")
         if not isinstance(
             transport, AbstractPreparedBalanceLawTransport
         ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):

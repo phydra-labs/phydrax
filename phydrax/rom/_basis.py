@@ -18,7 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing, LinearSubspace
 from ..ml.decomposition import SubspaceModel
-from ..typing import parse
+from ..typing import checked, parse
 
 
 BasisRole: TypeAlias = Literal["state", "nonlinear-term", "residual", "roq"]
@@ -46,6 +46,7 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
     rank: int = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         subspace: LinearSubspace,
@@ -59,8 +60,6 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
         source_artifact_ids: Sequence[str],
         evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(subspace, LinearSubspace):
-            raise TypeError("subspace must be a LinearSubspace.")
         if subspace.batch_shape:
             raise ValueError("Reduced basis artifacts require one unbatched subspace.")
         role = parse(role, BasisRole, "role")
@@ -131,7 +130,7 @@ def reduced_basis_from_subspace_model(
     source_artifact_ids: Sequence[str],
     evidence_ids: Sequence[str] = (),
 ) -> tuple[ReducedBasisArtifact, Array]:
-    """Bind one array POD model to a physical basis artifact and affine offset."""
+    """Bind the current physical basis and affine offset, not a projector fit-response certificate."""
     if not isinstance(model, SubspaceModel):
         raise TypeError("model must be a SubspaceModel.")
     if model.case_shape:
@@ -143,9 +142,10 @@ def reduced_basis_from_subspace_model(
             "Intrusive reduced bases require every feature to have positive physical measure."
         )
     pairing = DiagonalPairing(jnp.asarray(model.feature_metric))
+    physical_components = model.components
     space = ArraySpace(
         (model.in_size,),
-        dtype=model.components.dtype,
+        dtype=physical_components.dtype,
         pairing=pairing,
         space_id=canonical_fingerprint(
             {
@@ -158,7 +158,7 @@ def reduced_basis_from_subspace_model(
             }
         ),
     )
-    basis = jnp.swapaxes(model.components, -1, -2)
+    basis = jnp.swapaxes(physical_components, -1, -2)
     subspace = LinearSubspace(
         space,
         basis,

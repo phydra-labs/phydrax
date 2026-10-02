@@ -22,6 +22,7 @@ from ...integration import (
     PhaseQuenchedReweightingResult,
     prepare_phase_quenched_reweighting,
 )
+from ...typing import checked
 from ._finite_density import ChemicalChargeConvention
 
 
@@ -33,6 +34,7 @@ class MultiChargeCanonicalPlan(StrictModule, NonTrainableState):
     volume: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         convention: ChemicalChargeConvention,
@@ -43,8 +45,6 @@ class MultiChargeCanonicalPlan(StrictModule, NonTrainableState):
         periodicities: Sequence[float],
         volume: float,
     ) -> None:
-        if not isinstance(convention, ChemicalChargeConvention):
-            raise TypeError("convention must be ChemicalChargeConvention.")
         nodes = tuple(node_shape)
         bounds = tuple(charge_bounds)
         periods = tuple(float(value) for value in periodicities)

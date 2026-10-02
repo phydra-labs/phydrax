@@ -66,6 +66,65 @@ def quantum_lattice_candidate_support_tuples() -> tuple[SupportTuple, ...]:
                 "claim": "method-specific-control-not-sign-cure",
             },
         ),
+        SupportTuple(
+            "quantum-lattice.configuration-columns",
+            {
+                "address": "rank-free-exact-packed-uint32-words",
+                "domain": "explicit-species-product-or-exact-abelian-charges",
+                "operator": "sparse-outgoing-target-source",
+                "binding": "separate-topology-and-occurrence-numeric-slots",
+                "sampling": "physical-raw-route-probability-with-null-attempts",
+                "statistics": "finite-fermion-spin-boson",
+                "execution": "single-device-complex128-float64",
+                "resources": "explicit-transition-route-coordinate-workspace-limits",
+            },
+        ),
+        *(
+            SupportTuple(
+                "quantum-lattice.positive-guide",
+                {
+                    "provider": "frozen-strictmodule-log-amplitude-magnitude",
+                    "mapping": "explicit-packed-address-provider-domain-binding",
+                    "node-policy": node_policy,
+                    "similarity": "positive-invertible-original-self-adjoint",
+                    "metric": "same-actual-guide-inverse-square",
+                    "observables": "original-physical-real-or-complex",
+                    "global-support": "provider-declaration-not-encountered-proof",
+                    "execution": "single-device-complex128-float64",
+                },
+            )
+            for node_policy in ("reject", "positive-log-floor")
+        ),
+        *(
+            SupportTuple(
+                "quantum-lattice.projector-monte-carlo",
+                {
+                    "target": "self-adjoint-ground-state",
+                    "address": "rank-free-exact-packed-uint32-words",
+                    "spawn": spawn,
+                    "compression": compression,
+                    "controller": controller,
+                    "guide": guide,
+                    "annihilation": "complete-seeded-compensated-before-late-compression",
+                    "estimator": "physical-projected-and-per-time-aggregated-replica-ratio",
+                    "history": "complete-incoming-shift-finite-window-reweighting",
+                    "uncertainty": "joint-common-block-covariance-denominator-gated",
+                    "restart": "atomic-commit-explicit-same-draw-resource-replay",
+                    "execution": "single-device-complex128-float64",
+                    "resources": "explicit-support-group-event-attempt-source-history-byte-limits",
+                    "approximation": "no-initiator-finite-euler-finite-population",
+                    "claim": "candidate-not-sign-cure-or-unbiased-stationary-certificate",
+                },
+            )
+            for spawn in ("exact", "sampled", "semistochastic")
+            for compression in ("none", "threshold")
+            for controller in ("fixed-shift", "double-log")
+            for guide in (
+                "unguided",
+                "frozen-positive-reject",
+                "frozen-positive-log-floor",
+            )
+        ),
     )
 
 
@@ -102,6 +161,31 @@ def quantum_lattice_candidate_profiles() -> tuple[CapabilityProfile, ...]:
             "raw-chain-retention",
             "sign-and-effective-sample-evidence",
             "locked-control",
+        ),
+        "quantum-lattice.configuration-columns": (
+            "resource-admission-and-overflow-refusal",
+            "fermionic-sign-and-complex-column-orientation",
+            "raw-route-probability-and-null-attempt-expectation",
+            "numeric-binding-and-same-support-refresh",
+            "locked-independent-reference",
+        ),
+        "quantum-lattice.positive-guide": (
+            "resource-and-numerical-range-refusal",
+            "original-self-adjoint-and-frozen-guide-binding",
+            "same-actual-inverse-guide-metric",
+            "real-and-complex-physical-observable-recovery",
+            "locked-independent-reference",
+        ),
+        "quantum-lattice.projector-monte-carlo": (
+            "resource-admission-and-atomic-overflow-refusal",
+            "fermionic-sign-and-complex-phase",
+            "physical-raw-route-probability-and-compression-expectation",
+            "complete-annihilation-and-raw-history-retention",
+            "same-actual-guide-physical-metric",
+            "joint-covariance-and-denominator-safety",
+            "checkpoint-and-same-draw-resource-replay",
+            "population-history-timestep-and-sign-resolution",
+            "locked-independent-reference",
         ),
     }
     grouped: dict[str, list[SupportTuple]] = {}

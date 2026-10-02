@@ -17,6 +17,7 @@ from ...qualification._evidence import (
     QualificationMatrix,
 )
 from ...qualification._registry import SupportTuple
+from ...typing import checked
 
 
 _FINANCE_CAPABILITIES = frozenset(
@@ -60,6 +61,7 @@ class FinanceQualificationMatrix(StrictModule, NonTrainableState):
     qualification_matrix: QualificationMatrix
     matrix_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support_tuples: Sequence[SupportTuple],
@@ -67,8 +69,6 @@ class FinanceQualificationMatrix(StrictModule, NonTrainableState):
         /,
     ) -> None:
         supports = _support_tuples(support_tuples)
-        if not isinstance(qualification_matrix, QualificationMatrix):
-            raise TypeError("qualification_matrix must be a QualificationMatrix.")
         expected = _predicates(supports)
         if qualification_matrix.predicates != QualificationMatrix(expected).predicates:
             raise ValueError(
@@ -131,6 +131,7 @@ class FinanceQualificationCampaign(StrictModule, NonTrainableState):
     evaluated_at: int = eqx.field(static=True)
     campaign_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         matrix: FinanceQualificationMatrix,
@@ -140,8 +141,6 @@ class FinanceQualificationCampaign(StrictModule, NonTrainableState):
         *,
         evaluated_at: int,
     ) -> None:
-        if not isinstance(matrix, FinanceQualificationMatrix):
-            raise TypeError("matrix must be a FinanceQualificationMatrix.")
         if not isinstance(evidence, Sequence) or isinstance(evidence, str):
             raise TypeError("evidence must be a sequence of QualificationEvidence.")
         records = tuple(evidence)
@@ -150,8 +149,6 @@ class FinanceQualificationCampaign(StrictModule, NonTrainableState):
         records = tuple(sorted(records, key=lambda item: item.evidence_id))
         if len({item.evidence_id for item in records}) != len(records):
             raise ValueError("Finance campaign evidence IDs must be unique.")
-        if not isinstance(coverage, QualificationCoverageReport):
-            raise TypeError("coverage must be a QualificationCoverageReport.")
         if coverage.matrix_id != matrix.qualification_matrix.matrix_id:
             raise ValueError("Coverage report belongs to another qualification matrix.")
         if isinstance(evaluated_at, bool) or not isinstance(evaluated_at, int):

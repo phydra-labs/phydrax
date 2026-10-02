@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._background import FLRWBackground
 from ._closure import ScientificArtifactEnvelope
 from ._halos import LinearVariancePlan, NFWProfile, SphericalOverdensityMassDefinition
@@ -195,6 +196,7 @@ class TinkerDuffy200mPlan(StrictModule, NonTrainableState):
     pivot_mass: float = eqx.field(static=True)
     calibration_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         variance: LinearVariancePlan,
@@ -204,8 +206,6 @@ class TinkerDuffy200mPlan(StrictModule, NonTrainableState):
         maximum_redshift: float = 2.0,
         pivot_mass: float = 2.0e12,
     ) -> None:
-        if not isinstance(variance, LinearVariancePlan):
-            raise TypeError("variance must be LinearVariancePlan.")
         minimum, maximum = (float(value) for value in mass_domain)
         redshift = float(maximum_redshift)
         pivot = float(pivot_mass)

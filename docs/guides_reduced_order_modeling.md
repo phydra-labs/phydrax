@@ -26,6 +26,14 @@ physical state, support, measure, geometry, sources, and evidence with
 `reduced_basis_from_subspace_model`. General vector-space bases may be supplied as
 `LinearSubspace` values.
 
+The adapter reads physical components derived from the model's current
+authoritative weighted basis, preserving the declared state/support/measure/
+geometry identities and affine offset. Intrusive ROM construction still refuses
+incomplete positive physical support. Projector-mode fit differentiation does not
+admit basis-sensitive reduced-model differentiation: request basis mode with its
+isolation and pivot conditions for a direct fit-basis derivative. Learned basis
+replacement is prediction-only, not a new certified spectral fit.
+
 `ReducedBasisArtifact.role` distinguishes state, nonlinear-term, residual, and ROQ
 bases. These roles are not interchangeable.
 
@@ -281,6 +289,17 @@ basis; `retained_energy` (default `1.0`: every resolved direction) and an
 absolute `minimum_singular_value` can only lower the rank further. Snapshots
 whose trailing singular values matter below that floor need an SVD in
 orthonormal coordinates.
+
+Use exact array `POD` with the native `DenseSVD()` when the full orthonormal-coordinate
+singular spectrum is affordable or trailing modes below the snapshot-Gram
+resolution floor matter. For leading array modes of resident weighted/masked
+snapshots, explicitly select `RandomizedSVD`, an approximation tolerance/resource
+policy, and a typed fit key. This route is fixed-width QR range compression with
+leading certification, not a new snapshot-Gram or streaming algorithm. Its actual
+projection energy is original-action capture; a finite approximation or high
+energy fraction alone is neither a leading-order certificate nor a ROM error
+bound. General arbitrary pairings stay with admitted exact/snapshot routes;
+randomized non-diagonal custom metrics are refused rather than silently densified.
 
 ## Transient, mixed, and descriptor systems
 

@@ -29,7 +29,7 @@ from ...backends import (
     BackendAvailability,
     BackendCapabilities,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._report import (
     AdapterCapability,
     AdapterError,
@@ -384,6 +384,7 @@ class OpticStudioRunResult(StrictModule, NonTrainableState):
     artifact: ScientificArtifactEnvelope = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         request: OpticStudioAnalysisRequest,
@@ -392,12 +393,6 @@ class OpticStudioRunResult(StrictModule, NonTrainableState):
         artifact: ScientificArtifactEnvelope,
         /,
     ) -> None:
-        if not isinstance(request, OpticStudioAnalysisRequest):
-            raise TypeError("request must be an OpticStudioAnalysisRequest.")
-        if not isinstance(report, AdapterReport):
-            raise TypeError("report must be an AdapterReport.")
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be a ScientificArtifactEnvelope.")
         payload_json_ = _canonical_result_json(payload_json)
         if hashlib.sha256(payload_json_.encode("utf-8")).hexdigest() != (
             artifact.content_digest

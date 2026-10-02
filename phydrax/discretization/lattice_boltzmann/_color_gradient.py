@@ -57,6 +57,7 @@ from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from ..._validation import unique_identifiers
 from ...qualification._registry import CapabilityProfile, SupportTuple
+from ...typing import checked
 from ._boundary import PreparedLatticeBoltzmannBoundary
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._discretization import LatticeBoltzmannDiscretization
@@ -247,6 +248,7 @@ class ColorGradientLBMMethod(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hydrodynamic_method: LatticeBoltzmannMethodPlan,
@@ -262,8 +264,6 @@ class ColorGradientLBMMethod(StrictModule, NonTrainableState):
         maximum_capillary_number: float = 1.0,
         conservation_tolerance: float = 1.0e-11,
     ) -> None:
-        if not isinstance(hydrodynamic_method, LatticeBoltzmannMethodPlan):
-            raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
         if hydrodynamic_method.forcing is None:
             raise ValueError("Color-gradient capillary forcing requires a forced method.")
         if isinstance(component_ids, str):
@@ -506,6 +506,7 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
     boundary: PreparedLatticeBoltzmannBoundary
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -514,14 +515,6 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
         boundary: PreparedLatticeBoltzmannBoundary,
         /,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be an LBM discretization.")
-        if not isinstance(scaling, LatticeBoltzmannScaling):
-            raise TypeError("scaling must be LatticeBoltzmannScaling.")
-        if not isinstance(method, ColorGradientLBMMethod):
-            raise TypeError("method must be ColorGradientLBMMethod.")
-        if not isinstance(boundary, PreparedLatticeBoltzmannBoundary):
-            raise TypeError("boundary must be a prepared LBM boundary.")
         if boundary.discretization.prepared_id != discretization.prepared_id:
             raise ValueError("Boundary and color-gradient discretizations do not match.")
         if not np.isclose(
@@ -589,9 +582,8 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
             )
         return args
 
+    @checked
     def _validate_state(self, state: ColorGradientLBMState, /) -> ColorGradientLBMState:
-        if not isinstance(state, ColorGradientLBMState):
-            raise TypeError("state must be ColorGradientLBMState.")
         populations = jnp.asarray(state.color_populations)
         if populations.shape != (
             self.method.component_count,

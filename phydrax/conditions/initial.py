@@ -10,6 +10,7 @@ import equinox as eqx
 from phydrax.domain import DomainComponent, DomainFunction, FixedStart
 
 from ..operators.differential._domain_ops import dt_n
+from ..typing import checked
 from ._base import _condition_functions, _fields, AbstractResidualCondition
 from .boundary import _condition_value, ConditionValue
 
@@ -26,6 +27,7 @@ class Initial(AbstractResidualCondition):
     backend: Literal["ad", "jet"] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -39,8 +41,6 @@ class Initial(AbstractResidualCondition):
         backend: Literal["ad", "jet"] = "ad",
         label: str | None = None,
     ) -> None:
-        if not isinstance(on, DomainComponent):
-            raise TypeError("Initial conditions require one DomainComponent.")
         if evolution_var not in on.domain.labels:
             raise KeyError(
                 f"Label {evolution_var!r} is not in domain {on.domain.labels}."

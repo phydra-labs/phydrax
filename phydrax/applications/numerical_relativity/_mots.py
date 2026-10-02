@@ -28,6 +28,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._spacetime_conventions import RelativityConvention
+from ...typing import checked
 from ._surfaces import SphericalSpectralSurface, SphericalSurfacePlan
 
 
@@ -99,6 +100,7 @@ class MOTSSolvePlan(StrictModule, NonTrainableState):
     stability_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface_plan: SphericalSurfacePlan,
@@ -109,8 +111,6 @@ class MOTSSolvePlan(StrictModule, NonTrainableState):
         minimum_radius: float = 1.0e-10,
         stability_tolerance: float = 1.0e-7,
     ) -> None:
-        if not isinstance(surface_plan, SphericalSurfacePlan):
-            raise TypeError("surface_plan must be a SphericalSurfacePlan.")
         residual_tolerance_ = float(residual_tolerance)
         minimum_radius_ = float(minimum_radius)
         stability_tolerance_ = float(stability_tolerance)

@@ -17,7 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 
 
@@ -83,6 +83,7 @@ class PreparedTriangleWLSQ(StrictModule, NonTrainableState):
     report: TriangleWLSQReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TriangleFiniteVolumeDiscretization,
@@ -90,8 +91,6 @@ class PreparedTriangleWLSQ(StrictModule, NonTrainableState):
         *,
         weight_power: float = 2.0,
     ) -> None:
-        if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
-            raise TypeError("WLSQ requires triangular finite-volume geometry.")
         centers = np.asarray(discretization.cell_centers)
         indices, valid = _cell_neighbor_stencils(
             np.asarray(discretization.owner_cells),
@@ -209,6 +208,7 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
     epsilon: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         gradient: PreparedTriangleWLSQ,
@@ -217,8 +217,6 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
         limiter: TriangleLimiterKind = "venkatakrishnan",
         epsilon: float = 1e-12,
     ) -> None:
-        if not isinstance(gradient, PreparedTriangleWLSQ):
-            raise TypeError("gradient must be PreparedTriangleWLSQ.")
         limiter = parse(limiter, TriangleLimiterKind, "limiter")
         self.gradient = gradient
         self.limiter = limiter

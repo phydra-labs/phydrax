@@ -13,6 +13,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._flow_matching_metric import AbstractFlowMatchingMetric
 from ...._geometry_precision import GeometryPrecisionPolicy
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..data import FunctionSamples, OperatorOutputSpec
 from ._physics import operator_hilbert_norm
 
@@ -27,6 +28,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
     event_shape: tuple[int, ...] = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         query: FunctionSamples,
@@ -37,10 +39,6 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
         precision: GeometryPrecisionPolicy | None = None,
         metric_id: str | None = None,
     ) -> None:
-        if not isinstance(query, FunctionSamples):
-            raise TypeError("query must be FunctionSamples.")
-        if not isinstance(output_spec, OperatorOutputSpec):
-            raise TypeError("output_spec must be OperatorOutputSpec.")
         if query.geometry_case_shape:
             raise ValueError(
                 "Operator flow matching requires one fixed query geometry per metric."

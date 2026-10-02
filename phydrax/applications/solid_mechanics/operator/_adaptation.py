@@ -21,6 +21,7 @@ from ....nn.operator.training._adaptation import (
     TestTimeAdaptationResult,
 )
 from ....nn.operator.training._trained_operator import TrainedOperator
+from ....typing import checked
 from ._cases import MechanicsOperatorCase
 from ._parameters import MechanicsParameterSpec
 from ._qualification import assess_mechanics_support, MechanicsSupportEvidence
@@ -35,6 +36,7 @@ class MechanicsFineTuningPolicy(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
     policy_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         context_policy: BoundedResidualAdaptationPolicy,
@@ -44,8 +46,6 @@ class MechanicsFineTuningPolicy(StrictModule, NonTrainableState):
         residual_objective_id: str,
         policy_id: str,
     ) -> None:
-        if not isinstance(context_policy, BoundedResidualAdaptationPolicy):
-            raise TypeError("context_policy must be a BoundedResidualAdaptationPolicy.")
         observables = tuple(str(value) for value in allowed_observable_ids)
         if (
             not observables

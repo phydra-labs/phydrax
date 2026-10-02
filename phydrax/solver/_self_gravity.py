@@ -30,6 +30,7 @@ from ..equations import (
     EulerSystem,
     IdealMHDSystem,
 )
+from ..typing import checked
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedAcceptedStepCoupling,
@@ -69,9 +70,8 @@ class ConservativeGravityEnergyCoupling(AbstractPreparedAcceptedStepCoupling):
 
     gravity: PreparedNewtonianSelfGravity
 
+    @checked
     def __init__(self, gravity: PreparedNewtonianSelfGravity, /) -> None:
-        if not isinstance(gravity, PreparedNewtonianSelfGravity):
-            raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
         self.gravity = gravity
         self.modified_components = ("total_energy",)
         self.coupling_id = canonical_fingerprint(
@@ -204,14 +204,13 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
     energy_index: int = eqx.field(static=True)
     cell_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: NewtonianSelfGravityPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
     ) -> None:
-        if not isinstance(plan, NewtonianSelfGravityPlan):
-            raise TypeError("plan must be NewtonianSelfGravityPlan.")
         if not isinstance(
             transport, AbstractPreparedBalanceLawTransport
         ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):

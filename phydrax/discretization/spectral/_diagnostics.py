@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._space import TensorSpectralDiscretization
 
 
@@ -79,6 +80,7 @@ class SpectralModalDiagnosticsPlan(StrictModule, NonTrainableState):
     workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -89,8 +91,6 @@ class SpectralModalDiagnosticsPlan(StrictModule, NonTrainableState):
         floor_multiplier: float = 32.0,
         maximum_workspace_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         fraction = float(tail_fraction)
         minimum = int(minimum_tail_modes)
         multiplier = float(floor_multiplier)
@@ -154,9 +154,8 @@ class PreparedSpectralModalDiagnostics(StrictModule, NonTrainableState):
     plan: SpectralModalDiagnosticsPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SpectralModalDiagnosticsPlan, /) -> None:
-        if not isinstance(plan, SpectralModalDiagnosticsPlan):
-            raise TypeError("plan must be a SpectralModalDiagnosticsPlan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {

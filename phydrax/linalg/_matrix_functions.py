@@ -24,7 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._certificates import _operator_numeric_fingerprint
 from ._exponential_taylor import (
     execute_taylor_exponential_action,
@@ -190,6 +190,7 @@ class TransformDiagonalRepresentation(StrictModule):
             representation_id=representation_id,
         )
 
+    @checked
     def _initialize(
         self,
         operator: AbstractLinearOperator,
@@ -199,14 +200,10 @@ class TransformDiagonalRepresentation(StrictModule):
         *,
         representation_id: str | None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if not operator.source.compatible(operator.target) or operator.batch_shape:
             raise ValueError(
                 "Transform-diagonal representations require an unbatched endomorphism."
             )
-        if not isinstance(transform, AbstractLinearTransform):
-            raise TypeError("transform must be an AbstractLinearTransform.")
         if (
             transform.physical_space.size != operator.source.size
             or transform.modal_space.size < 1

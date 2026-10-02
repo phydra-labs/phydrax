@@ -26,6 +26,7 @@ from .._trainable import NonTrainableState
 from ..ein import contract
 from ..geometry.simplicial import DDGOperators, TriangleMesh
 from ..sparse import EdgeRelation
+from ..typing import checked
 
 
 # Cotangent conductances are dimensionless; roundoff on right angles gives
@@ -55,9 +56,8 @@ class FilmSurfaceTopology(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mesh: TriangleMesh, /) -> None:
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("FilmSurfaceTopology requires a TriangleMesh.")
         topology = mesh.topology
         faces = np.asarray(topology.faces, dtype=np.int32)
         edges = np.asarray(topology.edges, dtype=np.int32)
@@ -187,6 +187,7 @@ class PreparedFilmSurface(StrictModule):
     geometry_revision: Array
     evidence: FilmSurfaceEvidence
 
+    @checked
     def __init__(
         self,
         topology: FilmSurfaceTopology,
@@ -195,8 +196,6 @@ class PreparedFilmSurface(StrictModule):
         *,
         geometry_revision: ArrayLike = 0,
     ) -> None:
-        if not isinstance(topology, FilmSurfaceTopology):
-            raise TypeError("PreparedFilmSurface requires a FilmSurfaceTopology.")
         points = jnp.asarray(coordinates, dtype=jnp.float64)
         if points.shape != (topology.num_vertices, 3):
             raise ValueError("coordinates must have shape (num_vertices, 3).")

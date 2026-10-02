@@ -39,7 +39,7 @@ from ....special._solid_harmonic import (
     solid_harmonic_irregular,
     solid_harmonic_regular,
 )
-from ....typing import parse
+from ....typing import checked, parse
 
 
 TranslationRoute3D = Literal["dense"]
@@ -414,9 +414,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
     local_convention: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: LaplaceMultipolePlan3D, /) -> None:
-        if not isinstance(plan, LaplaceMultipolePlan3D):
-            raise TypeError("plan must be LaplaceMultipolePlan3D.")
         layout = SphericalModeLayout(plan.expansion_order + 1, spin=0, reality=False)
         directions_, weights_ = _translation_quadrature(layout.bandlimit)
         directions = jnp.asarray(directions_)

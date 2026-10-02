@@ -20,7 +20,7 @@ from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..domain import DomainFunction
 from ..nn.layers._dropout import Dropout
-from ..typing import parse
+from ..typing import checked, parse
 from ._predictive import PredictionInterval, PredictiveField, SampleAxis
 
 
@@ -79,6 +79,7 @@ class MCDropoutCalibration(StrictModule):
     case_dim: str | None = eqx.field(static=True)
     evidence: MCDropoutCalibrationEvidence
 
+    @checked
     def __init__(
         self,
         coefficient: ArrayLike,
@@ -102,8 +103,6 @@ class MCDropoutCalibration(StrictModule):
             raise ValueError("split_identity must be non-empty.")
         if method == "functional_conformal" and not case_dim:
             raise ValueError("functional_conformal requires case_dim.")
-        if not isinstance(evidence, MCDropoutCalibrationEvidence):
-            raise TypeError("evidence must be MCDropoutCalibrationEvidence.")
         self.coefficient = coefficient_
         self.nominal_coverage = coverage
         self.method = method

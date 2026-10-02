@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ...._strict import StrictModule
 from ....discretization._transfer import FieldTransfer
 from ....interchange._geospatial import GeospatialContract
+from ....typing import checked
 from ..electrical._finite_patch import PreparedDC
 
 
@@ -219,6 +220,7 @@ class HydrogeophysicalPlan(StrictModule):
             raise ValueError("Physical field does not match source cell count.")
         return target.flatten(self.transfer.primal_operator.mv(source.unflatten(value)))
 
+    @checked
     def predict(
         self,
         porosity: ArrayLike,
@@ -228,10 +230,6 @@ class HydrogeophysicalPlan(StrictModule):
         *,
         log_discrepancy: ArrayLike = 0.0,
     ) -> HydrogeophysicalPrediction:
-        if not isinstance(calibration, ArchieSaturationConductivity):
-            raise TypeError(
-                "Petrophysical calibration must be explicit ArchieSaturationConductivity."
-            )
         porosity = jnp.broadcast_to(jnp.asarray(porosity), self.source_volumes_m3.shape)
         water = jnp.asarray(water_volume_m3)
         temperature = jnp.broadcast_to(jnp.asarray(temperature_K), porosity.shape)

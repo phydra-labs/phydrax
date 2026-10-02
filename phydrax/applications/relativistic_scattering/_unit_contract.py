@@ -38,7 +38,7 @@ from ...metrix import (
     tetrad_project_vector,
     tetrad_reconstruct_vector,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import derived_unit, UnitDefinition
 
 
@@ -132,6 +132,7 @@ class RelativisticUnitContract(StrictModule, NonTrainableState):
     )
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -145,10 +146,6 @@ class RelativisticUnitContract(StrictModule, NonTrainableState):
         polarization_normalization: PolarizationNormalization = "physical-helicity",
         identical_particle_normalization: IdenticalParticleNormalization = "factorial-symmetry",
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be a RelativityConvention.")
         if not scale.quantum_constants_explicit:
             raise ValueError(
                 "Relativistic unit contracts require explicitly declared c and hbar."
@@ -603,6 +600,7 @@ class LocalRelativisticFramePlan(StrictModule, NonTrainableState):
     orientation_id: str = eqx.field(static=True)
     frame_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: ADMGridGeometry,
@@ -616,12 +614,6 @@ class LocalRelativisticFramePlan(StrictModule, NonTrainableState):
         observer_id: str,
         orientation_id: str,
     ) -> None:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
-        if not isinstance(tetrad, OrthonormalTetrad):
-            raise TypeError("tetrad must be an OrthonormalTetrad.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
         observer = _identifier(observer_id, "observer_id")
         orientation = _identifier(orientation_id, "orientation_id")
         if geometry.scale_id != units.scale.scale_id:
@@ -691,6 +683,7 @@ class LocalRelativisticFramePlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_adm(
         cls,
         geometry: ADMGridGeometry,
@@ -713,10 +706,6 @@ class LocalRelativisticFramePlan(StrictModule, NonTrainableState):
         JAX-safe; ``frame_id`` names the static lineage while ``frame_token`` and
         the dynamic fields identify the exact stage realization.
         """
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
         observer = _identifier(observer_id, "observer_id")
         orientation = _identifier(orientation_id, "orientation_id")
         if geometry.scale_id != units.scale.scale_id:

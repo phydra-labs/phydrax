@@ -14,6 +14,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._operators import AbstractLinearOperator, FunctionLinearOperator
 from ._spaces import AbstractVectorSpace, DualSpace
 
@@ -27,6 +28,7 @@ class ConstraintMap(StrictModule, NonTrainableState):
     dual_pullback: AbstractLinearOperator
     constraint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         full_space: AbstractVectorSpace,
@@ -40,8 +42,6 @@ class ConstraintMap(StrictModule, NonTrainableState):
             reduced_space, AbstractVectorSpace
         ):
             raise TypeError("Constraint spaces must be AbstractVectorSpace values.")
-        if not isinstance(prolongation, AbstractLinearOperator):
-            raise TypeError("prolongation must be an AbstractLinearOperator.")
         if not prolongation.source.compatible(
             reduced_space
         ) or not prolongation.target.compatible(full_space):

@@ -26,6 +26,7 @@ from ..discretization import (
     PreparedFiniteDifferenceDiscretization,
     PreparedTensorGrid,
 )
+from ..typing import checked
 
 
 def _pml_profile(
@@ -200,6 +201,7 @@ class StaggeredAcousticPlan(StrictModule):
     sensor_indices: Array | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -213,8 +215,6 @@ class StaggeredAcousticPlan(StrictModule):
         sensor_indices: ArrayLike | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
             raise ValueError(
                 "Staggered acoustics requires an interval-primary tensor grid."
@@ -486,13 +486,12 @@ class PreparedStaggeredAcoustics(StrictModule):
         self.unpack_split(state)
         return state
 
+    @checked
     def unpack_split(
         self,
         state: StaggeredAcousticState,
         /,
     ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
-        if not isinstance(state, StaggeredAcousticState):
-            raise TypeError("Acoustic state must be StaggeredAcousticState.")
         dimension = len(self.plan.grid.axis_names)
         if (
             len(state.pressure_components) != dimension

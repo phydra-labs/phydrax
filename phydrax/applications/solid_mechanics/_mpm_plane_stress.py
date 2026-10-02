@@ -27,6 +27,7 @@ from ...operators.mechanics import (
     HyperelasticLaw,
     HyperelasticResponse,
 )
+from ...typing import checked
 from ._plane_stress import (
     BlockDiagonalPlaneStressReductionPlan,
     PlaneStressFailure,
@@ -120,6 +121,7 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractImplicitMPMConstitutivePlan,
@@ -127,8 +129,6 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         *,
         reduction: BlockDiagonalPlaneStressReductionPlan | None = None,
     ) -> None:
-        if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
-            raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":
             raise ValueError("Plane-stress closure requires one 3-D base material.")
         reduction_ = (

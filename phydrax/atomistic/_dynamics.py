@@ -28,7 +28,7 @@ from ..discretization import (
     PeriodicCell,
     PreparedVerletParticleNeighborhood,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._constraints import PreparedDistanceConstraints
 from ._ensemble_advanced import AtomisticSplittingPlan, SplittingOperatorKind
 from ._potential_program import (
@@ -192,6 +192,7 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
     constraints: PreparedDistanceConstraints | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -202,16 +203,8 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
         *,
         constraints: PreparedDistanceConstraints | None = None,
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be a PreparedAtomisticSystem.")
-        if not isinstance(potential, AbstractPreparedAtomisticHamiltonian):
-            raise TypeError(
-                "potential must implement AbstractPreparedAtomisticHamiltonian."
-            )
         if potential.system.prepared_id != system.prepared_id:
             raise ValueError("Potential program belongs to another atomistic system.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
         if neighborhood.particle_discretization_id != system.particles.prepared_id:
             raise ValueError("Neighborhood belongs to another particle support.")
         neighborhood_box = neighborhood.box
@@ -282,9 +275,8 @@ class PreparedAtomisticDynamics(StrictModule):
     constraints: PreparedDistanceConstraints | None
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: AtomisticDynamicsPlan, /) -> None:
-        if not isinstance(plan, AtomisticDynamicsPlan):
-            raise TypeError("plan must be an AtomisticDynamicsPlan.")
         self.plan = plan
         self.system = plan.system
         self.potential = plan.potential
@@ -447,6 +439,7 @@ class PreparedAtomisticDynamics(StrictModule):
             successful & jnp.isfinite(energy),
         )
 
+    @checked
     def evaluate_state(
         self,
         state: AtomisticDynamicsState,
@@ -455,10 +448,6 @@ class PreparedAtomisticDynamics(StrictModule):
         *,
         state_index: ArrayLike | None = None,
     ) -> AtomisticHamiltonianEvaluation:
-        if not isinstance(state, AtomisticDynamicsState):
-            raise TypeError("state must be an AtomisticDynamicsState.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(self)
         if state.prepared_dynamics_id != self.prepared_id:
             raise ValueError("State belongs to another atomistic dynamics runtime.")
@@ -484,6 +473,7 @@ class PreparedAtomisticDynamics(StrictModule):
             successful,
         )
 
+    @checked
     def energy_state(
         self,
         state: AtomisticDynamicsState,
@@ -492,10 +482,6 @@ class PreparedAtomisticDynamics(StrictModule):
         *,
         state_index: ArrayLike | None = None,
     ) -> AtomisticPotentialEnergyEvaluation:
-        if not isinstance(state, AtomisticDynamicsState):
-            raise TypeError("state must be an AtomisticDynamicsState.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(self)
         if state.prepared_dynamics_id != self.prepared_id:
             raise ValueError("State belongs to another atomistic dynamics runtime.")
@@ -668,6 +654,7 @@ class PreparedAtomisticDynamics(StrictModule):
             prepared_dynamics_id=self.prepared_id,
         )
 
+    @checked
     def rebase_thermodynamic_state(
         self,
         state: AtomisticDynamicsState,
@@ -675,10 +662,6 @@ class PreparedAtomisticDynamics(StrictModule):
         state_index: ArrayLike,
         /,
     ) -> AtomisticThermodynamicRebaseEvaluation:
-        if not isinstance(state, AtomisticDynamicsState):
-            raise TypeError("state must be an AtomisticDynamicsState.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(self)
         if (
             state.prepared_dynamics_id != self.prepared_id
@@ -866,16 +849,13 @@ class PreparedAtomisticDynamics(StrictModule):
     ) -> AtomisticDynamicsState:
         return self.step_detailed(state, thermodynamic).accepted_state
 
+    @checked
     def step_detailed(
         self,
         state: AtomisticDynamicsState,
         thermodynamic: PreparedThermodynamicStateTable,
         /,
     ) -> AtomisticStepEvaluation:
-        if not isinstance(state, AtomisticDynamicsState):
-            raise TypeError("state must be an AtomisticDynamicsState.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(self)
         if (
             state.prepared_dynamics_id != self.prepared_id
@@ -1108,6 +1088,7 @@ class PreparedAtomisticDynamics(StrictModule):
             rejection_reasons=reasons,
         )
 
+    @checked
     def diagnostics(
         self,
         state: AtomisticDynamicsState,
@@ -1116,8 +1097,6 @@ class PreparedAtomisticDynamics(StrictModule):
         rejection_reasons: Array | None = None,
         /,
     ) -> AtomisticDynamicsDiagnostics:
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(self)
         if state.thermodynamic_table_id != thermodynamic.table_id:
             raise ValueError("State belongs to another thermodynamic table.")

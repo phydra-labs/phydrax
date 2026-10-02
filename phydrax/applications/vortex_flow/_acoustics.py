@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class AerodynamicLoadHistory(StrictModule):
@@ -105,11 +106,10 @@ class FWHTonalAcousticsPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self, history: AerodynamicLoadHistory, observers: ArrayLike, /
     ) -> FWHObserverResult:
-        if not isinstance(history, AerodynamicLoadHistory):
-            raise TypeError("history must be AerodynamicLoadHistory.")
         observer = jnp.asarray(observers, dtype=history.source_position.dtype)
         if observer.ndim != 2 or observer.shape[1] != 3:
             raise ValueError("FW-H observers require shape (count,3).")

@@ -21,7 +21,7 @@ from ...stochastic._signature_features import (
     SignatureFeatures,
     time_augment_path,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 SignatureFeatureKind: TypeAlias = Literal["signature", "logsignature"]
@@ -217,6 +217,7 @@ class CausalSignaturePolicy(StrictModule):
     training_realization_ids: tuple[str, ...] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedCausalSignaturePolicy,
@@ -229,10 +230,6 @@ class CausalSignaturePolicy(StrictModule):
         training_sample: SignaturePolicySampleSet,
         policy_id: str,
     ) -> None:
-        if not isinstance(prepared, PreparedCausalSignaturePolicy):
-            raise TypeError("prepared must be a PreparedCausalSignaturePolicy.")
-        if not isinstance(training_sample, SignaturePolicySampleSet):
-            raise TypeError("training_sample must be a SignaturePolicySampleSet.")
         if training_sample.sample_role != "training":
             raise ValueError("training_sample must declare sample_role='training'.")
         if training_sample.history_dimension != prepared.spec.history_dimension:

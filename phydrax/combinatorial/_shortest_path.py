@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..sparse import EdgeRelation
+from ..typing import checked
 from ._method import (
     AbstractLinearCombinatorialMethod,
     CombinatorialPlan,
@@ -108,6 +109,7 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
     acyclic: bool = eqx.field(static=True)
     _structure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -115,8 +117,6 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
         target: int,
         /,
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be an EdgeRelation.")
         if relation.source_size != relation.target_size:
             raise ValueError("shortest-path relations require one shared vertex space.")
         vertices = relation.source_size
@@ -182,9 +182,8 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.edge_count,), jnp.float32)
 
+    @checked
     def canonicalize(self, decision: PathDecision, /) -> PathDecision:
-        if not isinstance(decision, PathDecision):
-            raise TypeError("shortest-path decisions must be PathDecision values.")
         vertices = jnp.asarray(decision.vertices, dtype=jnp.int32)
         edges = jnp.asarray(decision.edges, dtype=jnp.int32)
         length = jnp.asarray(decision.length, dtype=jnp.int32)

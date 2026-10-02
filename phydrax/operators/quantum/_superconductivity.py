@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, OperatorProperties
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ...typing import checked
 from ._fermionic_fock import FermionModeOrder
 
 
@@ -30,9 +31,8 @@ class NambuConvention(StrictModule):
     particle_hole_matrix: Array
     convention_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mode_order: FermionModeOrder, /) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         count = mode_order.mode_count
         zero = jnp.zeros((count, count), dtype=jnp.complex128)
         identity = jnp.eye(count, dtype=jnp.complex128)
@@ -62,6 +62,7 @@ class FermionicPairingPlan(StrictModule):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mode_order: FermionModeOrder,
@@ -73,8 +74,6 @@ class FermionicPairingPlan(StrictModule):
         energy_unit: str,
         tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         minus = np.asarray(minus_k_indices)
         weights = np.asarray(k_weights)
         if (

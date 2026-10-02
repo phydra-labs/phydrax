@@ -19,6 +19,7 @@ from ..discretization.splatting import (
     PreparedParticleGridSplat,
     SplatDepositResult,
 )
+from ..typing import checked
 from ._self_gravity import PreparedNewtonianSelfGravity
 
 
@@ -62,16 +63,13 @@ class ParticleMeshGravityPlan(StrictModule):
     transfer: PreparedParticleGridSplat
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         gravity: PreparedNewtonianSelfGravity,
         transfer: PreparedParticleGridSplat,
         /,
     ) -> None:
-        if not isinstance(gravity, PreparedNewtonianSelfGravity):
-            raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
-        if not isinstance(transfer, PreparedParticleGridSplat):
-            raise TypeError("transfer must be PreparedParticleGridSplat.")
         if (
             transfer.plan.target.prepared_id
             != gravity.dynamics.discretization.grid.prepared_id
@@ -171,6 +169,7 @@ class ParticleMeshGravityPlan(StrictModule):
             successful=successful,
         )
 
+    @checked
     def step(
         self,
         state: ParticleMeshGravityState,
@@ -181,8 +180,6 @@ class ParticleMeshGravityPlan(StrictModule):
         *,
         background_density: ArrayLike | None = None,
     ) -> ParticleMeshGravityStepResult:
-        if not isinstance(state, ParticleMeshGravityState):
-            raise TypeError("state must be ParticleMeshGravityState.")
         start = jnp.asarray(start_time)
         end = jnp.asarray(end_time, dtype=start.dtype)
         step = end - start

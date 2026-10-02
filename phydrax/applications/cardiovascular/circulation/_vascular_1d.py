@@ -26,7 +26,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 
 
 VascularPortSide: TypeAlias = Literal["inlet", "outlet"]
@@ -236,9 +236,8 @@ class Vascular1DPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(self, tube_law: SquareRootTubeLaw, /) -> "PreparedVascular1D":
-        if not isinstance(tube_law, SquareRootTubeLaw):
-            raise TypeError("tube_law must be a SquareRootTubeLaw.")
         return PreparedVascular1D(
             plan=self,
             tube_law=tube_law,

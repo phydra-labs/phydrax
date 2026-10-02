@@ -16,6 +16,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import inverse as matrix_inverse
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._utils import _pointwise_array
 
@@ -27,6 +28,7 @@ class VectorBundleConnection(StrictModule):
     chart: CoordinateChart
     fiber_dimension: int
 
+    @checked
     def __init__(
         self,
         coefficients: Callable[[Array], Array],
@@ -37,8 +39,6 @@ class VectorBundleConnection(StrictModule):
     ) -> None:
         if not callable(coefficients):
             raise TypeError("Bundle-connection coefficients must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Bundle connection requires a CoordinateChart.")
         dimension = int(fiber_dimension)
         if dimension < 1:
             raise ValueError("Bundle fiber_dimension must be positive.")

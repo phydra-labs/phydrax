@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
-from ...typing import parse
+from ...typing import checked, parse
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from .._core import (
@@ -137,6 +137,7 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -147,14 +148,10 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
         admissibility_policy: PolygonAdmissibilityPolicy | None = None,
         resource_budget: VirtualElementResourceBudget | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
             raise ValueError("Virtual elements currently require a planar 2-D CellMesh.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError("Virtual elements require polygonal connectivity.")
-        if not isinstance(field, VirtualElementFieldSpec):
-            raise TypeError("field must be VirtualElementFieldSpec.")
         if field.element.form_type.dimension != mesh.topological_dimension:
             raise ValueError("Virtual-element form dimension must match the mesh.")
         precision = (
@@ -231,11 +228,10 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
+    @checked
     def __init__(
         self, plan: VirtualElementPlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, VirtualElementPlan):
-            raise TypeError("plan must be VirtualElementPlan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")

@@ -45,8 +45,20 @@ from jax.typing import ArrayLike, DTypeLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer
 from ..sparse import EdgeRelation, KeyGroupPlan
-from ..typing import as_array, Bool, Dim, Float, Int32, parse, Scalar, Scope, Size
+from ..typing import (
+    as_array,
+    Bool,
+    checked,
+    Dim,
+    Float,
+    Int32,
+    parse,
+    Scalar,
+    Scope,
+    Size,
+)
 
 
 _INT32_MAX = int(np.iinfo(np.int32).max)
@@ -198,6 +210,7 @@ class ConnectedComponentPlan(StrictModule):
     maximum_rounds: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -206,8 +219,6 @@ class ConnectedComponentPlan(StrictModule):
         component_capacity: int,
         maximum_rounds: int,
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be a phydrax.sparse.EdgeRelation.")
         if relation.source_size != relation.target_size:
             raise ValueError("relation must map one entity space onto itself.")
         entities = _positive_integer(relation.source_size, "relation entity count")
@@ -446,7 +457,14 @@ class ComponentTransitionPlan(StrictModule):
     @property
     def key_dtype(self) -> DTypeLike:
         """Return the narrowest pair-key dtype holding every ``(old, new)`` key."""
-        if self.grouping.key_upper_bound <= _INT32_MAX:
+        bound = nonnegative_integer(
+            self.grouping.key_upper_bound, "component pair key bound"
+        )
+        if bound < 0 or bound > _INT64_MAX:
+            raise ValueError(
+                "component pair key bound must fit the nonnegative int64 range."
+            )
+        if bound <= _INT32_MAX:
             return jnp.int32
         return jnp.int64
 
@@ -508,15 +526,13 @@ class ComponentTransitionPlan(StrictModule):
             pair_active, groups.group_keys % self.new_capacity, -1
         ).astype(jnp.int32)
         if self.reciprocal_dominance:
-            pair_old, pair_new, pair_overlap, pair_active = (
-                _reciprocal_dominant_pairs(
-                    pair_old,
-                    pair_new,
-                    pair_overlap,
-                    pair_active,
-                    self.old_capacity,
-                    self.new_capacity,
-                )
+            pair_old, pair_new, pair_overlap, pair_active = _reciprocal_dominant_pairs(
+                pair_old,
+                pair_new,
+                pair_overlap,
+                pair_active,
+                self.old_capacity,
+                self.new_capacity,
             )
         old_event, new_event, old_children, new_parents = _classify_events(
             pair_old,
@@ -574,21 +590,22 @@ def _reciprocal_dominant_pairs(
         num_segments=new_capacity,
     )
     retained = pair_active & (
-        (pair_overlap >= old_maximum[safe_old])
-        | (pair_overlap >= new_maximum[safe_new])
+        (pair_overlap >= old_maximum[safe_old]) | (pair_overlap >= new_maximum[safe_new])
     )
     capacity = pair_active.size
     rank = jnp.cumsum(retained.astype(jnp.int32)) - 1
     target = jnp.where(retained, rank, capacity)
-    compact_old = jnp.full((capacity + 1,), -1, dtype=jnp.int32).at[target].set(
-        pair_old
-    )[:capacity]
-    compact_new = jnp.full((capacity + 1,), -1, dtype=jnp.int32).at[target].set(
-        pair_new
-    )[:capacity]
-    compact_overlap = jnp.zeros(
-        (capacity + 1,), dtype=pair_overlap.dtype
-    ).at[target].set(pair_overlap)[:capacity]
+    compact_old = (
+        jnp.full((capacity + 1,), -1, dtype=jnp.int32).at[target].set(pair_old)[:capacity]
+    )
+    compact_new = (
+        jnp.full((capacity + 1,), -1, dtype=jnp.int32).at[target].set(pair_new)[:capacity]
+    )
+    compact_overlap = (
+        jnp.zeros((capacity + 1,), dtype=pair_overlap.dtype)
+        .at[target]
+        .set(pair_overlap)[:capacity]
+    )
     compact_active = jnp.arange(capacity) < jnp.sum(retained, dtype=jnp.int32)
     return compact_old, compact_new, compact_overlap, compact_active
 

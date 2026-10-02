@@ -46,7 +46,7 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._mac_composite_projection import (
     CompositeMACProjectionPlan,
     CompositeMACProjectionResult,
@@ -226,6 +226,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
     fixed_diffusion_coefficient: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         momentum: PreparedMACMomentumOperators,
@@ -240,8 +241,6 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
         fixed_diffusion_coefficient: float | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         solve_method = parse(solve_method, MACHelmholtzSolveMethod, "solve_method")
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
@@ -1088,6 +1087,7 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
     prepared_les_id: str | None = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -1101,8 +1101,6 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         linear_policy: LinearSolvePolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         prepared_les = _prepared_algebraic_les(dynamics)
         implicit_les = prepared_les is not None and prepared_les.model.coefficient > 0.0
         fixed = None if fixed_step_size is None else float(fixed_step_size)
@@ -1590,6 +1588,7 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
     capabilities: TemporalMethodCapabilities
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -1603,8 +1602,6 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         linear_policy: LinearSolvePolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         step = float(step_size)
         if step <= 0.0 or not np.isfinite(step):
             raise ValueError("MACSBDF2Method requires a positive finite fixed step.")
@@ -2045,9 +2042,8 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
             method_id=self.method_id,
         )
 
+    @checked
     def step(self, history: MACSBDF2State, /, *, args: Any = None) -> MACSBDF2StepResult:
-        if not isinstance(history, MACSBDF2State):
-            raise TypeError("history must be MACSBDF2State.")
         if history.method_id != self.method_id:
             raise ValueError("MAC SBDF2 history belongs to a different method.")
         current_state = self.dynamics.validate_state(history.state)

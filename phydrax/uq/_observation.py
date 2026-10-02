@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from .._likelihoods import AbstractLikelihood
 from ..stochastic._state_space import AbstractObservationModel, StateSpaceStepContext
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
@@ -39,6 +39,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         likelihood: AbstractLikelihood,
@@ -52,8 +53,6 @@ class LikelihoodObservationModel(AbstractObservationModel):
             Callable[[Array, Array, StateSpaceStepContext], Mapping[str, Any]] | None
         ) = None,
     ) -> None:
-        if not isinstance(likelihood, AbstractLikelihood):
-            raise TypeError("likelihood must implement AbstractLikelihood.")
         if not callable(location):
             raise TypeError("location must be callable.")
         if parameters is not None and not callable(parameters):

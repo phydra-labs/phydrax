@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import checked
 from ._sector import AbstractSectorBasis, SectorBasisResourcePolicy
 
 
@@ -255,6 +256,7 @@ class FiniteGroupActionPlan(StrictModule):
     resources: OrbitSectorResourcePolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: AbstractSectorBasis,
@@ -262,15 +264,11 @@ class FiniteGroupActionPlan(StrictModule):
         resources: OrbitSectorResourcePolicy,
         /,
     ) -> None:
-        if not isinstance(basis, AbstractSectorBasis):
-            raise TypeError("basis must be an AbstractSectorBasis.")
         values = tuple(generators)
         if not values or any(
             not isinstance(value, MonomialConfigurationGenerator) for value in values
         ):
             raise TypeError("At least one monomial symmetry generator is required.")
-        if not isinstance(resources, OrbitSectorResourcePolicy):
-            raise TypeError("resources must be OrbitSectorResourcePolicy.")
         if len({value.label for value in values}) != len(values):
             raise ValueError("Symmetry-generator labels must be unique.")
         for value in values:
@@ -375,6 +373,7 @@ class PreparedOrbitSectorBasis(AbstractSectorBasis):
     orbit_sizes: Array
     projection_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractSectorBasis,
@@ -389,12 +388,6 @@ class PreparedOrbitSectorBasis(AbstractSectorBasis):
         projection_tolerance: float,
         basis_id: str,
     ) -> None:
-        if not isinstance(base, AbstractSectorBasis):
-            raise TypeError("base must be an AbstractSectorBasis.")
-        if not isinstance(action, PreparedFiniteGroupAction):
-            raise TypeError("action must be PreparedFiniteGroupAction.")
-        if not isinstance(resources, SectorBasisResourcePolicy):
-            raise TypeError("resources must be SectorBasisResourcePolicy.")
         representative_table = jnp.asarray(representatives, dtype=jnp.int32)
         raw_map = jnp.asarray(raw_to_orbit, dtype=jnp.int32)
         embedding = jnp.asarray(embedding_coefficients, dtype=jnp.complex128)

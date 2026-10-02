@@ -20,6 +20,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import MaterializationPolicy, materialize
+from ..typing import checked
 from ._gp_actions import AbstractGaussianProcessActionPolicy
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._minibatch_posterior import AbstractObservationFactor, LikelihoodBatch
@@ -45,6 +46,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
     active_mask: Array
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observation_points: ArrayLike,
@@ -56,13 +58,9 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         regularization: ArrayLike = 1e-8,
         likelihood_samples: int = 8,
     ) -> None:
-        if not isinstance(state, GaussianProcessLikelihoodState):
-            raise TypeError("state must be a GaussianProcessLikelihoodState.")
         points = jnp.asarray(observation_points)
         if points.ndim != state.kernel.input_ndim + 1 or points.shape[0] <= 0:
             raise ValueError("observation_points must match the kernel input rank.")
-        if not isinstance(actions, AbstractGaussianProcessActionPolicy):
-            raise TypeError("actions must implement AbstractGaussianProcessActionPolicy.")
         if actions.requires_residual:
             raise ValueError(
                 "Residual-dependent actions are not reusable non-Gaussian inducing geometry."

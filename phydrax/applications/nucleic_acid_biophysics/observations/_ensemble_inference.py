@@ -30,6 +30,7 @@ from ....pgm import (
     run_exact_factor_graph,
     VariableSelection,
 )
+from ....typing import checked
 from ....uq._map import find_map, MAPResult
 from ....uq._posterior import (
     IdentityBijector,
@@ -357,6 +358,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
     identification_convention: str = eqx.field(static=True)
     independence_assumption: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         batch: MutationProfileBatch,
@@ -379,8 +381,6 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             raise TypeError(
                 "Finite ensembles require a mutation batch and structural hypothesis."
             )
-        if not isinstance(population_model, ConditionPopulationModel):
-            raise TypeError("population_model must be a ConditionPopulationModel.")
         if (
             population_model.condition_ids != batch.condition_ids
             or population_model.state_ids != hypothesis.state_ids
@@ -707,6 +707,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def diagnostics(
         self,
         parameters: Mapping[str, Array],
@@ -716,8 +717,6 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         profile_mask: ArrayLike | None = None,
         optimization_converged: bool = True,
     ) -> EnsembleDiagnostics:
-        if not isinstance(policy, EnsembleDiagnosticPolicy):
-            raise TypeError("policy must be an EnsembleDiagnosticPolicy.")
         selected_profiles = self.batch.analysis_profile_mask(profile_mask)
         prediction = self.posterior_prediction(parameters)
         state_probability = prediction.state_mutation_probability

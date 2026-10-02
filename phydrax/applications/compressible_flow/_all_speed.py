@@ -28,6 +28,7 @@ from ...equations._nonequilibrium_gas import (
     TwoTemperatureMixtureNavierStokesSystem,
 )
 from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
+from ...typing import checked
 from ._contracts import AllSpeedCompressiblePolicy, ShockResolvingPolicy
 
 
@@ -67,9 +68,8 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTraina
     flux_id: str = eqx.field(static=True)
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
+    @checked
     def __init__(self, policy: AllSpeedCompressiblePolicy, /) -> None:
-        if not isinstance(policy, AllSpeedCompressiblePolicy):
-            raise TypeError("policy must be AllSpeedCompressiblePolicy.")
         self.policy = policy
         self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
@@ -196,9 +196,8 @@ class ShockAwareAllSpeedFluxPlan(
     flux_id: str = eqx.field(static=True)
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
+    @checked
     def __init__(self, policy: ShockResolvingPolicy, /) -> None:
-        if not isinstance(policy, ShockResolvingPolicy):
-            raise TypeError("policy must be ShockResolvingPolicy.")
         self.policy = policy
         self.primary = AllSpeedHLLFluxPlan(policy.all_speed)
         self.differentiability = BranchDifferentiationPolicy.BRANCHWISE

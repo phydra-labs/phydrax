@@ -18,6 +18,7 @@ from .._external_resource import ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import conversion_factor, METER, UnitDefinition
 from ._geospatial import GeospatialContract
 
@@ -127,6 +128,7 @@ class BoreholeTrajectory(StrictModule, NonTrainableState):
     resources: tuple[ResourceManifest, ...] = eqx.field(static=True)
     trajectory_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -144,8 +146,6 @@ class BoreholeTrajectory(StrictModule, NonTrainableState):
         name_ = str(name).strip()
         if not name_:
             raise ValueError("Borehole name is required.")
-        if not isinstance(coordinates, GeospatialContract):
-            raise TypeError("Borehole coordinates require GeospatialContract.")
         spatial = coordinates.require_cartesian(dimensions=3)
         if spatial.length_unit != length_unit:
             raise ValueError("Borehole array unit and geospatial length unit disagree.")

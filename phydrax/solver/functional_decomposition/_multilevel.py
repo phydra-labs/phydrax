@@ -18,6 +18,7 @@ from ...domain import (
     partition_of_unity_field,
     SubdomainHierarchy,
 )
+from ...typing import checked
 from .._functional_correction import (
     FunctionalCorrectionProblem,
     prepare_functional_correction,
@@ -32,6 +33,7 @@ class FunctionalCoarseCorrection(StrictModule):
     correction: FunctionalCorrectionProblem
     field_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_solver: FunctionalSolver,
@@ -41,10 +43,6 @@ class FunctionalCoarseCorrection(StrictModule):
         *,
         epsilon: float = 1.0,
     ) -> None:
-        if not isinstance(base_solver, FunctionalSolver):
-            raise TypeError("base_solver must be a FunctionalSolver.")
-        if not isinstance(family, LocalFieldFamily):
-            raise TypeError("family must be a LocalFieldFamily.")
         name = str(field_name)
         if name not in base_solver.functions:
             raise KeyError(f"Base solver has no field {name!r}.")

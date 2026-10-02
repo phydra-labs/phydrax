@@ -32,6 +32,7 @@ from ...dynamics._plant import (
     PlantRuntimeState,
     PlantStepContext,
 )
+from ...typing import checked
 from ._backend import (
     ObservationFreshness,
     ROBOTICS_OPERATIONS,
@@ -434,11 +435,8 @@ class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
     activation_indices: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, adapter: MJXAdapter, plan: MJXMuscleProjectionPlan, /) -> None:
-        if not isinstance(adapter, MJXAdapter):
-            raise TypeError("adapter must be MJXAdapter.")
-        if not isinstance(plan, MJXMuscleProjectionPlan):
-            raise TypeError("plan must be MJXMuscleProjectionPlan.")
         available = adapter.muscle_actuator_names
         if not available:
             raise ValueError("The prepared MJX model has no compiled built-in muscles.")
@@ -660,6 +658,7 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
     _prepared_devices: tuple[str, ...] = eqx.field(static=True)
     _mjx: Any = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -686,10 +685,6 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
         case_ndim_ = int(case_ndim)
         if case_ndim_ < 0:
             raise ValueError("case_ndim must be nonnegative.")
-        if not isinstance(semantic_provenance, SemanticProvenance):
-            raise TypeError("semantic_provenance must be SemanticProvenance.")
-        if not isinstance(numeric_revision, NumericRevision):
-            raise TypeError("numeric_revision must be NumericRevision.")
         if numeric_revision.semantic_id != semantic_provenance.semantic_id:
             raise ValueError("MJX numeric revision belongs to different semantics.")
 
@@ -786,9 +781,8 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
         self._prepared_devices = prepared_devices
         self._mjx = mjx_module
 
+    @checked
     def _payload(self, state: MJXState, /) -> tuple[MJXState, tuple[int, ...]]:
-        if not isinstance(state, MJXState):
-            raise TypeError("MJX plant payload must be MJXState.")
         if not isinstance(state.opaque, self._mjx.Data):
             raise TypeError("MJX state must retain a complete mjx.Data PyTree.")
         if state.opaque.impl != self._mjx.Impl.JAX:
@@ -797,11 +791,10 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
         _validate_devices(state, self._prepared_devices)
         return state, case_shape
 
+    @checked
     def _state(
         self, state: PlantRuntimeState, /
     ) -> tuple[PlantRuntimeState, MJXState, tuple[int, ...]]:
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         observed_ids = (
             state.semantic_provenance_id,
             state.numeric_revision_id,

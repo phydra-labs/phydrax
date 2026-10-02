@@ -17,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core import Currency, InstrumentReference
 
 
@@ -137,6 +138,7 @@ class ExecutionOrder(StrictModule):
     expires_ns: int | None = eqx.field(static=True)
     sequence: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -151,8 +153,6 @@ class ExecutionOrder(StrictModule):
         limit_price: ArrayLike | None = None,
         expires_ns: int | None = None,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(side, Side):
             raise TypeError("side must be Side.BUY or Side.SELL.")
         if not isinstance(kind, OrderKind):
@@ -223,6 +223,7 @@ class ExecutionInventory(StrictModule):
     quantity: Array
     fees: Array
 
+    @checked
     def __init__(
         self,
         instrument: InstrumentReference,
@@ -233,10 +234,6 @@ class ExecutionInventory(StrictModule):
         quantity: ArrayLike = 0.0,
         fees: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(instrument, InstrumentReference):
-            raise TypeError("instrument must be an InstrumentReference.")
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         if instrument.settlement_currency.currency_id != currency.currency_id:
             raise ValueError(
                 "inventory currency must equal the instrument settlement currency."
@@ -412,13 +409,10 @@ class ExecutionConstraints(StrictModule):
         self.maximum_quote_offset = float(maximum_quote_offset)
         self.require_terminal_flat = bool(require_terminal_flat)
 
+    @checked
     def action_is_admissible(
         self, action: ExecutionAction, state: ExecutionState, /
     ) -> Array:
-        if not isinstance(action, ExecutionAction):
-            raise TypeError("action must be an ExecutionAction.")
-        if not isinstance(state, ExecutionState):
-            raise TypeError("state must be an ExecutionState.")
         proposed_inventory = (
             state.inventory + action.market_quantity + action.impulse_quantity
         )
@@ -502,6 +496,7 @@ class ExecutionLedger(StrictModule):
     event_order: ExecutionEventOrder = eqx.field(static=True)
     quantity_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_inventory: ExecutionInventory,
@@ -509,8 +504,6 @@ class ExecutionLedger(StrictModule):
         *,
         quantity_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(initial_inventory, ExecutionInventory):
-            raise TypeError("initial_inventory must be an ExecutionInventory.")
         tolerance = float(quantity_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("quantity_tolerance must be finite and nonnegative.")

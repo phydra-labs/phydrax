@@ -23,6 +23,7 @@ from phydrax.qualification import (
     ScientificClaimProfile,
 )
 
+from ....typing import checked
 from ._labeled_assay import LabeledTranscriptAssay, LabeledTranscriptCounts
 from ._pulse_chase import (
     PulseChaseIdentifiability,
@@ -87,6 +88,7 @@ class PulseChaseQualificationAssessment:
             return "inconclusive"
         return "ready-for-claim-evaluation"
 
+    @checked
     def evaluate_claim(
         self,
         claim: ScientificClaimProfile,
@@ -105,8 +107,6 @@ class PulseChaseQualificationAssessment:
         issued_at: int,
         expires_at: int,
     ) -> QualificationEvidence:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
         _require_exact_claim_scope(claim)
         if (
             claim.campaign_id != self.campaign_id

@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import checked
 
 
 class GRRadiationAngularClosureEvaluation(StrictModule):
@@ -663,6 +664,7 @@ class MonteCarloRadiationClosurePlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def stress_energy_projection(
         self,
         evaluation: MonteCarloRadiationClosureEvaluation,
@@ -670,8 +672,6 @@ class MonteCarloRadiationClosurePlan(StrictModule, NonTrainableState):
         /,
     ) -> StressEnergyProjection:
         geometry = _require_geometry(self.scale, self.convention, geometry)
-        if not isinstance(evaluation, MonteCarloRadiationClosureEvaluation):
-            raise TypeError("evaluation must be MonteCarloRadiationClosureEvaluation.")
         if evaluation.plan_id != self.plan_id:
             raise ValueError("Monte Carlo evaluation belongs to another closure plan.")
         return _projection(

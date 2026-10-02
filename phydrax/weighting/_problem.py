@@ -27,6 +27,7 @@ from ..linalg import (
 from ..linalg._spaces import _coordinate_dtype
 from ..linalg.eigen import SelfAdjointSpectrumPolicy
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import checked
 
 
 class ExactMoments(StrictModule):
@@ -157,14 +158,13 @@ class GroupMassConstraints(StrictModule):
     target: ExactMoments | IntervalMoments
     group_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         group_map: AbstractSparseLinearOperator,
         target: ExactMoments | IntervalMoments,
         /,
     ) -> None:
-        if not isinstance(group_map, AbstractSparseLinearOperator):
-            raise TypeError("group_map must be an AbstractSparseLinearOperator.")
         if not isinstance(target, (ExactMoments, IntervalMoments)):
             raise TypeError("Group mass target must be exact or interval moments.")
         if (

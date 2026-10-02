@@ -21,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
+from ...typing import checked
 from ._collision import (
     BGKCollisionPlan,
     CentralMomentCollisionPlan,
@@ -366,6 +367,7 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
     maximum_spurious_current_ratio: float = eqx.field(static=True)
     envelope_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lattice: LatticeBoltzmannVelocitySet,
@@ -391,16 +393,10 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
         maximum_relative_mass_drift: float = 0.0,
         maximum_spurious_current_ratio: float = 0.0,
     ) -> None:
-        if not isinstance(lattice, LatticeBoltzmannVelocitySet):
-            raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
         if not isinstance(collision, _COLLISION_TYPES):
             raise TypeError("collision must be a supported LBM collision plan.")
         if forcing is not None and not isinstance(forcing, GuoForcingPlan):
             raise TypeError("forcing must be GuoForcingPlan or None.")
-        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
-            raise TypeError("precision must be a LatticeBoltzmannPrecisionPolicy.")
-        if not isinstance(hardware, LatticeBoltzmannHardwareTarget):
-            raise TypeError("hardware must be a LatticeBoltzmannHardwareTarget.")
         if not lattice.supports(collision.family):
             raise ValueError(
                 f"Lattice {lattice.name!r} is not certified for collision {collision.family!r}."
@@ -535,11 +531,10 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
             ("precision", self.precision.policy_id),
         )
 
+    @checked
     def evaluate(
         self, point: LatticeBoltzmannOperatingPoint, /
     ) -> LatticeBoltzmannEnvelopeAdmission:
-        if not isinstance(point, LatticeBoltzmannOperatingPoint):
-            raise TypeError("point must be a LatticeBoltzmannOperatingPoint.")
         values = jnp.stack(
             (
                 point.mach_number,
@@ -692,16 +687,13 @@ class PreparedLatticeBoltzmannOperatingEnvelope(StrictModule, NonTrainableState)
     resources: LatticeBoltzmannResourceEstimate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: LatticeBoltzmannOperatingEnvelopePlan,
         resources: LatticeBoltzmannResourceEstimate,
         /,
     ) -> None:
-        if not isinstance(plan, LatticeBoltzmannOperatingEnvelopePlan):
-            raise TypeError("plan must be a LatticeBoltzmannOperatingEnvelopePlan.")
-        if not isinstance(resources, LatticeBoltzmannResourceEstimate):
-            raise TypeError("resources must be LatticeBoltzmannResourceEstimate.")
         if not resources.fits_budget:
             raise LatticeBoltzmannEnvelopeError(
                 "Prepared LBM resources exceed the hardware budget."

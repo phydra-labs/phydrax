@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._ephemeris import TabulatedEphemeris
 from ._forces import AbstractAstrodynamicsForce, AstrodynamicsForceEvaluation
@@ -29,9 +30,8 @@ class ThirdBodyGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, ephemeris: TabulatedEphemeris, body_index: int, /) -> None:
-        if not isinstance(ephemeris, TabulatedEphemeris):
-            raise TypeError("ephemeris must be a TabulatedEphemeris.")
         if isinstance(body_index, bool) or not isinstance(body_index, int):
             raise TypeError("body_index must be an integer.")
         index = body_index
@@ -114,6 +114,7 @@ class ZonalHarmonicGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mu: ArrayLike,
@@ -125,8 +126,6 @@ class ZonalHarmonicGravity(AbstractAstrodynamicsForce):
         j3: ArrayLike = 0.0,
         j4: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         self.mu = jnp.asarray(mu).reshape(())
         self.reference_radius = jnp.asarray(reference_radius).reshape(())
         self.j2 = jnp.asarray(j2).reshape(())

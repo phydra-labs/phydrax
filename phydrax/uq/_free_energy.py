@@ -28,7 +28,11 @@ from ..linalg._dense_pseudoinverse import (
     factor_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
-from ..typing import parse
+from ..typing import checked, parse
+from ._correlation_selection import (
+    correlation_inefficiency,
+    synchronous_block_indices,
+)
 from ._free_energy_kernels import (
     bar_kernel,
     fep_kernel,
@@ -889,6 +893,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
     dataset_id: str = eqx.field(static=True)
     selection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         retained: ArrayLike,
@@ -909,8 +914,6 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
         dataset_kind: str,
         dataset_id: str,
     ) -> None:
-        if not isinstance(plan, FreeEnergySelectionPlan):
-            raise TypeError("plan must be FreeEnergySelectionPlan.")
         kept = jnp.asarray(retained, dtype=jnp.bool_)
         block = _index_array(block_index, "block_index")
         group = _index_array(block_group_index, "block_group_index")
@@ -1284,104 +1287,6 @@ def _dataset_observations(dataset: FreeEnergyDataset, /) -> _DatasetObservations
     raise TypeError("dataset must be an authenticated free-energy dataset.")
 
 
-def _correlation_inefficiency(
-    values: np.ndarray,
-    retained: np.ndarray,
-    strata: np.ndarray,
-    chain: np.ndarray,
-    draw: np.ndarray,
-    repeat: np.ndarray,
-    dependence: np.ndarray,
-    stratum_count: int,
-    maximum_lag: int | None,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    result = np.ones((stratum_count,), dtype=np.float64)
-    resolved = np.ones((stratum_count,), dtype=np.bool_)
-    for stratum in range(stratum_count):
-        selected_state = retained & (strata == stratum)
-        if not np.any(selected_state):
-            resolved[stratum] = False
-            continue
-        group_keys = sorted(
-            set(
-                zip(
-                    repeat[selected_state].tolist(),
-                    dependence[selected_state].tolist(),
-                )
-            )
-        )
-        for repeat_id, dependence_id in group_keys:
-            selected = (
-                selected_state & (repeat == repeat_id) & (dependence == dependence_id)
-            )
-            sequences: list[np.ndarray] = []
-            for chain_id in sorted(set(chain[selected].tolist())):
-                indices = np.nonzero(selected & (chain == chain_id))[0]
-                indices = indices[np.argsort(draw[indices], kind="stable")]
-                if indices.size:
-                    sequences.append(values[indices])
-            sample_count = sum(sequence.size for sequence in sequences)
-            if sample_count < 2:
-                resolved[stratum] = False
-                continue
-            concatenated = np.concatenate(sequences)
-            mean = float(np.mean(concatenated))
-            variance_numerator = sum(
-                float(np.sum((sequence - mean) ** 2)) for sequence in sequences
-            )
-            variance = variance_numerator / sample_count
-            scale = max(float(np.max(np.abs(concatenated), initial=0.0)), 1.0)
-            variance_floor = 128.0 * np.finfo(concatenated.dtype).eps * scale * scale
-            if not math.isfinite(variance):
-                resolved[stratum] = False
-                continue
-            if variance <= variance_floor:
-                continue
-            available_lag = max(sequence.size for sequence in sequences) - 1
-            if available_lag < 1:
-                resolved[stratum] = False
-                continue
-            lag_limit = (
-                available_lag if maximum_lag is None else min(available_lag, maximum_lag)
-            )
-            correlations: list[float] = []
-            correlation_valid = True
-            for lag in range(1, lag_limit + 1):
-                numerator = 0.0
-                count = 0
-                for sequence in sequences:
-                    if sequence.size > lag:
-                        numerator += float(
-                            np.sum((sequence[:-lag] - mean) * (sequence[lag:] - mean))
-                        )
-                        count += sequence.size - lag
-                if count == 0:
-                    correlation_valid = False
-                    break
-                correlation = numerator / (count * variance)
-                if not math.isfinite(correlation):
-                    correlation_valid = False
-                    break
-                correlations.append(correlation)
-            if not correlation_valid:
-                resolved[stratum] = False
-                continue
-            included = 0.0
-            for index in range(0, len(correlations), 2):
-                pair_sum = correlations[index]
-                if index + 1 < len(correlations):
-                    pair_sum += correlations[index + 1]
-                if pair_sum <= 0.0:
-                    break
-                included += pair_sum
-            result[stratum] = max(
-                result[stratum],
-                max(1.0, 1.0 + 2.0 * included),
-            )
-    return result, resolved
-
-
 def _select_free_energy_dataset(
     dataset: FreeEnergyDataset,
     plan: FreeEnergySelectionPlan,
@@ -1442,16 +1347,18 @@ def _select_free_energy_dataset(
         )
         for target in range(stratum_count):
             work = potential[target] - origin_value
-            target_inefficiency, target_resolved = _correlation_inefficiency(
-                work,
-                retained,
-                strata,
-                chain,
-                draw,
-                repeat,
-                dependence,
-                stratum_count,
-                plan.maximum_correlation_lag,
+            target_inefficiency, target_resolved, _window_closed = (
+                correlation_inefficiency(
+                    work,
+                    retained,
+                    strata,
+                    chain,
+                    draw,
+                    repeat,
+                    dependence,
+                    stratum_count,
+                    plan.maximum_correlation_lag,
+                )
             )
             relevant = np.arange(stratum_count) != target
             inefficiency[relevant] = np.maximum(
@@ -1460,7 +1367,7 @@ def _select_free_energy_dataset(
             )
             correlation_resolved[relevant] &= target_resolved[relevant]
     else:
-        inefficiency, correlation_resolved = _correlation_inefficiency(
+        inefficiency, correlation_resolved, _window_closed = correlation_inefficiency(
             values,
             retained,
             strata,
@@ -1476,31 +1383,9 @@ def _select_free_energy_dataset(
         if plan.block_length is None
         else plan.block_length
     )
-    block_keys: list[tuple[int, int, int]] = []
-    group_keys = sorted(
-        set(zip(repeat[retained].tolist(), dependence[retained].tolist()))
+    block_index, group_index, block_count = synchronous_block_indices(
+        retained, repeat, dependence, draw, resolved_block_length
     )
-    group_lookup = {key: index for index, key in enumerate(group_keys)}
-    group_index = np.full(active.shape, -1, dtype=np.int32)
-    observation_block_key: dict[int, tuple[int, int, int]] = {}
-    for key in group_keys:
-        selected = retained & (repeat == key[0]) & (dependence == key[1])
-        unique_draws = sorted(set(int(value) for value in draw[selected]))
-        draw_rank = {value: index for index, value in enumerate(unique_draws)}
-        group_index[selected] = group_lookup[key]
-        for index in np.nonzero(selected)[0]:
-            block_key = (
-                key[0],
-                key[1],
-                draw_rank[int(draw[index])] // resolved_block_length,
-            )
-            observation_block_key[int(index)] = block_key
-            block_keys.append(block_key)
-    unique_blocks = sorted(set(block_keys))
-    block_lookup = {key: index for index, key in enumerate(unique_blocks)}
-    block_index = np.full(active.shape, -1, dtype=np.int32)
-    for index, key in observation_block_key.items():
-        block_index[index] = block_lookup[key]
     raw_counts = np.asarray(
         [np.sum(active & (strata == state)) for state in range(stratum_count)],
         dtype=np.int32,
@@ -1530,7 +1415,7 @@ def _select_free_energy_dataset(
         effective,
         plan,
         resolved_block_length=resolved_block_length,
-        block_count=len(unique_blocks),
+        block_count=block_count,
         dataset_kind=kind,
         dataset_id=dataset.dataset_id,
     )

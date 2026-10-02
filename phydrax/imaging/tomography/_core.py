@@ -28,6 +28,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial import AffineSimplexMap
 from ...measurement import MeasurementAsset, RaySampleSupport
+from ...typing import checked
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +104,7 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
     coordinate_contract_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: ProjectionSupport,
@@ -112,10 +114,6 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
         volume_coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        if not isinstance(volume_coordinate_contract, SpatialCoordinateContract):
-            raise TypeError(
-                "volume_coordinate_contract must be SpatialCoordinateContract."
-            )
         if (
             volume_coordinate_contract.spatial_id
             != support.rays.coordinate_contract.spatial_id
@@ -264,6 +262,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
     coordinate_contract_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: ProjectionSupport,
@@ -274,8 +273,6 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         *,
         maximum_segments_per_ray: int = 64,
     ) -> None:
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if coordinate_contract.spatial_id != support.rays.coordinate_contract.spatial_id:
             raise ValueError(
                 "X-ray rays and tetrahedral geometry must share one spatial coordinate contract."

@@ -52,7 +52,7 @@ from ...operators.quantum._superconductivity import (
     prepare_fermionic_bdg,
     PreparedFermionicBdG,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import UnitDefinition
 
 
@@ -544,6 +544,7 @@ class BdGChernPlan(StrictModule):
     quantization_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         connectivity: PreparedReciprocalConnectivity,
@@ -558,8 +559,6 @@ class BdGChernPlan(StrictModule):
         require_refinement: bool = True,
         quantization_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(connectivity, PreparedReciprocalConnectivity):
-            raise TypeError("connectivity must be PreparedReciprocalConnectivity.")
         matrices = np.asarray(nambu_connection_matrices, dtype=np.complex128)
         if (
             matrices.ndim != 3
@@ -575,8 +574,6 @@ class BdGChernPlan(StrictModule):
         tolerance = float(quantization_tolerance)
         if not basis or not source or not isfinite(gap) or gap <= 0.0:
             raise ValueError("BdG Chern basis/source IDs and minimum gap are required.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("quantization_tolerance must be finite and non-negative.")
         if refinement is not None and not isinstance(

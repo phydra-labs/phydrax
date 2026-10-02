@@ -47,7 +47,7 @@ from ...sparse import (
     RelationExecutionPlan,
     RowRelation,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._cubical_whitney import PICShapeOrder
 from ..particle._core import ParticleDiscretization
 from ..spectral import SharedGridHankelOffset
@@ -166,11 +166,10 @@ class AzimuthalTransferPlan(StrictModule, NonTrainableState):
     shape_order: PICShapeOrder = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, grid: QuasiCylindricalGrid, /, *, shape_order: PICShapeOrder = 1
     ) -> None:
-        if not isinstance(grid, QuasiCylindricalGrid):
-            raise TypeError("grid must be a QuasiCylindricalGrid.")
         order = parse(shape_order, PICShapeOrder, "shape_order")
         if order + 1 > grid.radial_count or order + 1 > grid.axial_count:
             raise ValueError("The shape stencil is wider than the grid.")
@@ -210,13 +209,10 @@ class PreparedAzimuthalTransfer(StrictModule, NonTrainableState):
     particles_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: AzimuthalTransferPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, AzimuthalTransferPlan):
-            raise TypeError("plan must be an AzimuthalTransferPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if particles.ambient_dimension != 3:
             raise ValueError("Quasi-cylindrical particles carry Cartesian 3-D positions.")
         volumes = _effective_volumes(plan.grid, plan.shape_order)

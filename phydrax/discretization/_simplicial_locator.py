@@ -21,7 +21,7 @@ from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_b
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import Bool, Dim, Float, Int32, Integer
+from ..typing import Bool, checked, Dim, Float, Int32, Integer
 from ._cell_geometry_validity import _bernstein_plan
 from .fem._cell_map import PreparedFiniteElementCellMap
 
@@ -224,6 +224,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     policy: SimplicialLocationPolicy
     locator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_map: PreparedFiniteElementCellMap,
@@ -231,15 +232,11 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         policy: SimplicialLocationPolicy,
         /,
     ) -> None:
-        if not isinstance(cell_map, PreparedFiniteElementCellMap):
-            raise TypeError("cell_map must be PreparedFiniteElementCellMap.")
         kind = cell_map.coordinate_element.cell_kind
         if kind not in ("interval", "triangle", "tetrahedron") and not kind.startswith(
             "simplex:"
         ):
             raise ValueError("Simplicial locator requires a simplex coordinate map.")
-        if not isinstance(policy, SimplicialLocationPolicy):
-            raise TypeError("policy must be SimplicialLocationPolicy.")
         values = jnp.asarray(coordinates)
         if values.shape != (cell_map.coordinate_count, cell_map.ambient_dimension):
             raise ValueError("Locator coordinates do not match the prepared cell map.")

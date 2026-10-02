@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class FusionCoherenceEvidence(StrictModule):
@@ -468,6 +469,7 @@ class StringNetPlan(StrictModule):
     hilbert_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         category: FiniteFusionCategory,
@@ -479,8 +481,6 @@ class StringNetPlan(StrictModule):
         maximum_hilbert_dimension: int = 65_536,
         maximum_operator_elements: int = 10_000_000,
     ) -> None:
-        if not isinstance(category, FiniteFusionCategory):
-            raise TypeError("category must be FiniteFusionCategory.")
         if not bool(np.asarray(category.coherence.coherent)):
             raise ValueError("String-net lowering requires coherent F/R data.")
         edges = int(edge_count)
@@ -766,6 +766,7 @@ class AnyonicTensor(StrictModule):
     blocks: tuple[AnyonicTensorBlock, ...]
     tensor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         category: FiniteFusionCategory,
@@ -773,8 +774,6 @@ class AnyonicTensor(StrictModule):
         blocks: Sequence[AnyonicTensorBlock],
         /,
     ) -> None:
-        if not isinstance(category, FiniteFusionCategory):
-            raise TypeError("category must be FiniteFusionCategory.")
         orientations_ = tuple(orientations)
         blocks_ = tuple(blocks)
         if any(value not in (-1, 1) for value in orientations_):

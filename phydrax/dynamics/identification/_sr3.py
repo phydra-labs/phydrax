@@ -22,7 +22,7 @@ from ...linalg import (
     prepare,
     solve,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._sindy_design import SINDyDesign
 from ._sparse_regression import (
     _solve_outputs,
@@ -118,9 +118,8 @@ class SR3Regression(AbstractSparseRegression):
         self.zero_tolerance = resolved_zero
         self.max_features = feature_limit
 
+    @checked
     def fit(self, design: SINDyDesign, /) -> SparseRegressionResult:
-        if not isinstance(design, SINDyDesign):
-            raise TypeError("design must be a SINDyDesign.")
         if design.num_features > self.max_features:
             raise ValueError(
                 f"SR3 design has {design.num_features} features; max_features={self.max_features}."

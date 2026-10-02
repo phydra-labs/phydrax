@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import checked
 from ._operators import (
     _materialize_by_basis,
     AbstractLinearOperator,
@@ -35,6 +36,7 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
     centered: bool = eqx.field(static=True)
     rank_upper_bound: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         features: AbstractLinearOperator,
@@ -45,8 +47,6 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
         damping: float = 0.0,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(features, AbstractLinearOperator):
-            raise TypeError("features must be an AbstractLinearOperator.")
         if features.batch_shape:
             raise ValueError("Empirical feature operators must be unbatched.")
         if not isinstance(features.target, ArraySpace):

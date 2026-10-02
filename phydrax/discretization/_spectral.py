@@ -24,7 +24,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 if TYPE_CHECKING:
@@ -379,6 +379,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
     spectrum_id: str = eqx.field(static=True)
     _num_groups: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transform: ModalTransform,
@@ -395,8 +396,6 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         spectrum_id: str | None = None,
         zero_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(transform, ModalTransform):
-            raise TypeError("transform must be a ModalTransform.")
         operator = str(operator_id)
         if not operator:
             raise ValueError("operator_id must be non-empty.")

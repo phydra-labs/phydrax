@@ -22,7 +22,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cochain_hodge import DiagonalHodge
-from ..typing import parse
+from ..typing import checked, parse
 from ._ir import batch_graphs, GraphIR, unbatch_graph
 
 
@@ -151,6 +151,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
     graph_fingerprint: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         graph: GraphIR,
@@ -165,8 +166,6 @@ class OperatorTopology(StrictModule, NonTrainableState):
         _graph_fingerprint: str | None = None,
         _support_id: str | None = None,
     ) -> None:
-        if not isinstance(graph, GraphIR):
-            raise TypeError("OperatorTopology graph must be a GraphIR.")
         cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("OperatorTopology case dimensions must be positive.")

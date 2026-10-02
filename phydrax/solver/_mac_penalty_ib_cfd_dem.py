@@ -24,6 +24,7 @@ from ..equations._mac_penalty_ib_cfd_dem import (
     MACPenaltyIBCFDEMCouplingPlan,
     MACPenaltyIBEvaluation,
 )
+from ..typing import checked
 from ._structured_incompressible import MACRateProjectionResult
 
 
@@ -106,6 +107,7 @@ class MACPenaltyIBCouplingState(StrictModule):
     accepted_windows: Array
 
     @classmethod
+    @checked
     def initialize(
         cls,
         coupling: MACPenaltyIBCFDEMCouplingPlan,
@@ -113,10 +115,6 @@ class MACPenaltyIBCouplingState(StrictModule):
         fluid_state: ArrayLike,
         /,
     ) -> MACPenaltyIBCouplingState:
-        if not isinstance(coupling, MACPenaltyIBCFDEMCouplingPlan):
-            raise TypeError("coupling must be MACPenaltyIBCFDEMCouplingPlan.")
-        if not isinstance(dem_state, DEMRuntimeState):
-            raise TypeError("dem_state must be DEMRuntimeState.")
         fluid = coupling.fluid.validate_state(fluid_state)
         bodies = coupling.dynamics.bodies
         dtype = fluid.dtype

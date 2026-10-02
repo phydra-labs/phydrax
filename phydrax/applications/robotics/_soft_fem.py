@@ -31,6 +31,7 @@ from ...dynamics._plant import (
 from ...dynamics._plant_codec import ControlVectorCodec, PlantStateVectorCodec
 from ...equations._finite_element_material import MaterialState, MaterialTransaction
 from ...linalg import ArraySpace
+from ...typing import checked
 from ..solid_mechanics._fem_dynamics import (
     FiniteElementDynamicsPlan,
     FiniteElementDynamicsResult,
@@ -257,11 +258,8 @@ class FEMSoftLoads(StrictModule, NonTrainableState):
     command: FEMSoftCommand
     layout: FEMSoftLoadLayout
 
+    @checked
     def __init__(self, command: FEMSoftCommand, layout: FEMSoftLoadLayout, /) -> None:
-        if not isinstance(command, FEMSoftCommand):
-            raise TypeError("command must be FEMSoftCommand.")
-        if not isinstance(layout, FEMSoftLoadLayout):
-            raise TypeError("layout must be FEMSoftLoadLayout.")
         expected = (
             (len(layout.pressure_region_ids),),
             (len(layout.fiber_channel_ids),),
@@ -491,6 +489,7 @@ class FEMSoftPlant(AbstractDiscretePlant, NonTrainableState):
     initial_step_offset: int = eqx.field(static=True)
     initial_state_version_offset: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics_plan: FiniteElementDynamicsPlan,
@@ -505,16 +504,6 @@ class FEMSoftPlant(AbstractDiscretePlant, NonTrainableState):
         region_force_evaluator: Callable | None = None,
         region_force_evaluator_id: str | None = None,
     ) -> None:
-        if not isinstance(dynamics_plan, FiniteElementDynamicsPlan):
-            raise TypeError("dynamics_plan must be FiniteElementDynamicsPlan.")
-        if not isinstance(initial_state, FiniteElementDynamicsState):
-            raise TypeError("initial_state must be FiniteElementDynamicsState.")
-        if not isinstance(parameters, FEMSoftParameters):
-            raise TypeError("parameters must be FEMSoftParameters.")
-        if not isinstance(load_layout, FEMSoftLoadLayout):
-            raise TypeError("load_layout must be FEMSoftLoadLayout.")
-        if not isinstance(sensor_layout, FEMSoftSensorLayout):
-            raise TypeError("sensor_layout must be FEMSoftSensorLayout.")
         constitutive = str(constitutive_capability_id)
         if constitutive not in _CONSTITUTIVE_CAPABILITIES:
             raise ValueError("Unknown FEM soft constitutive capability ID.")
@@ -736,15 +725,13 @@ class FEMSoftPlant(AbstractDiscretePlant, NonTrainableState):
     def require_capabilities(self, capability_ids: Sequence[str], /) -> None:
         self.capabilities.require(capability_ids)
 
+    @checked
     def _payload(self, payload: FEMSoftState, /) -> FEMSoftState:
-        if not isinstance(payload, FEMSoftState):
-            raise TypeError("FEM soft plant payload must be FEMSoftState.")
         self.state_schema.validate(payload)
         return payload
 
+    @checked
     def _runtime_payload(self, state: PlantRuntimeState, /) -> FEMSoftState:
-        if not isinstance(state, PlantRuntimeState):
-            raise TypeError("state must be PlantRuntimeState.")
         observed = (
             state.semantic_provenance_id,
             state.numeric_revision_id,

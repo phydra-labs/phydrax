@@ -19,6 +19,7 @@ from ..discretization.finite_volume import (
     PreparedMACMomentumOperators,
     PreparedMACVariationalViscosityAction,
 )
+from ..typing import checked
 from ._dynamic_les import (
     DynamicLESInputs,
     DynamicLESResult,
@@ -56,9 +57,8 @@ class MACExplicitTestFilterPlan(StrictModule, NonTrainableState):
     boundary_support: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, test_filter: ResolvedLESFilter, /) -> None:
-        if not isinstance(test_filter, ResolvedLESFilter):
-            raise TypeError("test_filter must be a ResolvedLESFilter.")
         if (
             test_filter.family != "explicit-filter"
             or test_filter.topology != "tensor-product"
@@ -106,16 +106,13 @@ class PreparedMACExplicitTestFilter(StrictModule, NonTrainableState):
     boundary_support: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MACExplicitTestFilterPlan,
         momentum: PreparedMACMomentumOperators,
         /,
     ) -> None:
-        if not isinstance(plan, MACExplicitTestFilterPlan):
-            raise TypeError("plan must be MACExplicitTestFilterPlan.")
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         if momentum.dimension != 3:
             raise ValueError("MAC dynamic LES requires a three-dimensional grid.")
         grid = momentum.operators.discretization.grid
@@ -210,16 +207,13 @@ class MACDynamicLESPlan(StrictModule, NonTrainableState):
     test_filter: MACExplicitTestFilterPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamic_model: PreparedDynamicSmagorinskyPlan,
         test_filter: MACExplicitTestFilterPlan,
         /,
     ) -> None:
-        if not isinstance(dynamic_model, PreparedDynamicSmagorinskyPlan):
-            raise TypeError("dynamic_model must be PreparedDynamicSmagorinskyPlan.")
-        if not isinstance(test_filter, MACExplicitTestFilterPlan):
-            raise TypeError("test_filter must be MACExplicitTestFilterPlan.")
         provenance = dynamic_model.provenance
         resolved = provenance.resolved_filter
         if (
@@ -307,16 +301,13 @@ class PreparedMACDynamicLES(StrictModule, NonTrainableState):
     continuation_required: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MACDynamicLESPlan,
         momentum: PreparedMACMomentumOperators,
         /,
     ) -> None:
-        if not isinstance(plan, MACDynamicLESPlan):
-            raise TypeError("plan must be MACDynamicLESPlan.")
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         discretization = momentum.operators.discretization
         provenance = plan.dynamic_model.provenance
         if (
@@ -420,14 +411,13 @@ class PreparedMACDynamicLES(StrictModule, NonTrainableState):
             prepared_id=self.prepared_id,
         )
 
+    @checked
     def step_restriction(
         self,
         stage: MACDynamicLESStage,
         /,
     ) -> tuple[Array, bool]:
         """Return the explicit SGS bound from one already evaluated dynamic stage."""
-        if not isinstance(stage, MACDynamicLESStage):
-            raise TypeError("stage must be MACDynamicLESStage.")
         if stage.prepared_id != self.prepared_id:
             raise ValueError("Dynamic LES stage belongs to another prepared action.")
         return (

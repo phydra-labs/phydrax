@@ -71,6 +71,33 @@ operator = QuantumSectorOperator(prepared, SectorChargeMap(basis, basis, 0))
 
 Use `phydrax.linalg.eigen.Eigenproblem(operator)` and the normal `phydrax.linalg.eigen.eigensolve` planning/execution API for ground or excited states. There is no quantum-lattice eigensolver wrapper.
 
+## Rank-free packed configuration columns
+
+`QuantumConfigurationDomain` and `QuantumAddressCodec` store exact `uint32`
+word-vector keys with explicit species/component IDs and optional exact charges.
+They need neither a scalar Hilbert rank nor finite rank/unrank DP tables.
+The zero key is physical; a separate activity mask represents padding.
+`prepare_quantum_lattice_columns` uses `QuantumColumnResourcePolicy` to admit
+sparse local transition tables, physical raw routes, decoded coordinates, and
+workspace. Shared transition topology is separate from each occurrence's
+numerical binding; `refresh_quantum_lattice_columns` permits only same-support,
+same-ordered-term numerical rebinding.
+
+`QuantumLatticeColumnOperator` exposes outgoing `H[target, source]` columns and
+physical raw-route proposals, including null attempts and actual route
+probabilities rather than coalesced-target probabilities. It is not the
+finite-sector `ArraySpace` operator and does not replace the retained VMC row
+contract. `QuantumGuide` provides an explicitly frozen positive similarity with
+the matching inverse-square physical metric, not arbitrary non-Hermitian
+Hamiltonian admission.
+
+The [native projector guide](guides_projector_monte_carlo.md) explains complete
+annihilation before late compression, bounded resource refusal/same-draw replay,
+explicit native units, joint ratio analysis, and finite-history/population
+caveats. These single-device complex128/float64 candidates are unreleased and
+do not claim initiator/excited-state/distributed/transcorrelated support or a
+sign-problem cure. Existing direct sectors, VMC, TPQ, and response are unchanged.
+
 ## Finite-group orbit sectors
 
 `FiniteGroupActionPlan` projects one existing direct charge sector into a

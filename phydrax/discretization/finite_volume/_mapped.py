@@ -19,6 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, DiagonalPairing
+from ...typing import checked
 from .._axis import broadcasted_grid
 from .._core import DiscretizationCapability, DiscretizationKey, PreparationReport
 from .._lifecycle import (
@@ -469,6 +470,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     mapping_id: str = eqx.field(static=True)
     periodic_seams: tuple[MappedPeriodicSeam, ...]
 
+    @checked
     def __init__(
         self,
         plan: MappedFiniteVolumePlan,
@@ -476,8 +478,6 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         *,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(plan, MappedFiniteVolumePlan):
-            raise TypeError("plan must be a MappedFiniteVolumePlan.")
         reference = plan.reference
         (
             vertices,

@@ -13,6 +13,7 @@ from jaxtyping import PyTree
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
+from ..typing import checked
 from ._distributions import LogNormal, Normal
 from ._posterior import (
     AbstractBijector,
@@ -41,10 +42,9 @@ class GaussianPriorWhitening(StrictModule):
         self.scale = scale
 
     @classmethod
+    @checked
     def from_parameter_space(cls, space: ParameterSpace, /) -> GaussianPriorWhitening:
         """Infer exact Gaussian unconstrained priors from supported prior/bijector pairs."""
-        if not isinstance(space, ParameterSpace):
-            raise TypeError("space must be a ParameterSpace.")
         if space.priors is None:
             raise ValueError(
                 "Gaussian prior whitening requires explicit distribution priors."

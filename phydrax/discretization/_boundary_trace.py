@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._cell_complex import PolyhedralConnectivity, TetrahedralConnectivity
 from .finite_volume._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -37,11 +38,10 @@ class BoundarySurfaceTrace(StrictModule):
     geometry_id: str = eqx.field(static=True)
     trace_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, discretization: UnstructuredFiniteVolumeDiscretization, faces: ArrayLike
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Boundary trace requires prepared unstructured FV geometry.")
         if discretization.cell_dimension != 3:
             raise ValueError(
                 "Boundary surface trace requires a three-dimensional volume."

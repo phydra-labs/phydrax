@@ -23,6 +23,7 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import checked
 from ..finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
     EntropyConservativeEulerFluxPlan,
@@ -47,6 +48,7 @@ class SpectralSplitFormPlan(StrictModule):
     certification_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         volume_flux: AbstractSymmetricTwoPointFluxPlan,
@@ -56,8 +58,6 @@ class SpectralSplitFormPlan(StrictModule):
         maximum_pair_workspace_bytes: int = 512 * 1024**2,
         certification_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
-            raise TypeError("volume_flux must be a symmetric two-point flux plan.")
         if not isinstance(volume_flux, EntropyConservativeEulerFluxPlan):
             raise TypeError(
                 "Only the built-in analytic entropy-conservative Euler flux "

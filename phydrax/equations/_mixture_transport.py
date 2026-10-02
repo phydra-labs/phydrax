@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg._dense_inverse import dense_inverse
+from ..typing import checked
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 from ._gas_transport_properties import (
     AbstractGasTransportPropertyPlan,
@@ -109,6 +110,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     transport_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
@@ -117,14 +119,10 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         *,
         conservation_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
-            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
             raise TypeError(
                 "Gas transport currently requires ideal-mixture thermodynamics."
             )
-        if not isinstance(properties, AbstractGasTransportPropertyPlan):
-            raise TypeError("properties must implement AbstractGasTransportPropertyPlan.")
         if properties.species_count != thermodynamics.schema.species_count:
             raise ValueError(
                 "Transport properties and thermodynamics must have identical species counts."

@@ -28,7 +28,7 @@ from phydrax.nn.operator.representations import (
     TensorFieldLayout,
 )
 
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 
 
 def _kernel_shape(value: int | Sequence[int], dimension: int, /) -> tuple[int, ...]:
@@ -111,6 +111,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
     equivariance_tolerance: float
     fingerprint: str
 
+    @checked
     def __init__(
         self,
         group: FiniteOrthogonalGroup,
@@ -123,8 +124,6 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         equivariance_tolerance: float = 1e-10,
         max_construction_bytes: int = 256 * 1024**2,
     ) -> None:
-        if not isinstance(group, FiniteOrthogonalGroup):
-            raise TypeError("group must be a FiniteOrthogonalGroup.")
         if not isinstance(input_layout, TensorFieldLayout) or not isinstance(
             output_layout, TensorFieldLayout
         ):
@@ -477,6 +476,7 @@ class TensorNormActivation(StrictModule):
     activation: Callable
     epsilon: float
 
+    @checked
     def __init__(
         self,
         layout: TensorFieldLayout,
@@ -485,8 +485,6 @@ class TensorNormActivation(StrictModule):
         *,
         epsilon: float = 1e-12,
     ) -> None:
-        if not isinstance(layout, TensorFieldLayout):
-            raise TypeError("layout must be a TensorFieldLayout.")
         if not callable(activation):
             raise TypeError("activation must be callable.")
         epsilon_value = float(epsilon)
@@ -523,6 +521,7 @@ class TensorRMSNorm(StrictModule):
     gains: tuple[Array, ...]
     epsilon: float
 
+    @checked
     def __init__(
         self,
         layout: TensorFieldLayout,
@@ -531,8 +530,6 @@ class TensorRMSNorm(StrictModule):
         epsilon: float = 1e-6,
         dtype: Any = jnp.float32,
     ) -> None:
-        if not isinstance(layout, TensorFieldLayout):
-            raise TypeError("layout must be a TensorFieldLayout.")
         epsilon_value = float(epsilon)
         if not math.isfinite(epsilon_value) or epsilon_value <= 0.0:
             raise ValueError("epsilon must be positive and finite.")

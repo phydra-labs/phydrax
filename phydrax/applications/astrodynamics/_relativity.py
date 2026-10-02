@@ -12,6 +12,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._forces import AbstractAstrodynamicsForce, AstrodynamicsForceEvaluation
 from ._status import AstrodynamicsStatus
@@ -29,6 +30,7 @@ class Schwarzschild1PNForce(AbstractAstrodynamicsForce):
     speed_of_light: jnp.ndarray
     force_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mu: ArrayLike,
@@ -37,8 +39,6 @@ class Schwarzschild1PNForce(AbstractAstrodynamicsForce):
         *,
         speed_of_light: ArrayLike = _SPEED_OF_LIGHT,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         mu_host = np.asarray(mu)
         light_host = np.asarray(speed_of_light)
         if mu_host.shape != () or light_host.shape != ():

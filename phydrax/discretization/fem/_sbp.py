@@ -19,6 +19,7 @@ from ..._interpolation import barycentric_differentiation_matrix
 from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 def _gll_rule(order: int, /) -> tuple[np.ndarray, np.ndarray]:
@@ -315,11 +316,10 @@ class MappedTensorMetrics(StrictModule, NonTrainableState):
     def cell_count(self) -> int:
         return self.coordinates.shape[0]
 
+    @checked
     def face_pair_evidence(self, pair: MetricFacePair, /) -> tuple[Array, Array, Array]:
         """Return neighbor permutation, point defect, and opposite-normal defect."""
 
-        if not isinstance(pair, MetricFacePair):
-            raise TypeError("pair must be MetricFacePair.")
         if (
             pair.owner_axis >= self.dimension
             or pair.neighbor_axis >= self.dimension
@@ -448,6 +448,7 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sbp: ElementLocalSBPData,
@@ -456,8 +457,6 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float | None = None,
     ) -> None:
-        if not isinstance(sbp, ElementLocalSBPData):
-            raise TypeError("sbp must be ElementLocalSBPData.")
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Mapped tensor metrics support dimensions two and three.")

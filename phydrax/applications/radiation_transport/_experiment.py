@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..astrophysics._radiative_transfer import (
     PolarizedRadiativeTransferPlan,
     RayTransferPlan,
@@ -105,6 +106,7 @@ class ScalarRadiativeExperimentPlan(StrictModule, NonTrainableState):
     sensor: RadiativeSensorPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: RayTransferPlan,
@@ -112,12 +114,6 @@ class ScalarRadiativeExperimentPlan(StrictModule, NonTrainableState):
         sensor: RadiativeSensorPlan,
         /,
     ) -> None:
-        if not isinstance(transfer, RayTransferPlan):
-            raise TypeError("transfer must be RayTransferPlan.")
-        if not isinstance(spectral, CorrelatedKDistributionPlan):
-            raise TypeError("spectral must be CorrelatedKDistributionPlan.")
-        if not isinstance(sensor, RadiativeSensorPlan):
-            raise TypeError("sensor must be RadiativeSensorPlan.")
         if sensor.response_weights.shape != (spectral.band_count,):
             raise ValueError("Sensor response must contain one weight per spectral band.")
         self.transfer = transfer

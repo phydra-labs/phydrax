@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import checked
 from ._pairings import DiagonalPairing
 from ._spaces import (
     _coordinate_dtype,
@@ -106,9 +107,8 @@ class AxisArraySpace(AbstractVectorSpace):
     layout: cx.AxisLayout = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, template: cx.AxisArray, /, *, space_id: str | None = None) -> None:
-        if not isinstance(template, cx.AxisArray):
-            raise TypeError("template must be an AxisArray.")
         delegate = PyTreeSpace(template)
         self.delegate = delegate
         self.layout = template.layout

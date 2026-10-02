@@ -21,6 +21,7 @@ from ...integration._api import IntegrationRealization
 from ...integration._targets import WeightedSampleTarget
 from ...stochastic._path_ensemble import StochasticPathEnsemblePlan
 from ...stochastic._state_space import AbstractTransitionKernel
+from ...typing import checked
 from ._solver import SchrodingerBridgeSolver
 
 
@@ -35,6 +36,7 @@ class DiffusionBridgeProblem(StrictModule):
     state_geometry: Any
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_law: AbstractProbabilityLaw,
@@ -60,8 +62,6 @@ class DiffusionBridgeProblem(StrictModule):
             raise TypeError(
                 "diffusion bridge reference must expose a normalized log density."
             )
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         selected_contexts = tuple(contexts)
         if len(selected_contexts) != time_grid.num_steps:
             raise ValueError(

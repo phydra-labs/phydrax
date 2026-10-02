@@ -28,7 +28,7 @@ from ...._model._ports import (
 )
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 from ..._keys import EvalKey, split_eval_key
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
 from ..data import (
@@ -504,6 +504,7 @@ class OperatorExecutionPlan(StrictModule):
         OperatorPrediction,
     ] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         execution_model: AbstractOperatorModel,
@@ -521,12 +522,6 @@ class OperatorExecutionPlan(StrictModule):
         compilation_strategy: OperatorCompilationStrategy = "eager",
         padding_policy: OperatorPaddingPolicy = "explicit_mask",
     ) -> None:
-        if not isinstance(execution_model, AbstractOperatorModel):
-            raise TypeError("OperatorExecutionPlan requires a PhydraX execution model.")
-        if not isinstance(task, OperatorTask):
-            raise TypeError("OperatorExecutionPlan requires an OperatorTask.")
-        if not isinstance(training_evidence, OperatorTrainingEvidence):
-            raise TypeError("training_evidence must be an OperatorTrainingEvidence.")
         if normalization is not None and not isinstance(
             normalization, OperatorNormalizationPolicy
         ):
@@ -706,6 +701,7 @@ class OperatorExecutionPlan(StrictModule):
         report.require()
         return self.prepare_prevalidated(batch)
 
+    @checked
     def replace_prepared_source(
         self,
         prepared: PreparedOperatorInput,
@@ -714,8 +710,6 @@ class OperatorExecutionPlan(StrictModule):
         /,
     ) -> PreparedOperatorInput:
         """Replace one prepared physical source without relowering static inputs."""
-        if not isinstance(prepared, PreparedOperatorInput):
-            raise TypeError("prepared must be a PreparedOperatorInput.")
         if prepared.plan_fingerprint != self.fingerprint:
             raise ValueError(
                 "Prepared operator input belongs to a different runtime contract."

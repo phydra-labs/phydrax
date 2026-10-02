@@ -21,6 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, DiagonalPairing
 from ...sparse import EdgeRelation, SparseLinearMap
+from ...typing import checked
 from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
     polygonal_connectivity,
@@ -712,10 +713,9 @@ class MaskedFiniteVolumeGeometry(StrictModule):
     face_centers: Array
     content_rate_map: SparseLinearMap
 
+    @checked
     def __init__(self, mesh: MaskedSimplexMesh, /) -> None:
         """Evaluate the geometry of ``mesh``; see `evaluate_masked_fv_geometry`."""
-        if not isinstance(mesh, MaskedSimplexMesh):
-            raise TypeError("mesh must be a MaskedSimplexMesh.")
         if mesh.ambient_dimension != mesh.dimension:
             raise ValueError(
                 "Masked FV geometry requires triangles in 2-D or tetrahedra in 3-D."
@@ -827,9 +827,8 @@ class MaskedFiniteVolumeConservation(StrictModule):
     net_cell_sum: Array
     residual: Array
 
+    @checked
     def __init__(self, ledger: ConservationStageLedger, /) -> None:
-        if not isinstance(ledger, ConservationStageLedger):
-            raise TypeError("ledger must be a ConservationStageLedger.")
         source_sum, boundary_sum, net_cell_sum = ledger.conservation_sums()
         self.ledger = ledger
         self.source_sum = source_sum
@@ -1210,6 +1209,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         )
 
     @classmethod
+    @checked
     def from_cell_mesh(
         cls,
         mesh: CellMesh,
@@ -1220,8 +1220,6 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         boundary_face_groups: Mapping[str, ArrayLike] | None = None,
     ) -> "UnstructuredFiniteVolumePlan":
         """Construct directly from canonical polyhedral CellMesh."""
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
         if not isinstance(mesh.connectivity, PolyhedralConnectivity):
             raise ValueError(
                 "CellMesh FV cutover currently targets polyhedral connectivity; "
@@ -1381,11 +1379,10 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     preparation: PreparationReport
     quality: UnstructuredFiniteVolumeQualityReport
 
+    @checked
     def __init__(
         self, plan: UnstructuredFiniteVolumePlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, UnstructuredFiniteVolumePlan):
-            raise TypeError("plan must be UnstructuredFiniteVolumePlan.")
         mesh = plan.mesh
         points = np.asarray(mesh.coordinates)
         connectivity = mesh.connectivity

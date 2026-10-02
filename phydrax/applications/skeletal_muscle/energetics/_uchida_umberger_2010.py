@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 UCHIDA_UMBERGER_2010_SOURCE_REVISION = "86b30588374650fbaf012a345a836a64f6855522"
@@ -117,14 +118,13 @@ class UchidaUmberger2010Plan(StrictModule):
     muscle_ids: tuple[str, ...] = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: UchidaUmberger2010Parameters,
         muscle_ids: tuple[str, ...],
         /,
     ) -> None:
-        if not isinstance(parameters, UchidaUmberger2010Parameters):
-            raise TypeError("parameters must be UchidaUmberger2010Parameters.")
         ids = tuple(str(value).strip() for value in muscle_ids)
         if (
             len(ids) != parameters.muscle_mass_kg.shape[0]

@@ -20,6 +20,7 @@ from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DualSpace
+from ..typing import checked
 from ._affine import (
     AffineLinearROMEvaluation,
     AffineLinearROMProblem,
@@ -208,16 +209,13 @@ class AffineROMCertification(StrictModule, NonTrainableState):
     stability: AbstractStabilityBoundEvaluator
     certification_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         residual_norm: ResidualDualNormArtifact,
         stability: AbstractStabilityBoundEvaluator,
         /,
     ) -> None:
-        if not isinstance(residual_norm, ResidualDualNormArtifact):
-            raise TypeError("residual_norm must be a ResidualDualNormArtifact.")
-        if not isinstance(stability, AbstractStabilityBoundEvaluator):
-            raise TypeError("stability must be an AbstractStabilityBoundEvaluator.")
         if stability.family_id != residual_norm.family_id:
             raise ValueError(
                 "Stability and residual artifacts must bind one operator family."

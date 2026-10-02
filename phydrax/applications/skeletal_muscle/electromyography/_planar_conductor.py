@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 PETERSEN_ROSTALSKI_2019_DOI = "10.3389/fphys.2019.00176"
@@ -104,6 +105,7 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
     zero_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frequency_x_rad_per_m: ArrayLike,
@@ -134,8 +136,6 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
             raise ValueError("electrode_positions_m must have shape (electrode, 2).")
         if weights.shape != (positions.shape[0],):
             raise ValueError("electrode_weights must match electrode positions.")
-        if not isinstance(parameters, PlanarConductorParameters):
-            raise TypeError("parameters must be PlanarConductorParameters.")
         tolerance = float(zero_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("zero_tolerance must be positive and finite.")

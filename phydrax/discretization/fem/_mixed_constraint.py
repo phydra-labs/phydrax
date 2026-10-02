@@ -26,7 +26,7 @@ from ...linalg import (
     saddle_point_operator,
     ScaledLinearOperator,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellMesh
 from ._generic import (
@@ -324,6 +324,7 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
     rank_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -338,10 +339,6 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
         rank_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
-        if not isinstance(gauge, PressureGaugePolicy):
-            raise TypeError("gauge must be PressureGaugePolicy.")
         stabilization_ = (
             MixedPressureStabilization() if stabilization is None else stabilization
         )

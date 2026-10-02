@@ -40,6 +40,7 @@ from ...linalg import (
     solve,
     StructuredDirect,
 )
+from ...typing import checked
 
 
 class FastDiagonalizationEligibility(StrictModule):
@@ -91,6 +92,7 @@ class TensorFastDiagonalizationPreconditioner(
     eligibility: FastDiagonalizationEligibility
     builder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedLinearSolve,
@@ -100,8 +102,6 @@ class TensorFastDiagonalizationPreconditioner(
         builder_id: str,
         /,
     ) -> None:
-        if not isinstance(prepared, PreparedLinearSolve):
-            raise TypeError("prepared must be a PreparedLinearSolve.")
         structured_operator = prepared.problem.operator
         if not isinstance(structured_operator, KroneckerSumLinearOperator):
             raise TypeError(
@@ -114,8 +114,6 @@ class TensorFastDiagonalizationPreconditioner(
                     "Prepared fast diagonalization requires dense axis factors."
                 )
             factor_matrices.append(factor.matrix)
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         if not isinstance(eligibility, FastDiagonalizationEligibility) or not (
             eligibility.eligible
         ):
@@ -239,14 +237,13 @@ class TensorFastDiagonalizationBuilder(AbstractPreconditionerBuilder):
     def default_refresh(self) -> str:
         return "numeric"
 
+    @checked
     def _structural_reasons(
         self,
         setup_operator: AbstractLinearOperator,
         /,
     ) -> tuple[tuple[str, ...], tuple[int, ...]]:
         reasons = []
-        if not isinstance(setup_operator, AbstractLinearOperator):
-            raise TypeError("setup_operator must be an AbstractLinearOperator.")
         axis_sizes = tuple(operator.source.size for operator in self.mass_operators)
         if setup_operator.batch_shape or not setup_operator.source.compatible(
             setup_operator.target
@@ -477,6 +474,7 @@ class TensorFastDiagonalizationBuilder(AbstractPreconditionerBuilder):
         physical_mass = structured.source.flatten(structured.source.riesz(ones))
         return structured, physical_mass
 
+    @checked
     def prepare(
         self,
         setup_operator: AbstractLinearOperator,
@@ -484,8 +482,6 @@ class TensorFastDiagonalizationBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
-        if not isinstance(materialization, MaterializationPolicy):
-            raise TypeError("materialization must be a MaterializationPolicy.")
         structural_reasons, axis_sizes = self._structural_reasons(setup_operator)
         try:
             factors = self._materialized_factors(materialization)

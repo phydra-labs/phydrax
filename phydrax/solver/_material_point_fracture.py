@@ -25,6 +25,7 @@ from ..discretization.mpm import (
 )
 from ..discretization.splatting import ParticleGridSplatState
 from ..equations import MaterialPointArguments
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -119,14 +120,13 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
     spacing: tuple[float, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mechanics: PreparedMPMDynamics,
         plan: MPMPhaseFieldFracturePlan | None = None,
         /,
     ) -> None:
-        if not isinstance(mechanics, PreparedMPMDynamics):
-            raise TypeError("mechanics must be PreparedMPMDynamics.")
         plan_ = MPMPhaseFieldFracturePlan() if plan is None else plan
         if not isinstance(plan_, MPMPhaseFieldFracturePlan):
             raise TypeError("plan must be MPMPhaseFieldFracturePlan or None.")

@@ -15,7 +15,7 @@ from jax import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._tensor_support import PreparedTensorGrid
 from ..finite_difference._mapped_grid import PreparedMappedTensorGrid
 
@@ -97,6 +97,7 @@ class BlockInterface(StrictModule, NonTrainableState):
     orientation: InterfaceOrientation
     interface_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -118,8 +119,6 @@ class BlockInterface(StrictModule, NonTrainableState):
         right_side = parse(right_side, BlockSide, "right_side")
         if left_block == right_block:
             raise ValueError("A physical interface must connect distinct blocks.")
-        if not isinstance(orientation, InterfaceOrientation):
-            raise TypeError("orientation must be InterfaceOrientation.")
         self.name = values[0]
         self.left_block = values[1]
         self.left_axis = values[2]
@@ -314,6 +313,7 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
     interface_reports: tuple[MultiblockInterfaceReport, ...]
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MultiblockGridPlan,
@@ -321,8 +321,6 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
         *,
         interface_coordinates: Sequence[tuple[Array, Array]] | None = None,
     ) -> None:
-        if not isinstance(plan, MultiblockGridPlan):
-            raise TypeError("plan must be MultiblockGridPlan.")
         supplied = (
             None
             if interface_coordinates is None

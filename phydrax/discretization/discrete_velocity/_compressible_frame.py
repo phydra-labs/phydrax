@@ -14,6 +14,7 @@ from ..._exponential_family import solve_finite_support_mean
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_rules import (
     CompressibleVelocityRule,
@@ -28,14 +29,13 @@ class IntegerKineticFramePlan(StrictModule, NonTrainableState):
     shift: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rule: CompressibleVelocityRule,
         shift: tuple[int, ...],
         /,
     ) -> None:
-        if not isinstance(rule, CompressibleVelocityRule):
-            raise TypeError("rule must be a CompressibleVelocityRule.")
         frame = tuple(int(value) for value in shift)
         self.base_rule = rule
         self.shifted_rule = shift_compressible_velocity_rule(rule, frame)
@@ -222,6 +222,7 @@ class AdaptiveGaugePlan(StrictModule, NonTrainableState):
         )
         return frame, scale, supported
 
+    @checked
     def physical_velocities(
         self,
         rule: CompressibleVelocityRule,
@@ -229,8 +230,6 @@ class AdaptiveGaugePlan(StrictModule, NonTrainableState):
         temperature_scale: ArrayLike,
         /,
     ) -> Array:
-        if not isinstance(rule, CompressibleVelocityRule):
-            raise TypeError("rule must be a CompressibleVelocityRule.")
         frame = jnp.asarray(frame_velocity)
         scale = jnp.asarray(temperature_scale, dtype=frame.dtype)
         if frame.shape[:-1] != scale.shape or frame.shape[-1] != rule.dimension:

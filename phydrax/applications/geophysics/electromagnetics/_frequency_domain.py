@@ -23,6 +23,7 @@ from ....discretization import CellMesh, TetrahedralConnectivity
 from ....discretization.fem._de_rham import FiniteElementDeRhamComplex
 from ....exterior._complex import ComplexBoundary
 from ....linalg._complexes import coordinate_operator, coordinate_space
+from ....typing import checked
 
 
 def _material_stiffness(
@@ -206,12 +207,11 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
         complex = FiniteElementDeRhamComplex(
             mesh, family="trimmed", order=1, coefficient_dtype=jnp.complex128
         )
-        if not isinstance(survey, FrequencyDomainEMSurvey):
-            raise TypeError("Frequency-domain EM requires FrequencyDomainEMSurvey.")
         if survey.electric_current_functionals.shape[1] != complex.cell_counts[1]:
             raise ValueError("Frequency-domain EM survey does not match H(curl) edges.")
         connectivity = mesh.connectivity
@@ -277,6 +277,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
             ),
         ), full_action
 
+    @checked
     def solve(
         self,
         angular_frequencies: ArrayLike,
@@ -294,8 +295,6 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(frequencies)) | jnp.any(frequencies <= 0),
             "Frequency-domain EM frequencies must be finite and positive.",
         )
-        if not isinstance(material, ConductiveEMMaterial):
-            raise TypeError("Frequency-domain EM material is invalid.")
         if material.conductivity_S_m.shape[0] != self.complex.cell_counts[3]:
             raise ValueError("Frequency-domain EM material does not match mesh cells.")
         primary = None if primary_electric is None else jnp.asarray(primary_electric)

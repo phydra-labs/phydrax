@@ -31,6 +31,7 @@ from ..._array_archive import (
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._dark_radiation import (
     DarkRadiationExportEvidence,
     DarkRadiationLedger,
@@ -637,6 +638,7 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
     direction_channels: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         channels: tuple[DarkTwoBodyReactionPlan, ...],
@@ -649,8 +651,6 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
             or not all(isinstance(item, DarkTwoBodyReactionPlan) for item in channels)
         ):
             raise TypeError("channels must be a non-empty typed tuple of reaction plans.")
-        if not isinstance(radiation, DarkRadiationLedgerPlan):
-            raise TypeError("radiation must be a DarkRadiationLedgerPlan.")
         first = channels[0]
         unit_contract = (
             first.mass_unit,
@@ -740,6 +740,7 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def initialize(
         self,
         packets: WeightedSIDMPacketState,
@@ -748,8 +749,6 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
         *,
         reaction_epoch: ArrayLike = 0,
     ) -> InelasticSIDMState:
-        if not isinstance(packets, WeightedSIDMPacketState):
-            raise TypeError("packets must be WeightedSIDMPacketState.")
         indices = jnp.asarray(species_indices, dtype=jnp.int32)
         if indices.shape != packets.active_mask.shape:
             raise ValueError("species_indices must match weighted packet capacity.")
@@ -1914,9 +1913,8 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
             gravitational_mass,
         )
 
+    @checked
     def _check_state_shapes(self, state: InelasticSIDMState, /) -> None:
-        if not isinstance(state, InelasticSIDMState):
-            raise TypeError("state must be InelasticSIDMState.")
         if not isinstance(state.packets, WeightedSIDMPacketState):
             raise TypeError("state packets must be WeightedSIDMPacketState.")
         packets = state.packets

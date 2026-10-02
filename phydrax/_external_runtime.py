@@ -53,7 +53,7 @@ from ._publication import publish_file
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
 from .logging import emit
-from .typing import parse
+from .typing import checked, parse
 
 
 def _host_only(*values: Any) -> None:
@@ -2238,13 +2238,12 @@ class ExternalAdjointAction(ABC):
                 )
         return stage
 
+    @checked
     def apply_adjoint(
         self, stage: ExternalPrimalStage, /, *output_cotangents: Any
     ) -> tuple[np.ndarray, ...]:
         """Return the input cotangents `Jᵀȳ` at the staged realization."""
         _require_execution(self.capabilities, output_cotangents)
-        if not isinstance(stage, ExternalPrimalStage):
-            raise TypeError("stage must be an ExternalPrimalStage.")
         if stage.action_id != self.action_id:
             raise ValueError(
                 f"Replay mismatch: the stage belongs to another action, not this "

@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..graph import segment_log_normalize, segment_sum
+from ..typing import checked
 from ._kernel import (
     FactorExecutionEvidence,
     FactorGraphPrecisionPolicy,
@@ -163,6 +164,7 @@ class BeliefPropagationState(StrictModule):
     evidence: VariableStateValues
     step_index: Array
 
+    @checked
     def __init__(
         self,
         messages: ArrayLike,
@@ -171,8 +173,6 @@ class BeliefPropagationState(StrictModule):
         *,
         step_index: ArrayLike = 0,
     ) -> None:
-        if not isinstance(evidence, VariableStateValues):
-            raise TypeError("evidence must be VariableStateValues.")
         values = jnp.asarray(messages)
         if jnp.iscomplexobj(values):
             raise TypeError("Belief-propagation messages must be real-valued.")

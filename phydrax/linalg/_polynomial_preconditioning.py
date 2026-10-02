@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._assembly import assemble_diagonal
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -155,6 +155,7 @@ class ChebyshevPreconditioner(AbstractPreconditioner, NonTrainableState):
     builder_id: str = eqx.field(static=True)
     setup_operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         effective_operator: AbstractLinearOperator,
@@ -204,8 +205,6 @@ class ChebyshevPreconditioner(AbstractPreconditioner, NonTrainableState):
         if (scaling == "symmetric-jacobi") != scaled_effective:
             raise ValueError("scaling must match the effective operator representation.")
         bounds_source = parse(bounds_source, ChebyshevBoundsSource, "bounds_source")
-        if not isinstance(properties, PreconditionerProperties):
-            raise TypeError("properties must be PreconditionerProperties.")
         builder_id_ = str(builder_id)
         setup_operator_id_ = str(setup_operator_id)
         preconditioner_id_ = str(preconditioner_id)

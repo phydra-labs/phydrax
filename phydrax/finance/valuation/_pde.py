@@ -23,7 +23,7 @@ from ...linalg._tridiagonal_lines import (
     solve_tridiagonal_lines,
     TridiagonalLineSolveResult,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ..contracts._options import OptionType, VanillaPayoff
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
@@ -93,6 +93,7 @@ class PDEProblem(StrictModule):
     evidence_binding: FinanceEvidenceBinding | None
     pricing_law: PricingLaw | None
 
+    @checked
     def __init__(
         self,
         model: BlackScholesModel | LocalVolatilityModel,
@@ -112,8 +113,6 @@ class PDEProblem(StrictModule):
             raise TypeError(
                 "PDE model must be BlackScholesModel or LocalVolatilityModel."
             )
-        if not isinstance(payoff, VanillaPayoff):
-            raise TypeError("payoff must be VanillaPayoff.")
         exercise_route = parse(exercise_route, ExerciseRoute, "exercise_route")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be Currency or None.")
@@ -162,6 +161,7 @@ class PIDEPlan(StrictModule):
     jump_quadrature_nodes: int = eqx.field(static=True)
     jump_truncation: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         finite_difference: FiniteDifferencePlan,
@@ -170,8 +170,6 @@ class PIDEPlan(StrictModule):
         jump_quadrature_nodes: int = 48,
         jump_truncation: float = 10.0,
     ) -> None:
-        if not isinstance(finite_difference, FiniteDifferencePlan):
-            raise TypeError("finite_difference must be a FiniteDifferencePlan.")
         if (
             isinstance(jump_quadrature_nodes, bool)
             or not isinstance(jump_quadrature_nodes, int)
@@ -190,14 +188,13 @@ class PIDEProblem(StrictModule):
     diffusion_problem: PDEProblem
     jump_model: MertonJumpDiffusionModel | KouJumpDiffusionModel
 
+    @checked
     def __init__(
         self,
         diffusion_problem: PDEProblem,
         jump_model: MertonJumpDiffusionModel | KouJumpDiffusionModel,
         /,
     ) -> None:
-        if not isinstance(diffusion_problem, PDEProblem):
-            raise TypeError("diffusion_problem must be a PDEProblem.")
         if not isinstance(diffusion_problem.model, BlackScholesModel):
             raise ValueError(
                 "finite-activity PIDE currently requires constant diffusion."

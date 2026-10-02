@@ -26,6 +26,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ...typing import checked
 from .._tensor_entities import AxisEntityKind, TensorEntityLayout
 from .._tensor_support import PreparedTensorGrid
 from ._certification import FDConservationReport, FDStabilityReport
@@ -318,9 +319,8 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
     metric_report: MappedMetricIdentityReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MappedTensorGridPlan, /) -> None:
-        if not isinstance(plan, MappedTensorGridPlan):
-            raise TypeError("plan must be a MappedTensorGridPlan.")
         grid = plan.reference_grid
         dimension = len(grid.shape)
         physical_flat = jax.vmap(plan.coordinate_map)(grid.points)
@@ -486,14 +486,13 @@ class MappedDiffusionOperator(AbstractLinearOperator):
     conservation_report: FDConservationReport
     stability_report: FDStabilityReport
 
+    @checked
     def __init__(
         self,
         mapped_grid: PreparedMappedTensorGrid,
         coefficient: ArrayLike = 1.0,
         /,
     ) -> None:
-        if not isinstance(mapped_grid, PreparedMappedTensorGrid):
-            raise TypeError("mapped_grid must be PreparedMappedTensorGrid.")
         dimension = len(mapped_grid.shape)
         value = jnp.asarray(coefficient)
         if value.shape == () or value.shape == mapped_grid.shape:

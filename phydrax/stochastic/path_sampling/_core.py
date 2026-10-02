@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 PATH_PROPAGATION_SUCCESS = 0
@@ -151,9 +151,8 @@ class StateRegionPlan(StrictModule, NonTrainableState):
             return left | right
         return left ^ right
 
+    @checked
     def _binary(self, other: StateRegionPlan, kind: str, /) -> StateRegionPlan:
-        if not isinstance(other, StateRegionPlan):
-            raise TypeError("Boolean region operands must be StateRegionPlan values.")
         return StateRegionPlan(
             kind=kind,
             children=(self, other),
@@ -551,6 +550,7 @@ class FunctionalDynamicsKernel(StrictModule):
     time_step: float = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         step: Callable[[PRNGKey, Array, Array], DynamicsStep],
@@ -563,8 +563,6 @@ class FunctionalDynamicsKernel(StrictModule):
     ) -> None:
         if not callable(step) or not callable(transition_log_density):
             raise TypeError("step and transition_log_density must be callable.")
-        if not isinstance(capabilities, DynamicsKernelCapabilities):
-            raise TypeError("capabilities must be DynamicsKernelCapabilities.")
         interval = float(time_step)
         if not np.isfinite(interval) or interval <= 0.0:
             raise ValueError("time_step must be finite and positive.")

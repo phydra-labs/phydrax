@@ -21,6 +21,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....solver import DifferentialProblem, solve_diffrax
+from ....typing import checked
 from ..cellular import ShortenFastTwitchModel
 from ._territories import MotorUnitEndplateStimulus
 
@@ -318,13 +319,10 @@ class PreparedSkeletalFiberBundle(StrictModule):
     solver: dfx.Kvaerno5
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: SkeletalFiberBundlePlan, model: ShortenFastTwitchModel, /
     ) -> None:
-        if not isinstance(plan, SkeletalFiberBundlePlan):
-            raise TypeError("plan must be SkeletalFiberBundlePlan.")
-        if not isinstance(model, ShortenFastTwitchModel):
-            raise TypeError("model must be ShortenFastTwitchModel.")
         self.plan = plan
         self.model = model
         self.solver = dfx.Kvaerno5()
@@ -355,11 +353,10 @@ class PreparedSkeletalFiberBundle(StrictModule):
             stimulus,
         )
 
+    @checked
     def candidate(
         self, state: SkeletalFiberBundleState, step_ms: ArrayLike, /
     ) -> SkeletalFiberBundleCandidate:
-        if not isinstance(state, SkeletalFiberBundleState):
-            raise TypeError("state must be SkeletalFiberBundleState.")
         expected = (len(self.plan.fiber_ids), self.plan.node_count, 56)
         if state.values.shape != expected:
             raise ValueError(f"Fiber state must have shape {expected}.")

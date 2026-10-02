@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..operators.quantum._fermionic_fock import FermionModeOrder
+from ..typing import checked
 from ._core import MatrixProductOperator, MatrixProductState
 from ._mpo import add_mpo, apply_mpo, product_mpo
 
@@ -26,11 +27,10 @@ class FermionTopologySignPlan(StrictModule):
     parity_masks: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, mode_order: FermionModeOrder, edges: Sequence[tuple[str, str]], /
     ) -> None:
-        if not isinstance(mode_order, FermionModeOrder):
-            raise TypeError("mode_order must be FermionModeOrder.")
         values = tuple((str(left), str(right)) for left, right in edges)
         if any(left == right for left, right in values) or len(set(values)) != len(
             values

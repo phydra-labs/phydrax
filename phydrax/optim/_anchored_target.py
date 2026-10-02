@@ -15,6 +15,7 @@ from jax import Array, core
 
 from .._bounds import Bounds
 from .._strict import StrictModule
+from ..typing import checked
 from ._iterative._types import (
     MinimizationProblem,
     NonlinearConstraint,
@@ -167,6 +168,7 @@ class AnchoredTargetProblem(StrictModule):
     realization: Literal["deterministic", "frozen"] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evaluate: _Response,
@@ -184,10 +186,6 @@ class AnchoredTargetProblem(StrictModule):
     ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
-        if not isinstance(model, AnchoredResponseModel):
-            raise TypeError("model must be AnchoredResponseModel.")
-        if not isinstance(bounds, Bounds):
-            raise TypeError("bounds must be Bounds.")
         targets_ = jnp.asarray(targets)
         if targets_.ndim != 1 or not targets_.size:
             raise ValueError("targets must be a nonempty vector.")

@@ -56,6 +56,7 @@ from ..nonlinear import (
     root,
 )
 from ..sparse import compile_sparse_jacobian, EdgeRelation, SparseDerivativePlan
+from ..typing import checked
 
 
 def vertex_block_pattern(
@@ -93,6 +94,7 @@ class PreparedFilmNewton(StrictModule, NonTrainableState):
     linear_relative_tolerance: float = eqx.field(static=True)
     solver_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         residual: Callable[[Array, Any], Array],
@@ -104,8 +106,6 @@ class PreparedFilmNewton(StrictModule, NonTrainableState):
         termination: NonlinearTermination,
         solver_id: str,
     ) -> None:
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         size = sample_state.shape[0]
         space = ArraySpace((size,), dtype=np.float64)
         derivative = compile_sparse_jacobian(

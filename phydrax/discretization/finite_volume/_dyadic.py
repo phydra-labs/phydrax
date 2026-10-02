@@ -14,6 +14,7 @@ from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -100,6 +101,7 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: DyadicCellTopology,
@@ -108,8 +110,6 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
         component_names: Sequence[str] = ("value",),
         field_name: str = "state",
     ) -> None:
-        if not isinstance(topology, DyadicCellTopology):
-            raise TypeError("topology must be DyadicCellTopology.")
         if not bool(topology.evidence.successful) or not bool(topology.evidence.covering):
             raise ValueError(
                 "Dyadic finite volume requires a successful covering topology."

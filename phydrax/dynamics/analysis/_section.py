@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from .._evolution import AbstractEvolution, DiscreteEvolution, EvolutionTrajectory
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
@@ -65,6 +65,7 @@ class AffineSection(AbstractSection):
     state_layout: StateLayout
     section_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         normal: ArrayLike,
@@ -74,8 +75,6 @@ class AffineSection(AbstractSection):
         state_layout: StateLayout,
         section_id: str | None = None,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         normal_values = jnp.asarray(normal)
         if normal_values.shape != state_layout.shape:
             raise ValueError(
@@ -135,6 +134,7 @@ class CallableSection(AbstractSection):
     state_layout: StateLayout
     section_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         function: Callable[[Array, Array, Any], Array],
@@ -145,8 +145,6 @@ class CallableSection(AbstractSection):
     ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if not isinstance(section_id, str) or not section_id:
             raise ValueError("section_id must be a non-empty string.")
         self.function = function

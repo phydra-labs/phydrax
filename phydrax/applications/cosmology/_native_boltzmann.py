@@ -18,6 +18,7 @@ from phydrax.special._spherical_bessel import _spherical_j_sequence
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._background import FLRWBackground
 from ._closure import ScientificArtifactEnvelope
 from ._cmb import CmbSpectrumTable
@@ -536,6 +537,7 @@ class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
     line_of_sight_quadrature_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         background: FLRWBackground,
@@ -552,16 +554,6 @@ class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
         tail_tolerance: float = 1.0,
         line_of_sight_quadrature_tolerance: float = 1.0e-2,
     ) -> None:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be an FLRWBackground.")
-        if not isinstance(thermodynamics, ThermodynamicsHistory):
-            raise TypeError(
-                "thermodynamics must be a provenance-bearing ThermodynamicsHistory."
-            )
-        if not isinstance(layout, ScalarHierarchyLayout):
-            raise TypeError("layout must be a ScalarHierarchyLayout.")
-        if not isinstance(transitions, ApproximationTransitionPolicy):
-            raise TypeError("transitions must be an ApproximationTransitionPolicy.")
         if background.scale.scale_id != thermodynamics.scale.scale_id:
             raise ValueError("Background and thermodynamics scale identities disagree.")
         if float(np.asarray(background.curvature_density)) != 0.0:

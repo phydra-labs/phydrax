@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from .._strict import StrictModule
+from ..typing import checked
 
 
 _WORK_FIELDS = (
@@ -155,9 +156,8 @@ class NonlinearWorkBudget(StrictModule):
     def unlimited(cls) -> NonlinearWorkBudget:
         return cls()
 
+    @checked
     def permits(self, work: NonlinearWork, /) -> Array:
-        if not isinstance(work, NonlinearWork):
-            raise TypeError("work must be NonlinearWork.")
         permitted = jnp.asarray(True)
         for name in _WORK_FIELDS:
             limit = vars(self)[name]
@@ -170,9 +170,8 @@ class NonlinearWorkBudget(StrictModule):
             permitted = permitted & ~has_limit
         return permitted
 
+    @checked
     def consume(self, work: NonlinearWork, /) -> NonlinearWorkBudget:
-        if not isinstance(work, NonlinearWork):
-            raise TypeError("work must be NonlinearWork.")
         values = {}
         for name in _WORK_FIELDS:
             limit = vars(self)[name]
@@ -214,6 +213,7 @@ class NonlinearAttemptEvidence(StrictModule):
     failure_origin: str = eqx.field(static=True)
     children: tuple[NonlinearAttemptEvidence, ...]
 
+    @checked
     def __init__(
         self,
         *,
@@ -230,8 +230,6 @@ class NonlinearAttemptEvidence(StrictModule):
         identifier = str(component_id)
         if not identifier:
             raise ValueError("component_id must be non-empty.")
-        if not isinstance(work, NonlinearWork):
-            raise TypeError("work must be NonlinearWork.")
         children_ = tuple(children)
         if not all(isinstance(child, NonlinearAttemptEvidence) for child in children_):
             raise TypeError("children must contain NonlinearAttemptEvidence values.")

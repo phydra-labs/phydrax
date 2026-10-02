@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ...solid_mechanics import ClosedSurfacePressure
 from ..anatomy._surfaces import OrientedChamberSurface
 
@@ -49,6 +50,7 @@ class ChamberVolumePlan(StrictModule, NonTrainableState):
     orientation_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: OrientedChamberSurface,
@@ -57,8 +59,6 @@ class ChamberVolumePlan(StrictModule, NonTrainableState):
         minimum_volume: float | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(surface, OrientedChamberSurface):
-            raise TypeError("surface must be anatomy.OrientedChamberSurface.")
         threshold = (
             surface.geometric_tolerance
             if minimum_volume is None
@@ -167,6 +167,7 @@ class FollowerPressurePlan(StrictModule, NonTrainableState):
     chamber: ChamberVolumePlan
     load_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chamber: ChamberVolumePlan,
@@ -174,8 +175,6 @@ class FollowerPressurePlan(StrictModule, NonTrainableState):
         *,
         load_id: str | None = None,
     ) -> None:
-        if not isinstance(chamber, ChamberVolumePlan):
-            raise TypeError("chamber must be ChamberVolumePlan.")
         generated = canonical_fingerprint(
             {
                 "kind": "cardiac-follower-pressure",
@@ -293,6 +292,7 @@ class MechanicsChamber(StrictModule, NonTrainableState):
     pressure_plan: FollowerPressurePlan
     chamber_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chamber_id: str,
@@ -304,8 +304,6 @@ class MechanicsChamber(StrictModule, NonTrainableState):
         identifier = str(chamber_id)
         if not identifier:
             raise ValueError("chamber_id must be non-empty.")
-        if not isinstance(volume_plan, ChamberVolumePlan):
-            raise TypeError("volume_plan must be ChamberVolumePlan.")
         self.volume_plan = volume_plan
         self.pressure_plan = FollowerPressurePlan(
             volume_plan,

@@ -27,7 +27,7 @@ from ..operators.quantum import (
     AbstractDiscreteQuantumOperator,
     evaluate_local_operator,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._variational_monte_carlo import (
     _score_geometry,
     _validate_model_coordinates,
@@ -83,6 +83,7 @@ class ConnectedVMCNeuralTrajectoryProblem(StrictModule):
     projection_residual: Callable[[int, Any, Any], Array]
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vmc_problem: VariationalMonteCarloProblem,
@@ -93,8 +94,6 @@ class ConnectedVMCNeuralTrajectoryProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(vmc_problem, VariationalMonteCarloProblem):
-            raise TypeError("vmc_problem must be a VariationalMonteCarloProblem.")
         operators = tuple(collapse_operators)
         if not operators or any(
             not isinstance(operator, AbstractDiscreteQuantumOperator)

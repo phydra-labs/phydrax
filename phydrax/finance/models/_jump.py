@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ._diffusion import HestonModel
 
 
@@ -270,6 +271,7 @@ class BatesModel(StrictModule):
     jump_mean: Array
     jump_volatility: Array
 
+    @checked
     def __init__(
         self,
         heston: HestonModel,
@@ -278,8 +280,6 @@ class BatesModel(StrictModule):
         jump_volatility: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(heston, HestonModel):
-            raise TypeError("heston must be a HestonModel.")
         self.heston = heston
         self.jump_intensity = _scalar(jump_intensity, "jump_intensity", positive=True)
         self.jump_mean = _scalar(jump_mean, "jump_mean")

@@ -56,7 +56,7 @@ from ...linalg import (
     FunctionLinearOperator,
 )
 from ...system_modeling import AcausalSystem, compile_linear_acausal_system
-from ...typing import parse
+from ...typing import checked, parse
 from ._components import (
     AbstractSpatialComponent,
     AbstractTraceComponent,
@@ -181,6 +181,7 @@ class PreparedLaw(StrictModule):
     certificate: AbstractLawCertificate
     evidence: StrictModule
 
+    @checked
     def __init__(
         self,
         law_id: str,
@@ -199,8 +200,6 @@ class PreparedLaw(StrictModule):
                 "A law owns as many row blocks as unknown blocks so the coupled "
                 "problem stays square."
             )
-        if not isinstance(certificate, AbstractLawCertificate):
-            raise TypeError("certificate must be an AbstractLawCertificate.")
         self.law_id = canonical_identifier(law_id, "law_id")
         self.binding_id = binding_id
         self.state_blocks = state_blocks
@@ -319,6 +318,7 @@ class MortarImposition(StrictModule, NonTrainableState):
     minimum_inf_sup: float = eqx.field(static=True)
     max_evidence_entries: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         multiplier: MortarMultiplier,
@@ -329,8 +329,6 @@ class MortarImposition(StrictModule, NonTrainableState):
         minimum_inf_sup: float = 1.0e-6,
         max_evidence_entries: int = 16_000_000,
     ) -> None:
-        if not isinstance(multiplier, MortarMultiplier):
-            raise TypeError("multiplier must be a MortarMultiplier.")
         policy = InterfaceQuadraturePolicy() if quadrature is None else quadrature
         if not isinstance(policy, InterfaceQuadraturePolicy):
             raise TypeError("quadrature must be an InterfaceQuadraturePolicy.")
@@ -359,11 +357,10 @@ class TransmissionSide(StrictModule, NonTrainableState):
     field: str = eqx.field(static=True)
     domain: IntegrationDomain
 
+    @checked
     def __init__(
         self, role: str, component: str, field: str, domain: IntegrationDomain, /
     ) -> None:
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be an IntegrationDomain.")
         if domain.kind != "exterior_facet":
             raise ValueError(
                 "Transmission sides act on exterior facets of their component's "
@@ -1796,6 +1793,7 @@ class ScalarTransmissionLaw(AbstractCouplingLaw, NonTrainableState):
     sides: tuple[TransmissionSide, TransmissionSide]
     imposition: TransmissionImposition
 
+    @checked
     def __init__(
         self,
         law_id: str,
@@ -1804,8 +1802,6 @@ class ScalarTransmissionLaw(AbstractCouplingLaw, NonTrainableState):
         imposition: TransmissionImposition,
         /,
     ) -> None:
-        if not isinstance(binding, InterfaceBinding):
-            raise TypeError("binding must be an InterfaceBinding.")
         if (
             not isinstance(sides, tuple)
             or len(sides) != 2
@@ -2181,6 +2177,7 @@ class ConservativeFluxLaw(AbstractCouplingLaw, NonTrainableState):
     quadrature: InterfaceQuadraturePolicy
     max_evidence_entries: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law_id: str,
@@ -2192,16 +2189,12 @@ class ConservativeFluxLaw(AbstractCouplingLaw, NonTrainableState):
         quadrature: InterfaceQuadraturePolicy | None = None,
         max_evidence_entries: int = 16_000_000,
     ) -> None:
-        if not isinstance(binding, InterfaceBinding):
-            raise TypeError("binding must be an InterfaceBinding.")
         if (
             not isinstance(sides, tuple)
             or len(sides) != 2
             or not all(isinstance(side, TransmissionSide) for side in sides)
         ):
             raise TypeError("sides must be a (minus, plus) pair of TransmissionSide.")
-        if not isinstance(flux, AbstractInterfaceFlux):
-            raise TypeError("flux must be an AbstractInterfaceFlux.")
         policy = InterfaceQuadraturePolicy() if quadrature is None else quadrature
         if not isinstance(policy, InterfaceQuadraturePolicy):
             raise TypeError("quadrature must be an InterfaceQuadraturePolicy.")
@@ -2284,11 +2277,10 @@ class PortSide(StrictModule, NonTrainableState):
     field: str = eqx.field(static=True)
     domain: IntegrationDomain
 
+    @checked
     def __init__(
         self, connector: str, component: str, field: str, domain: IntegrationDomain, /
     ) -> None:
-        if not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be an IntegrationDomain.")
         if domain.kind != "exterior_facet":
             raise ValueError(
                 "A field port is a set of exterior facets of its component's support."
@@ -2623,6 +2615,7 @@ class IntegralPortLaw(AbstractCouplingLaw, NonTrainableState):
     through: int = eqx.field(static=True)
     rank_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law_id: str,
@@ -2636,10 +2629,6 @@ class IntegralPortLaw(AbstractCouplingLaw, NonTrainableState):
         flux_unit: str,
         rank_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(port, PortSide):
-            raise TypeError("port must be a PortSide.")
-        if not isinstance(system, AcausalSystem):
-            raise TypeError("system must be an AcausalSystem.")
         compiled = compile_linear_acausal_system(
             system,
             np.asarray(equations, dtype=np.float64),
@@ -2954,6 +2943,7 @@ class FieldTransferLaw(AbstractCouplingLaw, NonTrainableState):
     exchange: Array
     tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law_id: str,
@@ -2973,10 +2963,6 @@ class FieldTransferLaw(AbstractCouplingLaw, NonTrainableState):
                 raise ValueError(f"The {name} endpoint must name a component field.")
         if source.owner == target.owner:
             raise ValueError("A field transfer law couples two different components.")
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be a FieldTransfer.")
-        if not isinstance(measure, AbstractLinearOperator):
-            raise TypeError("measure must be an AbstractLinearOperator.")
         if transfer.dual_pullback_operator is None:
             raise ValueError(
                 "The transfer publishes no dual pullback; the exchange needs its "
@@ -3588,6 +3574,7 @@ class BoundaryIntegralTransmissionLaw(AbstractCouplingLaw, NonTrainableState):
     interface_source: Callable[[Array], Array] | None = eqx.field(static=True)
     quadrature: InterfaceQuadraturePolicy
 
+    @checked
     def __init__(
         self,
         law_id: str,
@@ -3600,12 +3587,6 @@ class BoundaryIntegralTransmissionLaw(AbstractCouplingLaw, NonTrainableState):
         interface_source: Callable[[Array], Array] | None = None,
         quadrature: InterfaceQuadraturePolicy | None = None,
     ) -> None:
-        if not isinstance(binding, InterfaceBinding):
-            raise TypeError("binding must be an InterfaceBinding.")
-        if not isinstance(volume, TransmissionSide):
-            raise TypeError("volume must be a TransmissionSide.")
-        if not isinstance(boundary, BoundaryIntegralSide):
-            raise TypeError("boundary must be a BoundaryIntegralSide.")
         if interface_source is not None and not callable(interface_source):
             raise TypeError("interface_source must be callable or None.")
         policy = InterfaceQuadraturePolicy() if quadrature is None else quadrature

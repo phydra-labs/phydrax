@@ -36,7 +36,7 @@ from ..measurement import (
     SamplingSemantics,
     ValueLayout,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._result import ImageRenderResult, RenderEvidence
 
 
@@ -58,6 +58,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
     traversal_stack_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         realization: SurfaceRealization,
@@ -73,16 +74,6 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
         leaf_size: int = 8,
         traversal_stack_capacity: int = 64,
     ) -> None:
-        if not isinstance(realization, SurfaceRealization):
-            raise TypeError("realization must be SurfaceRealization.")
-        if not isinstance(support, ImagePlaneSupport):
-            raise TypeError("support must be ImagePlaneSupport.")
-        if not isinstance(camera, CameraModel):
-            raise TypeError("camera must be CameraModel.")
-        if not isinstance(camera_coordinate_contract, SpatialCoordinateContract):
-            raise TypeError(
-                "camera_coordinate_contract must be SpatialCoordinateContract."
-            )
         if (
             camera_coordinate_contract.spatial_id
             != realization.model.metadata.coordinate_contract.spatial_id
@@ -92,8 +83,6 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
             )
         if not isinstance(quantity, QuantitySpec) or not isinstance(layout, ValueLayout):
             raise TypeError("quantity and layout must be measurement contracts.")
-        if not isinstance(sampling, SamplingSemantics):
-            raise TypeError("sampling must be SamplingSemantics.")
         field_association = parse(
             field_association, FieldAssociation, "field_association"
         )

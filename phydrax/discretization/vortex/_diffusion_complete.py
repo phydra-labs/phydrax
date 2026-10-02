@@ -21,6 +21,7 @@ from ...linalg import (
     LinearSolvePolicy,
     solve as solve_linear,
 )
+from ...typing import checked
 from ..particle import ParticleBox, ParticlePairRelation
 from ._capabilities import VortexDiffusionCapabilities
 from ._interfaces import VortexDiffusionDiagnostics, VortexDiffusionEvaluation
@@ -121,6 +122,7 @@ class GaussianPSENeighborhoodPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
+    @checked
     def __init__(
         self,
         relation: ParticlePairRelation,
@@ -131,8 +133,6 @@ class GaussianPSENeighborhoodPlan(StrictModule, NonTrainableState):
         cutoff_factor: float = 4.0,
         box: ParticleBox | None = None,
     ) -> None:
-        if not isinstance(relation, ParticlePairRelation):
-            raise TypeError("relation must be ParticlePairRelation.")
         dimension_, epsilon, cutoff = (
             int(dimension),
             float(smoothing_scale),

@@ -23,6 +23,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
+from ...typing import checked
 from ...uq import (
     HeterogeneousFunctionEnsemble,
     HomogeneousFunctionEnsemble,
@@ -494,7 +495,9 @@ def _fit_members(
     recipes: Sequence[AbstractRecipe], batch: MLBatch, key: Array, stream: int
 ) -> tuple[tuple[FitResult, ...], tuple[AbstractArrayModel, ...], Array, Array]:
     results = tuple(
-        recipe.fit_batch(batch, key=_key(key, stream + index))
+        recipe.fit_batch(
+            batch, key=_key(key, stream + index) if recipe.accepts_fit_key else None
+        )
         for index, recipe in enumerate(recipes)
     )
     models = tuple(result.as_trainable() for result in results)
@@ -508,6 +511,7 @@ class BaggingRecipe(AbstractRecipe):
     num_members: int = eqx.field(static=True)
     sample_fraction: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         recipe: AbstractRecipe,
@@ -516,8 +520,6 @@ class BaggingRecipe(AbstractRecipe):
         num_members: int = 16,
         sample_fraction: float = 1.0,
     ) -> None:
-        if not isinstance(recipe, AbstractRecipe):
-            raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or not (0.0 < float(sample_fraction) <= 1.0):
             raise ValueError(
                 "num_members must be positive and sample_fraction in (0, 1]."
@@ -535,7 +537,8 @@ class BaggingRecipe(AbstractRecipe):
             indices = jr.randint(_key(member_key, 1), (size,), 0, batch.sample_count)
             results.append(
                 self.recipe.fit_batch(
-                    batch.take_samples(indices), key=_key(member_key, 2)
+                    batch.take_samples(indices),
+                    key=_key(member_key, 2) if self.recipe.accepts_fit_key else None,
                 )
             )
         models = tuple(result.as_trainable() for result in results)
@@ -556,11 +559,10 @@ class RandomSubspaceRecipe(AbstractRecipe):
     num_members: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, recipe: AbstractRecipe, /, *, num_members: int = 16, feature_count: int
     ) -> None:
-        if not isinstance(recipe, AbstractRecipe):
-            raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or int(feature_count) <= 0:
             raise ValueError("num_members and feature_count must be positive.")
         self.recipe = recipe
@@ -587,7 +589,10 @@ class RandomSubspaceRecipe(AbstractRecipe):
                 feature_schema=FeatureSchema.anonymous(self.feature_count),
                 feature_mask=jnp.take(batch.feature_mask, indices, axis=-1),
             )
-            result = self.recipe.fit_batch(selected_batch, key=_key(member_key, 2))
+            result = self.recipe.fit_batch(
+                selected_batch,
+                key=_key(member_key, 2) if self.recipe.accepts_fit_key else None,
+            )
             results.append(result)
             models.append(
                 FeatureSubsetModel(
@@ -663,6 +668,7 @@ class StackingRecipe(AbstractRecipe):
     meta_recipe: AbstractRecipe
     num_folds: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base_recipes: Sequence[AbstractRecipe],
@@ -674,8 +680,6 @@ class StackingRecipe(AbstractRecipe):
         bases = tuple(base_recipes)
         if not bases or any(not isinstance(value, AbstractRecipe) for value in bases):
             raise TypeError("base_recipes must be a nonempty sequence of recipes.")
-        if not isinstance(meta_recipe, AbstractRecipe):
-            raise TypeError("meta_recipe must be an AbstractRecipe.")
         if int(num_folds) < 2:
             raise ValueError("num_folds must be at least two.")
         self.base_recipes = bases
@@ -706,7 +710,9 @@ class StackingRecipe(AbstractRecipe):
                 )
                 result = recipe.fit_batch(
                     batch.take_samples(training_indices),
-                    key=_key(root, 1000 + base_index * self.num_folds + fold),
+                    key=_key(root, 1000 + base_index * self.num_folds + fold)
+                    if recipe.accepts_fit_key
+                    else None,
                 )
                 prediction = result.model(
                     jnp.take(dense, validation_indices, axis=sample_axis),
@@ -737,9 +743,14 @@ class StackingRecipe(AbstractRecipe):
             feature_mask=jnp.isfinite(jnp.real(meta_features))
             & jnp.isfinite(jnp.imag(meta_features)),
         )
-        meta_result = self.meta_recipe.fit_batch(meta_batch, key=_key(root, 3000))
+        meta_result = self.meta_recipe.fit_batch(
+            meta_batch,
+            key=_key(root, 3000) if self.meta_recipe.accepts_fit_key else None,
+        )
         final_results = tuple(
-            recipe.fit_batch(batch, key=_key(root, 4000 + index))
+            recipe.fit_batch(
+                batch, key=_key(root, 4000 + index) if recipe.accepts_fit_key else None
+            )
             for index, recipe in enumerate(self.base_recipes)
         )
         fold_valid_array = jnp.stack(tuple(fold_valid))
@@ -781,6 +792,7 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
     gate_recipe: AbstractRecipe
     temperature: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         expert_recipes: Sequence[AbstractRecipe],
@@ -792,8 +804,6 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         experts = tuple(expert_recipes)
         if not experts or any(not isinstance(value, AbstractRecipe) for value in experts):
             raise TypeError("expert_recipes must be a nonempty sequence of recipes.")
-        if not isinstance(gate_recipe, AbstractRecipe):
-            raise TypeError("gate_recipe must be an AbstractRecipe.")
         if float(temperature) <= 0.0:
             raise ValueError("temperature must be positive.")
         self.expert_recipes = experts
@@ -804,7 +814,9 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         root = _require_key(key, "MixtureOfExpertsRecipe")
         targets = batch.require_targets()
         expert_results = tuple(
-            recipe.fit_batch(batch, key=_key(root, 5000 + index))
+            recipe.fit_batch(
+                batch, key=_key(root, 5000 + index) if recipe.accepts_fit_key else None
+            )
             for index, recipe in enumerate(self.expert_recipes)
         )
         predictions = tuple(
@@ -853,7 +865,10 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
             feature_schema=batch.feature_schema,
             target_schema=TargetSchema("continuous"),
         )
-        gate_result = self.gate_recipe.fit_batch(gate_batch, key=_key(root, 7000))
+        gate_result = self.gate_recipe.fit_batch(
+            gate_batch,
+            key=_key(root, 7000) if self.gate_recipe.accepts_fit_key else None,
+        )
         valid = jnp.concatenate(
             (
                 jnp.stack(tuple(result.valid for result in expert_results)),

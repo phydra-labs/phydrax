@@ -20,6 +20,7 @@ from ..discretization.finite_volume import (
     MHDCTRateResult,
     UpwindConstrainedTransportPlan,
 )
+from ..typing import checked
 
 
 class ConstrainedMHDRunStatus(IntEnum):
@@ -81,6 +82,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
     ctu_predictor: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spatial: UpwindConstrainedTransportPlan,
@@ -91,8 +93,6 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         divergence_tolerance: float = 1e-10,
         ctu_predictor: bool = False,
     ) -> None:
-        if not isinstance(spatial, UpwindConstrainedTransportPlan):
-            raise TypeError("spatial must be UpwindConstrainedTransportPlan.")
         cfl_ = float(cfl)
         iterations = int(positivity_iterations)
         tolerance = float(divergence_tolerance)
@@ -251,6 +251,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         )
         return cell, magnetic, factor, rate
 
+    @checked
     def advance(
         self,
         state: ConstrainedMHDState,
@@ -259,8 +260,6 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         args: Any = None,
         /,
     ) -> ConstrainedMHDStepResult:
-        if not isinstance(state, ConstrainedMHDState):
-            raise TypeError("state must be ConstrainedMHDState.")
         start = jnp.asarray(start_time, dtype=state.time.dtype).reshape(())
         end = jnp.asarray(end_time, dtype=state.time.dtype).reshape(())
         step = end - start

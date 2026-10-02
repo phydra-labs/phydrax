@@ -40,6 +40,7 @@ from .linalg import (
     MixedPrecisionPolicy,
     PyTreeSpace,
 )
+from .typing import checked
 
 
 _TreeT = TypeVar("_TreeT")
@@ -390,9 +391,8 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
     def certificate(self, value: _TreeT, /) -> _TreeT:
         return self._cast_tree(value, self.certificate_dtype)
 
+    @checked
     def bind_linear(self, policy: LinearSolvePolicy, /) -> LinearSolvePolicy:
-        if not isinstance(policy, LinearSolvePolicy):
-            raise TypeError("policy must be a LinearSolvePolicy.")
         if self.linear is None:
             return policy
         return eqx.tree_at(lambda value: value.precision, policy, self.linear)

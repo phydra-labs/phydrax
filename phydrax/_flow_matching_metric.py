@@ -16,6 +16,7 @@ from ._fingerprint import canonical_fingerprint
 from ._geometry_precision import GeometryPrecisionPolicy
 from ._strict import StrictModule
 from .metrix import AbstractRiemannianManifold, RiemannianMetric
+from .typing import checked
 
 
 class AbstractFlowMatchingMetric(StrictModule):
@@ -87,6 +88,7 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
     precision: GeometryPrecisionPolicy
     metric_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         metric: RiemannianMetric,
@@ -94,8 +96,6 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
         *,
         precision: GeometryPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(metric, RiemannianMetric):
-            raise TypeError("metric must be a RiemannianMetric.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, GeometryPrecisionPolicy):
             raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
@@ -149,6 +149,7 @@ class ManifoldFlowMatchingMetric(AbstractFlowMatchingMetric):
     precision: GeometryPrecisionPolicy
     metric_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: AbstractRiemannianManifold,
@@ -156,8 +157,6 @@ class ManifoldFlowMatchingMetric(AbstractFlowMatchingMetric):
         *,
         precision: GeometryPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(geometry, AbstractRiemannianManifold):
-            raise TypeError("geometry must be an AbstractRiemannianManifold.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, GeometryPrecisionPolicy):
             raise TypeError("precision must be a GeometryPrecisionPolicy or None.")

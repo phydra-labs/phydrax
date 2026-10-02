@@ -16,6 +16,7 @@ import phydrax.axes as cx
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._constraint_conditioning import (
     ConstraintLikelihoodTerm,
     LinearGaussianConstraintConditioner,
@@ -236,16 +237,13 @@ class IntrinsicCoregionalizationKernel(AbstractMultiOutputKernel):
     spatial_kernel: AbstractPositiveDefiniteKernel
     coregionalization: Coregionalization
 
+    @checked
     def __init__(
         self,
         spatial_kernel: AbstractPositiveDefiniteKernel,
         coregionalization: Coregionalization,
         /,
     ) -> None:
-        if not isinstance(spatial_kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("spatial_kernel must be a positive-definite kernel.")
-        if not isinstance(coregionalization, Coregionalization):
-            raise TypeError("coregionalization must be a Coregionalization.")
         self.spatial_kernel = spatial_kernel
         self.coregionalization = coregionalization
 
@@ -385,6 +383,7 @@ class MultiOutputGaussianProcessLikelihoodState(StrictModule):
     jitter: Array
     noise_layout: Literal["output", "observation"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -393,8 +392,6 @@ class MultiOutputGaussianProcessLikelihoodState(StrictModule):
         noise_layout: Literal["output", "observation"] = "output",
         jitter: ArrayLike = 1e-8,
     ) -> None:
-        if not isinstance(kernel, AbstractMultiOutputKernel):
-            raise TypeError("kernel must be an AbstractMultiOutputKernel.")
         noise = jnp.asarray(noise_scale, dtype=jnp.float64)
         if noise.ndim > 1 or (noise.ndim == 1 and noise.shape[0] == 0):
             raise ValueError("noise_scale must be scalar or a nonempty vector.")
@@ -521,14 +518,13 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
     design: MultiOutputDesign
     observations: Array
 
+    @checked
     def __init__(
         self,
         design: MultiOutputDesign,
         observations: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(design, MultiOutputDesign):
-            raise TypeError("design must be a MultiOutputDesign.")
         values = design.flatten(observations, name="multi-output GP observations")
         if not bool(jnp.all(jnp.isfinite(values))):
             raise ValueError("Multi-output GP observations must be finite.")

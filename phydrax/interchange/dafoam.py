@@ -39,6 +39,7 @@ from .._external_runtime import (
 from .._external_worker import _digest_file, _relative_path
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ..artifacts import ScientificArtifactEnvelope
+from ..typing import checked
 
 
 class DAFoamDesignVariableKind(StrEnum):
@@ -553,6 +554,7 @@ class DAFoamAdjointAction(ExternalAdjointAction):
     max_output_bytes: int
     environment: Mapping[str, str] | None
 
+    @checked
     def __init__(
         self,
         runtime: DAFoamRuntime,
@@ -566,8 +568,6 @@ class DAFoamAdjointAction(ExternalAdjointAction):
         environment: Mapping[str, str] | None = None,
     ) -> None:
         _host_only(case_files, options, design_shapes, timeout)
-        if not isinstance(runtime, DAFoamRuntime):
-            raise TypeError("runtime must be a DAFoamRuntime.")
         # Validate the case and options once against a placeholder design.
         _, request = _request(
             case_files,

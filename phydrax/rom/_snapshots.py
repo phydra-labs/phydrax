@@ -13,7 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..data_utils import CasePartitionManifest
-from ..typing import parse
+from ..typing import checked, parse
 
 
 SnapshotRole: TypeAlias = Literal[
@@ -45,6 +45,7 @@ class SnapshotManifest(StrictModule, NonTrainableState):
     source_artifact_ids: tuple[str, ...] = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         role: SnapshotRole,
@@ -64,8 +65,6 @@ class SnapshotManifest(StrictModule, NonTrainableState):
         source_artifact_ids: Sequence[str],
     ) -> None:
         role = parse(role, SnapshotRole, "role")
-        if not isinstance(partition, CasePartitionManifest):
-            raise TypeError("partition must be a CasePartitionManifest.")
         cases = tuple(str(value) for value in case_ids)
         chunks = tuple(str(value) for value in chunk_artifact_ids)
         sources = tuple(str(value) for value in source_artifact_ids)

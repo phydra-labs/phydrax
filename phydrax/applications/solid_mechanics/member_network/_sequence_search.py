@@ -21,6 +21,7 @@ from ....optim import (
     PrecedenceNode,
     PrecedenceSpace,
 )
+from ....typing import checked
 
 
 class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
@@ -32,6 +33,7 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
     complete_objective_callback: Callable = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PrecedenceSpace,
@@ -42,8 +44,6 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
         *,
         problem_id: str = "construction-sequence-search",
     ) -> None:
-        if not isinstance(space, PrecedenceSpace):
-            raise TypeError("space must be a PrecedenceSpace.")
         if not all(
             callable(value)
             for value in (evaluate_prefix, lower_bound, complete_objective)

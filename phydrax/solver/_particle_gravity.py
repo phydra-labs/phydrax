@@ -49,6 +49,7 @@ from ..sparse import (
     RelationExecutionState,
     RelationReductionEvidence,
 )
+from ..typing import checked
 
 
 _TargetInputs: TypeAlias = tuple[Array, Array, Array]
@@ -2121,6 +2122,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         run.defvjp(forward, backward)
         return run(tree)
 
+    @checked
     def evaluate_monopole(
         self,
         structure: PreparedUniformFMMStructure,
@@ -2145,8 +2147,6 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
                 "The Laplace monopole route requires a UniformFMMPlan without "
                 "short_range_scale."
             )
-        if not isinstance(structure, PreparedUniformFMMStructure):
-            raise TypeError("structure must be a PreparedUniformFMMStructure.")
         if structure.plan_id != self.plan_id:
             raise ValueError(
                 "The FMM structure was prepared by a different UniformFMMPlan."
@@ -2682,6 +2682,7 @@ class TreePMPlan(StrictModule, NonTrainableState):
     short_range_kernel: TreePMShortRangeKernel
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         short_range: BarnesHutGravityPlan | UniformFMMPlan,
@@ -2692,8 +2693,6 @@ class TreePMPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "short_range must be a BarnesHutGravityPlan or UniformFMMPlan."
             )
-        if not isinstance(split, TreePMSplitPolicy):
-            raise TypeError("split must be a TreePMSplitPolicy.")
         kernel = TreePMShortRangeKernel(
             short_range.gravitational_constant,
             short_range.softening,

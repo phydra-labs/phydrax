@@ -13,6 +13,7 @@ import numpy as np
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..data import (
     function_samples_with_values,
     FunctionSamples,
@@ -62,6 +63,7 @@ class OperatorResidualCorpus(StrictModule, NonTrainableState):
     source_artifact_ids: tuple[str, ...] = eqx.field(static=True)
     corpus_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dataset: OperatorDataset,
@@ -73,8 +75,6 @@ class OperatorResidualCorpus(StrictModule, NonTrainableState):
         source_artifact_ids: Sequence[str],
         corpus_id: str,
     ) -> None:
-        if not isinstance(dataset, OperatorDataset):
-            raise TypeError("dataset must be an OperatorDataset.")
         if dataset.targets.fields:
             raise ValueError("Operator residual corpora must be targetless.")
         identifiers = tuple(

@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ..sign_problem import (
     ComplexLangevinPlan,
     ComplexLangevinResult,
@@ -121,11 +121,8 @@ class PreparedPartialSaddleFTS(StrictModule, NonTrainableState):
     scft: PreparedSCFT
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PartialSaddleFTSPlan, scft: PreparedSCFT, /) -> None:
-        if not isinstance(plan, PartialSaddleFTSPlan):
-            raise TypeError("plan must be PartialSaddleFTSPlan.")
-        if not isinstance(scft, PreparedSCFT):
-            raise TypeError("scft must be PreparedSCFT.")
         if int(np.prod(scft.field_shape)) > plan.maximum_state_size:
             raise ValueError("Partial-saddle FTS state exceeds maximum_state_size.")
         self.plan = plan
@@ -265,9 +262,8 @@ class ComplexFTSPlan(StrictModule, NonTrainableState):
     langevin: ComplexLangevinPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, langevin: ComplexLangevinPlan, /) -> None:
-        if not isinstance(langevin, ComplexLangevinPlan):
-            raise TypeError("langevin must be ComplexLangevinPlan.")
         self.langevin = langevin
         self.plan_id = canonical_fingerprint(
             {"kind": "complex-fts-plan", "langevin": langevin.plan_id}
@@ -283,11 +279,8 @@ class PreparedComplexFTS(StrictModule, NonTrainableState):
     langevin: PreparedComplexLangevin
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ComplexFTSPlan, scft: PreparedSCFT, /) -> None:
-        if not isinstance(plan, ComplexFTSPlan):
-            raise TypeError("plan must be ComplexFTSPlan.")
-        if not isinstance(scft, PreparedSCFT):
-            raise TypeError("scft must be PreparedSCFT.")
 
         def action(fields: Array) -> Array:
             gauge_fixed = fields - jnp.mean(fields)

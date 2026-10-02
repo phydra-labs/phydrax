@@ -23,7 +23,7 @@ from ..domain import (
     PairedSupport,
     SubdomainPatch,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._base import AbstractResidualCondition
 
 
@@ -131,6 +131,7 @@ class SubdomainValueJump(AbstractResidualCondition):
     target: DomainFunction
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left_field: FieldBinding,
@@ -141,8 +142,6 @@ class SubdomainValueJump(AbstractResidualCondition):
         target: DomainFunction | ArrayLike = 0.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(pairing, PairedSupport):
-            raise TypeError("pairing must be a PairedSupport.")
         self.fields = _field_names(left_field, right_field)
         self.on = pairing.component
         self.pairing = pairing
@@ -170,6 +169,7 @@ class SubdomainFluxJump(AbstractResidualCondition):
     target: DomainFunction
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left_field: FieldBinding,
@@ -182,8 +182,6 @@ class SubdomainFluxJump(AbstractResidualCondition):
         target: DomainFunction | ArrayLike = 0.0,
         label: str | None = None,
     ) -> None:
-        if not isinstance(pairing, PairedSupport):
-            raise TypeError("pairing must be a PairedSupport.")
         if pairing.normal is None:
             raise ValueError("Flux-jump conditions require an oriented interface normal.")
         if not callable(left_flux) or not callable(right_flux):
@@ -226,6 +224,7 @@ class SubdomainTransmission(AbstractResidualCondition):
     ] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left_field: FieldBinding,
@@ -238,8 +237,6 @@ class SubdomainTransmission(AbstractResidualCondition):
         *,
         label: str | None = None,
     ) -> None:
-        if not isinstance(pairing, PairedSupport):
-            raise TypeError("pairing must be a PairedSupport.")
         if not callable(operator):
             raise TypeError("operator must be callable.")
         self.fields = _field_names(left_field, right_field)
@@ -276,6 +273,7 @@ class LocalizedResidual(AbstractResidualCondition):
     patch: SubdomainPatch
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         condition: AbstractResidualCondition,
@@ -285,10 +283,6 @@ class LocalizedResidual(AbstractResidualCondition):
         on: DomainComponent | None = None,
         label: str | None = None,
     ) -> None:
-        if not isinstance(condition, AbstractResidualCondition):
-            raise TypeError("condition must be an AbstractResidualCondition.")
-        if not isinstance(patch, SubdomainPatch):
-            raise TypeError("patch must be a SubdomainPatch.")
         component = patch.interior if on is None else on
         if not isinstance(
             component, DomainComponent

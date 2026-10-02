@@ -25,6 +25,7 @@ from ...discretization.vortex._source import (
     VortexSourceState,
     VortexTargetState,
 )
+from ...typing import checked
 
 
 class PassiveVortexProbes(StrictModule, NonTrainableState):
@@ -48,14 +49,13 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def sample(
         self,
         prepared_velocity: AbstractPreparedVortexVelocity,
         source: VortexSourceState,
         /,
     ) -> VortexVelocityEvaluation:
-        if not isinstance(source, VortexSourceState):
-            raise TypeError("source must be VortexSourceState.")
         return prepared_velocity.evaluate(
             source,
             VortexTargetState(

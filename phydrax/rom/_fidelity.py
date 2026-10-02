@@ -11,6 +11,7 @@ from jax import Array
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..fidelity import FidelityCaseSpec, FidelityEvaluation, FidelityLevelSpec
+from ..typing import checked
 from ._affine import PreparedAffineLinearROM
 
 
@@ -23,6 +24,7 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
     observable: str = eqx.field(static=True)
     evaluator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: PreparedAffineLinearROM,
@@ -33,10 +35,6 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
         observable: str = "state",
         evaluator_id: str | None = None,
     ) -> None:
-        if not isinstance(model, PreparedAffineLinearROM):
-            raise TypeError("model must be a PreparedAffineLinearROM.")
-        if not isinstance(level, FidelityLevelSpec):
-            raise TypeError("level must be a FidelityLevelSpec.")
         cost_ = float(cost)
         if not np.isfinite(cost_) or cost_ <= 0.0:
             raise ValueError("ROM fidelity cost must be finite and positive.")
@@ -80,6 +78,7 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
         self.observable = observable_
         self.evaluator_id = identifier
 
+    @checked
     def __call__(
         self,
         case: FidelityCaseSpec,
@@ -87,8 +86,6 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
         /,
     ) -> FidelityEvaluation:
         del key
-        if not isinstance(case, FidelityCaseSpec):
-            raise TypeError("case must be a FidelityCaseSpec.")
         state_output = self.observable == "state"
         result = self.model.evaluate(case.inputs, reconstruct=state_output)
         if state_output:

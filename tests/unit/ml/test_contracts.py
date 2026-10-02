@@ -12,6 +12,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, FrozenModel, ModelBinding
+from phydrax.ml._contracts import OperationDerivativeContract
 
 
 _INPUT = phx.DerivativeSurface.INPUT
@@ -192,3 +193,176 @@ def test_contracts_scenario_2() -> None:
     batch = phx.ml.MLBatch(jnp.ones((3, 1)), jnp.ones((3,)))
     with pytest.raises(ValueError, match="cannot accompany"):
         phx.ml.fit(_ScaleRecipe(), batch, sample_weight=jnp.ones((3,)))
+
+
+def _gated_operations(
+    valid: jax.Array,
+) -> tuple[OperationDerivativeContract, ...]:
+    independent = (
+        phx.SurfaceDerivative(_INPUT, phx.GradientLevel.SMOOTH),
+        phx.SurfaceDerivative(_PARAMETER, phx.GradientLevel.SMOOTH),
+    )
+    encoder = phx.DerivativeContract(
+        independent,
+        route=phx.DerivativeRoute.DIRECT,
+        regularity=phx.DerivativeRegularity.smooth(),
+    )
+    projection = phx.DerivativeContract(
+        (
+            *independent,
+            phx.SurfaceDerivative(_FIT_TARGETS, phx.GradientLevel.CONDITIONAL),
+        ),
+        route=phx.DerivativeRoute.DIRECT,
+        regularity=phx.DerivativeRegularity.smooth(),
+        conditions=("nonzero-normalizer",),
+    )
+    return (
+        OperationDerivativeContract("transform", encoder),
+        OperationDerivativeContract(
+            "project",
+            projection,
+            runtime_surfaces=(_FIT_TARGETS,),
+            runtime_valid=valid[..., None],
+            runtime_status=jnp.where(valid, 0, phx.ml.ML_RANK_DEFICIENT)[..., None],
+        ),
+    )
+
+
+class _NormalizedScaleRecipe(phx.ml.AbstractRecipe):
+    """An actual singular normalization supplies a dynamic conditional gate."""
+
+    def fit_batch(self, batch: phx.ml.MLBatch, /, *, key: Any = None) -> phx.ml.FitResult:
+        del key
+        total = jnp.sum(batch.require_targets())
+        valid = jnp.isfinite(total) & (total != 0)
+        operations = _gated_operations(valid)
+        return phx.ml.FitResult(
+            _ScaleModel(1 / total),
+            phx.ml.FitDiagnostics(
+                valid=valid,
+                status=jnp.where(valid, 0, phx.ml.ML_RANK_DEFICIENT),
+                method="nonzero-normalization",
+            ),
+            valid=valid,
+            status=jnp.where(valid, 0, phx.ml.ML_RANK_DEFICIENT),
+            method="nonzero-normalization",
+            derivative_contract=operations[0].contract,
+            operation_derivatives=operations,
+            default_operation="transform",
+        )
+
+
+def test_operation_gates_toggle_without_revoking_independent_surfaces() -> None:
+    request = phx.DifferentiationRequest((_FIT_TARGETS,))
+    independent = phx.DifferentiationRequest((_INPUT, _PARAMETER))
+
+    @jax.jit
+    def evidence(total: jax.Array) -> tuple[jax.Array, jax.Array]:
+        result = phx.ml.fit(_NormalizedScaleRecipe(), jnp.ones((1, 1)), total[None])
+        admission = result.derivative_admission(request, operation="project")
+        assert admission.supported
+        assert admission.runtime_valid is not None
+        assert admission.runtime_status is not None
+        assert result.require_derivative(independent, operation="project").supported
+        assert result.derivative_admission(independent).runtime_valid is None
+        return admission.runtime_valid, admission.runtime_status
+
+    assert jnp.array_equal(evidence(jnp.array(2.0))[0], jnp.array([True]))
+    valid, status = evidence(jnp.array(0.0))
+    assert jnp.array_equal(valid, jnp.array([False]))
+    assert jnp.array_equal(status, jnp.array([phx.ml.ML_RANK_DEFICIENT]))
+
+    @jax.jit
+    def require_gate(total: jax.Array) -> jax.Array:
+        result = phx.ml.fit(_NormalizedScaleRecipe(), jnp.ones((1, 1)), total[None])
+        admission = result.require_derivative(request, operation="project")
+        assert admission.runtime_valid is not None
+        return admission.runtime_valid
+
+    assert jnp.array_equal(require_gate(jnp.array(2.0)), jnp.array([True]))
+    with pytest.raises(Exception, match="derivative-unsupported"):
+        require_gate(jnp.array(0.0)).block_until_ready()
+    result = phx.ml.fit(_NormalizedScaleRecipe(), jnp.ones((1, 1)), jnp.array([2.0]))
+    assert not result.derivative_admission(request).supported
+    with pytest.raises(ValueError, match="derivative-unsupported"):
+        result.require_derivative(request)
+    with pytest.raises(ValueError, match="Unknown derivative operation"):
+        result.derivative_admission(independent, operation="unknown")
+
+
+def test_fit_checked_gate_is_retained_when_only_model_is_consumed() -> None:
+    request = phx.DifferentiationRequest((_FIT_TARGETS,))
+
+    @jax.jit
+    def model_only(total: jax.Array) -> jax.Array:
+        return phx.ml.fit(
+            _NormalizedScaleRecipe(),
+            jnp.ones((1, 1)),
+            total[None],
+            derivative_request=request,
+            derivative_operation="project",
+        ).model(jnp.array([3.0]))
+
+    assert jnp.allclose(model_only(jnp.array(2.0)), jnp.array([1.5]))
+    with pytest.raises(Exception, match="derivative-unsupported"):
+        model_only(jnp.array(0.0)).block_until_ready()
+    assert jnp.allclose(
+        jax.grad(lambda total: jnp.sum(model_only(total)))(jnp.array(2.0)), -0.75
+    )
+
+
+def test_schema_binding_preserves_operation_gates_and_default_contract() -> None:
+    original = phx.ml.fit(
+        phx.ml.linear.RidgeRecipe(0.1),
+        jnp.array([[1.0], [2.0], [3.0]]),
+        jnp.array([2.0, 4.0, 6.0]),
+    )
+    operations = _gated_operations(jnp.array(False))
+    result = phx.ml.FitResult(
+        original.as_trainable(),
+        original.diagnostics,
+        valid=original.valid,
+        status=original.status,
+        method=original.method,
+        derivative_contract=operations[0].contract,
+        operation_derivatives=operations,
+        default_operation="transform",
+    )
+    rebound = result.bind_schemas(phx.ml.FeatureSchema(("renamed",)))
+    request = phx.DifferentiationRequest((_FIT_TARGETS,))
+    assert not rebound.derivative_admission(request).supported
+    admission = rebound.derivative_admission(request, operation="project")
+    assert admission.runtime_valid is not None
+    assert jnp.array_equal(admission.runtime_valid, jnp.array([False]))
+    with pytest.raises(eqx.EquinoxRuntimeError, match="derivative-unsupported"):
+        rebound.require_derivative(request, operation="project")
+    unrelated = phx.ml.fit(
+        _ScaleRecipe(), jnp.ones((2, 1)), jnp.array([1.0, 3.0])
+    ).require_derivative(request)
+    assert unrelated.level(_FIT_TARGETS) is phx.GradientLevel.CONDITIONAL
+    assert unrelated.runtime_valid is None
+    assert unrelated.runtime_status is None
+
+
+def test_operation_metadata_rejects_misaligned_cases_and_independent_fit_gates() -> None:
+    contract = phx.DerivativeContract.smooth((_INPUT,))
+    with pytest.raises(ValueError, match="only FIT"):
+        OperationDerivativeContract(
+            "project",
+            contract,
+            runtime_surfaces=(_INPUT,),
+            runtime_valid=jnp.array([False]),
+            runtime_status=jnp.array([1]),
+        )
+    operations = _gated_operations(jnp.array([True, False]))
+    with pytest.raises(ValueError, match="case shape"):
+        phx.ml.FitResult(
+            _ScaleModel(1.0),
+            None,
+            valid=True,
+            status=0,
+            method="invalid-cases",
+            derivative_contract=contract,
+            operation_derivatives=operations,
+            default_operation="transform",
+        )

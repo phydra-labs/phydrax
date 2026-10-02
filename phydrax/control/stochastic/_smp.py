@@ -22,7 +22,7 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
-from ...typing import parse
+from ...typing import checked, parse
 from ._evaluation import ControlledPathBatch
 
 
@@ -139,6 +139,7 @@ class StochasticMaximumPrincipleProblem(StrictModule):
     noise_size: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -159,8 +160,6 @@ class StochasticMaximumPrincipleProblem(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         callbacks = (
             drift,
             diffusion,

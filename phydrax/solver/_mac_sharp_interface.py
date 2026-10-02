@@ -37,7 +37,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 class MACSharpInterfaceStatus(IntFlag):
@@ -204,6 +204,7 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
     operator_evidence: MACSharpOperatorEvidence
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -214,14 +215,8 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
-        if not isinstance(boundaries, PreparedMACBoundaryPlan):
-            raise TypeError("boundaries must be PreparedMACBoundaryPlan.")
         if boundaries.operators.prepared_id != operators.prepared_id:
             raise ValueError("Sharp-interface boundaries and operators differ.")
-        if not isinstance(geometry, QualifiedSharpGeometry):
-            raise TypeError("geometry must be QualifiedSharpGeometry.")
         discretization = operators.discretization
         expected_pairing = canonical_fingerprint(
             {
@@ -823,6 +818,7 @@ class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
             tolerance=self.tolerance,
         )
 
+    @checked
     def transition(
         self,
         previous_time: ArrayLike,
@@ -831,8 +827,6 @@ class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> MACMovingSharpInterfaceEpochResult:
-        if not isinstance(previous, QualifiedSharpGeometry):
-            raise TypeError("previous must be QualifiedSharpGeometry.")
         previous_time_ = jnp.asarray(previous_time)
         time_ = jnp.asarray(time)
         step = time_ - previous_time_
@@ -894,6 +888,7 @@ class MACImmersedInterfaceProjectionPlan(StrictModule, NonTrainableState):
     jump_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sharp: MACSharpInterfaceProjectionPlan,
@@ -902,8 +897,6 @@ class MACImmersedInterfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         jump_id: str,
     ) -> None:
-        if not isinstance(sharp, MACSharpInterfaceProjectionPlan):
-            raise TypeError("sharp must be MACSharpInterfaceProjectionPlan.")
         if not callable(jump_source):
             raise TypeError("jump_source must be callable.")
         identifier = str(jump_id)

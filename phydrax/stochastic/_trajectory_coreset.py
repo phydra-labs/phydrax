@@ -26,7 +26,7 @@ from ..coresets import (
     moment_recombine,
     MomentRecombination,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._trajectory import StochasticDriverSegmentReference, StochasticTrajectory
 
 
@@ -49,6 +49,7 @@ class StochasticTrajectoryBlockView(StrictModule):
     stride: int = eqx.field(static=True)
     blocks_per_path: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         trajectory: StochasticTrajectory,
@@ -57,8 +58,6 @@ class StochasticTrajectoryBlockView(StrictModule):
         block_length: int,
         stride: int = 1,
     ) -> None:
-        if not isinstance(trajectory, StochasticTrajectory):
-            raise TypeError("trajectory must be a StochasticTrajectory.")
         length = _positive_integer(block_length, name="block_length")
         step = _positive_integer(stride, name="stride")
         if length > trajectory.num_times:

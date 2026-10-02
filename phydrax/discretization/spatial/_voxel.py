@@ -22,6 +22,7 @@ from phydrax.sparse import (
     RelationExecutionPlan,
 )
 
+from ...typing import checked
 from ._morton import morton_decode_integer, morton_encode_integer, MortonAddressPlan
 
 
@@ -244,6 +245,7 @@ class SparseVoxelField(StrictModule):
     background_value: jax.Array
     background_mode: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedSparseVoxelGrid,
@@ -253,8 +255,6 @@ class SparseVoxelField(StrictModule):
         background_mode: str = "unsupported",
         background_value: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(grid, PreparedSparseVoxelGrid):
-            raise TypeError("grid must be PreparedSparseVoxelGrid.")
         value_array = jnp.asarray(values)
         expected_prefix = (grid.brick_capacity, grid.voxels_per_brick)
         if value_array.shape[:2] != expected_prefix:

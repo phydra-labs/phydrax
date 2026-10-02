@@ -24,6 +24,7 @@ from ...linalg import (
     SmallLinearSolvePlan,
     verify_dense_properties,
 )
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -62,6 +63,7 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
     context: AstrodynamicsContext
     configuration_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dry_mass: npt.ArrayLike,
@@ -73,8 +75,6 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
         context: AstrodynamicsContext,
         /,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         mass = np.asarray(dry_mass, dtype=np.float64)
         inertia = np.asarray(dry_inertia, dtype=np.float64)
         tanks = np.asarray(tank_locations, dtype=np.float64)
@@ -170,6 +170,7 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
     times: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         configuration: VehicleConfiguration,
@@ -179,8 +180,6 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
         *,
         effector_ids: Iterable[str],
     ) -> None:
-        if not isinstance(configuration, VehicleConfiguration):
-            raise TypeError("configuration must be a VehicleConfiguration.")
         items = tuple(effectors)
         identifiers = tuple(str(value).strip() for value in effector_ids)
         if (
@@ -270,11 +269,10 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
         )
         return derivative, valid
 
+    @checked
     def rollout(
         self, initial: VehicleState, command_schedule: Callable[[Array], object], /
     ) -> VehicleResult:
-        if not isinstance(initial, VehicleState):
-            raise TypeError("initial must be a VehicleState.")
         if (
             initial.position.shape != (3,)
             or initial.velocity.shape != (3,)

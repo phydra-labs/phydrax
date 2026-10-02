@@ -19,6 +19,7 @@ from ..._sampling import SingleCoordinateProposalPayload
 from ..._strict import StrictModule
 from ...discretization import CochainDiscretization, DiagonalHodge
 from ...metrix import EuclideanStateGeometry
+from ...typing import checked
 from ._lattice_action import (
     AbstractIncrementalLatticeAction,
     AbstractLatticeEuclideanAction,
@@ -49,6 +50,7 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
     evidence: LatticeActionEvidence
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: CochainDiscretization,
@@ -58,8 +60,6 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
         mass_squared: float = 1.0,
         quartic_coupling: float = 1.0,
     ) -> None:
-        if not isinstance(discretization, CochainDiscretization):
-            raise TypeError("discretization must be CochainDiscretization.")
         if discretization.max_degree < 1:
             raise ValueError("A scalar lattice action requires degree-one cells.")
         kinetic = float(kinetic_scale)
@@ -156,6 +156,7 @@ class LocalPhi4LatticeAction(AbstractIncrementalLatticeAction):
     evidence: LatticeActionEvidence
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: Phi4LatticeAction,
@@ -164,8 +165,6 @@ class LocalPhi4LatticeAction(AbstractIncrementalLatticeAction):
         incident_valid: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(base, Phi4LatticeAction):
-            raise TypeError("base must be Phi4LatticeAction.")
         edges = jnp.asarray(incident_edges, dtype=jnp.int32)
         signs = jnp.asarray(incident_signs, dtype=base.kinetic_scale.dtype)
         valid = jnp.asarray(incident_valid, dtype=jnp.bool_)

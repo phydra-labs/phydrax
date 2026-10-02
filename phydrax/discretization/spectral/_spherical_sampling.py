@@ -32,7 +32,7 @@ from ...linalg import (
     RHSLayout,
     solve as linear_solve,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._spherical import SphericalSpectralDiscretization
 
 
@@ -238,16 +238,13 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
     report: SphericalSampleReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SphericalSamplePlan,
         discretization: SphericalSpectralDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, SphericalSamplePlan):
-            raise TypeError("plan must be a SphericalSamplePlan.")
-        if not isinstance(discretization, SphericalSpectralDiscretization):
-            raise TypeError("discretization must be spherical spectral.")
         mask = np.asarray(plan.active_mask, dtype=np.bool_)
         active_count = int(np.count_nonzero(mask))
         if active_count == 0:

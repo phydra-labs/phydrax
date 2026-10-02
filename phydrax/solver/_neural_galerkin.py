@@ -57,7 +57,7 @@ from ..linalg import (
     solve,
 )
 from ..nn.parameters import ParameterSubspace
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._hybrid_event import HybridReplayPolicy
@@ -139,6 +139,7 @@ class FieldProjectionMetric(StrictModule):
     field: str = eqx.field(static=True)
     label: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: str,
@@ -151,8 +152,6 @@ class FieldProjectionMetric(StrictModule):
         name = str(field)
         if not name:
             raise ValueError("field must be non-empty.")
-        if not isinstance(realization, IntegrationRealization):
-            raise TypeError("realization must be an IntegrationRealization.")
         if not isinstance(realization.target, (ComponentTarget, DensityTarget)):
             raise TypeError(
                 "Field projection requires a component or density integration target."

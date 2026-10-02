@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 ParticleDerivativeTier: TypeAlias = Literal["A", "B", "C", "D"]
@@ -187,6 +188,7 @@ class ParticleQualificationResult(StrictModule, NonTrainableState):
     production_gate_satisfied: Array
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maturity: ParticleMethodMaturity,
@@ -198,8 +200,6 @@ class ParticleQualificationResult(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(maturity, ParticleMethodMaturity):
             raise TypeError("maturity must be a ParticleMethodMaturity.")
-        if not isinstance(profile, AbstractParticleQualificationProfile):
-            raise TypeError("profile must be an AbstractParticleQualificationProfile.")
         if any(not isinstance(value, ParticleClaimEvidence) for value in evidence):
             raise TypeError("evidence must contain ParticleClaimEvidence values.")
         claim_satisfied = (

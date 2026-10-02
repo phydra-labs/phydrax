@@ -24,6 +24,7 @@ from ...linalg import (
     LinearSolveResult,
     PreparedFactorization,
 )
+from ...typing import checked
 
 
 class GeneralizedTauPlan(StrictModule, NonTrainableState):
@@ -35,6 +36,7 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
     maximum_augmented_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -44,8 +46,6 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
         *,
         maximum_augmented_dimension: int = 1024,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or operator.source.size != operator.target.size:
             raise ValueError("Tau augmentation requires an unbatched square operator.")
         constraints = jnp.asarray(constraint_matrix)
@@ -185,6 +185,7 @@ class TauSolveResult(StrictModule):
     linear_result: LinearSolveResult
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -193,8 +194,6 @@ class TauSolveResult(StrictModule):
         linear_result: LinearSolveResult,
         prepared_id: str,
     ) -> None:
-        if not isinstance(linear_result, LinearSolveResult):
-            raise TypeError("linear_result must be a LinearSolveResult.")
         self.field = field
         self.tau = jnp.asarray(tau)
         self.linear_result = linear_result

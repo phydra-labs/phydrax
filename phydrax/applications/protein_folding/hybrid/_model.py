@@ -35,6 +35,7 @@ from ....discretization.particle._rigid_body import (
     RigidBodyLoad,
 )
 from ....qualification._reference import ReferenceArtifactManifest
+from ....typing import checked
 from ...nucleic_acid_biophysics.coarse._mechanics import PreparedNucleotideModel
 
 
@@ -104,6 +105,7 @@ class HybridCrossInteractionPlan(StrictModule, NonTrainableState):
     parameter_source: ReferenceArtifactManifest
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         site_pairs: ArrayLike,
@@ -130,10 +132,6 @@ class HybridCrossInteractionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Duplicate cross-site pairs would double-count an interaction."
             )
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
-        if not isinstance(parameter_source, ReferenceArtifactManifest):
-            raise TypeError("parameter_source must be ReferenceArtifactManifest.")
         count = pairs.shape[0]
         epsilon = _parameter(steric_energy, count, "steric_energy")
         radius = _parameter(steric_radius, count, "steric_radius")
@@ -254,6 +252,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
     support_map: HybridSupportMap = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         protein_network: PreparedElasticNetwork,
@@ -267,14 +266,6 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
     ) -> None:
-        if not isinstance(protein_network, PreparedElasticNetwork):
-            raise TypeError("protein_network must be PreparedElasticNetwork.")
-        if not isinstance(nucleotide_model, PreparedNucleotideModel):
-            raise TypeError("nucleotide_model must be PreparedNucleotideModel.")
-        if not isinstance(cross, HybridCrossInteractionPlan):
-            raise TypeError("cross must be HybridCrossInteractionPlan.")
-        if not isinstance(protein_reference, ReferenceArtifactManifest):
-            raise TypeError("protein_reference must be ReferenceArtifactManifest.")
         system = protein_network.system
         if system.cell is not None:
             raise ValueError(

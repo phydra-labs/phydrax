@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._cell_de_rham import AbstractCellDeRhamComplex
 
 
@@ -61,6 +62,7 @@ class CochainHaloExchange(StrictModule, NonTrainableState):
     target_partitions: Array
     exchange_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cochain: AbstractCellDeRhamComplex,
@@ -68,10 +70,6 @@ class CochainHaloExchange(StrictModule, NonTrainableState):
         degree: int,
         /,
     ) -> None:
-        if not isinstance(cochain, AbstractCellDeRhamComplex):
-            raise TypeError("cochain must be an AbstractCellDeRhamComplex.")
-        if not isinstance(partition, CochainPartition):
-            raise TypeError("partition must be a CochainPartition.")
         degree_ = int(degree)
         counts = tuple(entity.count for entity in cochain.topology.entity_sets)
         if len(partition.owners) != len(counts) or any(

@@ -40,7 +40,7 @@ from ...linalg.eigen import (
     RestartedLanczos,
 )
 from ...tensor_network import su2_wigner_3j, su2_wigner_6j
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import ENERGY, UnitDefinition
 from ._identity import MonopoleLandauLevel
 
@@ -63,6 +63,7 @@ class QuantumHallEnergyScale(StrictModule, NonTrainableState):
     label: str = eqx.field(static=True)
     scale_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         unit: UnitDefinition,
@@ -72,8 +73,6 @@ class QuantumHallEnergyScale(StrictModule, NonTrainableState):
     ) -> None:
         value = float(joules_per_unit)
         label_ = str(label).strip()
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("unit must be UnitDefinition.")
         if unit.dimension != ENERGY or not isfinite(value) or value <= 0.0 or not label_:
             raise ValueError("Quantum Hall energy scale is invalid.")
         self.unit = unit
@@ -166,6 +165,7 @@ class HaldaneSpherePlan(StrictModule, NonTrainableState):
     energy_scale: QuantumHallEnergyScale
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_count: int,
@@ -180,10 +180,6 @@ class HaldaneSpherePlan(StrictModule, NonTrainableState):
     ) -> None:
         particles = int(particle_count)
         offset = int(flux_offset)
-        if not isinstance(manifold, MonopoleLandauLevel):
-            raise TypeError("manifold must be MonopoleLandauLevel.")
-        if not isinstance(energy_scale, QuantumHallEnergyScale):
-            raise TypeError("energy_scale must be QuantumHallEnergyScale.")
         if particles < 2:
             raise ValueError("Haldane sphere particles or statistics are invalid.")
         statistics_ = parse(statistics, HallStatistics, "statistics")
@@ -247,6 +243,7 @@ class HaldanePseudopotentialPlan(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sphere: HaldaneSpherePlan,
@@ -254,8 +251,6 @@ class HaldanePseudopotentialPlan(StrictModule, NonTrainableState):
         source_id: str,
         /,
     ) -> None:
-        if not isinstance(sphere, HaldaneSpherePlan):
-            raise TypeError("sphere must be HaldaneSpherePlan.")
         channels = tuple(
             sorted(
                 (int(index), float(value)) for index, value in relative_channels.items()
@@ -411,6 +406,7 @@ class HaldaneSphereSpectrumPlan(StrictModule, NonTrainableState):
     random_seed: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedHaldaneSphereHamiltonian,
@@ -420,8 +416,6 @@ class HaldaneSphereSpectrumPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 200,
         random_seed: int = 0,
     ) -> None:
-        if not isinstance(prepared, PreparedHaldaneSphereHamiltonian):
-            raise TypeError("prepared must be PreparedHaldaneSphereHamiltonian.")
         count = int(eigenpair_count)
         steps = int(maximum_steps)
         seed = int(random_seed)

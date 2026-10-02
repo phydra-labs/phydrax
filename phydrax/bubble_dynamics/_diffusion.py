@@ -28,7 +28,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field, parameter_field
 from .._validation import positive_integer
 from ..solver import DifferentialProblem, DifferentialSolution, solve_diffrax
-from ..typing import parse
+from ..typing import checked, parse
 from ._contracts import MOLAR_GAS_CONSTANT, scalar_parameter
 from ._interface import TolmanCorrectionPolicy
 from ._status import BubbleDynamicsStatus
@@ -222,6 +222,7 @@ class EpsteinPlessetPlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         properties: GasSolutionProperties,
@@ -239,8 +240,6 @@ class EpsteinPlessetPlan(StrictModule):
         absolute_tolerance: float = 1.0e-11,
         maximum_steps: int = 16384,
     ) -> None:
-        if not isinstance(properties, GasSolutionProperties):
-            raise TypeError("properties must be GasSolutionProperties.")
         if tolman is not None and not isinstance(tolman, TolmanCorrectionPolicy):
             raise TypeError("tolman must be a TolmanCorrectionPolicy or None.")
         support = BubbleValidityPolicy() if validity is None else validity
@@ -679,6 +678,7 @@ class PinnedSurfaceBubblePlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         properties: GasSolutionProperties,
@@ -695,8 +695,6 @@ class PinnedSurfaceBubblePlan(StrictModule):
         absolute_tolerance: float = 1.0e-11,
         maximum_steps: int = 16384,
     ) -> None:
-        if not isinstance(properties, GasSolutionProperties):
-            raise TypeError("properties must be GasSolutionProperties.")
         if tolman is not None and not isinstance(tolman, TolmanCorrectionPolicy):
             raise TypeError("tolman must be a TolmanCorrectionPolicy or None.")
         support = BubbleValidityPolicy() if validity is None else validity

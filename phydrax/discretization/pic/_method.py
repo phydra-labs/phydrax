@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import DimensionalScaleContract, RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import LENGTH, MASS, TIME, UnitDefinition
 from ._types import RelativisticPushResult
 
@@ -200,6 +200,7 @@ class RelativisticPushPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relativity: RelativityScaleContract,
@@ -208,8 +209,6 @@ class RelativisticPushPlan(StrictModule, NonTrainableState):
         method: RelativisticPusher,
         tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         method_ = parse(method, RelativisticPusher, "method")
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ < 0.0:

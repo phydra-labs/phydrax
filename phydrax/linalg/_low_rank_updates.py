@@ -21,7 +21,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._binding import LinearSolveTemplate
 from ._factorizations import PreparedFactorization
 from ._operators import AbstractLinearOperator
@@ -468,6 +468,7 @@ class PreparedLowRankSequence(StrictModule):
     status: Array
     sequence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedLowRankSolve,
@@ -480,8 +481,6 @@ class PreparedLowRankSequence(StrictModule):
         status: Any = LowRankDeterminantStatus.SUCCESS,
         base_lineage: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(prepared, PreparedLowRankSolve):
-            raise TypeError("prepared must be a PreparedLowRankSolve.")
         active = jnp.asarray(active_rank, dtype=jnp.int32)
         accepted = jnp.asarray(accepted_count, dtype=jnp.int32)
         sign = jnp.asarray(determinant_sign, dtype=prepared.operator.core.dtype)

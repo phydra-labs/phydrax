@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...sparse import EdgeRelation, KeyGroupPlan
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -52,6 +53,7 @@ class HierarchicalRadiusParticleNeighborhoodPlan(AbstractParticleNeighborhoodPla
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interaction_radii: ArrayLike,
@@ -89,8 +91,6 @@ class HierarchicalRadiusParticleNeighborhoodPlan(AbstractParticleNeighborhoodPla
             raise ValueError("Cell, pair, and candidate capacities must be positive.")
         if not np.isfinite(skin_) or skin_ < 0.0:
             raise ValueError("skin must be finite and nonnegative.")
-        if not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox.")
         levels = np.searchsorted(edges[1:-1], radii, side="right").astype(np.int32)
         key = DiscretizationKey(
             name,
@@ -160,16 +160,13 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
     artifact_kind: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: HierarchicalRadiusParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, HierarchicalRadiusParticleNeighborhoodPlan):
-            raise TypeError("plan must be a HierarchicalRadiusParticleNeighborhoodPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if plan.interaction_radii.shape != (particles.capacity,):
             raise ValueError("Interaction radii must match particle capacity.")
         if plan.box.ambient_dimension != particles.ambient_dimension:

@@ -17,6 +17,7 @@ from phydrax._strict import StrictModule
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...special._spherical_harmonic import _real_spherical_harmonic_table
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
 from ._forces import AbstractAstrodynamicsForce, AstrodynamicsForceEvaluation
@@ -39,6 +40,7 @@ class SphericalHarmonicGravityField(StrictModule):
     tide_system: str = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cosine: ArrayLike,
@@ -89,10 +91,6 @@ class SphericalHarmonicGravityField(StrictModule):
             raise ValueError(
                 "Gravity coupling and reference radius must be positive finite scalars."
             )
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
-        if not isinstance(provenance, AstrodynamicsDataProvenance):
-            raise TypeError("provenance must be AstrodynamicsDataProvenance.")
         self.cosine = jnp.asarray(cosine_host)
         self.sine = jnp.asarray(sine_host)
         self.mu = jnp.asarray(mu_host)

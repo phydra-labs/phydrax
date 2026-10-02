@@ -15,6 +15,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ....typing import checked
 from ._approximation import (
     LikelihoodApproximationPolicy,
     QualifiedGravitationalWaveLikelihood,
@@ -48,6 +49,7 @@ class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
     likelihood_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: GravitationalWaveLikelihoodPlan,
@@ -56,8 +58,6 @@ class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
         *,
         num_bins: int,
     ) -> None:
-        if not isinstance(base, GravitationalWaveLikelihoodPlan):
-            raise TypeError("base must be GravitationalWaveLikelihoodPlan.")
         if not base.waveform.capabilities.arbitrary_frequencies:
             raise ValueError(
                 "Relative binning requires arbitrary-frequency waveform evaluation."

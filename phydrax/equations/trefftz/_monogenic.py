@@ -27,6 +27,7 @@ from ...metrix.clifford import (
     CliffordAlgebraSpec,
     CliffordBladeLayout,
 )
+from ...typing import checked
 from ._core import (
     _AbstractTrialSpaceField,
     _trial_space_regularity,
@@ -166,6 +167,7 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
     _certificate: TrialSpaceCertificate
     _resource_evidence: TrefftzResourceEvidence
 
+    @checked
     def __init__(
         self,
         algebra: CliffordAlgebraSpec,
@@ -175,8 +177,6 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
     ) -> None:
-        if not isinstance(algebra, CliffordAlgebraSpec):
-            raise TypeError("algebra must be a CliffordAlgebraSpec.")
         if not algebra.nondegenerate:
             raise ValueError("Monogenic basis requires a nondegenerate Clifford algebra.")
         degree = int(maximum_degree)
@@ -355,6 +355,7 @@ class LinearMonogenicField(_AbstractTrialSpaceField, StructuredDerivativeProvide
     in_size: int = eqx.field(static=True)
     out_size: int | tuple[int, int] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: MonogenicPolynomialBasis,
@@ -364,8 +365,6 @@ class LinearMonogenicField(_AbstractTrialSpaceField, StructuredDerivativeProvide
         initial_scale: float = 0.0,
         key: Array = DOC_KEY0,
     ) -> None:
-        if not isinstance(basis, MonogenicPolynomialBasis):
-            raise TypeError("basis must be MonogenicPolynomialBasis.")
         channels_ = int(channels)
         scale = float(initial_scale)
         if channels_ <= 0:

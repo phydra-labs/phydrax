@@ -23,7 +23,7 @@ from ..linalg import (
     MatrixFunctionPolicy,
 )
 from ..operators.quantum.lattice import QuantumSectorOperator
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class ThermalPureQuantumPlan(StrictModule):
@@ -37,6 +37,7 @@ class ThermalPureQuantumPlan(StrictModule):
     maximum_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         beta: float,
@@ -57,8 +58,6 @@ class ThermalPureQuantumPlan(StrictModule):
             raise ValueError("beta must be finite and non-negative.")
         if probes < 2 or observables < 0 or byte_limit < 1 or workspace_limit < 1:
             raise ValueError("TPQ probe/observable counts and byte limits are invalid.")
-        if not isinstance(matrix_function, MatrixFunctionPolicy):
-            raise TypeError("matrix_function must be MatrixFunctionPolicy.")
         if matrix_function.method != "lanczos":
             raise ValueError(
                 "Canonical fixed-sector TPQ requires Lanczos matrix functions."

@@ -36,6 +36,7 @@ from ..operators.quantum import (
     retarded_embedding,
     retarded_open_system_point,
 )
+from ..typing import checked
 
 
 _BOLTZMANN_CONSTANT_SI = 1.380_649e-23
@@ -48,6 +49,7 @@ class PeriodicLeadContactPlan(StrictModule, NonTrainableState):
     contact_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lead: PeriodicPrincipalLayerLeadPlan,
@@ -55,8 +57,6 @@ class PeriodicLeadContactPlan(StrictModule, NonTrainableState):
         contact_id: str,
         /,
     ) -> None:
-        if not isinstance(lead, PeriodicPrincipalLayerLeadPlan):
-            raise TypeError("lead must be PeriodicPrincipalLayerLeadPlan.")
         coupling = np.asarray(device_coupling)
         identifier = str(contact_id).strip()
         if (

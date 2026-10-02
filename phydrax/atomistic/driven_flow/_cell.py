@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
 from ...linalg import DenseLinearOperator, matrix_exponential_action
+from ...typing import checked
 
 
 class EvolvingFlowCellState(StrictModule):
@@ -298,6 +299,7 @@ class LeesEdwardsRemapPlan(StrictModule, NonTrainableState):
     maximum_reduced_tilt: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_plan: EvolvingFlowCellPlan,
@@ -307,8 +309,6 @@ class LeesEdwardsRemapPlan(StrictModule, NonTrainableState):
         gradient_axis: int = 1,
         maximum_reduced_tilt: float = 0.5,
     ) -> None:
-        if not isinstance(cell_plan, EvolvingFlowCellPlan):
-            raise TypeError("cell_plan must be EvolvingFlowCellPlan.")
         flow = int(flow_axis)
         gradient = int(gradient_axis)
         maximum = float(maximum_reduced_tilt)

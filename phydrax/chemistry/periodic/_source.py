@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...operators.periodic import PeriodicOrbitalBasisPlan
+from ...typing import checked
 from ...units import ENERGY, UnitDefinition
 
 
@@ -110,6 +111,7 @@ class PeriodicSourceContext(StrictModule, NonTrainableState):
     provenance: PeriodicProvenanceManifest
     context_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: PeriodicOrbitalBasisPlan,
@@ -117,20 +119,12 @@ class PeriodicSourceContext(StrictModule, NonTrainableState):
         provenance: PeriodicProvenanceManifest,
         /,
     ) -> None:
-        if not isinstance(basis, PeriodicOrbitalBasisPlan):
-            raise TypeError("Periodic source context requires PeriodicOrbitalBasisPlan.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("Periodic source context requires an energy UnitDefinition.")
         if (
             energy_unit.dimension != ENERGY
             or energy_unit.reference_system_id != basis.length_unit.reference_system_id
         ):
             raise ValueError(
                 "Periodic source energy units must have ENERGY dimension in the basis reference system."
-            )
-        if not isinstance(provenance, PeriodicProvenanceManifest):
-            raise TypeError(
-                "Periodic source context requires PeriodicProvenanceManifest."
             )
         self.basis = basis
         self.energy_unit = energy_unit

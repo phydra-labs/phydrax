@@ -20,7 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._barostat import (
     apply_isotropic_monte_carlo_barostat,
     IsotropicMonteCarloBarostatPlan,
@@ -59,6 +59,7 @@ class AtomisticCanonicalSamplingQualification(StrictModule, NonTrainableState):
     sampling_bias_bound: float = eqx.field(static=True)
     qualification_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedAtomisticDynamics,
@@ -69,10 +70,6 @@ class AtomisticCanonicalSamplingQualification(StrictModule, NonTrainableState):
         sampling_exact: bool,
         sampling_bias_bound: float,
     ) -> None:
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(dynamics)
         evidence = str(evidence_id)
         bound = float(sampling_bias_bound)
@@ -276,6 +273,7 @@ class AtomisticMultistatePlan(StrictModule, NonTrainableState):
     run_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamic: PreparedThermodynamicStateTable,
@@ -292,12 +290,6 @@ class AtomisticMultistatePlan(StrictModule, NonTrainableState):
         repeat_index: int = 0,
         run_id: str,
     ) -> None:
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
-        if not isinstance(qualification, AtomisticCanonicalSamplingQualification):
-            raise TypeError(
-                "qualification must be AtomisticCanonicalSamplingQualification."
-            )
         if (
             qualification.dynamics_id != thermodynamic.dynamics_id
             or qualification.thermodynamic_table_id != thermodynamic.table_id
@@ -430,16 +422,13 @@ class PreparedAtomisticMultistate(StrictModule):
     prepared_id: str = eqx.field(static=True)
     initial_continuation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: AtomisticMultistatePlan,
         dynamics: PreparedAtomisticDynamics,
         /,
     ) -> None:
-        if not isinstance(plan, AtomisticMultistatePlan):
-            raise TypeError("plan must be AtomisticMultistatePlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         plan.thermodynamic.validate_dynamics(dynamics)
         if (
             plan.qualification.dynamics_id != dynamics.prepared_id
@@ -765,9 +754,8 @@ class PreparedAtomisticMultistate(StrictModule):
         )
         return labels, attempted, changed, next_counters, sams, counter_valid & finite
 
+    @checked
     def iterate(self, state: AtomisticMultistateState, /) -> AtomisticMultistateIteration:
-        if not isinstance(state, AtomisticMultistateState):
-            raise TypeError("state must be AtomisticMultistateState.")
         if state.plan_id != self.prepared_id:
             raise ValueError("Multistate state belongs to another prepared runtime.")
         propagated = jax.vmap(
@@ -929,6 +917,7 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
     predecessor_id: str = eqx.field(static=True)
     segment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedAtomisticMultistate,
@@ -938,8 +927,6 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
         predecessor_id: str,
         /,
     ) -> None:
-        if not isinstance(runtime, PreparedAtomisticMultistate):
-            raise TypeError("runtime must be PreparedAtomisticMultistate.")
         capacity_ = int(capacity)
         start = int(expected_start_iteration)
         index = int(segment_index)
@@ -963,11 +950,10 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def run(
         self, state: AtomisticMultistateState, /
     ) -> "AtomisticMultistateSegmentResult":
-        if not isinstance(state, AtomisticMultistateState):
-            raise TypeError("state must be AtomisticMultistateState.")
         if state.plan_id != self.runtime.prepared_id:
             raise ValueError("Segment state belongs to another multistate runtime.")
         valid_predecessor = (

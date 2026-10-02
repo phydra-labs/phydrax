@@ -42,6 +42,7 @@ from .._fingerprint import canonical_fingerprint
 from .._identity import SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._ports import (
     ModelPorts,
     PortBindingEvidence,
@@ -513,6 +514,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
     declared_capabilities: tuple[str, ...] = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -525,10 +527,6 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
         declared_capabilities: Iterable[str] = (),
         semantic_provenance: SemanticProvenance | None = None,
     ) -> None:
-        if not isinstance(derivative, DerivativeContract):
-            raise TypeError("derivative must be a DerivativeContract.")
-        if not isinstance(execution, ExecutionCapabilities):
-            raise TypeError("execution must be ExecutionCapabilities.")
         _optional_type(precision, ComponentPrecisionContract, "precision")
         _optional_type(randomness, RandomnessContract, "randomness")
         _optional_type(ports, ModelPorts, "ports")
@@ -754,6 +752,7 @@ class ComponentContract(StrictModule, NonTrainableState):
     evidence: tuple[tuple[str, CapabilityEvidenceKind], ...] = eqx.field(static=True)
     bound_semantic_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -766,8 +765,6 @@ class ComponentContract(StrictModule, NonTrainableState):
     ) -> None:
         authority_ = _require_authority(authority)
         semantic_id = _slot_semantic_id(slot_semantic_id)
-        if not isinstance(model_contract, ModelExecutionContract):
-            raise TypeError("model_contract must be a ModelExecutionContract.")
         _optional_type(port_binding, PortBindingEvidence, "port_binding")
         _optional_type(derivative_admission, DerivativeAdmission, "derivative_admission")
         requirements_ = _requirements(requirements)

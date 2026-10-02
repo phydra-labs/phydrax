@@ -23,6 +23,7 @@ from ..discretization.splatting import (
     MeshSplatRoutes,
     PreparedMeshParticleGridSplat,
 )
+from ..typing import checked
 
 
 class FluidParticleSample(StrictModule):
@@ -137,6 +138,7 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
     maximum_porosity: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedSoftSphereDEMDynamics,
@@ -147,10 +149,6 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
         minimum_porosity: float = 1.0e-3,
         maximum_porosity: float = 1.0,
     ) -> None:
-        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
-        if not isinstance(transfer, PreparedMeshParticleGridSplat):
-            raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
         particle_ids = dynamics.bodies.particles.particle_ids
         if transfer.particle_capacity != dynamics.bodies.capacity or not bool(
             jnp.all(transfer.stable_source_ids == particle_ids)

@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..optics.wave import ThinFilmInterferencePlan
-from ..typing import Bool, Float, Identifier, Int32, VariadicDim
+from ..typing import Bool, checked, Float, Identifier, Int32, VariadicDim
 from ._colorimetry import SpectralColorimetryPlan, SpectralColorimetryResult
 
 
@@ -124,6 +124,7 @@ class ThinFilmAppearancePlan(StrictModule):
     two_sided: bool = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interference: ThinFilmInterferencePlan,
@@ -132,10 +133,6 @@ class ThinFilmAppearancePlan(StrictModule):
         *,
         two_sided: bool = False,
     ) -> None:
-        if not isinstance(interference, ThinFilmInterferencePlan):
-            raise TypeError("interference must be a ThinFilmInterferencePlan.")
-        if not isinstance(colorimetry, SpectralColorimetryPlan):
-            raise TypeError("colorimetry must be a SpectralColorimetryPlan.")
         if not isinstance(two_sided, bool):
             raise TypeError("two_sided must be a bool.")
         if not np.array_equal(

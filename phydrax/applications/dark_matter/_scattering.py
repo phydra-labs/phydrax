@@ -22,6 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import scatter_elastic_pairs
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 
 
 _BOLTZMANN_J_K = 1.380649e-23
@@ -188,6 +189,7 @@ class ElasticScatteringTable(StrictModule, NonTrainableState):
     requested_use: tuple[tuple[str, bool], ...] = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         target_ids: Sequence[str],
@@ -208,10 +210,6 @@ class ElasticScatteringTable(StrictModule, NonTrainableState):
         targets = tuple(_identifier(value, "target ID") for value in target_ids)
         if not targets or len(set(targets)) != len(targets):
             raise ValueError("target_ids must be non-empty and unique.")
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError("Scattering tables require a ReferenceArtifactManifest.")
-        if not isinstance(mark_sampler, BoundedThermalMarkSamplerPlan):
-            raise TypeError("mark_sampler must be a BoundedThermalMarkSamplerPlan.")
         requested = _requested_use(commercial_use, redistribution, training_use, export)
         source.require_rights(**dict(requested))
         convention = dict(source.nondimensionalization)

@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._boundary_open import (
     apply_open_boundaries,
     LatticeBoltzmannBoundaryState,
@@ -56,6 +56,7 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
     solid_count: int = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -64,8 +65,6 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
         *,
         source_id: str | None = None,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("Geometry snapshot requires an LBM discretization.")
         mask = np.asarray(fluid_mask, dtype=np.bool_)
         if mask.shape != discretization.grid.shape:
             raise ValueError(
@@ -167,16 +166,13 @@ class PreparedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
     moving_faces: tuple[tuple[int, WallSide], ...] = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
         plan: LatticeBoltzmannBoundaryPlan,
         /,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("Boundary preparation requires an LBM discretization.")
-        if not isinstance(plan, LatticeBoltzmannBoundaryPlan):
-            raise TypeError("plan must be a LatticeBoltzmannBoundaryPlan.")
         geometry = (
             LatticeBoltzmannGeometrySnapshot.all_fluid(discretization)
             if plan.geometry is None
@@ -358,6 +354,7 @@ class StagedLatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
     convective_parameter_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CompiledLatticeBoltzmannLinkTopology,
@@ -372,8 +369,6 @@ class StagedLatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         pressure_parameter_ids: Sequence[str] = (),
         convective_parameter_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(topology, CompiledLatticeBoltzmannLinkTopology):
-            raise TypeError("topology must be CompiledLatticeBoltzmannLinkTopology.")
         self.topology = topology
         self.body_ids = tuple(str(value) for value in body_ids)
         self.velocity_normals = tuple(velocity_normals)
@@ -745,6 +740,7 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
     convective_parameter_ids: tuple[str, ...] = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -760,10 +756,6 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         pressure_parameter_ids: Sequence[str] = (),
         convective_parameter_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
-        if not isinstance(topology, CompiledLatticeBoltzmannLinkTopology):
-            raise TypeError("topology must be CompiledLatticeBoltzmannLinkTopology.")
         if topology.population_shape != discretization.population_shape:
             raise ValueError("Boundary topology and population shapes do not match.")
         bodies = tuple(str(value) for value in body_ids)
@@ -831,6 +823,7 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
             initialized,
         )
 
+    @checked
     def apply(
         self,
         post_collision: ArrayLike,
@@ -843,10 +836,6 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         rho = jnp.asarray(density, dtype=values.dtype)
         if rho.shape != self.discretization.grid.shape:
             raise ValueError("Boundary density must match grid shape.")
-        if not isinstance(state, LatticeBoltzmannBoundaryState):
-            raise TypeError("state must be LatticeBoltzmannBoundaryState.")
-        if not isinstance(parameters, LatticeBoltzmannBoundaryParameters):
-            raise TypeError("parameters must be LatticeBoltzmannBoundaryParameters.")
         axes = tuple(range(self.discretization.velocity_set.dimension))
         pulled = jnp.stack(
             tuple(

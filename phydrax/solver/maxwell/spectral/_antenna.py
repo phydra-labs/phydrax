@@ -54,6 +54,7 @@ from ...._interpolation import cubic_hermite_interpolate, local_cubic_slopes
 from ...._lorentz import boost_wavevector
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..._maxwell_antenna import (
     _transverse_samples,
     SampledPlaneAntennaEvidence,
@@ -97,6 +98,7 @@ class PreparedSpectralPlaneAntenna(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SampledPlaneCurrentAntennaPlan,
@@ -115,8 +117,6 @@ class PreparedSpectralPlaneAntenna(StrictModule, NonTrainableState):
         tangential axes (for the magnetic-sheet closure evidence);
         ``grid_velocity`` the Galilean grid velocity along the normal.
         """
-        if not isinstance(plan, SampledPlaneCurrentAntennaPlan):
-            raise TypeError("plan must be a SampledPlaneCurrentAntennaPlan.")
         a = plan.normal_axis
         b, c = plan.tangential_axes
         electric_offsets, magnetic_offsets = offsets

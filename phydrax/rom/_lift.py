@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractLinearOperator
+from ..typing import checked
 from ._reduction import TrialTestReduction
 
 
@@ -37,6 +38,7 @@ class ReducedLiftArtifact(StrictModule, NonTrainableState):
     maximum_trace_defect: float = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: TrialTestReduction,
@@ -49,10 +51,6 @@ class ReducedLiftArtifact(StrictModule, NonTrainableState):
         evidence_ids: Sequence[str],
         tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(reduction, TrialTestReduction):
-            raise TypeError("reduction must be a TrialTestReduction.")
-        if not isinstance(trace_operator, AbstractLinearOperator):
-            raise TypeError("trace_operator must be an AbstractLinearOperator.")
         if not trace_operator.source.compatible(reduction.trial.full_space):
             raise ValueError("Trace source must match the trial full space.")
         lifts = tuple(reduction.trial.full_space.validate(value) for value in lift_terms)

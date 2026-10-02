@@ -14,6 +14,7 @@ from ..domain._normalized_density import normalize_density_field
 from ..domain._referenced_density import DensityReference
 from ..domain._separated_density import SeparatedLogDensityField
 from ..integration._api import IntegrationRealization, reduce
+from ..typing import checked
 from ._fokker_planck_approximation import DensityFokkerPlanckResult
 
 
@@ -29,6 +30,7 @@ class SeparatedFokkerPlanckPlan(StrictModule):
     reference: DensityReference = eqx.field(static=True)
     state_var: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: SeparatedLogDensityField,
@@ -42,8 +44,6 @@ class SeparatedFokkerPlanckPlan(StrictModule):
         reference: DensityReference = "coordinate",
         state_var: str = "x",
     ) -> None:
-        if not isinstance(field, SeparatedLogDensityField):
-            raise TypeError("field must be a SeparatedLogDensityField.")
         if not isinstance(realization, IntegrationRealization) or not isinstance(
             validation_realization, IntegrationRealization
         ):

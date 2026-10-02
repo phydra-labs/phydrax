@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._coefficients import PrimeField
 from ._complex import CompactBoundary
 from ._resources import TopologyResourceError, TopologyResourcePolicy
@@ -277,14 +278,13 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
             output[row] += coefficient * values[column]
         return tuple(output)
 
+    @checked
     def apply_field(
         self,
         vector: Sequence[int],
         field: PrimeField,
         /,
     ) -> tuple[int, ...]:
-        if not isinstance(field, PrimeField):
-            raise TypeError("Field application requires a PrimeField.")
         return tuple(field.normalize(value) for value in self.apply_integer(vector))
 
     def dense(

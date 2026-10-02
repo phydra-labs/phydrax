@@ -18,6 +18,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from .._frame import (
     AbstractAtomisticTrajectorySinkPlan,
     AbstractAtomisticTrajectorySourcePlan,
@@ -192,9 +193,8 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
             leaf, shape=(0,) + shape, maxshape=(None,) + shape, dtype=dtype, chunks=True
         )
 
+    @checked
     def write(self, frame: AtomisticFrame, /) -> None:
-        if not isinstance(frame, AtomisticFrame):
-            raise TypeError("frame must be AtomisticFrame.")
         if self.count:
             identities = (
                 ("system_id", frame.system_id),
@@ -407,9 +407,8 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
         self.handle = open(target, "a" if append else "w", encoding="utf-8")
         self.sink_id = sink_id
 
+    @checked
     def write(self, frame: AtomisticFrame, /) -> None:
-        if not isinstance(frame, AtomisticFrame):
-            raise TypeError("frame must be AtomisticFrame.")
         position = np.asarray(frame.positions)
         metadata = {
             "time": float(frame.time),

@@ -22,6 +22,7 @@ from ...linalg import (
     LinearSolvePolicy,
     solve,
 )
+from ...typing import checked
 from ._sindy_design import SINDyDesign
 from ._sparse_regression import (
     AbstractSparseRegression,
@@ -318,9 +319,8 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
             f"structure={self.structure.structure_id}"
         )
 
+    @checked
     def fit(self, design: SINDyDesign, /) -> SparseRegressionResult:
-        if not isinstance(design, SINDyDesign):
-            raise TypeError("design must be a SINDyDesign.")
         coefficient_count = design.output_size * design.num_features
         if coefficient_count > self.max_coefficients:
             raise ValueError(

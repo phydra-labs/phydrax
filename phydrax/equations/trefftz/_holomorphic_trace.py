@@ -23,7 +23,7 @@ from ..._holomorphic import (
 from ..._holomorphic_linear import HolomorphicLinearFrame
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._holomorphic_frame import HolomorphicPolynomialFrame
 
 
@@ -302,14 +302,13 @@ class DiskHolomorphicTraceLift(StrictModule, NonTrainableState):
     _holomorphic_certificate: HolomorphicMapCertificate
     _trace_certificate: HolomorphicTraceCertificate
 
+    @checked
     def __init__(
         self,
         plan: DiskHolomorphicTracePlan,
         coefficient_vector: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, DiskHolomorphicTracePlan):
-            raise TypeError("plan must be DiskHolomorphicTracePlan.")
         coefficients = jnp.asarray(coefficient_vector)
         frame_certificate = plan.frame.linear_frame_certificate()
         if coefficients.shape != (frame_certificate.real_coefficient_count,):

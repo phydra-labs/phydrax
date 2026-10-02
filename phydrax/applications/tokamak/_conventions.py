@@ -13,6 +13,7 @@ from numbers import Integral
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
+from ...typing import checked
 from ...units import METER
 
 
@@ -133,11 +134,10 @@ class TokamakMagneticConvention:
             safety_factor_sign=1,
         )
 
+    @checked
     def transform_to(
         self, target: TokamakMagneticConvention, /
     ) -> TokamakConventionTransform:
-        if not isinstance(target, TokamakMagneticConvention):
-            raise TypeError("target must be TokamakMagneticConvention.")
         flux_factor = (
             (2.0 * math.pi)
             ** (

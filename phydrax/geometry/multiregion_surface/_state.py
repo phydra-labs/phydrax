@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._validation import unique_identifiers
-from ...typing import Bool, Dim, Float, Identifier, Size
+from ...typing import Bool, checked, Dim, Float, Identifier, Size
 from ._topology import MultiRegionSurfaceTopology
 
 
@@ -88,6 +88,7 @@ class MultiRegionSurfaceState(StrictModule):
     topology_id: Identifier = eqx.field(static=True)
     epoch: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: MultiRegionSurfaceTopology,
@@ -100,8 +101,6 @@ class MultiRegionSurfaceState(StrictModule):
         sheet_field_names: Sequence[str] = (),
         region_field_names: Sequence[str] = (),
     ) -> None:
-        if not isinstance(topology, MultiRegionSurfaceTopology):
-            raise TypeError("topology must be a MultiRegionSurfaceTopology.")
         sheet_names = _field_names(sheet_field_names, "sheet_field_names")
         region_names = _field_names(region_field_names, "region_field_names")
         dtype = np.dtype(topology.plan.coordinate_dtype)
@@ -140,10 +139,9 @@ class MultiRegionSurfaceState(StrictModule):
             lambda state: state.positions, self, values.astype(self.positions.dtype)
         )
 
+    @checked
     def require_topology(self, topology: MultiRegionSurfaceTopology, /) -> None:
         """Refuse a state that belongs to another topology or epoch."""
-        if not isinstance(topology, MultiRegionSurfaceTopology):
-            raise TypeError("topology must be a MultiRegionSurfaceTopology.")
         if self.topology_id != topology.topology_id or self.epoch != topology.epoch:
             raise ValueError("State belongs to a different multiregion topology epoch.")
 

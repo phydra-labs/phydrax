@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from ..typing import checked
 from ._hybrid import AbstractExternalAtomisticProvider, ExternalAtomisticEvaluation
 from ._system import PreparedAtomisticSystem
 
@@ -100,6 +101,7 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
     step_size: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -107,10 +109,6 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
         step_size: float,
         /,
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
-        if not isinstance(provider, AbstractExternalAtomisticProvider):
-            raise TypeError("provider must implement AbstractExternalAtomisticProvider.")
         step = float(step_size)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("step_size must be finite and positive.")

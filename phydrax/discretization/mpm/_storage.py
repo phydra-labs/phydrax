@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import GatherStencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..spatial import SparseBlockTopologyPlan, SparseBlockTopologyState
 from ..splatting import (
     ParticleGridSplatState,
@@ -83,9 +84,8 @@ class BlockSparseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     topology_plan: SparseBlockTopologyPlan
     storage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, topology_plan: SparseBlockTopologyPlan, /) -> None:
-        if not isinstance(topology_plan, SparseBlockTopologyPlan):
-            raise TypeError("topology_plan must be SparseBlockTopologyPlan.")
         self.topology_plan = topology_plan
         self.storage_id = canonical_fingerprint(
             {

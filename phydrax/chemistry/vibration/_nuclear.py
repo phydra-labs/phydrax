@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._anharmonic import _product_basis_hamiltonian, AnharmonicForceFieldResult
 
 
@@ -109,6 +110,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frequencies: ArrayLike,
@@ -122,8 +124,6 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         vscf_maximum_sweeps: int = 100,
         residual_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(force_field, AnharmonicForceFieldResult):
-            raise TypeError("force_field must be AnharmonicForceFieldResult.")
         frequency = jnp.asarray(frequencies)
         quanta = int(maximum_quanta)
         capacity = int(maximum_basis_states)

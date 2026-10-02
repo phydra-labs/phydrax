@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._system import PreparedAtomisticSystem
 
 
@@ -35,6 +36,7 @@ class AtomisticPhaseSpaceMeasurePlan(StrictModule, NonTrainableState):
     coordinate_map_id: str = eqx.field(static=True)
     measure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -43,8 +45,6 @@ class AtomisticPhaseSpaceMeasurePlan(StrictModule, NonTrainableState):
         scaled_entity_count: int | None = None,
         volume_coordinate_convention: str = "molecular-center",
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be a PreparedAtomisticSystem.")
         entities = (
             len(system.molecule_labels)
             if scaled_entity_count is None
@@ -93,6 +93,7 @@ class AtomisticThermodynamicStatePlan(StrictModule, NonTrainableState):
     bias_id: str | None = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         phase_space: AtomisticPhaseSpaceMeasurePlan,
@@ -106,8 +107,6 @@ class AtomisticThermodynamicStatePlan(StrictModule, NonTrainableState):
         bias_id: str | None = None,
         state_id: str | None = None,
     ) -> None:
-        if not isinstance(phase_space, AtomisticPhaseSpaceMeasurePlan):
-            raise TypeError("phase_space must be an AtomisticPhaseSpaceMeasurePlan.")
         if ensemble not in _ENSEMBLE_CODES:
             raise ValueError("ensemble must be 'nve', 'nvt', or 'npt'.")
         temperature_ = None if temperature is None else float(temperature)

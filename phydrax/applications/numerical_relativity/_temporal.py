@@ -21,7 +21,7 @@ from ..._numerics._ssp_runge_kutta import (
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
-from ...typing import parse
+from ...typing import checked, parse
 from ._boundaries import (
     AbstractZ4cBoundary,
     PeriodicBoundary,
@@ -135,6 +135,7 @@ class FixedGridZ4cRuntime(StrictModule, NonTrainableState):
     courant_number: float = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Z4cSystem,
@@ -150,18 +151,6 @@ class FixedGridZ4cRuntime(StrictModule, NonTrainableState):
         integrator: Z4cIntegrator = "ssprk54",
         maximum_courant_number: float = 0.25,
     ) -> None:
-        if not isinstance(system, Z4cSystem):
-            raise TypeError("system must be a Z4cSystem.")
-        if not isinstance(grid, FixedGridGeometry):
-            raise TypeError("grid must be a FixedGridGeometry.")
-        if not isinstance(derivatives, FourthOrderDerivatives):
-            raise TypeError("derivatives must be FourthOrderDerivatives.")
-        if not isinstance(gauge, AbstractZ4cGauge):
-            raise TypeError("gauge must implement AbstractZ4cGauge.")
-        if not isinstance(boundary, AbstractZ4cBoundary):
-            raise TypeError("boundary must implement AbstractZ4cBoundary.")
-        if not isinstance(enforcement, Z4cAlgebraicEnforcement):
-            raise TypeError("enforcement must be Z4cAlgebraicEnforcement.")
         step = float(time_step)
         start = float(start_time)
         maximum_courant = float(maximum_courant_number)

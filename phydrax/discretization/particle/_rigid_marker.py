@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator, OperatorProperties, PyTreeSpace
+from ...typing import checked
 from .._lagrangian_marker import (
     LagrangianMarkerDiscretization,
     LagrangianMarkerKinematics,
@@ -53,6 +54,7 @@ class RigidMarkerMapPlan(StrictModule, NonTrainableState):
     marker_owner: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         markers: LagrangianMarkerDiscretization,
@@ -60,10 +62,6 @@ class RigidMarkerMapPlan(StrictModule, NonTrainableState):
         marker_owner: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(markers, LagrangianMarkerDiscretization):
-            raise TypeError("markers must be LagrangianMarkerDiscretization.")
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be PreparedRigidBodySet.")
         if markers.ambient_dimension != bodies.ambient_dimension:
             raise ValueError("Marker and rigid-body dimensions differ.")
         owner = np.asarray(marker_owner)
@@ -104,9 +102,8 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
     generalized_velocity_space: PyTreeSpace
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: RigidMarkerMapPlan, /) -> None:
-        if not isinstance(plan, RigidMarkerMapPlan):
-            raise TypeError("plan must be RigidMarkerMapPlan.")
         active_body = np.asarray(plan.bodies.particles.active_mask)
         fixed = np.asarray(plan.bodies.fixed_mask)
         mobile = np.flatnonzero(active_body & ~fixed).astype(np.int32)
@@ -150,9 +147,8 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
         rotation = quaternion_rotation_matrix(kinematics.orientation)
         return contract("...ij,...j->...i", rotation[owner], reference)
 
+    @checked
     def evaluate(self, kinematics: RigidBodyKinematics, /) -> LagrangianMarkerKinematics:
-        if not isinstance(kinematics, RigidBodyKinematics):
-            raise TypeError("kinematics must be RigidBodyKinematics.")
         offset = self._world_offset(kinematics)
         owner = self.marker_owner
         position = kinematics.position[owner] + offset

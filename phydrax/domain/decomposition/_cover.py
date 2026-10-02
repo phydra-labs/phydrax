@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._components import DomainComponent
 from .._domain import Domain
 from .._function import DomainFunction
@@ -70,6 +70,7 @@ class SubdomainPatch(StrictModule, NonTrainableState):
     to_ambient: CoordinateMap
     patch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain: Domain,
@@ -82,14 +83,8 @@ class SubdomainPatch(StrictModule, NonTrainableState):
         patch_id: str,
         window: DomainFunction | None = None,
     ) -> None:
-        if not isinstance(domain, Domain):
-            raise TypeError("domain must be a Domain.")
-        if not isinstance(interior, DomainComponent):
-            raise TypeError("interior must be a DomainComponent.")
         if not interior.domain.same_support(domain):
             raise ValueError("interior must live on the patch domain.")
-        if not isinstance(support, DomainFunction):
-            raise TypeError("support must be a DomainFunction.")
         if window is not None:
             if not isinstance(window, DomainFunction):
                 raise TypeError("window must be a DomainFunction or None.")
@@ -118,10 +113,9 @@ class SubdomainPatch(StrictModule, NonTrainableState):
     def ambient_domain(self) -> Domain:
         return self.support.domain
 
+    @checked
     def lift(self, field: DomainFunction, /) -> DomainFunction:
         """Pull a local field onto the ambient domain."""
-        if not isinstance(field, DomainFunction):
-            raise TypeError("field must be a DomainFunction.")
         if not field.domain.same_support(self.domain):
             raise ValueError("field must live on the patch domain.")
         from ...operators import pullback
@@ -130,10 +124,9 @@ class SubdomainPatch(StrictModule, NonTrainableState):
         substitutions = {label: coordinates[label] for label in field.deps}
         return pullback(field, substitutions, domain=self.ambient_domain)
 
+    @checked
     def restrict(self, field: DomainFunction, /) -> DomainFunction:
         """Pull an ambient field onto the local domain."""
-        if not isinstance(field, DomainFunction):
-            raise TypeError("field must be a DomainFunction.")
         if not field.domain.same_support(self.ambient_domain):
             raise ValueError("field must live on the ambient domain.")
         from ...operators import pullback
@@ -156,6 +149,7 @@ class PairedSupport(StrictModule, NonTrainableState):
     codimension: int = eqx.field(static=True)
     topology: PairingTopology = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: DomainComponent,
@@ -170,8 +164,6 @@ class PairedSupport(StrictModule, NonTrainableState):
         codimension: int = 1,
         topology: PairingTopology = "shared-interface",
     ) -> None:
-        if not isinstance(component, DomainComponent):
-            raise TypeError("component must be a DomainComponent.")
         left_id = _identifier(left_patch_id, "left_patch_id")
         right_id = _identifier(right_patch_id, "right_patch_id")
         if left_id == right_id:
@@ -219,6 +211,7 @@ class PairedSupport(StrictModule, NonTrainableState):
             name="right_coordinates",
         )
 
+    @checked
     def trace(
         self,
         field: DomainFunction,
@@ -227,8 +220,6 @@ class PairedSupport(StrictModule, NonTrainableState):
         side: Literal["left", "right"],
     ) -> DomainFunction:
         """Pull a local field onto this support using one declared side."""
-        if not isinstance(field, DomainFunction):
-            raise TypeError("field must be a DomainFunction.")
         if side == "left":
             coordinates = _coordinate_dict(self.left_coordinates)
         elif side == "right":
@@ -352,6 +343,7 @@ class SubdomainCover(StrictModule, NonTrainableState):
     exact_coverage: bool = eqx.field(static=True)
     maximum_overlap: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ambient: Domain,
@@ -363,8 +355,6 @@ class SubdomainCover(StrictModule, NonTrainableState):
         exact_coverage: bool = False,
         maximum_overlap: int | None = None,
     ) -> None:
-        if not isinstance(ambient, Domain):
-            raise TypeError("ambient must be a Domain.")
         patches_ = tuple(patches)
         if not patches_:
             raise ValueError("A subdomain cover requires at least one patch.")

@@ -4,10 +4,13 @@
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from phydrax.ml import _numerics as numerics
 from phydrax.ml._contracts import (
     ML_INFEASIBLE,
+    ML_INSUFFICIENT_DATA,
+    ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
 )
@@ -53,12 +56,21 @@ def test_numerics_scenario_1() -> None:
     assert jnp.allclose(result.retained_energy, 1.0, atol=1e-12)
     assert jnp.allclose(result.orthogonality_error, 0.0, atol=1e-12)
 
-    projector_gradient = jax.grad(
-        lambda matrix: jnp.sum(
-            numerics.fit_weighted_subspace(matrix, weights, rank=1).components ** 2
-        )
-    )(values.at[-1].set(0.0))
-    assert jnp.all(jnp.isfinite(projector_gradient))
+    probe = jnp.array([[0.2, -0.7, 0.4], [0.5, 0.1, -0.3], [-0.2, 0.8, 0.6]])
+    clean = values.at[-1].set(0.0)
+    direction = jnp.arange(clean.size, dtype=clean.dtype).reshape(clean.shape) / 17.0
+
+    def action(matrix: jax.Array) -> jax.Array:
+        fitted = numerics.fit_weighted_subspace(matrix, weights, rank=1)
+        rows = fitted.components + fitted.frame_correction
+        return jnp.sum((jnp.conj(rows).T @ rows) * probe)
+
+    tangent = jax.jvp(action, (clean,), (direction,))[1]
+    step = 1e-5
+    finite_difference = (
+        action(clean + step * direction) - action(clean - step * direction)
+    ) / (2 * step)
+    assert jnp.allclose(tangent, finite_difference, rtol=1e-5, atol=1e-7)
     design = jnp.array([[-2.0, 1.0], [-1.0, 2.0], [1.0, 1.0], [2.0, -1.0]])
     coefficients = jnp.array([[2.0, -1.0], [0.5, 3.0]])
     intercept = jnp.array([1.5, -2.0])
@@ -174,3 +186,42 @@ def test_numerics_scenario_2() -> None:
     assert bool(result.converged)
     assert int(result.iterations) == 4
     assert jnp.allclose(result.value, 0.5)
+
+
+@pytest.mark.parametrize(
+    ("weights", "expected"),
+    [
+        ([1.0, float("nan"), 1.0], ML_NONFINITE),
+        ([1.0, -1.0, 1.0], ML_INFEASIBLE),
+        ([0.0, 0.0, 0.0], ML_INSUFFICIENT_DATA),
+    ],
+)
+def test_spectral_rejection_preserves_unavailable_evidence(
+    weights: list[float], expected: int
+) -> None:
+    x = jnp.array([[2.0, 0.1], [-1.0, 0.8], [0.3, -0.4]])
+
+    def fit(w: jax.Array) -> numerics.SpectralFitResult:
+        return numerics.fit_weighted_subspace(x, w, rank=1, differentiate="none")
+
+    for result in (fit(jnp.array(weights)), jax.jit(fit)(jnp.array(weights))):
+        assert int(result.status) == expected
+        assert not bool(result.valid)
+        assert not bool(result.rank_evidence.available)
+        assert jnp.all(jnp.isnan(result.components))
+        assert jnp.all(jnp.isnan(result.singular_values))
+
+
+def test_spectral_active_nonfinite_and_zero_weight_exclusion() -> None:
+    x = jnp.array([[2.0, 0.1], [-1.0, 0.8], [jnp.nan, jnp.nan]])
+    failed = numerics.fit_weighted_subspace(x, jnp.ones(3), rank=1, differentiate="none")
+    assert int(failed.status) == ML_NONFINITE
+    excluded = numerics.fit_weighted_subspace(
+        x, jnp.array([1.0, 1.0, 0.0]), rank=1, differentiate="none"
+    )
+    reference = numerics.fit_weighted_subspace(
+        x[:2], jnp.ones(2), rank=1, differentiate="none"
+    )
+    assert bool(excluded.valid)
+    assert jnp.allclose(excluded.offset, reference.offset, atol=1e-12)
+    assert jnp.allclose(excluded.components, reference.components, atol=1e-12)

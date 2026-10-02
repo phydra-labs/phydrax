@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellComplexTopology
 from ..sparse import EdgeRelation
+from ..typing import checked
 
 
 class CompactCellLayout(StrictModule, NonTrainableState):
@@ -31,6 +32,7 @@ class CompactCellLayout(StrictModule, NonTrainableState):
     selection_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -39,8 +41,6 @@ class CompactCellLayout(StrictModule, NonTrainableState):
         *,
         selection_id: str | None = None,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("Compact layouts require a CellComplexTopology.")
         selected = tuple(masks)
         if len(selected) != len(topology.entity_sets):
             raise ValueError("One compact-layout mask is required per cell degree.")
@@ -330,14 +330,13 @@ class CellVertexSupport(StrictModule, NonTrainableState):
     relations: tuple[EdgeRelation, ...]
     support_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
         relations: Sequence[EdgeRelation],
         /,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("Cell vertex support requires a CellComplexTopology.")
         values = tuple(relations)
         if len(values) != len(topology.entity_sets):
             raise ValueError("One vertex-support relation is required per cell degree.")

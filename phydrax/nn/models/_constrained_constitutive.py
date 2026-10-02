@@ -15,6 +15,7 @@ from phydrax.ein import contract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from .._keys import EvalKey
 from ._constitutive import DeformationGradientMinors
 
@@ -123,6 +124,7 @@ class CoercivePolyconvexEnvelope(StrictModule, ParameterOwner):
     raw_barrier_coefficient: Array
     constraints: PolyconvexMaterialConstraints
 
+    @checked
     def __init__(
         self,
         constraints: PolyconvexMaterialConstraints,
@@ -133,8 +135,6 @@ class CoercivePolyconvexEnvelope(StrictModule, ParameterOwner):
         determinant_coefficient: float = 1.0,
         barrier_coefficient: float = 0.01,
     ) -> None:
-        if not isinstance(constraints, PolyconvexMaterialConstraints):
-            raise TypeError("constraints must be PolyconvexMaterialConstraints.")
         gradient = jnp.asarray(gradient_coefficients, dtype=jnp.float64)
         cofactor = jnp.asarray(cofactor_coefficients, dtype=jnp.float64)
         if gradient.shape != (len(constraints.gradient_exponents),) or cofactor.shape != (
@@ -232,16 +232,13 @@ class ConstrainedPolyconvexPotential(StrictModule, ParameterOwner):
     envelope: CoercivePolyconvexEnvelope
     minors: DeformationGradientMinors
 
+    @checked
     def __init__(
         self,
         reference: ReferenceConfiguration,
         envelope: CoercivePolyconvexEnvelope,
         /,
     ) -> None:
-        if not isinstance(reference, ReferenceConfiguration):
-            raise TypeError("reference must be a ReferenceConfiguration.")
-        if not isinstance(envelope, CoercivePolyconvexEnvelope):
-            raise TypeError("envelope must be a CoercivePolyconvexEnvelope.")
         self.reference = reference
         self.envelope = envelope
         self.minors = DeformationGradientMinors(reference.dimension)

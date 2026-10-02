@@ -23,7 +23,7 @@ from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticUnitSystem
 from ...discretization import PeriodicCell
 from ...ein import contract
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import derived_unit, ENERGY, LENGTH, UnitDefinition
 from .._result import ElectronicEnergyLedger
 from ._source import PeriodicProvenanceManifest
@@ -130,6 +130,7 @@ class PeriodicEwaldResult(StrictModule, NonTrainableState):
     unit_system_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energy: ArrayLike,
@@ -149,12 +150,6 @@ class PeriodicEwaldResult(StrictModule, NonTrainableState):
         stress_ = jnp.asarray(stress, dtype=energy_.dtype)
         if force.ndim != 2 or force.shape[1] != 3 or stress_.shape != (3, 3):
             raise ValueError("Ewald forces and stress have invalid shapes.")
-        if not isinstance(energy_ledger, ElectronicEnergyLedger):
-            raise TypeError("energy_ledger must be ElectronicEnergyLedger.")
-        if not isinstance(evidence, PeriodicEwaldEvidence):
-            raise TypeError("evidence must be PeriodicEwaldEvidence.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         if energy_ledger.energy_unit != units.scale.energy_unit:
             raise ValueError("Ewald ledger energy unit differs from the unit system.")
         identifiers = tuple(
@@ -212,6 +207,7 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell: PeriodicCell,
@@ -234,8 +230,6 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Periodic Ewald requires a fully periodic three-dimensional cell."
             )
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("Periodic Ewald requires AtomisticUnitSystem.")
         alpha_ = float(alpha)
         real = int(real_shell)
         reciprocal = int(reciprocal_shell)
@@ -290,9 +284,8 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
     reciprocal_indices: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PeriodicEwaldPlan, /) -> None:
-        if not isinstance(plan, PeriodicEwaldPlan):
-            raise TypeError("plan must be PeriodicEwaldPlan.")
         real = np.stack(
             np.meshgrid(
                 *(np.arange(-plan.real_shell, plan.real_shell + 1) for _ in range(3)),
@@ -598,6 +591,7 @@ class GTHLocalEvaluation(StrictModule, NonTrainableState):
     coefficient_unit: UnitDefinition
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -610,10 +604,6 @@ class GTHLocalEvaluation(StrictModule, NonTrainableState):
         squared = jnp.asarray(squared_wavevectors, dtype=values_.real.dtype)
         if values_.shape != squared.shape:
             raise ValueError("GTH local values must align with squared wavevectors.")
-        if not isinstance(evidence, GTHComponentEvidence):
-            raise TypeError("evidence must be GTHComponentEvidence.")
-        if not isinstance(coefficient_unit, UnitDefinition):
-            raise TypeError("coefficient_unit must be UnitDefinition.")
         self.values = values_
         self.squared_wavevectors = squared
         self.evidence = evidence
@@ -641,6 +631,7 @@ class GTHNonlocalEvaluation(StrictModule, NonTrainableState):
     energy_unit: UnitDefinition
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energy: ArrayLike,
@@ -653,10 +644,6 @@ class GTHNonlocalEvaluation(StrictModule, NonTrainableState):
         energy_ = jnp.asarray(energy, dtype=channel.real.dtype).reshape(())
         if channel.ndim != 1 or channel.size == 0:
             raise ValueError("GTH nonlocal channel energies must be a non-empty vector.")
-        if not isinstance(evidence, GTHComponentEvidence):
-            raise TypeError("evidence must be GTHComponentEvidence.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         self.energy = energy_
         self.channel_energies = channel
         self.evidence = evidence
@@ -688,6 +675,7 @@ class GTHPseudopotentialPlan(StrictModule, NonTrainableState):
     local_coefficient_unit: UnitDefinition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ionic_charge: float,
@@ -720,8 +708,6 @@ class GTHPseudopotentialPlan(StrictModule, NonTrainableState):
             raise TypeError("GTH length_unit must have length dimension.")
         if energy_unit.reference_system_id != length_unit.reference_system_id:
             raise ValueError("GTH energy and length units must share a reference system.")
-        if not isinstance(source_manifest, PeriodicProvenanceManifest):
-            raise TypeError("GTH source_manifest must be PeriodicProvenanceManifest.")
         angular = tuple(value.angular_momentum for value in channels_)
         if len(set(angular)) != len(angular):
             raise ValueError("GTH projector angular momenta must be unique.")

@@ -27,7 +27,7 @@ from .._model import (
 )
 from .._model._component import slot_component_contracts
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._operators import AbstractLinearOperator
 from ._policies import RankPolicy
@@ -168,6 +168,7 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
     nullspace_policy_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -181,8 +182,6 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
         constraint_id: str = "unconstrained",
         nullspace_policy_id: str = "none",
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be AbstractLinearOperator.")
         capacity_ = int(capacity)
         degree = int(extrapolation_degree)
         tolerance = float(rank_tolerance)

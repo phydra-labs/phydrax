@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import checked
 from ..lattice_boltzmann._program import (
     KineticProgramManifest,
     smooth_compressible_spatial_dvm_manifest,
@@ -66,6 +67,7 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
     maximum_reach: tuple[int, int] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -74,8 +76,6 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
         time_step: float,
         /,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if (
             quadrature.name != "D2V17"
             or quadrature.dimension != 2
@@ -199,6 +199,7 @@ class SmoothCompressibleD2V17SpatialPlan(StrictModule):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: SmoothCompressibleD2VKineticMethod,
@@ -217,10 +218,6 @@ class SmoothCompressibleD2V17SpatialPlan(StrictModule):
             | None
         ) = None,
     ) -> None:
-        if not isinstance(method, SmoothCompressibleD2VKineticMethod):
-            raise TypeError("method must be a SmoothCompressibleD2VKineticMethod.")
-        if not isinstance(energy_plan, PositiveEnergyEquilibriumPlan):
-            raise TypeError("energy_plan must be a PositiveEnergyEquilibriumPlan.")
         transport = D2V17PeriodicTransportPlan(
             method.quadrature, spatial_shape, cell_spacing, time_step
         )
@@ -306,6 +303,7 @@ class PreparedSmoothCompressibleD2V17SpatialDynamics(StrictModule):
     conservation_tolerance: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: SmoothCompressibleD2VKineticMethod,
@@ -322,12 +320,6 @@ class PreparedSmoothCompressibleD2V17SpatialDynamics(StrictModule):
         population_floor: float = 0.0,
         conservation_tolerance: float = 1.0e-11,
     ) -> None:
-        if not isinstance(method, SmoothCompressibleD2VKineticMethod):
-            raise TypeError("method must be a SmoothCompressibleD2VKineticMethod.")
-        if not isinstance(energy_plan, PositiveEnergyEquilibriumPlan):
-            raise TypeError("energy_plan must be a PositiveEnergyEquilibriumPlan.")
-        if not isinstance(transport, D2V17PeriodicTransportPlan):
-            raise TypeError("transport must be a D2V17PeriodicTransportPlan.")
         if (
             method.quadrature.quadrature_id != energy_plan.quadrature.quadrature_id
             or method.quadrature.quadrature_id != transport.quadrature.quadrature_id

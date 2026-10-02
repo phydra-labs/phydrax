@@ -28,7 +28,7 @@ from ..linalg._complexes import (
     HodgeDecompositionPolicy,
     HodgeLaplacianPart,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._form_type import FormTwist, FormType
 
 
@@ -175,12 +175,11 @@ class DiscreteForm(StrictModule, NonTrainableState):
     form_type: FormType = eqx.field(static=True)
     values: Array
 
+    @checked
     def __init__(
         self, realization_id: str, form_type: FormType, values: ArrayLike, /
     ) -> None:
         identifier = canonical_identifier(realization_id, "realization_id")
-        if not isinstance(form_type, FormType):
-            raise TypeError("form_type must be a FormType.")
         coefficients = jnp.asarray(values)
         if coefficients.ndim != 1:
             raise ValueError(

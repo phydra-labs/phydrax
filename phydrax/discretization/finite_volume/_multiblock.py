@@ -14,7 +14,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ..multiblock import InterfaceOrientation
 from ._positivity import FiniteVolumeAdmissibilityReport, FluxPositivityPlan
 from ._riemann import AbstractNumericalFluxPlan
@@ -83,6 +83,7 @@ class ConservativeMultiblockInterfacePlan(StrictModule):
     interface_solver: AbstractNumericalFluxPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         left: FiniteVolumeDiscretization,
@@ -114,12 +115,8 @@ class ConservativeMultiblockInterfacePlan(StrictModule):
             )
         if left.component_names != right.component_names:
             raise ValueError("Multiblock FV component layouts must match.")
-        if not isinstance(orientation, InterfaceOrientation):
-            raise TypeError("orientation must be an InterfaceOrientation.")
         if orientation.trace_rank != len(left.cell_shape) - 1:
             raise ValueError("Interface orientation rank must match tangential rank.")
-        if not isinstance(interface_solver, AbstractNumericalFluxPlan):
-            raise TypeError("interface_solver must be a numerical flux plan.")
         left_shape = _tangential_shape(left.cell_shape, left_axis_)
         right_shape = _tangential_shape(right.cell_shape, right_axis_)
         oriented_right_shape = tuple(
@@ -228,6 +225,7 @@ class FiniteVolumeMultiblockRuntimePlan(StrictModule):
     positivity: FluxPositivityPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         block_dynamics: tuple[Any, ...],
@@ -244,8 +242,6 @@ class FiniteVolumeMultiblockRuntimePlan(StrictModule):
             for interface in interfaces_
         ):
             raise TypeError("interfaces must contain conservative multiblock plans.")
-        if not isinstance(positivity, FluxPositivityPlan):
-            raise TypeError("positivity must be FluxPositivityPlan.")
         self.block_dynamics = blocks
         self.interfaces = interfaces_
         self.positivity = positivity

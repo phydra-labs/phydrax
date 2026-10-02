@@ -37,7 +37,7 @@ from ...observation import (
     TheoryVector,
 )
 from ...qualification import ReferenceArtifactManifest
-from ...typing import parse
+from ...typing import checked, parse
 from ...uq._metrics import (
     GaussianScaleCalibrator,
     interval_calibration_diagnostics,
@@ -729,14 +729,13 @@ class DarkMatterCoordinateContract(StrictModule, NonTrainableState):
     unit_ids: tuple[str, ...] = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: CoordinateLayout,
         unit_ids: Sequence[str],
         /,
     ) -> None:
-        if not isinstance(layout, CoordinateLayout):
-            raise TypeError("layout must be CoordinateLayout.")
         units = tuple(_identifier(value, "unit_id") for value in unit_ids)
         if len(units) != layout.size:
             raise ValueError("One unit identity is required per observable coordinate.")
@@ -767,6 +766,7 @@ class ConstantExternalDarkMatterProduct(StrictModule, NonTrainableState):
     declared_product_id: str = eqx.field(static=True)
     product_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -787,14 +787,6 @@ class ConstantExternalDarkMatterProduct(StrictModule, NonTrainableState):
     ) -> None:
         if not callable(decoder):
             raise TypeError("decoder must be callable.")
-        if not isinstance(manifest, ReferenceArtifactManifest):
-            raise TypeError("manifest must be ReferenceArtifactManifest.")
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be ScientificArtifactEnvelope.")
-        if not isinstance(provenance, CosmologyProductProvenance):
-            raise TypeError("provenance must be CosmologyProductProvenance.")
-        if not isinstance(coordinates, DarkMatterCoordinateContract):
-            raise TypeError("coordinates must be DarkMatterCoordinateContract.")
         manifest.require_rights(
             commercial_use=commercial_use,
             redistribution=redistribution,
@@ -898,6 +890,7 @@ class ExternalDarkMatterEmulatorProduct(StrictModule, NonTrainableState):
     successful: Array
     product_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         location: ArrayLike,
@@ -921,8 +914,6 @@ class ExternalDarkMatterEmulatorProduct(StrictModule, NonTrainableState):
         scale_ = jnp.asarray(scale, dtype=location_.dtype).reshape((-1,))
         if location_.shape != scale_.shape:
             raise ValueError("External emulator location and scale must align.")
-        if not isinstance(coordinates, DarkMatterCoordinateContract):
-            raise TypeError("coordinates must be DarkMatterCoordinateContract.")
         if location_.shape != (coordinates.layout.size,):
             raise ValueError("External emulator values must match their coordinates.")
         combined_coordinates = DarkMatterCoordinateContract(
@@ -987,6 +978,7 @@ class DarkMatterErrorBudget(StrictModule, NonTrainableState):
     successful: Array
     budget_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         components: Mapping[str, ArrayLike],
@@ -997,8 +989,6 @@ class DarkMatterErrorBudget(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(components, Mapping) or not components:
             raise TypeError("components must be a nonempty mapping of standard errors.")
-        if not isinstance(coordinates, DarkMatterCoordinateContract):
-            raise TypeError("coordinates must be DarkMatterCoordinateContract.")
         names = tuple(sorted(_identifier(name, "error component") for name in components))
         if len(set(names)) != len(names):
             raise ValueError("Error-budget component names must be unique.")
@@ -1110,6 +1100,7 @@ class DarkMatterDiscrepancyPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         prediction: TheoryVector,
@@ -1125,21 +1116,6 @@ class DarkMatterDiscrepancyPlan(StrictModule, NonTrainableState):
         predicted_field: ArrayLike | None = None,
         target_field: ArrayLike | None = None,
     ) -> DarkMatterDiscrepancyProduct:
-        if not isinstance(prediction, TheoryVector):
-            raise TypeError("prediction must be TheoryVector.")
-        if not isinstance(error_budget, DarkMatterErrorBudget):
-            raise TypeError("error_budget must be DarkMatterErrorBudget.")
-        if not isinstance(provenance, CosmologyProductProvenance):
-            raise TypeError("provenance must be CosmologyProductProvenance.")
-        if not isinstance(covariance, CholeskyCovarianceAction):
-            raise TypeError(
-                "covariance must be CholeskyCovarianceAction so marginal and "
-                "correlated discrepancy scales remain jointly auditable."
-            )
-        if not isinstance(prediction_coordinates, DarkMatterCoordinateContract):
-            raise TypeError(
-                "prediction_coordinates must be DarkMatterCoordinateContract."
-            )
         if provenance.source_kind == "external":
             if not isinstance(prediction_source, ConstantExternalDarkMatterProduct):
                 raise ValueError(
@@ -1348,6 +1324,7 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def fit(
         self,
         location: ArrayLike,
@@ -1362,8 +1339,6 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
         mask: ArrayLike | None = None,
         weights: ArrayLike | None = None,
     ) -> DarkMatterEmulatorCalibrationProduct:
-        if not isinstance(provenance, CosmologyProductProvenance):
-            raise TypeError("provenance must be CosmologyProductProvenance.")
         if provenance.source_kind == "external":
             raise ValueError(
                 "External emulator calibration requires fit_external with a governed source."
@@ -1381,6 +1356,7 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
             emulator_source=None,
         )
 
+    @checked
     def fit_external(
         self,
         emulator: ExternalDarkMatterEmulatorProduct,
@@ -1391,10 +1367,6 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
         mask: ArrayLike | None = None,
         weights: ArrayLike | None = None,
     ) -> DarkMatterEmulatorCalibrationProduct:
-        if not isinstance(emulator, ExternalDarkMatterEmulatorProduct):
-            raise TypeError("emulator must be ExternalDarkMatterEmulatorProduct.")
-        if not isinstance(reference, ConstantExternalDarkMatterProduct):
-            raise TypeError("reference must be ConstantExternalDarkMatterProduct.")
         if emulator.coordinates.contract_id != reference.coordinates.contract_id:
             raise ValueError(
                 "External emulator and calibration reference coordinate/unit contracts disagree."
@@ -1414,6 +1386,7 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
             emulator_source=emulator,
         )
 
+    @checked
     def _fit(
         self,
         location: ArrayLike,
@@ -1429,12 +1402,6 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
         weights: ArrayLike | None,
         emulator_source: ExternalDarkMatterEmulatorProduct | None,
     ) -> DarkMatterEmulatorCalibrationProduct:
-        if not isinstance(reference, ConstantExternalDarkMatterProduct):
-            raise TypeError("reference must be ConstantExternalDarkMatterProduct.")
-        if not isinstance(provenance, CosmologyProductProvenance):
-            raise TypeError("provenance must be CosmologyProductProvenance.")
-        if not isinstance(emulator_coordinates, DarkMatterCoordinateContract):
-            raise TypeError("emulator_coordinates must be DarkMatterCoordinateContract.")
         if emulator_coordinates.contract_id != reference.coordinates.contract_id:
             raise ValueError(
                 "Emulator and calibration reference coordinate/unit contracts disagree."

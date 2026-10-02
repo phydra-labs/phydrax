@@ -23,6 +23,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial._ddg import DDGOperators, discrete_operators
 from ...geometry.simplicial._mesh import TriangleMesh
+from ...typing import checked
 
 
 _VACUUM_PERMEABILITY = float(ElectromagneticScaleContract.si().vacuum_permeability)
@@ -66,6 +67,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: TriangleMesh,
@@ -77,8 +79,6 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         softening_length: float | None = None,
         tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(mesh, TriangleMesh):
-            raise TypeError("mesh must be TriangleMesh.")
         pearl = float(pearl_length)
         tolerance_ = float(tolerance)
         vertices = np.asarray(mesh.vertices)

@@ -52,7 +52,7 @@ from ...measurement import (
     SpatialSamplingKind,
     ValueLayout,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import conversion_factor, derived_unit, UnitDefinition
 from ._components import (
     AbstractReconstructionComponent,
@@ -85,6 +85,7 @@ class MeasurementIdentity(StrictModule, NonTrainableState):
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     unit: UnitDefinition
 
+    @checked
     def __init__(
         self,
         quantity: QuantitySpec,
@@ -93,14 +94,8 @@ class MeasurementIdentity(StrictModule, NonTrainableState):
         sampling: SamplingSemantics,
         /,
     ) -> None:
-        if not isinstance(quantity, QuantitySpec):
-            raise TypeError("quantity must be a QuantitySpec.")
-        if not isinstance(layout, ValueLayout):
-            raise TypeError("layout must be a ValueLayout.")
         if not isinstance(support, SampleSupport):
             raise TypeError("support must be a SampleSupport.")
-        if not isinstance(sampling, SamplingSemantics):
-            raise TypeError("sampling must be SamplingSemantics.")
         if layout.component_shape != ():
             raise ValueError("Coupled field observations are scalar per sample.")
         self.quantity_id = quantity.quantity_id
@@ -297,6 +292,7 @@ class FieldPointObservation(AbstractObservationBinding, NonTrainableState):
     derivative: tuple[int, ...] | None = eqx.field(static=True)
     coverage: FieldQueryCoverage = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         binding_id: str,
@@ -313,8 +309,6 @@ class FieldPointObservation(AbstractObservationBinding, NonTrainableState):
         length_unit: UnitDefinition | None = None,
         coverage: FieldQueryCoverage = "complete",
     ) -> None:
-        if not isinstance(support, PointSampleSupport):
-            raise TypeError("A point observation samples a PointSampleSupport.")
         identity = MeasurementIdentity(
             quantity,
             ValueLayout.scalar() if layout is None else layout,
@@ -336,8 +330,6 @@ class FieldPointObservation(AbstractObservationBinding, NonTrainableState):
             )
         length = _coordinate_length_unit(support, length_unit)
         order = 0 if derivative is None else sum(derivative)
-        if not isinstance(field_unit, UnitDefinition):
-            raise TypeError("field_unit must be a UnitDefinition.")
         identity.scale(_power(field_unit, length, -order), "point values")
         self.binding_id = canonical_identifier(binding_id, "binding_id")
         self.components = (canonical_identifier(component, "component"),)
@@ -459,6 +451,7 @@ class FieldBoundaryObservation(AbstractObservationBinding, NonTrainableState):
     field_unit: UnitDefinition
     length_unit: UnitDefinition | None
 
+    @checked
     def __init__(
         self,
         binding_id: str,
@@ -479,10 +472,6 @@ class FieldBoundaryObservation(AbstractObservationBinding, NonTrainableState):
         statistic_ = parse(statistic, BoundaryStatistic, "statistic")
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
             raise ValueError("A boundary observation acts on an exterior-facet domain.")
-        if not isinstance(rule, FacetTraceRule):
-            raise TypeError("rule must be a FacetTraceRule.")
-        if not isinstance(field_unit, UnitDefinition):
-            raise TypeError("field_unit must be a UnitDefinition.")
         identity = MeasurementIdentity(
             quantity,
             ValueLayout.scalar() if layout is None else layout,
@@ -615,6 +604,7 @@ class FieldFluxObservation(AbstractObservationBinding, NonTrainableState):
     identity: MeasurementIdentity
     reaction_unit: UnitDefinition
 
+    @checked
     def __init__(
         self,
         binding_id: str,
@@ -632,10 +622,6 @@ class FieldFluxObservation(AbstractObservationBinding, NonTrainableState):
     ) -> None:
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
             raise ValueError("A flux observation acts on an exterior-facet domain.")
-        if not isinstance(rule, FacetTraceRule):
-            raise TypeError("rule must be a FacetTraceRule.")
-        if not isinstance(reaction_unit, UnitDefinition):
-            raise TypeError("reaction_unit must be a UnitDefinition.")
         identity = MeasurementIdentity(
             quantity,
             ValueLayout.scalar() if layout is None else layout,

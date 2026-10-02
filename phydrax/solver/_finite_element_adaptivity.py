@@ -27,6 +27,7 @@ from ..discretization.fem import (
 )
 from ..equations import MaterialTransaction
 from ..meshing import MeshAdaptationResult
+from ..typing import checked
 from ._finite_element_schedule import FiniteElementAcceptedState
 
 
@@ -114,6 +115,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             diagnostics=diagnostics,
         )
 
+    @checked
     def execute(
         self,
         accepted: FiniteElementAcceptedState,
@@ -122,12 +124,6 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         args: object = None,
         /,
     ) -> FiniteElementTopologyResult:
-        if not isinstance(accepted, FiniteElementAcceptedState):
-            raise TypeError("accepted must be FiniteElementAcceptedState.")
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
-        if not isinstance(adaptation, MeshAdaptationResult):
-            raise TypeError("adaptation must be MeshAdaptationResult.")
         if (
             mesh.topology_id != accepted.topology_id
             or adaptation.source.mesh.mesh_id != mesh.mesh_id
@@ -191,6 +187,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             diagnostics="committed",
         )
 
+    @checked
     def execute_hp(
         self,
         accepted: FiniteElementAcceptedState,
@@ -203,10 +200,6 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
     ) -> FiniteElementHPTopologyResult:
         """Transfer, certify, and atomically promote one prepared hp candidate."""
 
-        if not isinstance(accepted, FiniteElementAcceptedState):
-            raise TypeError("accepted must be FiniteElementAcceptedState.")
-        if not isinstance(transaction, FiniteElementHPTransaction):
-            raise TypeError("transaction must be FiniteElementHPTransaction.")
         if accepted.topology_id != transaction.accepted.topology.topology_id:
             raise ValueError("Accepted state and hp transaction topology disagree.")
         transfers = transaction.p_transfers + transaction.h_transfers

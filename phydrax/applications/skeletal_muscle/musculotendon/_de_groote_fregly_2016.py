@@ -29,6 +29,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ....nonlinear import implicit_root_result, NonlinearSystemProblem
+from ....typing import checked
 
 
 _SOURCE_DOI = "10.1007/s10439-016-1591-9"
@@ -540,6 +541,7 @@ class DeGrooteFregly2016Plan(StrictModule):
     muscle_mask: tuple[bool, ...] = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: DeGrooteFregly2016Parameters,
@@ -549,8 +551,6 @@ class DeGrooteFregly2016Plan(StrictModule):
         muscle_mask: Sequence[bool] | None = None,
         model_id: str | None = None,
     ) -> None:
-        if not isinstance(parameters, DeGrooteFregly2016Parameters):
-            raise TypeError("parameters must be DeGrooteFregly2016Parameters.")
         names = tuple(_identifier(name, "muscle name") for name in muscle_names)
         if len(names) != parameters.muscle_capacity or len(set(names)) != len(names):
             raise ValueError("muscle_names must uniquely fill the parameter capacity.")
@@ -597,14 +597,13 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
     reference_state: DeGrooteFregly2016State
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DeGrooteFregly2016Plan,
         reference_state: DeGrooteFregly2016State,
         /,
     ) -> None:
-        if not isinstance(plan, DeGrooteFregly2016Plan):
-            raise TypeError("plan must be DeGrooteFregly2016Plan.")
         self.plan = plan
         self._validate_state(reference_state)
         self.reference_state = reference_state
@@ -625,9 +624,8 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
     def muscle_capacity(self) -> int:
         return self.parameters.muscle_capacity
 
+    @checked
     def _validate_state(self, state: DeGrooteFregly2016State, /) -> None:
-        if not isinstance(state, DeGrooteFregly2016State):
-            raise TypeError("state must be DeGrooteFregly2016State.")
         expected = (self.plan.parameters.muscle_capacity,)
         if state.activation.shape != expected:
             raise ValueError(f"State must have fixed shape {expected}.")
@@ -962,13 +960,12 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
             self.prepared_id,
         )
 
+    @checked
     def commit(
         self, candidate: DeGrooteFregly2016Candidate, /
     ) -> DeGrooteFregly2016State:
         """Atomically accept the full candidate or return its untouched source."""
 
-        if not isinstance(candidate, DeGrooteFregly2016Candidate):
-            raise TypeError("candidate must be DeGrooteFregly2016Candidate.")
         if candidate.prepared_id != self.prepared_id:
             raise ValueError("Candidate belongs to another prepared musculotendon model.")
         return jax.tree.map(
@@ -1069,14 +1066,13 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
     constitutive: PreparedDeGrooteFregly2016Musculotendon
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DeGrooteFregly2016ImplicitTendonForcePlan,
         reference_state: DeGrooteFregly2016State,
         /,
     ) -> None:
-        if not isinstance(plan, DeGrooteFregly2016ImplicitTendonForcePlan):
-            raise TypeError("plan must be DeGrooteFregly2016ImplicitTendonForcePlan.")
         explicit_plan = DeGrooteFregly2016Plan(
             plan.parameters,
             plan.muscle_names,
@@ -1274,13 +1270,12 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
             self.prepared_id,
         )
 
+    @checked
     def commit(
         self, candidate: DeGrooteFregly2016ImplicitCandidate, /
     ) -> DeGrooteFregly2016State:
         """Atomically accept the implicit candidate or return its full source."""
 
-        if not isinstance(candidate, DeGrooteFregly2016ImplicitCandidate):
-            raise TypeError("candidate must be DeGrooteFregly2016ImplicitCandidate.")
         if candidate.prepared_id != self.prepared_id:
             raise ValueError("Candidate belongs to another implicit prepared model.")
         return jax.tree.map(

@@ -15,7 +15,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
-from ..typing import parse
+from ..typing import checked, parse
 from ._newton import NewtonKrylov, NewtonTrustRegion
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
@@ -114,6 +114,7 @@ class MixedPrecisionRootExecution(StrictModule):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.precision = policy
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -124,12 +125,6 @@ class MixedPrecisionRootExecution(StrictModule):
         *,
         args: Any = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be NonlinearSystemProblem.")
-        if not isinstance(method, AbstractNonlinearMethod):
-            raise TypeError("method must be AbstractNonlinearMethod.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
         if (
             termination.maximum_evaluations is not None

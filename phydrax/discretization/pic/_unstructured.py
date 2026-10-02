@@ -29,7 +29,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
-from ...typing import AnyDim, Bool, Dim, Float, Int32, Scalar
+from ...typing import AnyDim, Bool, checked, Dim, Float, Int32, Scalar
 from .._simplicial_locator import CellLocationResult, PreparedSimplicialCellLocator
 from ..particle import ParticlePopulationState
 from ._charge_state import PICChargeModelPlan, PICChargeState
@@ -98,6 +98,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         locator: PreparedSimplicialCellLocator,
@@ -110,12 +111,8 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         pusher: RelativisticPushPlan | None = None,
     ) -> None:
-        if not isinstance(locator, PreparedSimplicialCellLocator):
-            raise TypeError("locator must be PreparedSimplicialCellLocator.")
         if locator.cell_map.coordinate_element.degree != 1:
             raise ValueError("Whitney electrostatic PIC requires an order-one cell map.")
-        if not isinstance(charge_model, PICChargeModelPlan):
-            raise TypeError("charge_model must be PICChargeModelPlan.")
         epsilon = float(permittivity)
         if epsilon <= 0.0 or not np.isfinite(epsilon):
             raise ValueError("permittivity must be positive and finite.")

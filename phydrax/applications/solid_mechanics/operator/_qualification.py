@@ -28,7 +28,7 @@ from ....nn.operator.training._risk import (
     MechanicsCaseReductionResult,
 )
 from ....nn.operator.training._trained_operator import TrainedOperator
-from ....typing import parse
+from ....typing import checked, parse
 from ._cases import MechanicsCaseBuilder, MechanicsOperatorCase
 from ._parameters import (
     MechanicsParameterDistribution,
@@ -176,6 +176,7 @@ class MechanicsOperatorQualification(StrictModule, NonTrainableState):
     qualification_id: str = eqx.field(static=True)
     qualification_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         training_distribution: MechanicsParameterDistribution,
@@ -188,14 +189,6 @@ class MechanicsOperatorQualification(StrictModule, NonTrainableState):
         qualification_id: str,
         support_spec: MechanicsParameterSpec | None = None,
     ) -> None:
-        if not isinstance(training_distribution, MechanicsParameterDistribution):
-            raise TypeError(
-                "training_distribution must be a MechanicsParameterDistribution."
-            )
-        if not isinstance(held_out_case_builder, MechanicsCaseBuilder):
-            raise TypeError("held_out_case_builder must be a MechanicsCaseBuilder.")
-        if not isinstance(parameter_reduction, MechanicsCaseReduction):
-            raise TypeError("parameter_reduction must be a MechanicsCaseReduction.")
         resolved_metrics = tuple(metrics)
         if not resolved_metrics or any(
             not isinstance(metric, MechanicsQualificationMetric)

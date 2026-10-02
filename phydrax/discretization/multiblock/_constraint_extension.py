@@ -17,7 +17,7 @@ from ...geometry._interface_extension import (
 from ...geometry._trace_extension import PreparedTraceExtension
 from ...linalg import RankPolicy, SolveResourcePolicy
 from ...linalg._operators import AbstractLinearOperator
-from ...typing import parse
+from ...typing import checked, parse
 from ._core import BlockInterface, PreparedMultiblockGrid
 
 
@@ -41,6 +41,7 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
     gauge_certificate_id: str | None = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         multiblock: PreparedMultiblockGrid,
@@ -56,10 +57,6 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         gauge_certificate_id: str | None = None,
         preservation_operator: AbstractLinearOperator | None = None,
     ) -> None:
-        if not isinstance(multiblock, PreparedMultiblockGrid):
-            raise TypeError("multiblock must be PreparedMultiblockGrid.")
-        if not isinstance(interface, BlockInterface):
-            raise TypeError("interface must be BlockInterface.")
         if interface.name not in tuple(
             value.name for value in multiblock.plan.interfaces
         ):
@@ -72,8 +69,6 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         report = multiblock.interface_reports[report_index]
         if not report.passed:
             raise ValueError("Multiblock physical interface evidence did not pass.")
-        if not isinstance(support, OrientedInterfaceSupport):
-            raise TypeError("support must be OrientedInterfaceSupport.")
         if not isinstance(trace_operator, AbstractLinearOperator) or not isinstance(
             candidate_operator, AbstractLinearOperator
         ):

@@ -19,7 +19,7 @@ from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
 from ...discretization import FreeSurfaceGeometryState, JAXPLICStageReconstruction
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ..layers import warp_jacobian
 from .data import FunctionSamples, OperatorBatch, OperatorPrediction
 from .task import OperatorTask
@@ -69,9 +69,8 @@ class FreeBoundaryOperatorSpec(StrictModule, NonTrainableState):
         self.query_name = query
         self.topology_changes = bool(topology_changes)
 
+    @checked
     def validate_task(self, task: OperatorTask, /) -> None:
-        if not isinstance(task, OperatorTask):
-            raise TypeError("task must be an OperatorTask.")
         fields = task.field_by_name
         required = (self.geometry_field,) + self.state_fields
         missing = tuple(name for name in required if name not in fields)
@@ -98,9 +97,8 @@ class FreeBoundaryOperatorSpec(StrictModule, NonTrainableState):
         elif geometry.channels != "scalar":
             raise ValueError("Level-set and phase-fraction geometry must be scalar.")
 
+    @checked
     def validate_prediction(self, prediction: OperatorPrediction, /) -> None:
-        if not isinstance(prediction, OperatorPrediction):
-            raise TypeError("prediction must be an OperatorPrediction.")
         required = (self.geometry_field,) + self.state_fields
         missing = tuple(name for name in required if name not in prediction.fields)
         if missing:

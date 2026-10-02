@@ -25,6 +25,7 @@ from ...nonlinear import (
     SemismoothNewton,
     VariationalInequalityProblem,
 )
+from ...typing import checked
 from ._rigid_body import (
     PreparedRigidBodySet,
     rigid_body_world_inertia,
@@ -167,6 +168,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
     valid: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FixedCapacityUnilateralPlan,
@@ -174,8 +176,6 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
         *,
         prepared_scope_id: str,
     ) -> None:
-        if not isinstance(plan, FixedCapacityUnilateralPlan):
-            raise TypeError("plan must be a FixedCapacityUnilateralPlan.")
         scope = str(prepared_scope_id)
         if not scope:
             raise ValueError("prepared_scope_id must be nonempty.")
@@ -204,6 +204,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
             jnp.asarray(0, dtype=jnp.int32),
         )
 
+    @checked
     def evaluate(
         self,
         state: UnilateralState,
@@ -212,8 +213,6 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
         active: ArrayLike,
         /,
     ) -> UnilateralStepResult:
-        if not isinstance(state, UnilateralState):
-            raise TypeError("state must be UnilateralState.")
         matrix = jnp.asarray(delassus)
         free = jnp.asarray(free_residual, dtype=matrix.dtype)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
@@ -538,11 +537,8 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
     rows: PreparedUnilateralRows
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: JointLimitPlan, graph: PreparedRigidJointGraph, /) -> None:
-        if not isinstance(plan, JointLimitPlan):
-            raise TypeError("plan must be a JointLimitPlan.")
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
         if graph.plan.hinge is None:
             raise ValueError("Joint limits require a prepared hinge graph.")
         if graph.bodies.ambient_dimension != 3:
@@ -608,6 +604,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
             jnp.asarray(0, dtype=jnp.int32),
         )
 
+    @checked
     def evaluate(
         self,
         state: JointLimitState,
@@ -615,10 +612,6 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
         time_step: ArrayLike,
         /,
     ) -> JointLimitStepResult:
-        if not isinstance(state, JointLimitState):
-            raise TypeError("state must be JointLimitState.")
-        if not isinstance(kinematics, RigidBodyKinematics):
-            raise TypeError("kinematics must be RigidBodyKinematics.")
         expected = (self.capacity,)
         if (
             state.coordinate.shape != expected

@@ -18,6 +18,7 @@ from ..._differentiation import (
 )
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -481,7 +482,9 @@ def _cross_validate_materialized(
         fit_key, prediction_key = jr.split(fold_key)
         train_batch = batch.take_samples(fold.train_indices)
         validation_batch = batch.take_samples(fold.validation_indices)
-        fit_result = recipe.fit_batch(train_batch, key=fit_key)
+        fit_result = recipe.fit_batch(
+            train_batch, key=fit_key if recipe.accepts_fit_key else None
+        )
         if not isinstance(fit_result, FitResult):
             raise TypeError("Recipe.fit_batch must return a FitResult.")
         predictions = _predict(fit_result, validation_batch, scorer, key=prediction_key)
@@ -492,7 +495,7 @@ def _cross_validate_materialized(
                 fit_result,
                 score,
                 predictions,
-                fit_key=fit_key,
+                fit_key=fit_key if recipe.accepts_fit_key else None,
                 prediction_key=prediction_key,
             )
         )
@@ -722,9 +725,8 @@ class CrossValidator(StrictModule):
     split_plan: AbstractSplitPlan
     scorer: Any
 
+    @checked
     def __init__(self, split_plan: AbstractSplitPlan, scorer: Any, /) -> None:
-        if not isinstance(split_plan, AbstractSplitPlan):
-            raise TypeError("split_plan must be an AbstractSplitPlan.")
         if not callable(scorer) and not isinstance(scorer, _Scorer):
             raise TypeError("scorer must be callable or expose a score method.")
         self.split_plan = split_plan

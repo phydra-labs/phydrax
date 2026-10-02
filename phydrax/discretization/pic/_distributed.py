@@ -61,6 +61,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._distributed_field import DistributedHaloPlan
 from ..particle import (
     ParticleAllocationRequest,
@@ -735,6 +736,7 @@ class PICMigrationPlan(StrictModule, NonTrainableState):
     shifts: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decomposition: PICDomainDecomposition,
@@ -743,8 +745,6 @@ class PICMigrationPlan(StrictModule, NonTrainableState):
         packet_capacity: int,
         reach: int = 1,
     ) -> None:
-        if not isinstance(decomposition, PICDomainDecomposition):
-            raise TypeError("decomposition must be PICDomainDecomposition.")
         capacity, hops = int(packet_capacity), int(reach)
         if capacity <= 0 or hops <= 0:
             raise ValueError("packet_capacity and reach must be positive.")

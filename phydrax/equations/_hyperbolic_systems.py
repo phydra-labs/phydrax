@@ -21,6 +21,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import inverse
+from ..typing import checked
 from ._materials import IdealGasMaterial
 from ._transport_closures import AbstractTransportClosure
 
@@ -812,6 +813,7 @@ class CompressibleNavierStokesSystem(
     material: IdealGasMaterial
     transport: AbstractTransportClosure
 
+    @checked
     def __init__(
         self,
         transport: AbstractTransportClosure,
@@ -820,8 +822,6 @@ class CompressibleNavierStokesSystem(
         *,
         material: IdealGasMaterial | None = None,
     ) -> None:
-        if not isinstance(transport, AbstractTransportClosure):
-            raise TypeError("transport must be an AbstractTransportClosure.")
         inviscid = EulerSystem(dimension, material=material)
         self.dimension = inviscid.dimension
         self.component_names = inviscid.component_names

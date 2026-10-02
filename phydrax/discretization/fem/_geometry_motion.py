@@ -64,6 +64,7 @@ from ...nonlinear import (
     PseudoTransient,
 )
 from ...sparse import ElementTensorOperator
+from ...typing import checked
 from .._cell_geometry_validity import (
     CellValidityCertificate,
     CellValidityPolicy,
@@ -1115,6 +1116,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
     topology_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -1123,8 +1125,6 @@ class FiniteElementMeshMotionPlan(StrictModule):
         *,
         policy: FiniteElementMeshMotionPolicy | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         if not isinstance(boundary_provider, FiniteElementBoundaryProvider):
             raise TypeError(
                 "boundary_provider must satisfy FiniteElementBoundaryProvider."

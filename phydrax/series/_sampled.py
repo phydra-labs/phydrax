@@ -13,7 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._support import _checked_series_index, _identifier, SeriesSupport
 from ._types import SeriesAlignment
 
@@ -70,6 +70,7 @@ class SampledSeries(StrictModule):
     alignment: SeriesAlignment = eqx.field(static=True)
     series_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SeriesSupport,
@@ -80,8 +81,6 @@ class SampledSeries(StrictModule):
         value_valid: Any | None = None,
         series_id: str,
     ) -> None:
-        if not isinstance(support, SeriesSupport):
-            raise TypeError("support must be a SeriesSupport.")
         alignment = parse(alignment, SeriesAlignment, "alignment")
         values_ = jax.tree_util.tree_map(_numeric_array, values)
         leaves = jax.tree_util.tree_leaves(values_)

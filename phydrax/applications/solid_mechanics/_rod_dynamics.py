@@ -34,7 +34,7 @@ from ...linalg import (
     SmallLinearSolvePlan,
     solve_small_linear,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._rod_materials import (
     LinearElasticRodMaterialPlan,
     PreparedLinearElasticRodMaterial,
@@ -486,9 +486,8 @@ class PreparedRod(StrictModule, NonTrainableState):
     material_workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: RodPlan, /) -> None:
-        if not isinstance(plan, RodPlan):
-            raise TypeError("plan must be a RodPlan.")
         segment_vectors = (
             plan.rest_positions[plan.segment_node_ids[:, 1]]
             - plan.rest_positions[plan.segment_node_ids[:, 0]]
@@ -1335,11 +1334,8 @@ class PreparedRodDynamics(StrictModule, NonTrainableState):
     inertia_solve: SmallLinearSolvePlan | None
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, rod: PreparedRod, plan: RodDynamicsPlan, /) -> None:
-        if not isinstance(rod, PreparedRod):
-            raise TypeError("rod must be a PreparedRod.")
-        if not isinstance(plan, RodDynamicsPlan):
-            raise TypeError("plan must be a RodDynamicsPlan.")
         inertia_solve = SmallLinearSolvePlan(3) if rod.plan.dimension == 3 else None
         self.rod = rod
         self.plan = plan

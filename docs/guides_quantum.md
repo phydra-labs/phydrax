@@ -16,6 +16,13 @@ parameter-shift gradients, quantum feature models, and exact fidelity kernels.
 These APIs retain a separate local-map lifecycle; see
 [Local quantum programs](guides_quantum_programs.md).
 
+Sparse lattice ground-state coefficient projection is a separate
+[native projector Monte Carlo](guides_projector_monte_carlo.md) path, not VMC,
+TDVP, quantum jumps, or evolution of a learned amplitude. Its outgoing columns
+use `H[target, source]`; the retained VMC local-energy adapter continues to use
+`H[current, connected]` after self-adjoint-certified conjugation. Packed
+rank-free configurations do not replace finite-sector rank/unrank or eigen APIs.
+
 ## Three distinct brackets
 
 Three operations in Phydrax are Lie brackets, but they act on different objects:

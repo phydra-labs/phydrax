@@ -28,6 +28,7 @@ from ...measurement import (
     ValueKind,
     ValueLayout,
 )
+from ...typing import checked
 from ...units import conversion_factor, derived_unit, ONE, RADIAN, UnitDefinition
 from .._asset import ImageAsset
 from .._plane import ImagePlaneSupport
@@ -147,6 +148,7 @@ class SchlierenDeflectionPlan(StrictModule, NonTrainableState):
     small_angle_limit: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rays: RaySampleSupport,
@@ -161,10 +163,6 @@ class SchlierenDeflectionPlan(StrictModule, NonTrainableState):
         gradient_frame_id: str,
         small_angle_limit: float = 0.05,
     ) -> None:
-        if not isinstance(rays, RaySampleSupport):
-            raise TypeError("rays must be RaySampleSupport.")
-        if not isinstance(image_support, ImagePlaneSupport):
-            raise TypeError("image_support must be ImagePlaneSupport.")
         if (
             rays.sample_shape[0]
             != image_support.image_shape[0] * image_support.image_shape[1]
@@ -340,6 +338,7 @@ class KnifeEdgeSchlierenPlan(StrictModule, NonTrainableState):
     contrast_gain_per_radian: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: ImageAsset,
@@ -348,8 +347,6 @@ class KnifeEdgeSchlierenPlan(StrictModule, NonTrainableState):
         *,
         contrast_gain_per_radian: float,
     ) -> None:
-        if not isinstance(reference, ImageAsset):
-            raise TypeError("reference must be ImageAsset.")
         direction = np.asarray(cutoff_direction_rc, dtype=np.float64)
         if direction.shape != (2,) or not np.all(np.isfinite(direction)):
             raise ValueError("cutoff_direction_rc must be a finite two-vector.")
@@ -379,11 +376,10 @@ class KnifeEdgeSchlierenPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self, deflection: SchlierenDeflectionResult, /
     ) -> SchlierenImageFormationResult:
-        if not isinstance(deflection, SchlierenDeflectionResult):
-            raise TypeError("deflection must be SchlierenDeflectionResult.")
         if deflection.prediction.support_id != self.support_id:
             raise ValueError("Deflection and reference image supports differ.")
         reference = self.reference_values
@@ -433,14 +429,13 @@ class BackgroundOrientedSchlierenPlan(StrictModule, NonTrainableState):
     unit_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         background: ImageAsset,
         displacement_pixels_per_radian: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(background, ImageAsset):
-            raise TypeError("background must be ImageAsset.")
         scale = np.asarray(displacement_pixels_per_radian, dtype=np.float64)
         if scale.shape not in {(), (2,)} or not np.all(np.isfinite(scale)):
             raise ValueError(
@@ -469,11 +464,10 @@ class BackgroundOrientedSchlierenPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self, deflection: SchlierenDeflectionResult, /
     ) -> SchlierenImageFormationResult:
-        if not isinstance(deflection, SchlierenDeflectionResult):
-            raise TypeError("deflection must be SchlierenDeflectionResult.")
         if deflection.prediction.support_id != self.support_id:
             raise ValueError("Deflection and background image supports differ.")
         background = self.background_values

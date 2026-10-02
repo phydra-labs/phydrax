@@ -16,7 +16,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
-from ..typing import parse
+from ..typing import checked, parse
 from ._layout import InputLayout, StateLayout
 
 
@@ -102,6 +102,7 @@ class TrajectoryData(StrictModule):
     source_id: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinates: ArrayLike,
@@ -126,8 +127,6 @@ class TrajectoryData(StrictModule):
         source_id: str,
         dataset_id: str | None = None,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         if not isinstance(coordinate_id, str) or not coordinate_id:

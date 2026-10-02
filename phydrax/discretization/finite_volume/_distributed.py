@@ -20,6 +20,7 @@ from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._dynamics import PreparedFiniteVolumeDynamics
 
 
@@ -148,6 +149,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
     execution_group_id: str | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FiniteVolumeDecompositionPlan,
@@ -156,8 +158,6 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         execution_group: ExecutionGroup | None = None,
     ) -> None:
-        if not isinstance(plan, FiniteVolumeDecompositionPlan):
-            raise TypeError("plan must be a FiniteVolumeDecompositionPlan.")
         if execution_group is not None:
             available = tuple(execution_group.devices)
         elif devices is not None:
@@ -271,9 +271,8 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
             self.periodic_halo(state, axis) for axis in range(len(self.plan.global_shape))
         )
 
+    @checked
     def _validate_dynamics(self, dynamics: PreparedFiniteVolumeDynamics, /) -> None:
-        if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
-            raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         if dynamics.discretization.cell_shape != self.plan.global_shape:
             raise ValueError("Distributed FV dynamics and decomposition shapes differ.")
         if (

@@ -19,6 +19,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..nn.flows import AbstractFlowDistribution
+from ..typing import checked
 from ._flow_family import build_default_flow, validate_flow
 from ._posterior import PosteriorProblem
 from ._variational import (
@@ -46,14 +47,13 @@ class FlowVariationalFamily(AbstractVariationalFamily):
     event_sizes: tuple[int, ...] = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         flow: AbstractFlowDistribution,
         reference: PyTree[Any],
         /,
     ) -> None:
-        if not isinstance(flow, AbstractFlowDistribution):
-            raise TypeError("flow must be an AbstractFlowDistribution.")
         flat_reference, unravel = ravel_pytree(reference)
         if flat_reference.size < 1:
             raise ValueError("Flow variational coordinates cannot be empty.")

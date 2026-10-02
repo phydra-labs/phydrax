@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._geometry_protocol import FiniteVolumeStageFaceBlock, FiniteVolumeStageMetrics
@@ -595,6 +596,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
     geometry_family_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -605,14 +607,10 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         topology_epoch_id: str | None = None,
         geometry_family_id: str | None = None,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("VOF requires unstructured FV geometry.")
         if discretization.cell_dimension != 2 or not isinstance(
             discretization.connectivity, PolygonalConnectivity
         ):
             raise ValueError("PLIC reconstruction currently supports 2-D polygons.")
-        if not isinstance(gradient, PreparedCellPolynomialReconstruction):
-            raise TypeError("gradient must be PreparedCellPolynomialReconstruction.")
         if gradient.basis.degree != 1:
             raise ValueError("VOF interface normals require a degree-one gradient.")
         if gradient.discretization.prepared_id != discretization.prepared_id:
@@ -1411,6 +1409,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             reconstruction_id=reconstruction_id,
         )
 
+    @checked
     def face_phase_apertures(
         self,
         volume_fraction: ArrayLike,
@@ -1426,10 +1425,6 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         """
 
         alpha = np.asarray(self.validate_volume_fraction(volume_fraction))
-        if not isinstance(plic, PLICReconstruction):
-            raise TypeError("plic must be a PLICReconstruction.")
-        if not isinstance(stage_metrics, FiniteVolumeStageMetrics):
-            raise TypeError("stage_metrics must be FiniteVolumeStageMetrics.")
         geometry = self.discretization
         volume_fraction_id = canonical_fingerprint(
             {
@@ -1674,6 +1669,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             apertures_id=apertures_id,
         )
 
+    @checked
     def donor_phase_apertures(
         self,
         total_volume_flux: ArrayLike,
@@ -1682,8 +1678,6 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
     ) -> Array:
         """Select both phase apertures from the upwind physical-face donor."""
 
-        if not isinstance(reconstruction, JAXPLICStageReconstruction):
-            raise TypeError("reconstruction must be a JAXPLICStageReconstruction.")
         if (
             reconstruction.plan_id != self.plan_id
             or reconstruction.geometry_id != self.discretization.geometry_id

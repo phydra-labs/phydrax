@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ..core import Currency, FinanceDate, FXPair
 from ._base import AbstractResolvedContract
 from ._cashflows import CashflowBatch
@@ -176,6 +177,7 @@ class ResolvedEquityForward(AbstractResolvedContract):
     pay_receive: PayReceive = eqx.field(static=True)
     settlement_price_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -192,8 +194,6 @@ class ResolvedEquityForward(AbstractResolvedContract):
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
     ) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
         self.settlement_price = _settlement_fixing(
@@ -313,6 +313,7 @@ class ResolvedFXForward(AbstractResolvedContract):
     base_discount_curve_id: str = eqx.field(static=True)
     pay_receive: PayReceive = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -327,8 +328,6 @@ class ResolvedFXForward(AbstractResolvedContract):
         base_discount_curve_id: str,
         pay_receive: PayReceive | str,
     ) -> None:
-        if not isinstance(fx_pair, FXPair):
-            raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
         self.contract_id = contract
@@ -479,6 +478,7 @@ class ResolvedCommodityForward(AbstractResolvedContract):
     pay_receive: PayReceive = eqx.field(static=True)
     settlement_price_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -495,8 +495,6 @@ class ResolvedCommodityForward(AbstractResolvedContract):
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
     ) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
         self.settlement_price = _settlement_fixing(
@@ -618,6 +616,7 @@ class ResolvedCommodityFuture(AbstractResolvedContract):
     pay_receive: PayReceive = eqx.field(static=True)
     settlement_price_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -632,8 +631,6 @@ class ResolvedCommodityFuture(AbstractResolvedContract):
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
     ) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
         self.settlement_price = _settlement_fixing(
@@ -721,6 +718,7 @@ class ResolvedEquityFuture(AbstractResolvedContract):
     pay_receive: PayReceive = eqx.field(static=True)
     settlement_price_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -735,8 +733,6 @@ class ResolvedEquityFuture(AbstractResolvedContract):
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
     ) -> None:
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
         self.settlement_price = _settlement_fixing(
@@ -824,6 +820,7 @@ class ResolvedFXFuture(AbstractResolvedContract):
     pay_receive: PayReceive = eqx.field(static=True)
     settlement_rate_known: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -838,8 +835,6 @@ class ResolvedFXFuture(AbstractResolvedContract):
         settlement_rate: ArrayLike = 0.0,
         settlement_rate_known: bool,
     ) -> None:
-        if not isinstance(fx_pair, FXPair):
-            raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
         self.settlement_rate = _settlement_fixing(settlement_rate, settlement_rate_known)

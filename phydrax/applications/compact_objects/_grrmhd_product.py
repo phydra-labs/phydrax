@@ -33,6 +33,7 @@ from ...metrix import (
 from ...metrix._adm_exchange import ADMGridGeometry
 from ...solver._grrmhd_runtime import FixedGridGRRMHDIMEXPlan, GRRMHDState
 from ...solver._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
+from ...typing import checked
 from ..astrophysics._gr_medium import FastLightSnapshot
 from ._accretion import FishboneMoncriefTorusPlan
 
@@ -67,6 +68,7 @@ class IngoingKerrGridPlan(StrictModule, NonTrainableState):
     metric: LorentzianMetric
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteVolumeDiscretization,
@@ -78,14 +80,8 @@ class IngoingKerrGridPlan(StrictModule, NonTrainableState):
         *,
         chart: CoordinateChart | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) != 3:
             raise ValueError("Ingoing Kerr GRRMHD requires a three-dimensional grid.")
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be RelativityConvention.")
         mass_ = float(mass)
         spin_ = float(spin)
         if (
@@ -270,6 +266,7 @@ class GRRMHDTorusInitialDataPlan(StrictModule, NonTrainableState):
     caloric_temperature_scale: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: FixedGridGRRMHDIMEXPlan,
@@ -281,12 +278,6 @@ class GRRMHDTorusInitialDataPlan(StrictModule, NonTrainableState):
         radiation_energy_scale: float = 1.0,
         caloric_temperature_scale: float = 1.0,
     ) -> None:
-        if not isinstance(runtime, FixedGridGRRMHDIMEXPlan):
-            raise TypeError("runtime must be FixedGridGRRMHDIMEXPlan.")
-        if not isinstance(geometry, IngoingKerrGridPlan):
-            raise TypeError("geometry must be IngoingKerrGridPlan.")
-        if not isinstance(torus, FishboneMoncriefTorusPlan):
-            raise TypeError("torus must be FishboneMoncriefTorusPlan.")
         values = tuple(
             float(value)
             for value in (

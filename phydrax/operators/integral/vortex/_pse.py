@@ -23,6 +23,7 @@ from ....discretization.vortex._interfaces import (
     VortexDiffusionEvaluation,
 )
 from ....discretization.vortex._source import VortexSourceState
+from ....typing import checked
 
 
 class ParticleStrengthExchangeEvidence(StrictModule):
@@ -168,14 +169,13 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
             }
         )
 
+    @checked
     def evaluate(
         self,
         source: VortexSourceState,
         viscosity: ArrayLike,
         /,
     ) -> VortexDiffusionEvaluation:
-        if not isinstance(source, VortexSourceState):
-            raise TypeError("source must be VortexSourceState.")
         if source.capacity != self.capacity or source.dimension != self.dimension:
             raise ValueError("PSE source does not match prepared capacity/dimension.")
         if source.volume is None:

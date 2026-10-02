@@ -49,6 +49,7 @@ from .._validation import finite_real_scalar, positive_finite_float, positive_in
 from ..ein import contract
 from ..typing import (
     Bool,
+    checked,
     Complex128,
     Dim,
     Float64,
@@ -430,6 +431,7 @@ class TrajectoryRadiationPlan(StrictModule, NonTrainableState):
     frequency_count: Size[_FrequencyDim] = eqx.field(static=True)
     plan_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -446,10 +448,6 @@ class TrajectoryRadiationPlan(StrictModule, NonTrainableState):
         quadrature_order: int = 8,
         resources: TrajectoryRadiationResources | None = None,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
-        if not isinstance(observers, RadiationObserverPlan):
-            raise TypeError("observers must be a RadiationObserverPlan.")
         frequencies = np.asarray(angular_frequencies, dtype=np.float64)
         if frequencies.ndim != 1 or frequencies.shape[0] == 0:
             raise ValueError("angular_frequencies must be a nonempty vector.")
@@ -1131,9 +1129,8 @@ class PreparedTrajectoryRadiation(StrictModule, NonTrainableState):
     speed_of_light: float = eqx.field(static=True)
     gridded_direct: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TrajectoryRadiationPlan, /) -> None:
-        if not isinstance(plan, TrajectoryRadiationPlan):
-            raise TypeError("plan must be a TrajectoryRadiationPlan.")
         scale = plan.scale
         c = float(scale.speed_of_light)
         permittivity = float(scale.vacuum_permittivity)
@@ -1304,9 +1301,8 @@ class PreparedTrajectoryRadiation(StrictModule, NonTrainableState):
             sample_capacity=0,
         )
 
+    @checked
     def _check_trajectory(self, trajectory: ChargedTrajectory, /) -> None:
-        if not isinstance(trajectory, ChargedTrajectory):
-            raise TypeError("trajectory must be a ChargedTrajectory.")
         if (
             self.plan.route == "segment-hermite"
             and trajectory.proper_accelerations is None
@@ -1372,13 +1368,12 @@ class PreparedTrajectoryRadiation(StrictModule, NonTrainableState):
         )
         return field, new_carry, evidence
 
+    @checked
     def accumulate(
         self, state: TrajectoryRadiationState, trajectory: ChargedTrajectory, /
     ) -> TrajectoryRadiationState:
         """Fold the next time chunk of the same lanes into ``state``."""
         self._check_trajectory(trajectory)
-        if not isinstance(state, TrajectoryRadiationState):
-            raise TypeError("state must be a TrajectoryRadiationState.")
         if state.charges.shape[0] != trajectory.particle_count:
             raise ValueError("trajectory lanes must match the state lanes.")
         if (state.node_proper_acceleration is None) != (
@@ -1523,10 +1518,9 @@ class PreparedTrajectoryRadiation(StrictModule, NonTrainableState):
             sample_capacity=max(state.sample_capacity, trajectory.sample_count),
         )
 
+    @checked
     def finalize(self, state: TrajectoryRadiationState, /) -> TrajectoryRadiationResult:
         """Close every lane and combine lanes under the coherence model."""
-        if not isinstance(state, TrajectoryRadiationState):
-            raise TypeError("state must be a TrajectoryRadiationState.")
         plan = self.plan
         coherent = state.coherent_field
         coherency = _coherency(plan, state, coherent, state.particle_fields)
@@ -1652,6 +1646,7 @@ class PreparedTrajectoryRadiation(StrictModule, NonTrainableState):
         state = self.initialize(trajectory)
         return self.finalize(self.accumulate(state, trajectory))
 
+    @checked
     def waveform(self, result: TrajectoryRadiationResult, times: ArrayLike, /) -> Array:
         """Observer-time far field ``r E(t)[T, D, 2]`` synthesized from ``field_spectrum``.
 
@@ -1659,8 +1654,6 @@ class PreparedTrajectoryRadiation(StrictModule, NonTrainableState):
         with trapezoid weights on the plan's frequency grid; only the coherent
         model has a field.
         """
-        if not isinstance(result, TrajectoryRadiationResult):
-            raise TypeError("result must be a TrajectoryRadiationResult.")
         if result.coherence != "coherent":
             raise ValueError("Observer-time waveforms exist only for coherent emission.")
         if result.plan_id != self.plan.plan_id:

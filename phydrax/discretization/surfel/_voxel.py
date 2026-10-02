@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..spatial import PreparedSparseVoxelGrid
 from ._footprint import SurfelFootprintPlan
 from ._geometry import SurfelGeometryState, SurfelOrientationScope
@@ -69,6 +70,7 @@ class PreparedSurfelVoxelProjection(StrictModule):
     evidence: SurfelVoxelRouteEvidence
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def project(
         self,
         geometry: SurfelGeometryState,
@@ -77,8 +79,6 @@ class PreparedSurfelVoxelProjection(StrictModule):
         confidence: ArrayLike | None = None,
         attributes: ArrayLike | None = None,
     ) -> SurfelVoxelProjectionResult:
-        if not isinstance(geometry, SurfelGeometryState):
-            raise TypeError("geometry must be SurfelGeometryState.")
         if geometry.discretization.prepared_id != self.plan.geometry_discretization_id:
             raise ValueError("Surfel geometry uses a different discretization.")
         capacity = geometry.capacity
@@ -299,6 +299,7 @@ class SurfelVoxelProjectionPlan(NonTrainableState, StrictModule):
     geometry_discretization_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedSparseVoxelGrid,
@@ -312,10 +313,6 @@ class SurfelVoxelProjectionPlan(NonTrainableState, StrictModule):
         minimum_denominator: float = 1.0e-12,
         minimum_normal_coherence: float = 0.25,
     ) -> None:
-        if not isinstance(grid, PreparedSparseVoxelGrid):
-            raise TypeError("grid must be PreparedSparseVoxelGrid.")
-        if not isinstance(geometry, SurfelGeometryState):
-            raise TypeError("geometry must be SurfelGeometryState.")
         if not bool(grid.evidence.successful) or not bool(geometry.evidence.successful):
             raise ValueError(
                 "Surfel voxel projection requires successful grid and geometry."

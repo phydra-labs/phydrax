@@ -10,6 +10,7 @@ from ..._flow_matching_metric import ManifoldFlowMatchingMetric
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ...metrix import AbstractGeodesicManifold, GeodesicManifoldStateGeometry
+from ...typing import checked
 from ._geodesic_interpolant import GeodesicEndpointInterpolant
 
 
@@ -21,6 +22,7 @@ class ManifoldTransportGeometry(StrictModule):
     metric: ManifoldFlowMatchingMetric
     state_geometry: GeodesicManifoldStateGeometry
 
+    @checked
     def __init__(
         self,
         manifold: AbstractGeodesicManifold,
@@ -30,8 +32,6 @@ class ManifoldTransportGeometry(StrictModule):
         target_coordinate: ArrayLike = 1.0,
         precision: GeometryPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(manifold, AbstractGeodesicManifold):
-            raise TypeError("manifold must be an AbstractGeodesicManifold.")
         self.manifold = manifold
         self.interpolant = GeodesicEndpointInterpolant(
             manifold,

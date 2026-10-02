@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._blades import CliffordBladeLayout
 from ._involutions import clifford_conjugate
 from ._product import CliffordProductPlan
@@ -27,9 +28,8 @@ class CliffordFiniteAlgebraProvider(StrictModule, NonTrainableState):
     basis_ids: tuple[str, ...] = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, algebra: CliffordAlgebraSpec, /) -> None:
-        if not isinstance(algebra, CliffordAlgebraSpec):
-            raise TypeError("algebra must be CliffordAlgebraSpec.")
         layout = CliffordBladeLayout.full(algebra)
         labels = tuple(
             "1" if not axes else "e" + "".join(str(axis) for axis in axes)

@@ -19,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import TetrahedralConnectivity
+from ....typing import checked
 from ....units import conversion_factor, derived_unit, METER, OHM, UnitDefinition
 from ._finite_patch import DC_CONDUCTIVITY_UNIT, FinitePatchDCPlan, PreparedDC
 
@@ -47,6 +48,7 @@ class CompleteElectrodeDCPlan(StrictModule, NonTrainableState):
     contact_impedance_ohm_m2: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         finite_patch: FinitePatchDCPlan,
@@ -55,10 +57,6 @@ class CompleteElectrodeDCPlan(StrictModule, NonTrainableState):
         *,
         unit: UnitDefinition = CONTACT_IMPEDANCE_UNIT,
     ) -> None:
-        if not isinstance(finite_patch, FinitePatchDCPlan):
-            raise TypeError(
-                "Complete electrode model requires FinitePatchDCPlan geometry/survey."
-            )
         values = jnp.asarray(contact_impedance) * float(
             conversion_factor(unit, CONTACT_IMPEDANCE_UNIT)
         )
@@ -96,9 +94,8 @@ class PreparedCompleteElectrodeDC(StrictModule, NonTrainableState):
     solve_policy: la.LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CompleteElectrodeDCPlan, /) -> None:
-        if not isinstance(plan, CompleteElectrodeDCPlan):
-            raise TypeError("Prepared complete electrode model requires its plan.")
         base = plan.finite_patch.prepare()
         mesh = plan.finite_patch.mesh
         connectivity = mesh.connectivity

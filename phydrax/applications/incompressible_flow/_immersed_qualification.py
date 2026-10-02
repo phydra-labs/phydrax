@@ -22,6 +22,7 @@ from ...qualification._evidence import (
     QualificationMatrix,
 )
 from ...solver._marker_flow_runtime import HydrodynamicLoadRecord
+from ...typing import checked
 from ._immersed_profile import (
     IMMERSED_REFERENCE_CASES,
     ImmersedDNSQualificationProfile,
@@ -97,6 +98,7 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def manufactured_loads(
         cls,
         regime: ImmersedBodyRegimePlan,
@@ -107,10 +109,6 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         *,
         raw_artifact_ids: Sequence[str],
     ) -> ImmersedReferenceCaseEvidence:
-        if not isinstance(regime, ImmersedBodyRegimePlan):
-            raise TypeError("regime must be ImmersedBodyRegimePlan.")
-        if not isinstance(record, HydrodynamicLoadRecord):
-            raise TypeError("record must be HydrodynamicLoadRecord.")
         force = jnp.asarray(expected_force, dtype=record.force.dtype)
         torque = jnp.asarray(expected_torque, dtype=record.torque.dtype)
         if force.shape != record.force.shape or torque.shape != record.torque.shape:
@@ -142,6 +140,7 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def sharp_certificate(
         cls,
         regime: ImmersedBodyRegimePlan,
@@ -150,12 +149,8 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         *,
         raw_artifact_ids: Sequence[str],
     ) -> ImmersedReferenceCaseEvidence:
-        if not isinstance(regime, ImmersedBodyRegimePlan):
-            raise TypeError("regime must be ImmersedBodyRegimePlan.")
         if regime.regime != "fixed-topology-sharp":
             raise ValueError("Sharp certificate evidence requires the sharp regime.")
-        if not isinstance(geometry, QualifiedSharpGeometry):
-            raise TypeError("geometry must be QualifiedSharpGeometry.")
         widths = (
             geometry.evidence.cell_bound_width,
             *geometry.evidence.face_bound_width,
@@ -239,14 +234,13 @@ class ImmersedReferenceCampaignPlan(StrictModule, NonTrainableState):
     required_cases: tuple[str, ...] = eqx.field(static=True)
     campaign_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         profile: ImmersedDNSQualificationProfile,
         regimes: Sequence[ImmersedBodyRegimePlan],
         /,
     ) -> None:
-        if not isinstance(profile, ImmersedDNSQualificationProfile):
-            raise TypeError("profile must be ImmersedDNSQualificationProfile.")
         regimes_ = tuple(regimes)
         if not regimes_ or any(
             not isinstance(regime, ImmersedBodyRegimePlan) for regime in regimes_

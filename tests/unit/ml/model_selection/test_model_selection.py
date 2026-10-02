@@ -19,6 +19,7 @@ from phydrax import (
 )
 from phydrax._model import AbstractArrayModel
 from phydrax._strict import StrictModule
+from phydrax.linalg.svd import RandomizedSVD
 from phydrax.ml import (
     AbstractRecipe,
     FitDiagnostics,
@@ -26,7 +27,9 @@ from phydrax.ml import (
     ML_SUCCESS,
     MLBatch,
 )
-from phydrax.ml.decomposition import IncrementalPCA
+from phydrax.ml.compose import FittedPipeline, Pipeline
+from phydrax.ml.decomposition import IncrementalPCA, PCA, SubspaceModel
+from phydrax.ml.linear import RidgeRecipe
 from phydrax.ml.metrics import (
     accuracy_score,
     FunctionScorer,
@@ -435,6 +438,151 @@ def test_model_selection_scenario_1() -> None:
                     )
                 )
     assert bool(result.valid)
+
+
+def _subspace_batch() -> MLBatch:
+    coordinate = jnp.linspace(-2.0, 2.0, 12)
+    features = jnp.stack((coordinate, 0.2 * coordinate**2, jnp.sin(coordinate)), axis=-1)
+    return MLBatch(features, coordinate[:, None])
+
+
+@pytest.mark.parametrize("recipe_kind", ("dense", "randomized", "incremental"))
+def test_subspace_cross_validation_routes_fit_keys(recipe_kind: str) -> None:
+    batch = _subspace_batch()
+    recipe: AbstractRecipe
+    if recipe_kind == "incremental":
+        recipe = IncrementalPCA(1)
+    elif recipe_kind == "randomized":
+        recipe = PCA(1, method=RandomizedSVD(oversampling=2, power_iterations=1))
+        with pytest.raises(ValueError, match="key"):
+            recipe.fit_batch(batch)
+    else:
+        recipe = PCA(1)
+        with pytest.raises(ValueError, match="key"):
+            recipe.fit_batch(batch, key=jr.key(101))
+    splits = KFoldPlan(3, shuffle=False).split(batch, key=jr.key(102))
+    root = jr.key(103)
+    scorer = FunctionScorer(mean_squared_error, greater_is_better=False)
+    result = cross_validate(recipe, batch, splits, scorer, key=root)
+
+    assert bool(result.valid)
+    for position, evaluation in enumerate(result.folds):
+        addressed_fit_key, prediction_key = jr.split(jr.fold_in(root, position))
+        fit_key = addressed_fit_key if recipe_kind == "randomized" else None
+        if fit_key is None:
+            assert evaluation.fit_key is None
+        else:
+            assert jnp.array_equal(jr.key_data(evaluation.fit_key), jr.key_data(fit_key))
+        assert jnp.array_equal(
+            jr.key_data(evaluation.prediction_key), jr.key_data(prediction_key)
+        )
+        expected = recipe.fit_batch(
+            batch.take_samples(evaluation.fold.train_indices), key=fit_key
+        ).as_trainable()
+        validation = batch.take_samples(evaluation.fold.validation_indices)
+        assert jnp.allclose(
+            evaluation.predictions,
+            expected(validation.dense_features(), key=prediction_key),
+        )
+
+
+@pytest.mark.parametrize("search_kind", ("grid", "random", "halving"))
+@pytest.mark.parametrize("randomized", (False, True), ids=("dense", "randomized"))
+def test_subspace_search_refit_routes_fit_keys(
+    search_kind: str, randomized: bool
+) -> None:
+    batch = _subspace_batch()
+    method = RandomizedSVD(oversampling=2, power_iterations=1) if randomized else None
+
+    def factory(n_components: int) -> PCA:
+        return PCA(n_components, method=method)
+
+    parameters = {"n_components": (1,)}
+    if search_kind == "random":
+        plan = RandomSearch(parameters, 1)
+    elif search_kind == "halving":
+        plan = SuccessiveHalvingSearch(parameters, min_folds=1)
+    else:
+        plan = GridSearch(parameters)
+    root = jr.key(104)
+    streams = jr.split(root, 4 if search_kind == "random" else 3)
+    addressed_refit_key = streams[-1]
+    result = plan.run(
+        factory,
+        batch,
+        KFoldPlan(3, shuffle=False),
+        FunctionScorer(mean_squared_error, greater_is_better=False),
+        key=root,
+    )
+    fit_key = addressed_refit_key if randomized else None
+    if fit_key is None:
+        assert result.refit_key is None
+    else:
+        assert jnp.array_equal(
+            jr.key_data(result.refit_key), jr.key_data(addressed_refit_key)
+        )
+    assert bool(result.valid)
+    fitted = result.best_fit.as_trainable()
+    expected = result.best_recipe.fit_batch(
+        batch.take_samples(result.split_result.sample_indices), key=fit_key
+    ).as_trainable()
+    assert isinstance(fitted, SubspaceModel)
+    assert isinstance(expected, SubspaceModel)
+    assert jnp.allclose(fitted.components, expected.components)
+    assert jnp.allclose(fitted(batch.dense_features()), expected(batch.dense_features()))
+
+
+@pytest.mark.parametrize("randomized", (False, True), ids=("dense", "randomized"))
+def test_subspace_pipeline_cv_and_search_refit(randomized: bool) -> None:
+    vector_batch = _subspace_batch()
+    batch = MLBatch(vector_batch.features, vector_batch.require_targets()[..., 0])
+    method = RandomizedSVD(oversampling=2, power_iterations=1) if randomized else None
+
+    def factory(alpha: float) -> Pipeline:
+        return Pipeline(
+            (("pca", PCA(1, method=method)), ("regressor", RidgeRecipe(alpha)))
+        )
+
+    root = jr.key(105)
+    _, evaluation_key, refit_key = jr.split(root, 3)
+    result = GridSearch({"alpha": (0.1, 1.0)}).run(
+        factory,
+        batch,
+        KFoldPlan(3, shuffle=False),
+        FunctionScorer(mean_squared_error, greater_is_better=False),
+        key=root,
+    )
+    assert bool(result.valid)
+    for candidate in result.evaluations:
+        candidate_key = jr.fold_in(evaluation_key, candidate.candidate.candidate_id)
+        for position, evaluation in enumerate(candidate.cross_validation.folds):
+            fit_key, prediction_key = jr.split(jr.fold_in(candidate_key, position))
+            expected = candidate.recipe.fit_batch(
+                batch.take_samples(evaluation.fold.train_indices), key=fit_key
+            ).as_trainable()
+            fitted = evaluation.fit_result.as_trainable()
+            assert isinstance(fitted, FittedPipeline)
+            assert isinstance(expected, FittedPipeline)
+            subspace = fitted.steps[0][1]
+            expected_subspace = expected.steps[0][1]
+            assert isinstance(subspace, SubspaceModel)
+            assert isinstance(expected_subspace, SubspaceModel)
+            assert jnp.allclose(subspace.components, expected_subspace.components)
+            assert jnp.allclose(
+                evaluation.predictions,
+                expected(
+                    batch.take_samples(evaluation.fold.validation_indices).features,
+                    key=prediction_key,
+                ),
+            )
+    assert jnp.array_equal(jr.key_data(result.refit_key), jr.key_data(refit_key))
+    expected_refit = result.best_recipe.fit_batch(
+        batch.take_samples(result.split_result.sample_indices), key=refit_key
+    ).as_trainable()
+    assert jnp.allclose(
+        result.best_fit.as_trainable()(batch.features),
+        expected_refit(batch.features),
+    )
 
 
 def test_out_of_fold_assembly_contracts() -> None:

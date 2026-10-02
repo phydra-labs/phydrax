@@ -31,7 +31,7 @@ from ...metrix._metric_domain import MetricDomainEvidence
 from ...metrix._spacetime_conventions import RelativityConvention
 from ...solver._differential import DifferentialProblem
 from ...solver._diffrax_backend import solve_diffrax
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import UnitDefinition
 from ._gr_bundles import (
     AbstractGRConstantOfMotion,
@@ -138,6 +138,7 @@ class GRRayPlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         metric: LorentzianMetric,
@@ -173,20 +174,10 @@ class GRRayPlan(StrictModule):
     ) -> None:
         if not isinstance(metric, LorentzianMetric) or metric.chart.dimension != 4:
             raise TypeError("GR ray plans require a four-dimensional LorentzianMetric.")
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
-        if not isinstance(convention, RelativityConvention):
-            raise TypeError("convention must be a RelativityConvention.")
         if convention.metric_signature != metric.convention:
             raise ValueError(
                 "RelativityConvention metric signature must match the metric."
             )
-        if not isinstance(coordinate_unit, UnitDefinition):
-            raise TypeError("coordinate_unit must be a UnitDefinition.")
-        if not isinstance(affine_parameter_unit, UnitDefinition):
-            raise TypeError("affine_parameter_unit must be a UnitDefinition.")
-        if not isinstance(initial_state, GRRayState):
-            raise TypeError("initial_state must be a GRRayState.")
         affine = jnp.asarray(affine_parameter, dtype=initial_state.coordinates.dtype)
         if affine.ndim != 1 or affine.shape[0] < 2:
             raise ValueError(
@@ -309,6 +300,7 @@ class GRRayPlan(StrictModule):
         self.plan_id = plan_id_
 
     @classmethod
+    @checked
     def from_screen(
         cls,
         metric: LorentzianMetric,
@@ -319,8 +311,6 @@ class GRRayPlan(StrictModule):
     ) -> GRRayPlan:
         """Construct a null-ray plan from a materialized observer screen."""
 
-        if not isinstance(screen, GRObserverScreenResult):
-            raise TypeError("screen must be a GRObserverScreenResult.")
         if "ray_kind" in kwargs and kwargs["ray_kind"] != "null":
             raise ValueError("Observer screen rays are null trajectories.")
         state = GRRayState(
@@ -454,6 +444,7 @@ class GRRayResult(StrictModule):
     coordinate_unit_id: str = eqx.field(static=True)
     affine_parameter_unit_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinates: ArrayLike,
@@ -509,16 +500,8 @@ class GRRayResult(StrictModule):
             raise ValueError(
                 "Transported screen bases must have shape (rays, history, 2, 4)."
             )
-        if not isinstance(domain_evidence, MetricDomainEvidence):
-            raise TypeError("domain_evidence must be MetricDomainEvidence.")
         if domain_evidence.margin.shape != history_shape:
             raise ValueError("Domain evidence must match the ray/history axes.")
-        if not isinstance(event_ledger, GRRayEventLedger):
-            raise TypeError("event_ledger must be a GRRayEventLedger.")
-        if not isinstance(status_evidence, GRRayStatusEvidence):
-            raise TypeError("status_evidence must be GRRayStatusEvidence.")
-        if not isinstance(bundle_evidence, GRRayBundleEvidence):
-            raise TypeError("bundle_evidence must be GRRayBundleEvidence.")
         ray_kind = parse(ray_kind, GRRayKind, "ray_kind")
         identities = (
             plan_id,

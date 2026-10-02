@@ -61,6 +61,53 @@ brackets.
 
 ::: phydrax.operators.CallableDiscreteQuantumOperator
 
+
+### Rank-free lattice columns and positive guides
+
+These canonical lattice APIs use packed `uint32` word-vector configurations
+without finite DP rank/unrank tables or a scalar Hilbert rank. Columns expose
+`H[target, source]`; retained VMC connections still expose
+`H[current, connected]` after self-adjoint-certified conjugation. Preparation
+separates reusable sparse transition topology from per-occurrence numerical
+bindings; refresh permits same-support numerical changes, not old-run
+continuation after an operator change.
+
+Guides freeze a positive magnitude provider and explicit input mapping.
+Provider global-support declarations are not proofs from encountered points.
+Explicit valid positive floors preserve invertible similarity using the same
+actual inverse-square metric; the original Hamiltonian must still certify
+self-adjointness. See the [projector guide](../../guides_projector_monte_carlo.md)
+for raw-route probabilities/null attempts, physical complex observables, and
+bounded replay semantics.
+
+::: phydrax.operators.quantum.lattice.QuantumAddressCodec
+
+::: phydrax.operators.quantum.lattice.QuantumAddress
+
+::: phydrax.operators.quantum.lattice.QuantumConfigurationDomain
+
+::: phydrax.operators.quantum.lattice.QuantumColumnResourcePolicy
+
+::: phydrax.operators.quantum.lattice.PreparedQuantumLatticeColumns
+
+::: phydrax.operators.quantum.lattice.prepare_quantum_lattice_columns
+
+::: phydrax.operators.quantum.lattice.refresh_quantum_lattice_columns
+
+::: phydrax.operators.quantum.lattice.QuantumColumnSource
+
+::: phydrax.operators.quantum.lattice.QuantumColumn
+
+::: phydrax.operators.quantum.lattice.RawQuantumExcitation
+
+::: phydrax.operators.quantum.lattice.QuantumLatticeColumnOperator
+
+::: phydrax.operators.quantum.lattice.QuantumGuideProvider
+
+::: phydrax.operators.quantum.lattice.QuantumGuide
+
+::: phydrax.operators.quantum.lattice.GuidedQuantumColumnOperator
+
 ### Continuum molecular electrons
 
 Electronic VMC is admitted by `ElectronicVMCResourcePlan`; electron,

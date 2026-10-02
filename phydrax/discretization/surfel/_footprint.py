@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from ._geometry import SurfelGeometryState
 
 
@@ -64,6 +65,7 @@ class SurfelFootprintPlan(NonTrainableState, StrictModule):
             }
         )
 
+    @checked
     def evaluate(
         self,
         geometry: SurfelGeometryState,
@@ -71,8 +73,6 @@ class SurfelFootprintPlan(NonTrainableState, StrictModule):
         surfel_slots: ArrayLike,
         /,
     ) -> SurfelFootprintEvaluation:
-        if not isinstance(geometry, SurfelGeometryState):
-            raise TypeError("geometry must be SurfelGeometryState.")
         if geometry.ambient_dimension != self.ambient_dimension:
             raise ValueError("Surfel geometry and footprint dimensions disagree.")
         points = jnp.asarray(query_points, dtype=geometry.position.dtype)

@@ -16,7 +16,7 @@ from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
-from ..typing import parse
+from ..typing import checked, parse
 from ._barostat import (
     apply_isotropic_monte_carlo_barostat,
     IsotropicMonteCarloBarostatPlan,
@@ -165,6 +165,7 @@ class AtomisticRolloutPlan(StrictModule):
     replay_identity_id: str = eqx.field(static=True)
     rollout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedAtomisticDynamics,
@@ -177,12 +178,6 @@ class AtomisticRolloutPlan(StrictModule):
         barostat: IsotropicMonteCarloBarostatPlan | None = None,
         barostat_interval: int | None = None,
     ) -> None:
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(trajectory, AtomisticTrajectoryPlan):
-            raise TypeError("trajectory must be AtomisticTrajectoryPlan.")
-        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
-            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(dynamics)
         if thermodynamic.state_count != 1:
             raise ValueError("AtomisticRolloutPlan is a single-state trajectory plan.")
@@ -240,9 +235,8 @@ class AtomisticRolloutPlan(StrictModule):
             }
         )
 
+    @checked
     def rollout(self, initial_state: AtomisticDynamicsState, /) -> AtomisticRolloutResult:
-        if not isinstance(initial_state, AtomisticDynamicsState):
-            raise TypeError("initial_state must be AtomisticDynamicsState.")
         if (
             initial_state.prepared_dynamics_id != self.dynamics.prepared_id
             or initial_state.thermodynamic_table_id != self.thermodynamic.table_id

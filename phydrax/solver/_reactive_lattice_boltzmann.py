@@ -21,6 +21,7 @@ from ..discretization.lattice_boltzmann._program import (
 )
 from ..discretization.lattice_boltzmann._species import SpeciesLatticeBoltzmannState
 from ..discretization.lattice_boltzmann._thermal import ThermalLatticeBoltzmannState
+from ..typing import checked
 
 
 _ReactionCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
@@ -194,6 +195,7 @@ class ReactiveSpeciesCouplingSchedulePlan(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def advance(
         self,
         state: ReactiveSpeciesLatticeBoltzmannState,
@@ -208,8 +210,6 @@ class ReactiveSpeciesCouplingSchedulePlan(StrictModule, NonTrainableState):
         args: Any = None,
         temperature_margin: Array | float = jnp.inf,
     ) -> ReactiveSpeciesLatticeBoltzmannStepResult:
-        if not isinstance(state, ReactiveSpeciesLatticeBoltzmannState):
-            raise TypeError("state must be ReactiveSpeciesLatticeBoltzmannState.")
         species_amount = jnp.sum(state.species.populations, axis=-1)
         sensible_energy = jnp.sum(state.thermal.populations, axis=-1)
         first = self._reaction_half(

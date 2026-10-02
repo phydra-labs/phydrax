@@ -42,7 +42,7 @@ from ..linalg.eigen import (
     RestartedLanczos,
 )
 from ..meshing._quality import CellQualityEvaluation, evaluate_cell_quality
-from ..typing import parse
+from ..typing import checked, parse
 from ._maxwell import (
     _apply_hodge_metric,
     AbstractMaxwellConstitutivePlan,
@@ -241,6 +241,7 @@ class PreparedFiniteElementMaxwellConstitutive(AbstractPreparedMaxwellConstituti
     layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FiniteElementMaxwellConstitutivePlan,
@@ -250,12 +251,6 @@ class PreparedFiniteElementMaxwellConstitutive(AbstractPreparedMaxwellConstituti
         *,
         boundary: ComplexBoundary = "absolute",
     ) -> None:
-        if not isinstance(plan, FiniteElementMaxwellConstitutivePlan):
-            raise TypeError("plan must be a FiniteElementMaxwellConstitutivePlan.")
-        if not isinstance(complex_, FiniteElementDeRhamComplex):
-            raise TypeError("complex must be a FiniteElementDeRhamComplex.")
-        if not isinstance(layout, MaxwellCochainLayout):
-            raise TypeError("layout must be a MaxwellCochainLayout.")
         if layout.layout_id != MaxwellCochainLayout(complex_).layout_id:
             raise ValueError("Material layout must belong to the exact FE complex.")
         if (
@@ -523,6 +518,7 @@ class UnstructuredMaxwellPlan(StrictModule):
     boundary: ComplexBoundary = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: AbstractCellDeRhamComplex,
@@ -537,8 +533,6 @@ class UnstructuredMaxwellPlan(StrictModule):
             raise TypeError(
                 "Unstructured Maxwell requires a three-dimensional cell de Rham complex."
             )
-        if not isinstance(constitutive, AbstractMaxwellConstitutivePlan):
-            raise TypeError("constitutive must be AbstractMaxwellConstitutivePlan.")
         boundary_ = parse(boundary, ComplexBoundary, "boundary")
         bound = None if spectral_upper_bound is None else float(spectral_upper_bound)
         factor = float(courant_factor)
@@ -591,9 +585,8 @@ class PreparedUnstructuredMaxwell(StrictModule):
     mesh_quality: CellQualityEvaluation | None
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: UnstructuredMaxwellPlan, /) -> None:
-        if not isinstance(plan, UnstructuredMaxwellPlan):
-            raise TypeError("plan must be an UnstructuredMaxwellPlan.")
         if isinstance(plan.constitutive, FiniteElementMaxwellConstitutivePlan):
             constitutive = plan.constitutive.prepare(
                 plan.cochain, plan.layout, boundary=plan.boundary

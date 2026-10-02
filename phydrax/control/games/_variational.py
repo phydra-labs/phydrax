@@ -41,6 +41,7 @@ from ...optim import (
     QuadraticProgram,
     solve_quadratic_program,
 )
+from ...typing import checked
 from .._trajectory_optimization import TrajectoryOptimizationView
 from ._constraints import (
     evaluate_game_feasibility,
@@ -146,6 +147,7 @@ class FiniteHorizonLQOpenLoopVEProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics_matrices: ArrayLike,
@@ -169,8 +171,6 @@ class FiniteHorizonLQOpenLoopVEProblem(StrictModule):
         problem_id: str = "control:game:lq-open-loop-ve",
         dynamics_id: str = "control:game:dynamics:affine-discrete",
     ) -> None:
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         a = _real_array(dynamics_matrices, "dynamics_matrices")
         if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
             raise ValueError(

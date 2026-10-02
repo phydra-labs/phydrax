@@ -15,6 +15,7 @@ from jax import Array
 
 from .._polynomial._cubature import CubatureReference
 from .._strict import StrictModule
+from ..typing import checked
 
 
 CubatureComponent: TypeAlias = Literal["interior", "boundary"]
@@ -143,6 +144,7 @@ class CubatureAtlas(StrictModule):
     source_id: str = eqx.field(static=True)
     physical_tags: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mapping: AbstractCubatureMap,
@@ -151,8 +153,6 @@ class CubatureAtlas(StrictModule):
         source_id: str,
         physical_tags: Sequence[str] | None = None,
     ) -> None:
-        if not isinstance(mapping, AbstractCubatureMap):
-            raise TypeError("CubatureAtlas mapping must be an AbstractCubatureMap.")
         entity_ids = jnp.asarray(source_entity_ids, dtype=jnp.int32).reshape((-1,))
         if entity_ids.shape != (mapping.num_charts,):
             raise ValueError("source_entity_ids must contain one ID per cubature chart.")

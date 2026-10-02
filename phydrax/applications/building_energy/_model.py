@@ -26,6 +26,7 @@ from ...dynamics import (
 )
 from ...ein import contract
 from ...linalg import DenseLinearOperator, LinearSystem, MatrixFunctionPolicy, solve
+from ...typing import checked
 
 
 def _text(value: str, owner: str) -> str:
@@ -162,6 +163,7 @@ class Surface(StrictModule):
     apertures: tuple[Aperture, ...]
     geometry_binding: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface_id: str,
@@ -179,8 +181,6 @@ class Surface(StrictModule):
         self.zone_id = _text(zone_id, "zone_id")
         if adjacent_zone == zone_id:
             raise ValueError("Surface cannot be adjacent to its own zone.")
-        if not isinstance(construction, Construction):
-            raise TypeError("construction must be Construction.")
         self.adjacent_zone = adjacent_zone
         if (adjacent_zone is not None and boundary_id is not None) or (
             adiabatic and (adjacent_zone is not None or boundary_id is not None)

@@ -22,6 +22,7 @@ from ....nonlinear import (
     RobustRoot,
     root,
 )
+from ....typing import checked
 
 
 CycleMap = Callable[[Array, Array, Any], Array]
@@ -86,6 +87,7 @@ class PreparedPeriodicShooting(StrictModule):
     map_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicShootingPlan,
@@ -93,8 +95,6 @@ class PreparedPeriodicShooting(StrictModule):
         map_id: str,
         /,
     ) -> None:
-        if not isinstance(plan, PeriodicShootingPlan):
-            raise TypeError("plan must be a PeriodicShootingPlan.")
         if not callable(cycle_map):
             raise TypeError("cycle_map must be callable.")
         identifier = str(map_id).strip()

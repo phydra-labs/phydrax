@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg._dense_inverse import dense_inverse
+from ...typing import checked
 from ._halo import PreparedFiniteVolumeHaloPlan
 from ._mapped import MappedFiniteVolumeDiscretization
 from ._physical_boundaries import PrescribedHeatFluxWallBoundary
@@ -678,14 +679,13 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             halo=halo,
         ).selected_step
 
+    @checked
     def residual_from_evaluation(
         self,
         evaluation: FiniteVolumeDiffusionEvaluation,
         discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         /,
     ) -> Array:
-        if not isinstance(evaluation, FiniteVolumeDiffusionEvaluation):
-            raise TypeError("evaluation must be FiniteVolumeDiffusionEvaluation.")
         residual = evaluation.cell_source
         for axis, flux in enumerate(evaluation.face_fluxes):
             integrated = flux * discretization.face_measures[axis][..., None]

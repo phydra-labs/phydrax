@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ..spatial import MortonPrimitiveBoundsState
 from ._footprint import SurfelFootprintPlan
 from ._geometry import SurfelGeometryState
@@ -67,6 +68,7 @@ class SurfelRayQueryPlan(StrictModule):
     ray_batch_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bounds: MortonPrimitiveBoundsState,
@@ -79,10 +81,6 @@ class SurfelRayQueryPlan(StrictModule):
         far_distance: float = float("inf"),
         ray_batch_size: int = 32,
     ) -> None:
-        if not isinstance(bounds, MortonPrimitiveBoundsState):
-            raise TypeError("bounds must be MortonPrimitiveBoundsState.")
-        if not isinstance(geometry, SurfelGeometryState):
-            raise TypeError("geometry must be SurfelGeometryState.")
         if not bool(bounds.evidence.successful) or not bool(geometry.evidence.successful):
             raise ValueError(
                 "Surfel ray queries require successful geometry and primitive bounds."

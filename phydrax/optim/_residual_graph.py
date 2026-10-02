@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import AbstractLinearOperator, PyTreeSpace
+from ..typing import checked
 from ._iterative import NonlinearLeastSquaresProblem
 from ._riemannian import ParameterGeometry
 from ._robust_losses import AbstractRobustLoss, robustify_residual
@@ -309,6 +310,7 @@ class PreparedResidualGraph(StrictModule):
     graph_id: str = eqx.field(static=True)
     numeric_version: Array
 
+    @checked
     def __init__(
         self,
         graph: ResidualGraphProblem,
@@ -321,8 +323,6 @@ class PreparedResidualGraph(StrictModule):
         graph_id: str,
         numeric_version: Any,
     ) -> None:
-        if not isinstance(graph, ResidualGraphProblem):
-            raise TypeError("graph must be ResidualGraphProblem.")
         self.graph = graph
         self.parameter_sizes = jnp.asarray(parameter_sizes, dtype=jnp.int32)
         self.residual_sizes = jnp.asarray(residual_sizes, dtype=jnp.int32)

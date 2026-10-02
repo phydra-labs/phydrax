@@ -16,6 +16,15 @@ Pipelines, unions, column transforms, and transformed-target regression fit ever
 child inside the current training batch or fold. Fitted compositions retain child
 schemas, diagnostics, provenance, and derivative contracts.
 
+A composition's root fit key keeps fixed child fit and transform addresses.
+Child fits receive their addressed key only when `recipe.accepts_fit_key` is
+true; exact key-free PCA/POD/TruncatedSVD and IncrementalPCA receive `None`.
+Randomized subspaces and other key-accepting stages retain their original keys,
+so dense transforms can precede stochastic learners without shifting randomness.
+This admission property does not claim every key-accepting recipe uses randomness.
+Direct exact-subspace fits still reject explicit keys; transform and prediction
+key routing is unchanged.
+
 ::: phydrax.ml.compose
     options:
         filters: ["!^_"]
@@ -26,6 +35,16 @@ Split plans make ordinary, stratified, grouped, blocked, rolling, and nested fol
 geometry explicit. Search plans keep candidate status, metrics, fold evidence,
 and selection nondifferentiability rather than treating the selected index as a
 continuous parameter.
+
+Cross-validation and search refits honor `recipe.accepts_fit_key` at the fit
+boundary without changing split, candidate, fold, or prediction key addresses.
+`FoldEvaluation.fit_key` and search-result `refit_key` record the key actually
+passed to the recipe: `None` for key-free fits, the original addressed key for
+key-accepting fits. Pipeline roots remain key-accepting so randomized subspaces
+and stochastic learners can keep their internal fit keys even when another
+stage is dense and key-free. Nested outer-fold records reuse the actual refit
+key from the inner search. Ensemble and multiclass child fits follow the same
+admission rule without changing their sampling or prediction streams.
 
 ::: phydrax.ml.model_selection
     options:

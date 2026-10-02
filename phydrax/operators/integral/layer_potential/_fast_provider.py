@@ -25,7 +25,7 @@ from ....linalg import (
     estimate_operator_action_cost,
     LinearCapabilityError,
 )
-from ....typing import parse
+from ....typing import checked, parse
 from ._fmm2d import LaplaceFMMBackend2D
 from ._galerkin3d import (
     _LaplaceDP0StrongOperator3D,
@@ -284,6 +284,7 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
     envelope: BEMExecutionEnvelope
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: LaplaceSingleLayerDP0Galerkin3D,
@@ -293,8 +294,6 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         formulation: BoundaryGalerkinFormulation = "strong",
         provider: str = "blocked-direct-dp0-galerkin-3d",
     ) -> None:
-        if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
-            raise TypeError("Fused blocked action requires prepared 3D Laplace DP0 BEM.")
         if not bool(prepared.assembly_report.accuracy_supported):
             raise BEMFastCapabilityError(
                 "Fused blocked action requires every prepared pair class to satisfy its declared quadrature tolerance."
@@ -471,6 +470,7 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
     envelope: BEMExecutionEnvelope
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: LaplaceSingleLayerDP0Galerkin3D,
@@ -480,8 +480,6 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
         max_block_entries: int = 1_000_000,
         max_block_workspace_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
-            raise TypeError("Exact-near provider requires prepared 3D Laplace DP0 BEM.")
         formulation = parse(formulation, BoundaryGalerkinFormulation, "formulation")
         limit = int(max_block_entries)
         workspace_limit = int(max_block_workspace_bytes)

@@ -22,6 +22,7 @@ from ...operators.quantum._two_particle_green import (
     MatsubaraTwoParticleGreenFunction,
     two_particle_channel_permutation,
 )
+from ...typing import checked
 
 
 class LatticeParquetEvidence(StrictModule, NonTrainableState):
@@ -100,16 +101,13 @@ class LatticeParquetPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         fully_irreducible_vertex: MatsubaraTwoParticleGreenFunction,
         channel_bubbles: ArrayLike,
         /,
     ) -> "PreparedLatticeParquet":
-        if not isinstance(fully_irreducible_vertex, MatsubaraTwoParticleGreenFunction):
-            raise TypeError(
-                "fully_irreducible_vertex must be a MatsubaraTwoParticleGreenFunction."
-            )
         if (
             fully_irreducible_vertex.mode_count != 1
             or not fully_irreducible_vertex.connected

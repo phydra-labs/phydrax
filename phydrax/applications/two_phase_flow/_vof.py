@@ -34,6 +34,7 @@ from ...discretization.finite_volume import (
 )
 from ...solver import MACVariableDensityProjectionPlan, MACVariationalViscosityPlan
 from ...solver._mac_sharp_interface import MACSharpInterfaceProjectionPlan
+from ...typing import checked
 
 
 FaceTuple = tuple[Array, ...]
@@ -192,6 +193,7 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteVolumeDiscretization,
@@ -208,8 +210,6 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule):
         surface_tension_law: LinearSurfaceTensionLaw | None = None,
         surface_tension_scalar: str | None = None,
     ) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
         dimension = len(discretization.cell_shape)
         if dimension not in (2, 3):
             raise ValueError("Two-phase VOF supports two or three dimensions.")

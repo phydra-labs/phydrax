@@ -26,6 +26,7 @@ from ...linalg import (
     PreconditionerProperties,
     PreconditionerRefreshPolicy,
 )
+from ...typing import checked
 from ._hp import FiniteElementHPTransferPlan
 from ._hp_runtime import FiniteElementHPEpoch, FiniteElementHPTraceConstraintPlan
 
@@ -302,9 +303,8 @@ class FiniteElementHPMultigridPreconditionerBuilder(AbstractPreconditionerBuilde
     coarse_builder: DenseInversePreconditionerBuilder
     _builder_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, hierarchy: FiniteElementHPMultigridPlan, /) -> None:
-        if not isinstance(hierarchy, FiniteElementHPMultigridPlan):
-            raise TypeError("hierarchy must be FiniteElementHPMultigridPlan.")
         self.hierarchy = hierarchy
         self.coarse_builder = DenseInversePreconditionerBuilder()
         self._builder_id = canonical_fingerprint(

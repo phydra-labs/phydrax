@@ -18,7 +18,7 @@ from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...exterior._algebra import map_reference_values
 from ...exterior._form_type import FormType, FormValueSpec
-from ...typing import Dim, Float, Int32
+from ...typing import checked, Dim, Float, Int32
 from .._cell_geometry_validity import _bernstein_plan
 from .._simplicial_locator import (
     AbstractCellLocator,
@@ -77,6 +77,7 @@ class _TensorCellLocator(AbstractCellLocator, NonTrainableState):
     policy: SimplicialLocationPolicy
     locator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_map: PreparedFiniteElementCellMap,
@@ -93,8 +94,6 @@ class _TensorCellLocator(AbstractCellLocator, NonTrainableState):
             raise ValueError(
                 "Tensor locator coordinates do not match the prepared chart."
             )
-        if not isinstance(policy, SimplicialLocationPolicy):
-            raise TypeError("Tensor queries require the owning bounded location policy.")
         plan = _bernstein_plan(
             "box", (cell_map.coordinate_element.degree,) * cell_map.reference_dimension
         )

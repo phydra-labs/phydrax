@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import TopologyEpoch
 from ..meshing import CellMeshTransition
+from ..typing import checked
 
 
 if TYPE_CHECKING:
@@ -179,6 +180,7 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
     operators_artifact_id: str | None = eqx.field(static=True)
     artifacts_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         epoch: TopologyEpoch,
@@ -189,8 +191,6 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
         metrics_artifact_id: str | None = None,
         operators_artifact_id: str | None = None,
     ) -> None:
-        if not isinstance(epoch, TopologyEpoch):
-            raise TypeError("epoch must be TopologyEpoch.")
         prepared = _required_identifier(prepared_id, "prepared_id")
         topology_artifact = _require_identifier(
             topology_artifact_id, "topology_artifact_id"
@@ -228,6 +228,7 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
         }
 
     @classmethod
+    @checked
     def from_archive_record(
         cls,
         record: dict[str, Any],
@@ -236,8 +237,6 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
     ) -> FiniteVolumeTopologyArtifacts:
         """Strictly reconstruct artifact identities and verify their epoch key."""
 
-        if not isinstance(epoch, TopologyEpoch):
-            raise TypeError("epoch must be TopologyEpoch.")
         payload = _strict_archive_record(
             record,
             frozenset(
@@ -1227,6 +1226,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             _storage=storage,
         )
 
+    @checked
     def append_requested(
         self,
         request: FiniteVolumeTopologyEventRequest,
@@ -1234,8 +1234,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         time: ArrayLike,
         /,
     ) -> FiniteVolumeTopologyEventJournal:
-        if not isinstance(request, FiniteVolumeTopologyEventRequest):
-            raise TypeError("request must be FiniteVolumeTopologyEventRequest.")
         if request.input_epoch_id != self.current_epoch_id:
             raise ValueError("Topology event request input epoch is stale.")
         accepted_step_ = _host_nonnegative_integer(accepted_step, "accepted_step")
@@ -1353,6 +1351,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError("Topology event input epoch is stale.")
         return sequence
 
+    @checked
     def _commit_retains_epoch(
         self,
         result_epoch: TopologyEpoch,
@@ -1362,10 +1361,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
     ) -> bool:
         """Validate the committed epoch transition; report whether it retains the tip."""
 
-        if not isinstance(result_epoch, TopologyEpoch):
-            raise TypeError("result_epoch must be TopologyEpoch.")
-        if not isinstance(result_artifacts, FiniteVolumeTopologyArtifacts):
-            raise TypeError("result_artifacts must be FiniteVolumeTopologyArtifacts.")
         if result_artifacts.epoch_id != result_epoch.epoch_id:
             raise ValueError("Committed topology artifacts have the wrong epoch key.")
         current = self.epoch_table[-1]
@@ -2577,6 +2572,7 @@ class FiniteVolumeTopologyEventTransaction:
 class FiniteVolumeTopologyEventScheduler:
     """Host scheduler that coalesces simultaneous requests before preparation."""
 
+    @checked
     def __init__(
         self,
         journal: FiniteVolumeTopologyEventJournal,
@@ -2584,8 +2580,6 @@ class FiniteVolumeTopologyEventScheduler:
         *,
         maximum_requests: int | None = None,
     ) -> None:
-        if not isinstance(journal, FiniteVolumeTopologyEventJournal):
-            raise TypeError("journal must be FiniteVolumeTopologyEventJournal.")
         if maximum_requests is not None and (
             isinstance(maximum_requests, bool)
             or not isinstance(maximum_requests, int)
@@ -2600,6 +2594,7 @@ class FiniteVolumeTopologyEventScheduler:
     def pending_requests(self) -> tuple[FiniteVolumeTopologyEventRequest, ...]:
         return tuple(item.request for item in self._pending)
 
+    @checked
     def submit(
         self,
         request: FiniteVolumeTopologyEventRequest,
@@ -2609,8 +2604,6 @@ class FiniteVolumeTopologyEventScheduler:
         *,
         accepted: bool = True,
     ) -> FiniteVolumeTopologyEventRequest:
-        if not isinstance(request, FiniteVolumeTopologyEventRequest):
-            raise TypeError("request must be FiniteVolumeTopologyEventRequest.")
         if not accepted:
             raise ValueError("Topology requests are accepted-step events.")
         if request.input_epoch_id != self.journal.current_epoch_id:

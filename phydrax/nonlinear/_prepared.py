@@ -24,6 +24,7 @@ from ..linalg import (
     RecyclingState,
     refresh_recycling,
 )
+from ..typing import checked
 from ._components import admit_residual_components
 from ._linearization import (
     _jacobian_solve_operator,
@@ -61,6 +62,7 @@ class PreparedNonlinearSolve(StrictModule):
     provenance: NonlinearProvenance
     numeric_version: Array
 
+    @checked
     def __init__(
         self,
         problem: NonlinearSystemProblem,
@@ -76,24 +78,12 @@ class PreparedNonlinearSolve(StrictModule):
         *,
         numeric_version: Any,
     ) -> None:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
         if problem.state_space is None or problem.residual_space is None:
             raise ValueError(
                 "A prepared nonlinear problem must have bound vector spaces."
             )
         if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
             raise TypeError("method must be NewtonKrylov or NewtonTrustRegion.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
-        if not isinstance(precision, NonlinearPrecisionPolicy):
-            raise TypeError("precision must be a NonlinearPrecisionPolicy.")
-        if not isinstance(jacobian, PreparedJacobian):
-            raise TypeError("jacobian must be a PreparedJacobian.")
-        if not isinstance(run, _RootState):
-            raise TypeError("run must be prepared Newton root state.")
-        if not isinstance(provenance, NonlinearProvenance):
-            raise TypeError("provenance must be a NonlinearProvenance.")
         if provenance.problem_id != problem.problem_id:
             raise ValueError("Prepared nonlinear provenance must match the problem.")
         if provenance.method_id != method.method_id:

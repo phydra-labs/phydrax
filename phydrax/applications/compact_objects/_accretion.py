@@ -21,6 +21,7 @@ from ..._trainable import NonTrainableState
 from ...equations._relativistic_eos import GammaLawEOS, RelativisticEOSState
 from ...metrix._adm_exchange import ADMGridGeometry
 from ...metrix._spacetime_conventions import RelativityConvention
+from ...typing import checked
 
 
 class AccretionInitialDataStatus(IntEnum):
@@ -86,6 +87,7 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
     relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eos: GammaLawEOS,
@@ -100,8 +102,6 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-11,
         relative_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(eos, GammaLawEOS):
-            raise TypeError("Michel--Bondi initial data require GammaLawEOS.")
         if float(eos.scale.speed_of_light) != 1.0:
             raise ValueError("Michel--Bondi data require a geometric c=1 EOS scale.")
         convention_ = (
@@ -419,6 +419,7 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def valencia_primitive(
         self,
         radius: ArrayLike,
@@ -426,8 +427,6 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
         /,
     ) -> MichelBondiValenciaData:
         solution = self.evaluate(radius)
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
         if geometry.leading_shape != solution.radius.shape:
             raise ValueError("ADM geometry shape must match Michel radii.")
         if geometry.scale_id != self.eos.scale.scale_id:
@@ -522,6 +521,7 @@ class FishboneMoncriefTorusPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         eos: GammaLawEOS,
@@ -539,8 +539,6 @@ class FishboneMoncriefTorusPlan(StrictModule, NonTrainableState):
         magnetic_seed_cutoff: float = 0.2,
         residual_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(eos, GammaLawEOS):
-            raise TypeError("Fishbone--Moncrief data require GammaLawEOS.")
         if float(eos.scale.speed_of_light) != 1.0:
             raise ValueError("Fishbone--Moncrief data require a geometric c=1 EOS scale.")
         convention_ = (

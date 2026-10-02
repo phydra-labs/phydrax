@@ -18,7 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._regulators import FunctionalRGStatus, Regulator, ThresholdQuadraturePlan
 
 
@@ -105,6 +105,7 @@ class ONLocalPotentialPlan(StrictModule, NonTrainableState):
     volume_factor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component_count: int,
@@ -119,10 +120,6 @@ class ONLocalPotentialPlan(StrictModule, NonTrainableState):
         components = int(component_count)
         dimension_ = float(dimension)
         capacity = int(maximum_field_nodes)
-        if not isinstance(regulator, Regulator):
-            raise TypeError("regulator must be a Regulator.")
-        if not isinstance(threshold, ThresholdQuadraturePlan):
-            raise TypeError("threshold must be a ThresholdQuadraturePlan.")
         if (
             components <= 0
             or not 1.0 < dimension_ < 6.0
@@ -165,9 +162,8 @@ class PreparedONLocalPotentialFlow(StrictModule, NonTrainableState):
     second_derivative_matrix: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ONLocalPotentialPlan, field_nodes: ArrayLike, /) -> None:
-        if not isinstance(plan, ONLocalPotentialPlan):
-            raise TypeError("plan must be ONLocalPotentialPlan.")
         nodes = np.asarray(field_nodes, dtype=np.float64)
         if (
             nodes.ndim != 1
@@ -213,9 +209,8 @@ class PreparedONLocalPotentialFlow(StrictModule, NonTrainableState):
             / denominator**2
         )
 
+    @checked
     def evaluate(self, state: ONPotentialState, /) -> ONPotentialFlowEvaluation:
-        if not isinstance(state, ONPotentialState):
-            raise TypeError("state must be ONPotentialState.")
         if state.potential.shape != self.field_nodes.shape:
             raise ValueError("Potential samples must match the prepared field grid.")
         first = contract("ij,j->i", self.first_derivative_matrix, state.potential)

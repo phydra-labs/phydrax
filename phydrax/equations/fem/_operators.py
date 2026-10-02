@@ -33,6 +33,7 @@ from ...linalg import (
     inverse_small_linear,
     SmallLinearSolvePlan,
 )
+from ...typing import checked
 
 
 def _cell_inverse_and_determinant(jacobian: Array, /) -> tuple[Array, Array, Array]:
@@ -136,6 +137,7 @@ class FiniteElementFacetMetricData(StrictModule):
     normal: Array
     measure: Array
 
+    @checked
     def __init__(
         self,
         cell_metric: FiniteElementMetricData,
@@ -143,8 +145,6 @@ class FiniteElementFacetMetricData(StrictModule):
         reference_weights: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(cell_metric, FiniteElementMetricData):
-            raise TypeError("cell_metric must be FiniteElementMetricData.")
         normals = jnp.asarray(reference_normals)
         weights = jnp.asarray(reference_weights)
         if normals.shape != (

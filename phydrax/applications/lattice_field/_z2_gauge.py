@@ -19,6 +19,7 @@ from ...solver import LocalHamiltonian, LocalHamiltonianTerm
 from ...topology import CellSubcomplex, compute_homology, HomologyResult, PrimeField
 from ...topology._reduction import field_rank
 from ...topology._resources import TopologyResourcePolicy
+from ...typing import checked
 
 
 _PAULI_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
@@ -49,6 +50,7 @@ class Z2GaugeModel(StrictModule, NonTrainableState):
     model_id: str = eqx.field(static=True)
     convention: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: CellComplexTopology,
@@ -58,8 +60,6 @@ class Z2GaugeModel(StrictModule, NonTrainableState):
         magnetic_coupling: float,
         external_charges: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be CellComplexTopology.")
         if topology.dimension < 1:
             raise ValueError("Z2 gauge models require a topology with edges.")
         electric, magnetic = float(electric_coupling), float(magnetic_coupling)

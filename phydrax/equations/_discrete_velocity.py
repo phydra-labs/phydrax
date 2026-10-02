@@ -22,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..discretization.discrete_velocity._quadrature import (
     CertifiedDiscreteVelocityQuadrature,
 )
+from ..typing import checked
 from ._hyperbolic_systems import AbstractAdmissibleSystem
 
 
@@ -57,6 +58,7 @@ class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem, NonTrainableStat
     reflection_routes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     population_floor: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -64,8 +66,6 @@ class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem, NonTrainableStat
         *,
         population_floor: float = 0.0,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         floor = float(population_floor)
         if not np.isfinite(floor) or floor < 0.0:
             raise ValueError("population_floor must be finite and non-negative.")
@@ -226,6 +226,7 @@ class ConservativeRelaxationDVMSource(AbstractConservativeDVMSource):
     equilibrium_id: str = eqx.field(static=True)
     relaxation_rate: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -237,8 +238,6 @@ class ConservativeRelaxationDVMSource(AbstractConservativeDVMSource):
         equilibrium_id: str,
         relaxation_rate: float,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         matrix = np.asarray(moment_matrix)
         names = tuple(str(value) for value in moment_names)
         identifier = str(equilibrium_id)

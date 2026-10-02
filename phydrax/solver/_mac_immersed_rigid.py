@@ -47,6 +47,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._mac_stage_inverse_general import (
     MACOperatorStageInverseMomentum,
     MACVariableDensityStageInverseMomentum,
@@ -114,6 +115,7 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
     linear_policy: LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledMACIncompressibleDynamics,
@@ -127,16 +129,10 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
 
-        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
-            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None:
             raise ValueError(
                 "MAC rigid immersed routes do not support active algebraic LES."
             )
-        if not isinstance(rigid_markers, PreparedRigidMarkerMap):
-            raise TypeError("rigid_markers must be PreparedRigidMarkerMap.")
-        if not isinstance(transfer, PreparedMACMarkerTransfer):
-            raise TypeError("transfer must be PreparedMACMarkerTransfer.")
         if transfer.markers.prepared_id != rigid_markers.markers.prepared_id:
             raise ValueError("Rigid map and transfer must share markers.")
         if transfer.operators.prepared_id != dynamics.momentum.operators.prepared_id:

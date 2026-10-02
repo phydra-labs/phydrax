@@ -34,6 +34,7 @@ from ..linalg.eigen import (
     GeneralEigenSolvePolicy,
     RestartedArnoldi,
 )
+from ..typing import checked
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -141,9 +142,8 @@ class UniformTransferLinearOperator(AbstractLinearOperator):
     tensors: tuple[Array, ...]
     bond_dimension: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, state: UniformMatrixProductState, /) -> None:
-        if not isinstance(state, UniformMatrixProductState):
-            raise TypeError("state must be UniformMatrixProductState.")
         dimension = state.bond_dimension**2
         space = ArraySpace(
             (dimension,),

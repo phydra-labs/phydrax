@@ -37,6 +37,7 @@ from ..equations._discrete_velocity import (
     AbstractConservativeDVMSource,
     DiscreteVelocityAdvectionSystem,
 )
+from ..typing import checked
 
 
 class FiniteVolumeDVMResidualEvidence(StrictModule):
@@ -129,6 +130,7 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule):
     population_floor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -141,8 +143,6 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule):
         precision: FiniteVolumePrecisionPolicy | None = None,
         population_floor: float = 0.0,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if not isinstance(
             discretization,
             (FiniteVolumeDiscretization, MappedFiniteVolumeDiscretization),
@@ -150,10 +150,6 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule):
             raise TypeError(
                 "discretization must be prepared structured finite-volume geometry."
             )
-        if not isinstance(method, FiniteVolumeMethodPlan):
-            raise TypeError("method must be FiniteVolumeMethodPlan.")
-        if not isinstance(boundaries, FiniteVolumeBoundarySet):
-            raise TypeError("boundaries must be FiniteVolumeBoundarySet.")
         if source is not None and not isinstance(source, AbstractConservativeDVMSource):
             raise TypeError("source must be a conservative DVM source or None.")
         if (

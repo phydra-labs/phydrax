@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._atlas_cover import AtlasCover
 from ._density import pullback_density, VolumeDensity
 from ._forms import DifferentialForm, pullback_form
@@ -24,6 +25,7 @@ class PatchwiseTensorField(StrictModule):
     local_fields: tuple[Callable[[Array], Array], ...]
     tensor_type: TensorType
 
+    @checked
     def __init__(
         self,
         cover: AtlasCover,
@@ -32,14 +34,10 @@ class PatchwiseTensorField(StrictModule):
         /,
     ) -> None:
         fields = tuple(local_fields)
-        if not isinstance(cover, AtlasCover):
-            raise TypeError("cover must be an AtlasCover.")
         if len(fields) != len(cover.atlas.charts) or any(
             not callable(field) for field in fields
         ):
             raise ValueError("One callable tensor field is required per chart.")
-        if not isinstance(tensor_type, TensorType):
-            raise TypeError("tensor_type must be a TensorType.")
         self.cover = cover
         self.local_fields = fields
         self.tensor_type = tensor_type
@@ -68,6 +66,7 @@ class PatchwiseDifferentialForm(StrictModule):
     cover: AtlasCover
     local_forms: tuple[DifferentialForm, ...]
 
+    @checked
     def __init__(
         self,
         cover: AtlasCover,
@@ -75,8 +74,6 @@ class PatchwiseDifferentialForm(StrictModule):
         /,
     ) -> None:
         forms = tuple(local_forms)
-        if not isinstance(cover, AtlasCover):
-            raise TypeError("cover must be an AtlasCover.")
         if len(forms) != len(cover.atlas.charts):
             raise ValueError("One differential form is required per chart.")
         if not forms or not isinstance(forms[0], DifferentialForm):
@@ -119,6 +116,7 @@ class PatchwiseMetric(StrictModule):
     cover: AtlasCover
     local_metrics: tuple[RiemannianMetric, ...]
 
+    @checked
     def __init__(
         self,
         cover: AtlasCover,
@@ -126,8 +124,6 @@ class PatchwiseMetric(StrictModule):
         /,
     ) -> None:
         metrics = tuple(local_metrics)
-        if not isinstance(cover, AtlasCover):
-            raise TypeError("cover must be an AtlasCover.")
         if len(metrics) != len(cover.atlas.charts):
             raise ValueError("One metric is required per chart.")
         for chart, metric in zip(cover.atlas.charts, metrics, strict=True):
@@ -156,6 +152,7 @@ class PatchwiseDensity(StrictModule):
     cover: AtlasCover
     local_densities: tuple[VolumeDensity, ...]
 
+    @checked
     def __init__(
         self,
         cover: AtlasCover,
@@ -163,8 +160,6 @@ class PatchwiseDensity(StrictModule):
         /,
     ) -> None:
         densities = tuple(local_densities)
-        if not isinstance(cover, AtlasCover):
-            raise TypeError("cover must be an AtlasCover.")
         if len(densities) != len(cover.atlas.charts):
             raise ValueError("One density is required per chart.")
         for chart, density in zip(cover.atlas.charts, densities, strict=True):

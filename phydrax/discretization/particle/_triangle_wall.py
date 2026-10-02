@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._pair_state import particle_wall_interaction_keys
 from ._rigid_contact import RigidContactGeometry
 from ._rigid_sphere import (
@@ -130,9 +131,8 @@ class PreparedTriangleWall(StrictModule, NonTrainableState):
     vertex_owner_triangle_ids: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TriangleWallPlan, /) -> None:
-        if not isinstance(plan, TriangleWallPlan):
-            raise TypeError("plan must be a TriangleWallPlan.")
         face_vertices = plan.vertices[plan.triangles]
         cross = jnp.cross(
             face_vertices[:, 1] - face_vertices[:, 0],

@@ -18,7 +18,7 @@ from phydrax import ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 from ....uq._map import find_map, MAPResult
 from ....uq._posterior import ParameterSpace, PosteriorProblem
 from ._mutation_profiles import MutationProfileBatch
@@ -56,6 +56,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
     parent_case_ids: tuple[str, ...] = eqx.field(static=True)
     independence_assumption: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         batch: MutationProfileBatch,
@@ -68,8 +69,6 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         source_case_ids: tuple[str, ...],
         parent_case_ids: tuple[str, ...] = (),
     ) -> None:
-        if not isinstance(batch, MutationProfileBatch):
-            raise TypeError("batch must be a MutationProfileBatch.")
         kind = parse(kind, MappingLawKind, "kind")
         matrix = np.asarray(design, float)
         names = tuple(parameter_names)

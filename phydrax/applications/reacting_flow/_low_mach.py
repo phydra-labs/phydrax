@@ -26,6 +26,7 @@ from ...equations._homogeneous_thermodynamics import (
     HomogeneousThermodynamicEvaluation,
     ZeroResidualHelmholtzTerm,
 )
+from ...typing import checked
 
 
 class LowMachReactiveState(StrictModule):
@@ -68,6 +69,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
     constraint_tolerance: float = eqx.field(static=True)
     formulation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
@@ -77,8 +79,6 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         mechanism: PreparedChemicalMechanism | None = None,
         constraint_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
-            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
             raise TypeError(
                 "Low-Mach reacting flow currently requires ideal-mixture thermodynamics."
@@ -221,6 +221,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
             self.formulation_id,
         )
 
+    @checked
     def evaluate_chemistry(
         self,
         state: LowMachReactiveState,
@@ -228,8 +229,6 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         *,
         thermodynamic_pressure_rate: ArrayLike = 0.0,
     ) -> LowMachReactiveEvaluation:
-        if not isinstance(state, LowMachReactiveState):
-            raise TypeError("state must be LowMachReactiveState.")
         if self.mechanism is None:
             raise ValueError("Chemistry evaluation requires a prepared mechanism.")
         mass = state.mass_fractions

@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleDiscretization
 
 
@@ -26,6 +27,7 @@ class WeaklyCompressibleSPHStateLayout(StrictModule, NonTrainableState):
     width: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -34,8 +36,6 @@ class WeaklyCompressibleSPHStateLayout(StrictModule, NonTrainableState):
         density_evolved: bool,
         layout_id: str | None = None,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         capacity = particles.capacity
         dimension = particles.ambient_dimension
         evolved = bool(density_evolved)

@@ -28,6 +28,7 @@ from ...linalg import (
     solve_checked,
     TolerancePolicy,
 )
+from ...typing import checked
 
 
 class ReactorKineticsState(StrictModule):
@@ -150,6 +151,7 @@ class PreparedDelayedNeutronKinetics(StrictModule, NonTrainableState):
     generation_time_s: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def step(
         self,
         state: ReactorKineticsState,
@@ -158,8 +160,6 @@ class PreparedDelayedNeutronKinetics(StrictModule, NonTrainableState):
         dt_s: ArrayLike,
         /,
     ) -> ReactorKineticsStepResult:
-        if not isinstance(state, ReactorKineticsState):
-            raise TypeError("state must be ReactorKineticsState.")
         if state.precursor_populations.shape != self.delayed_fractions.shape:
             raise ValueError("Kinetics state does not match delayed-neutron families.")
         rho = jnp.asarray(reactivity, dtype=jnp.float64)

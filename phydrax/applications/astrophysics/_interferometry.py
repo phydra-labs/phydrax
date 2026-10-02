@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import conversion_factor, HERTZ, UnitDefinition
 from ._gr_products import StokesImage
 from ._photometry import ObservationDataProvenance
@@ -75,6 +76,7 @@ class VisibilitySampling(StrictModule, NonTrainableState):
     visibility_count: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         uv_coordinates: ArrayLike,
@@ -86,8 +88,6 @@ class VisibilitySampling(StrictModule, NonTrainableState):
         frequency_unit: UnitDefinition = HERTZ,
         uv_unit: str = "wavelength",
     ) -> None:
-        if not isinstance(frequency_unit, UnitDefinition):
-            raise TypeError("frequency_unit must be UnitDefinition.")
         conversion_factor(frequency_unit, HERTZ)
         uv_unit_ = str(uv_unit).strip()
         if uv_unit_ != "wavelength":
@@ -145,6 +145,7 @@ class StokesVisibilityData(StrictModule, NonTrainableState):
     parent_product_ids: tuple[str, ...] = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         visibilities: ArrayLike,
@@ -155,12 +156,6 @@ class StokesVisibilityData(StrictModule, NonTrainableState):
         *,
         parent_product_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(sampling, VisibilitySampling):
-            raise TypeError("sampling must be VisibilitySampling.")
-        if not isinstance(visibility_unit, UnitDefinition):
-            raise TypeError("visibility_unit must be UnitDefinition.")
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         parents = tuple(str(value).strip() for value in parent_product_ids)
         if any(not value for value in parents):
             raise ValueError("parent_product_ids must contain non-empty identities.")
@@ -361,6 +356,7 @@ class ClosureTopology(StrictModule, NonTrainableState):
     amplitude_count: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sampling: VisibilitySampling,
@@ -370,8 +366,6 @@ class ClosureTopology(StrictModule, NonTrainableState):
         *,
         phase_conjugated: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(sampling, VisibilitySampling):
-            raise TypeError("sampling must be VisibilitySampling.")
         phase = _integer_matrix(
             phase_baseline_indices, 3, "phase_baseline_indices", allow_empty=True
         )
@@ -453,6 +447,7 @@ class ClosureTopology(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_station_cycles(
         cls,
         sampling: VisibilitySampling,
@@ -463,8 +458,6 @@ class ClosureTopology(StrictModule, NonTrainableState):
     ) -> ClosureTopology:
         """Resolve named station cycles when each baseline pair has one sample."""
 
-        if not isinstance(sampling, VisibilitySampling):
-            raise TypeError("sampling must be VisibilitySampling.")
         station_index = {name: index for index, name in enumerate(sampling.station_ids)}
         directed: dict[tuple[int, int], tuple[int, bool]] = {}
         for index, pair in enumerate(np.asarray(sampling.station_pairs)):

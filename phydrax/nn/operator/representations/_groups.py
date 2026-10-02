@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
+from ....typing import checked
 from ._tensor import TensorFieldLayout
 
 
@@ -234,6 +235,7 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
                 transposed = jnp.take(transposed, indices, axis=axis)
         return jnp.moveaxis(transposed, tuple(range(self.dimension)), normalized_axes)
 
+    @checked
     def field_action(
         self,
         values: Array,
@@ -244,8 +246,6 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
         spatial_axes: Sequence[int] | None = None,
     ) -> Array:
         """Apply spatial pullback followed by the declared tensor channel action."""
-        if not isinstance(layout, TensorFieldLayout):
-            raise TypeError("layout must be a TensorFieldLayout.")
         if layout.dimension != self.dimension:
             raise ValueError("Tensor layout and finite group dimensions must agree.")
         spatial = self.spatial_action(values, element, spatial_axes=spatial_axes)

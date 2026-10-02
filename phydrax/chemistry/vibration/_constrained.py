@@ -27,6 +27,7 @@ from ...linalg import (
     RankPolicy,
 )
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ...typing import checked
 from .._optimization import _require_structure_matches_system
 from .._units import angular_frequency_to_wavenumber
 from ..electronic_structure._derivatives import MolecularHessianResult
@@ -307,6 +308,7 @@ class ConstrainedVibrationalAnalysisResult(StrictModule, NonTrainableState):
     successful: Array
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vibration: VibrationalAnalysisResult,
@@ -322,8 +324,6 @@ class ConstrainedVibrationalAnalysisResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
     ) -> None:
-        if not isinstance(vibration, VibrationalAnalysisResult):
-            raise TypeError("vibration must be VibrationalAnalysisResult.")
         dtype = vibration.eigenvalues.dtype
         constraint_residual_ = jnp.asarray(constraint_residual, dtype=dtype).reshape(())
         tangent_residual = jnp.asarray(tangent_gradient_residual, dtype=dtype).reshape(())
@@ -373,6 +373,7 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
     imaginary_wavenumber_threshold: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -384,10 +385,6 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
         constraint_tolerance: float = 1.0e-8,
         imaginary_wavenumber_threshold: float = 10.0,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
-        if not isinstance(constraints, MolecularConstraintSetPlan):
-            raise TypeError("constraints must be MolecularConstraintSetPlan.")
         values = tuple(
             float(value)
             for value in (
@@ -418,6 +415,7 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         structure: AtomicStructure,
@@ -425,10 +423,6 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
         forces: ArrayLike,
         /,
     ) -> ConstrainedVibrationalAnalysisResult:
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be AtomicStructure.")
-        if not isinstance(hessian, MolecularHessianResult):
-            raise TypeError("hessian must be MolecularHessianResult.")
         _require_structure_matches_system(structure, self.system)
         if (
             hessian.units.unit_system_id != self.system.units.unit_system_id

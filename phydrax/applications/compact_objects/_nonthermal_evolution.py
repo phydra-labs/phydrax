@@ -14,6 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class NonthermalLorentzGrid(StrictModule, NonTrainableState):
@@ -104,6 +105,7 @@ class NonthermalElectronEvolutionPlan(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: RelativityScaleContract,
@@ -120,10 +122,6 @@ class NonthermalElectronEvolutionPlan(StrictModule, NonTrainableState):
         coulomb_coefficient: float = 0.0,
         energy_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        if not isinstance(grid, NonthermalLorentzGrid):
-            raise TypeError("grid must be NonthermalLorentzGrid.")
         values = tuple(
             float(value)
             for value in (
@@ -212,6 +210,7 @@ class NonthermalElectronEvolutionPlan(StrictModule, NonTrainableState):
         )
         return distribution, jnp.sum(distribution, axis=-1)
 
+    @checked
     def advance(
         self,
         state: NonthermalElectronState,
@@ -226,8 +225,6 @@ class NonthermalElectronEvolutionPlan(StrictModule, NonTrainableState):
         dissipative_heating: ArrayLike = 0.0,
         injection_fraction: ArrayLike = 0.0,
     ) -> NonthermalElectronResult:
-        if not isinstance(state, NonthermalElectronState):
-            raise TypeError("state must be NonthermalElectronState.")
         density = state.bin_number_density
         leading = density.shape[:-1]
         (

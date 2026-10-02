@@ -48,6 +48,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
 from .._validation import canonical_identifier
 from ..diagnostics import Diagnostic
+from ..typing import checked
 
 
 class MaterialSiteId(StrictModule, NonTrainableState):
@@ -432,6 +433,7 @@ class LearnedConstitutiveModel(AbstractConstitutiveModel):
     model_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractArrayModel,
@@ -464,8 +466,6 @@ class LearnedConstitutiveModel(AbstractConstitutiveModel):
         owner_ports = ModelPorts(inputs=inputs, outputs=outputs)
         input_size = sum(prod(port.event_shape) for port in inputs)
         output_size = sum(prod(port.event_shape) for port in outputs)
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError(f"{site} model must be an AbstractArrayModel.")
         if (
             _model_size(model.in_size, "in_size") != input_size
             or _model_size(model.out_size, "out_size") != output_size
@@ -600,6 +600,7 @@ class MaterialState(StrictModule, NonTrainableState):
     layout_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         site_id: MaterialSiteId,
@@ -610,8 +611,6 @@ class MaterialState(StrictModule, NonTrainableState):
         trial: ArrayLike | None = None,
         state_version: int = 0,
     ) -> None:
-        if not isinstance(site_id, MaterialSiteId):
-            raise TypeError("site_id must be a MaterialSiteId.")
         model = str(model_id).strip()
         committed_ = _inexact_array(committed)
         trial_ = committed_ if trial is None else _inexact_array(trial)
@@ -744,6 +743,7 @@ class MaterialCheckpointPayload(StrictModule, NonTrainableState):
     layout_id: str = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state: MaterialTransaction,
@@ -751,8 +751,6 @@ class MaterialCheckpointPayload(StrictModule, NonTrainableState):
         *,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(state, MaterialTransaction):
-            raise TypeError("state must be a MaterialTransaction.")
         plan = None if plan_id is None else str(plan_id).strip()
         if plan_id is not None and not plan:
             raise ValueError("plan_id must be non-empty or None.")
@@ -864,9 +862,8 @@ class MaterialIntegrationPlan(StrictModule):
         self.validate(transaction)
         return transaction
 
+    @checked
     def validate(self, state: MaterialTransaction, /) -> None:
-        if not isinstance(state, MaterialTransaction):
-            raise TypeError("state must be a MaterialTransaction.")
         if len(state.states) != len(self.site_ids):
             raise ValueError("Material state does not match integration site count.")
         for material_state, site, model in zip(
@@ -969,11 +966,10 @@ class MaterialIntegrationPlan(StrictModule):
         self.validate(state)
         return state.checkpoint_payload(plan_id=self.plan_id)
 
+    @checked
     def restore_payload(
         self, payload: MaterialCheckpointPayload, /
     ) -> MaterialTransaction:
-        if not isinstance(payload, MaterialCheckpointPayload):
-            raise TypeError("payload must be a MaterialCheckpointPayload.")
         if payload.plan_id != self.plan_id:
             raise ValueError("Material checkpoint payload is bound to another plan.")
         state = payload.restore()

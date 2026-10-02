@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..metrix import AtlasCover
+from ..typing import checked
 from ._precision import IntegrationPrecisionPolicy
 
 
@@ -65,6 +66,7 @@ class AtlasIntegrationTarget(StrictModule):
     patches: tuple[AtlasPatchQuadrature, ...]
     target_id: str
 
+    @checked
     def __init__(
         self,
         cover: AtlasCover,
@@ -73,8 +75,6 @@ class AtlasIntegrationTarget(StrictModule):
         *,
         target_id: str,
     ) -> None:
-        if not isinstance(cover, AtlasCover):
-            raise TypeError("cover must be an AtlasCover.")
         patches_ = tuple(patches)
         if not patches_:
             raise ValueError("Atlas integration requires at least one patch.")
@@ -102,6 +102,7 @@ class AtlasIntegrationResult(StrictModule):
     target_id: str
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         value: ArrayLike,
@@ -117,8 +118,6 @@ class AtlasIntegrationResult(StrictModule):
         self.patch_values = jnp.asarray(patch_values)
         self.represented_weight = jnp.asarray(represented_weight)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
         self.target_id = str(target_id)
 

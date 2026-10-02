@@ -38,7 +38,7 @@ from .._strict import StrictModule
 from .._trainable import fixed_field, parameter_field, ParameterOwner
 from .._validation import positive_integer
 from ..nonlinear import NonlinearStatus
-from ..typing import ConvertibleToArray, parse
+from ..typing import checked, ConvertibleToArray, parse
 from ._disjoining import AbstractDisjoiningPressure
 from ._film_contracts import PreparedFilmSurface
 from ._film_evidence import FilmStepStatus, resolve_film_status, SurfaceFilmEvidence
@@ -205,6 +205,7 @@ class SurfaceLubricationPlan(StrictModule, ParameterOwner):
     maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedFilmSurface,
@@ -223,8 +224,6 @@ class SurfaceLubricationPlan(StrictModule, ParameterOwner):
         tolerance: float = 1e-10,
         maximum_iterations: int = 40,
     ) -> None:
-        if not isinstance(surface, PreparedFilmSurface):
-            raise TypeError("surface must be a PreparedFilmSurface.")
         law = parse(mobility_law, FilmMobilityLaw, "mobility_law")
         policy = parse(boundary_policy, FilmBoundaryPolicy, "boundary_policy")
         if disjoining is not None and not isinstance(
@@ -435,9 +434,8 @@ class PreparedSurfaceLubrication(StrictModule):
     solver: PreparedFilmNewton = fixed_field()
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: SurfaceLubricationPlan, /) -> None:
-        if not isinstance(plan, SurfaceLubricationPlan):
-            raise TypeError("plan must be a SurfaceLubricationPlan.")
         surface = plan.surface
         vertex_count = surface.topology.num_vertices
         thickness = jnp.ones((vertex_count,), dtype=jnp.float64)
@@ -472,10 +470,9 @@ class PreparedSurfaceLubrication(StrictModule):
             topology_id=self.plan.surface.topology.topology_id,
         )
 
+    @checked
     def with_surface(self, surface: PreparedFilmSurface, /) -> PreparedSurfaceLubrication:
         """Rebind refreshed geometry on identical topology without recompiling."""
-        if not isinstance(surface, PreparedFilmSurface):
-            raise TypeError("surface must be a PreparedFilmSurface.")
         if surface.topology.topology_id != self.plan.surface.topology.topology_id:
             raise ValueError("Refreshed surface must keep the prepared topology.")
         return eqx.tree_at(lambda value: value.plan.surface, self, surface)
@@ -483,12 +480,11 @@ class PreparedSurfaceLubrication(StrictModule):
     def thickness(self, state: SurfaceLubricationState, /) -> Array:
         return state.liquid_volume_m3 / self.plan.surface.vertex_area
 
+    @checked
     def step(
         self, state: SurfaceLubricationState, step_size_s: ArrayLike, /
     ) -> SurfaceLubricationStepResult:
         """Advance one backward-Euler step; reject the candidate on any failure."""
-        if not isinstance(state, SurfaceLubricationState):
-            raise TypeError("state must be a SurfaceLubricationState.")
         plan = self.plan
         surface = plan.surface
         if state.topology_id != surface.topology.topology_id:

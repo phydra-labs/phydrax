@@ -19,6 +19,7 @@ from .._dtype_names import inexact_result_type
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
 
 
@@ -75,10 +76,9 @@ class BSplineGridBank(StrictModule, NonTrainableState):
         return cls(jnp.stack(tuple(grid.knots for grid in grids)), degree)
 
     @classmethod
+    @checked
     def repeat(cls, grid: BSplineGrid, count: int, /) -> BSplineGridBank:
         """Realize one fixed grid independently for each input channel."""
-        if not isinstance(grid, BSplineGrid):
-            raise TypeError("grid must be a BSplineGrid.")
         if isinstance(count, bool) or not isinstance(count, Integral) or count < 1:
             raise ValueError("grid-bank count must be a positive integer.")
         return cls(

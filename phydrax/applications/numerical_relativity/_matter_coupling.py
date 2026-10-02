@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
-from ...typing import parse
+from ...typing import checked, parse
 
 
 RelativisticMatterKind: TypeAlias = Literal["grhd", "grmhd", "grrmhd"]
@@ -143,9 +143,8 @@ class CoupledStageAddress(StrictModule, NonTrainableState):
     def step_size(self) -> Array:
         return self.step_end_time - self.step_start_time
 
+    @checked
     def matches(self, other: CoupledStageAddress, /) -> Array:
-        if not isinstance(other, CoupledStageAddress):
-            raise TypeError("Stage identity comparison requires CoupledStageAddress.")
         topology = jnp.asarray(self.topology_id == other.topology_id)
         return (
             topology
@@ -377,6 +376,7 @@ class CoupledStepLedgers(StrictModule):
     floor: FloorLedger
     horizon_flux: HorizonFluxLedger
 
+    @checked
     def __init__(
         self,
         source: SourceExchangeLedger,
@@ -386,16 +386,6 @@ class CoupledStepLedgers(StrictModule):
         horizon_flux: HorizonFluxLedger,
         /,
     ) -> None:
-        if not isinstance(source, SourceExchangeLedger):
-            raise TypeError("source must be SourceExchangeLedger.")
-        if not isinstance(constraint, ConstraintLedger):
-            raise TypeError("constraint must be ConstraintLedger.")
-        if not isinstance(conservation, ConservationLedger):
-            raise TypeError("conservation must be ConservationLedger.")
-        if not isinstance(floor, FloorLedger):
-            raise TypeError("floor must be FloorLedger.")
-        if not isinstance(horizon_flux, HorizonFluxLedger):
-            raise TypeError("horizon_flux must be HorizonFluxLedger.")
         self.source = source
         self.constraint = constraint
         self.conservation = conservation
@@ -482,9 +472,8 @@ class CoupledStepLedgers(StrictModule):
             & self.horizon_flux.finite
         )
 
+    @checked
     def within_step_limits(self, policy: MatterCouplingPolicy, /) -> Array:
-        if not isinstance(policy, MatterCouplingPolicy):
-            raise TypeError("policy must be MatterCouplingPolicy.")
         return (
             self.finite
             & self.floor.physically_valid
@@ -621,9 +610,8 @@ class CoupledBudget(StrictModule, NonTrainableState):
             zero,
         )
 
+    @checked
     def accumulate(self, ledgers: CoupledStepLedgers, /) -> CoupledBudget:
-        if not isinstance(ledgers, CoupledStepLedgers):
-            raise TypeError("ledgers must be CoupledStepLedgers.")
         source = ledgers.source
         constraint = ledgers.constraint
         conservation = ledgers.conservation
@@ -653,9 +641,8 @@ class CoupledBudget(StrictModule, NonTrainableState):
             self.horizon_magnetic_flux + horizon.magnetic_flux,
         )
 
+    @checked
     def within_limits(self, policy: MatterCouplingPolicy, /) -> Array:
-        if not isinstance(policy, MatterCouplingPolicy):
-            raise TypeError("policy must be MatterCouplingPolicy.")
         conservation_maximum = jnp.max(
             jnp.concatenate(
                 (
@@ -757,6 +744,7 @@ class Z4cStageProposal(StrictModule):
     constraint: ConstraintLedger
     evidence: CoupledParticipantStatus
 
+    @checked
     def __init__(
         self,
         candidate: Any,
@@ -767,16 +755,6 @@ class Z4cStageProposal(StrictModule):
         evidence: CoupledParticipantStatus,
         /,
     ) -> None:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
-        if not isinstance(address, CoupledStageAddress):
-            raise TypeError("address must be CoupledStageAddress.")
-        if not isinstance(source, SourceExchangeLedger):
-            raise TypeError("source must be SourceExchangeLedger.")
-        if not isinstance(constraint, ConstraintLedger):
-            raise TypeError("constraint must be ConstraintLedger.")
-        if not isinstance(evidence, CoupledParticipantStatus):
-            raise TypeError("evidence must be CoupledParticipantStatus.")
         self.candidate = candidate
         self.geometry = geometry
         self.address = address
@@ -797,6 +775,7 @@ class MatterStageProposal(StrictModule):
     evidence: CoupledParticipantStatus
     matter_kind: RelativisticMatterKind = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate: Any,
@@ -810,18 +789,6 @@ class MatterStageProposal(StrictModule):
         *,
         matter_kind: RelativisticMatterKind,
     ) -> None:
-        if not isinstance(stress_energy, StressEnergyProjection):
-            raise TypeError("stress_energy must be StressEnergyProjection.")
-        if not isinstance(address, CoupledStageAddress):
-            raise TypeError("address must be CoupledStageAddress.")
-        if not isinstance(conservation, ConservationLedger):
-            raise TypeError("conservation must be ConservationLedger.")
-        if not isinstance(floor, FloorLedger):
-            raise TypeError("floor must be FloorLedger.")
-        if not isinstance(horizon_flux, HorizonFluxLedger):
-            raise TypeError("horizon_flux must be HorizonFluxLedger.")
-        if not isinstance(evidence, CoupledParticipantStatus):
-            raise TypeError("evidence must be CoupledParticipantStatus.")
         matter_kind = parse(matter_kind, RelativisticMatterKind, "matter_kind")
         self.candidate = candidate
         self.stress_energy = stress_energy

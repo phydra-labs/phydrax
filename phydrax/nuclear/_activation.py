@@ -26,6 +26,7 @@ from ..linalg import (
     MatrixFunctionPolicy,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
+from ..typing import checked
 from ._energy import EnergyGroupStructure
 from ._identity import NuclideKey
 from ._provenance import NuclearDataProvenance
@@ -400,6 +401,7 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
         )
         return operator, rates
 
+    @checked
     def step(
         self,
         inventory: NuclideInventory,
@@ -409,8 +411,6 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
         *,
         external_source_mol_s: ArrayLike | None = None,
     ) -> ActivationStepResult:
-        if not isinstance(inventory, NuclideInventory):
-            raise TypeError("inventory must be NuclideInventory.")
         if inventory.network_id != self.network_id:
             raise ValueError("Inventory and activation network identities disagree.")
         if inventory.nuclide_ids != self.nuclide_ids:
@@ -541,14 +541,13 @@ class IrradiationSchedulePlan:
             ),
         )
 
+    @checked
     def run(
         self,
         network: PreparedActivationNetwork,
         inventory: NuclideInventory,
         /,
     ) -> ActivationScheduleResult:
-        if not isinstance(network, PreparedActivationNetwork):
-            raise TypeError("network must be PreparedActivationNetwork.")
         current = inventory
         amounts = [inventory.amounts_mol]
         times = [inventory.time_s]

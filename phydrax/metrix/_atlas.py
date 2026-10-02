@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import ChartTransition, CoordinateChart
 from ._complex import AlmostComplexStructure, holomorphicity_residual
 
@@ -202,14 +203,13 @@ class PatchwiseScalarField(StrictModule):
     atlas: CoordinateAtlas
     local_fields: tuple[Callable[[Array], Array], ...]
 
+    @checked
     def __init__(
         self,
         atlas: CoordinateAtlas,
         local_fields: Sequence[Callable[[Array], Array]],
         /,
     ) -> None:
-        if not isinstance(atlas, CoordinateAtlas):
-            raise TypeError("PatchwiseScalarField requires a CoordinateAtlas.")
         fields = tuple(local_fields)
         if len(fields) != len(atlas.charts) or any(
             not callable(field) for field in fields
@@ -243,14 +243,13 @@ class ComplexAtlasStructure(StrictModule):
     atlas: CoordinateAtlas
     local_structures: tuple[AlmostComplexStructure, ...]
 
+    @checked
     def __init__(
         self,
         atlas: CoordinateAtlas,
         local_structures: Sequence[AlmostComplexStructure],
         /,
     ) -> None:
-        if not isinstance(atlas, CoordinateAtlas):
-            raise TypeError("ComplexAtlasStructure requires a CoordinateAtlas.")
         structures = tuple(local_structures)
         if len(structures) != len(atlas.charts):
             raise ValueError("One almost-complex structure is required per atlas chart.")

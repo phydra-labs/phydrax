@@ -9,6 +9,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class CliffordResourceBudget(StrictModule, NonTrainableState):
@@ -101,6 +102,7 @@ class CliffordResourceEvidence(StrictModule, NonTrainableState):
     budget_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -110,8 +112,6 @@ class CliffordResourceEvidence(StrictModule, NonTrainableState):
         dense_kernel_bytes: int,
         budget: CliffordResourceBudget,
     ) -> None:
-        if not isinstance(budget, CliffordResourceBudget):
-            raise TypeError("budget must be a CliffordResourceBudget.")
         blades = int(blade_count)
         terms = int(product_terms)
         metadata = int(plan_bytes)

@@ -26,6 +26,7 @@ from ....optim import (
     StateDesignProblem,
     StateDesignResult,
 )
+from ....typing import checked
 from ._likelihood import (
     MultimodalLikelihoodResult,
     PreparedMultimodalLikelihood,
@@ -158,6 +159,7 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
     state_admissibility: Any | None
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: CardiacParameterSchema,
@@ -182,10 +184,6 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
         | None = None,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(schema, CardiacParameterSchema):
-            raise TypeError("schema must be a CardiacParameterSchema.")
-        if not isinstance(likelihood, PreparedMultimodalLikelihood):
-            raise TypeError("likelihood must be a PreparedMultimodalLikelihood.")
         if not isinstance(
             route,
             (

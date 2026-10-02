@@ -15,6 +15,8 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.units._dimension import DimensionSignature, Exponent
 
+from ..typing import checked
+
 
 Scale: TypeAlias = int | Fraction | str | tuple[int, int]
 UnitComponent: TypeAlias = tuple["UnitDefinition", Exponent]
@@ -83,6 +85,7 @@ class UnitDefinition(StrictModule, NonTrainableState):
     scale_denominator: int = eqx.field(static=True)
     unit_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         symbol: str,
@@ -92,8 +95,6 @@ class UnitDefinition(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(symbol, str) or not symbol or symbol.strip() != symbol:
             raise ValueError("unit symbols must be non-empty stripped strings")
-        if not isinstance(dimension, DimensionSignature):
-            raise TypeError("unit dimensions must be DimensionSignature values")
         if (
             not isinstance(reference_system_id, str)
             or not reference_system_id

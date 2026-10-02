@@ -23,6 +23,7 @@ from ..applications.relativistic_scattering._unit_contract import (
     RelativisticUnitContract,
 )
 from ..solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
+from ..typing import checked
 from ..units import AREA, UnitDefinition
 from ._species import ParticleSpeciesTable
 
@@ -126,6 +127,7 @@ class DarkBoundStateSpectrum(StrictModule, NonTrainableState):
     differentiation_mode: str = eqx.field(static=True)
     spectrum_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime_plan: DarkSectorEpochPlan,
@@ -140,16 +142,10 @@ class DarkBoundStateSpectrum(StrictModule, NonTrainableState):
         spectrum_source_id: str,
         production_evidence_ids: Sequence[str],
     ) -> None:
-        if not isinstance(runtime_plan, DarkSectorEpochPlan):
-            raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
-        if not isinstance(species, ParticleSpeciesTable):
-            raise TypeError("species must be ParticleSpeciesTable.")
         if runtime_plan.species_revision_id != species.table_id:
             raise ValueError(
                 "runtime_plan species revision must match the bound-state species table."
             )
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be RelativisticUnitContract.")
         if species.energy_unit.unit_id != units.energy_unit.unit_id:
             raise ValueError(
                 "species and bound-state spectrum must share the exact energy unit."
@@ -253,6 +249,7 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
     differentiation_mode: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spectrum: DarkBoundStateSpectrum,
@@ -268,8 +265,6 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
         coefficient_source_id: str,
         differentiation_mode: str = "analytic",
     ) -> None:
-        if not isinstance(spectrum, DarkBoundStateSpectrum):
-            raise TypeError("spectrum must be DarkBoundStateSpectrum.")
         level = spectrum.level(bound_pdg_id)
         coefficient = float(capture_coefficient)
         inverse_coefficient = float(photo_dissociation_coefficient)

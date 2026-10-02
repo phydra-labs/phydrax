@@ -18,6 +18,7 @@ from phydrax.ein import contract
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._fields import PlaneFieldSpace
 
 
@@ -37,6 +38,7 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
     inner_scale: Array
     remove_piston: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -47,8 +49,6 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
         inner_scale: ArrayLike = 0.0,
         remove_piston: bool = True,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         if space.topology != "periodic-cell":
             raise ValueError("Phase screens require a periodic-cell field space.")
         fried = jnp.asarray(fried_parameter, dtype=jnp.float64)
@@ -188,6 +188,7 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
     strength_fraction: Array
     layer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         screen: VonKarmanPhaseScreenPlan,
@@ -198,8 +199,6 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
         *,
         layer_id: str,
     ) -> None:
-        if not isinstance(screen, VonKarmanPhaseScreenPlan):
-            raise TypeError("screen must be a VonKarmanPhaseScreenPlan.")
         altitude_ = jnp.asarray(altitude, dtype=jnp.float64)
         velocity_ = jnp.asarray(velocity, dtype=jnp.float64)
         strength = jnp.asarray(strength_fraction, dtype=jnp.float64)

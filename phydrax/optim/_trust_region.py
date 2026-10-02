@@ -19,6 +19,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import AbstractLinearOperator, AbstractPreconditioner, AbstractVectorSpace
+from ..typing import checked
 
 
 class TrustRegionSubproblemStatus(IntEnum):
@@ -39,6 +40,7 @@ class TrustRegionQuadraticProblem(StrictModule):
     gradient: PyTree[Array]
     radius: Array
 
+    @checked
     def __init__(
         self,
         hessian: AbstractLinearOperator,
@@ -46,8 +48,6 @@ class TrustRegionQuadraticProblem(StrictModule):
         radius: Any,
         /,
     ) -> None:
-        if not isinstance(hessian, AbstractLinearOperator):
-            raise TypeError("hessian must be AbstractLinearOperator.")
         if hessian.batch_shape:
             raise ValueError("Trust-region Hessians must be unbatched.")
         if not hessian.source.compatible(hessian.target):

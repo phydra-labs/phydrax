@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import checked
 
 
 _ALLOWED_OCCURRENCE_KINDS = frozenset(
@@ -97,9 +98,8 @@ class CADSelector:
     entity_id: str
 
     @classmethod
+    @checked
     def from_occurrence(cls, occurrence: CADOccurrence, /) -> CADSelector:
-        if not isinstance(occurrence, CADOccurrence):
-            raise TypeError("occurrence must be a CADOccurrence.")
         return cls(
             occurrence.revision_id,
             occurrence.occurrence_id,
@@ -178,6 +178,7 @@ class CADRevision:
     def select(self, occurrence_id: str, /) -> CADSelector:
         return CADSelector.from_occurrence(self.occurrence(occurrence_id))
 
+    @checked
     def compose(
         self,
         parent: CADSelector,
@@ -187,8 +188,6 @@ class CADRevision:
         kind: str | None = None,
     ) -> CADSelector:
         """Compose a face/edge/coedge path by exact stored incidence only."""
-        if not isinstance(parent, CADSelector):
-            raise TypeError("parent must be a CADSelector.")
         if parent.revision_id != self.revision_id:
             raise ValueError("Cannot compose selectors from another CAD revision.")
         stored_parent = self.occurrence(parent.occurrence_id)
@@ -203,11 +202,10 @@ class CADRevision:
             )
         return CADSelector.from_occurrence(child)
 
+    @checked
     def children(
         self, parent: CADSelector, /, *, kind: str | None = None
     ) -> tuple[CADSelector, ...]:
-        if not isinstance(parent, CADSelector):
-            raise TypeError("parent must be a CADSelector.")
         if parent.revision_id != self.revision_id:
             raise ValueError("Cannot enumerate children from another CAD revision.")
         stored_parent = self.occurrence(parent.occurrence_id)
@@ -271,14 +269,13 @@ class CADSelectionSet:
         object.__setattr__(self, "selection_id", selection_id)
 
     @classmethod
+    @checked
     def from_revision(
         cls,
         revision: CADRevision,
         occurrence_ids: tuple[str, ...],
         /,
     ) -> CADSelectionSet:
-        if not isinstance(revision, CADRevision):
-            raise TypeError("revision must be a CADRevision.")
         identifiers = tuple(
             _identifier("occurrence_id", value) for value in occurrence_ids
         )
@@ -426,6 +423,7 @@ class AssociationGraph:
     transaction: OccurrenceCorrespondenceTransaction
     graph_id: str
 
+    @checked
     def __init__(
         self,
         source_revision: CADRevision,
@@ -437,8 +435,6 @@ class AssociationGraph:
             target_revision, CADRevision
         ):
             raise TypeError("AssociationGraph requires two CADRevision inventories.")
-        if not isinstance(transaction, OccurrenceCorrespondenceTransaction):
-            raise TypeError("transaction must be an OccurrenceCorrespondenceTransaction.")
         if (
             transaction.source_revision_id != source_revision.revision_id
             or transaction.target_revision_id != target_revision.revision_id
@@ -511,9 +507,8 @@ class AssociationGraph:
             if edge.target_occurrence_id == target_id
         )
 
+    @checked
     def resolve_target(self, selector: CADSelector, /) -> AssociationResolution:
-        if not isinstance(selector, CADSelector):
-            raise TypeError("selector must be a CADSelector.")
         if selector.revision_id != self.source_revision.revision_id:
             raise ValueError("Source selector belongs to another CAD revision.")
         if self.source_revision.select(selector.occurrence_id) != selector:
@@ -554,9 +549,8 @@ class AssociationGraph:
             self.transaction.coverage.certificate_id,
         )
 
+    @checked
     def resolve_preimage(self, selector: CADSelector, /) -> AssociationResolution:
-        if not isinstance(selector, CADSelector):
-            raise TypeError("selector must be a CADSelector.")
         if selector.revision_id != self.target_revision.revision_id:
             raise ValueError("Target selector belongs to another CAD revision.")
         if self.target_revision.select(selector.occurrence_id) != selector:
@@ -597,11 +591,10 @@ class AssociationGraph:
             self.transaction.coverage.certificate_id,
         )
 
+    @checked
     def resolve_target_selection(self, selection: CADSelectionSet, /) -> CADSelectionSet:
         """Map an exact set through all certified forward graph edges."""
 
-        if not isinstance(selection, CADSelectionSet):
-            raise TypeError("selection must be a CADSelectionSet.")
         if selection.revision_id != self.source_revision.revision_id:
             raise ValueError("Selection belongs to another source CAD revision.")
         candidates: dict[str, CADSelector] = {}
@@ -618,13 +611,12 @@ class AssociationGraph:
             tuple(candidates.values()),
         )
 
+    @checked
     def resolve_preimage_selection(
         self, selection: CADSelectionSet, /
     ) -> CADSelectionSet:
         """Map an exact set through all certified reverse graph edges."""
 
-        if not isinstance(selection, CADSelectionSet):
-            raise TypeError("selection must be a CADSelectionSet.")
         if selection.revision_id != self.target_revision.revision_id:
             raise ValueError("Selection belongs to another target CAD revision.")
         candidates: dict[str, CADSelector] = {}

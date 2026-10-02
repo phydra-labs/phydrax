@@ -31,6 +31,7 @@ from ..linalg import (
 )
 from ..solver._differential import DifferentialProblem
 from ..solver._finite_element_adaptivity import FiniteElementTopologyTransaction
+from ..typing import checked
 
 
 def _cavity_state_coordinates(state: Any, /) -> PreparedRealCoordinateTree:
@@ -347,9 +348,8 @@ class PreparedMaxwellEigenmodeNormalization(StrictModule, NonTrainableState):
     plan: MaxwellEigenmodeNormalizationPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MaxwellEigenmodeNormalizationPlan, /) -> None:
-        if not isinstance(plan, MaxwellEigenmodeNormalizationPlan):
-            raise TypeError("plan must be MaxwellEigenmodeNormalizationPlan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {
@@ -437,11 +437,10 @@ class CavityParticipationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self, modes: NormalizedMaxwellEigenmodes, /
     ) -> CavityParticipationResult:
-        if not isinstance(modes, NormalizedMaxwellEigenmodes):
-            raise TypeError("modes must be NormalizedMaxwellEigenmodes.")
         if modes.electric_modes.shape[1] != self.electric_dofs:
             raise ValueError("Participation metrics and electric modes disagree.")
         metrics = jnp.stack(self.region_metrics, axis=0)
@@ -533,11 +532,10 @@ class CavityDipoleCouplingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self, modes: NormalizedMaxwellEigenmodes, /
     ) -> CavityDipoleCouplingResult:
-        if not isinstance(modes, NormalizedMaxwellEigenmodes):
-            raise TypeError("modes must be NormalizedMaxwellEigenmodes.")
         if modes.electric_modes.shape[1] != self.electric_field_evaluation.shape[1]:
             raise ValueError("Field evaluation and electric mode coordinates disagree.")
         local_fields = ein.contract(
@@ -772,9 +770,8 @@ class MaxwellBlochPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evidence(self, state: MaxwellBlochState, /) -> MaxwellBlochEvidence:
-        if not isinstance(state, MaxwellBlochState):
-            raise TypeError("state must be MaxwellBlochState.")
         radius_squared = (
             state.bloch_u * state.bloch_u
             + state.bloch_v * state.bloch_v
@@ -789,6 +786,7 @@ class MaxwellBlochPlan(StrictModule, NonTrainableState):
             finite & physical,
         )
 
+    @checked
     def prepare(
         self,
         initial_state: MaxwellBlochState,
@@ -797,8 +795,6 @@ class MaxwellBlochPlan(StrictModule, NonTrainableState):
         t0: ArrayLike,
         t1: ArrayLike,
     ) -> PreparedMaxwellBloch:
-        if not isinstance(initial_state, MaxwellBlochState):
-            raise TypeError("initial_state must be MaxwellBlochState.")
         if not bool(self.evidence(initial_state).successful):
             raise ValueError("Initial Bloch vector must lie in the physical unit ball.")
         state_coordinates = _cavity_state_coordinates(initial_state)
@@ -1136,6 +1132,7 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
     maximum_cells: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -1147,8 +1144,6 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
         maximum_edges: int = 2**18,
         maximum_cells: int = 2**17,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
         order = int(requested_polynomial_order)
         if order < 1:
             raise ValueError("requested_polynomial_order must be positive.")

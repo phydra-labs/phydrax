@@ -42,7 +42,7 @@ from ..linalg._constraint_operators import (
 )
 from ..linalg._operators import BlockLinearOperator, FunctionLinearOperator
 from ..linalg._spaces import AbstractVectorSpace, ArraySpace, BlockSpace
-from ..typing import parse
+from ..typing import checked, parse
 from ._lifecycle import (
     RealizationLifecyclePhase,
     RealizationLifecycleState,
@@ -924,6 +924,7 @@ class PreparedAffineProjector(AbstractFieldRealization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         assembly: AffineBlockAssembly,
@@ -934,12 +935,6 @@ class PreparedAffineProjector(AbstractFieldRealization):
         *,
         numeric_version: int,
     ) -> None:
-        if not isinstance(assembly, AffineBlockAssembly):
-            raise TypeError("assembly must be an AffineBlockAssembly.")
-        if not isinstance(correction, PreparedLinearCorrection):
-            raise TypeError("correction must be PreparedLinearCorrection.")
-        if not isinstance(provider, AbstractLinearCorrectionProvider):
-            raise TypeError("provider must be AbstractLinearCorrectionProvider.")
         if correction.field_names != assembly.correction_fields:
             raise ValueError("Prepared correction fields do not match the assembly.")
         if correction.exactness_scope != policy.exactness_scope:
@@ -1112,9 +1107,8 @@ class ExactAffineProjector(AbstractFieldRealization):
 
     prepared: PreparedAffineProjector
 
+    @checked
     def __init__(self, prepared: PreparedAffineProjector, /) -> None:
-        if not isinstance(prepared, PreparedAffineProjector):
-            raise TypeError("ExactAffineProjector requires a PreparedAffineProjector.")
         if not prepared.correction.evidence.exact:
             raise ValueError(
                 "ExactAffineProjector requires correction evidence that certifies exact semantics."

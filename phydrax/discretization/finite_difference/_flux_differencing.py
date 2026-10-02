@@ -21,7 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._conservation_boundary import SourceFunction
 from .._core import (
     DiscretizationCapability,
@@ -46,6 +46,7 @@ class TensorSBPPlan(StrictModule, NonTrainableState):
     interior_order: SBPInteriorOrder = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -55,8 +56,6 @@ class TensorSBPPlan(StrictModule, NonTrainableState):
         component_names: Sequence[str],
         interior_order: SBPInteriorOrder = 4,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be a PreparedTensorGrid.")
         if any(
             not axis.periodic or axis.primary_entity != "point"
             for axis in grid.structured_axes
@@ -109,9 +108,8 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TensorSBPPlan, /) -> None:
-        if not isinstance(plan, TensorSBPPlan):
-            raise TypeError("plan must be a TensorSBPPlan.")
         derivatives = tuple(
             SBPDerivativePlan(
                 plan.grid,
@@ -209,6 +207,7 @@ class SBPFluxDifferencingMethodPlan(StrictModule):
     entropy_diagnostics: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         volume_flux: AbstractSymmetricTwoPointFluxPlan,
@@ -216,8 +215,6 @@ class SBPFluxDifferencingMethodPlan(StrictModule):
         *,
         entropy_diagnostics: bool = False,
     ) -> None:
-        if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
-            raise TypeError("volume_flux must be an AbstractSymmetricTwoPointFluxPlan.")
         if not volume_flux.symmetric or not volume_flux.consistent:
             raise ValueError("SBP volume flux must declare symmetry and consistency.")
         self.volume_flux = volume_flux
@@ -294,6 +291,7 @@ class PreparedSBPConservationDynamics(StrictModule):
     report: SBPFluxDifferencingReport
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Any,
@@ -304,10 +302,6 @@ class PreparedSBPConservationDynamics(StrictModule):
         source: SourceFunction | None = None,
         entropy_pair: Any = None,
     ) -> None:
-        if not isinstance(discretization, TensorSBPDiscretization):
-            raise TypeError("discretization must be a TensorSBPDiscretization.")
-        if not isinstance(method, SBPFluxDifferencingMethodPlan):
-            raise TypeError("method must be an SBPFluxDifferencingMethodPlan.")
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         if method.entropy_diagnostics != (entropy_pair is not None):

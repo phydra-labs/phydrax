@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 _VACUUM_PERMITTIVITY = float(ElectromagneticScaleContract.si().vacuum_permittivity)
@@ -317,6 +318,7 @@ class SBSOverlapPlan(StrictModule):
     acoustic_energy_per_length: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain_map: SBSSharedDomainMap,
@@ -336,8 +338,6 @@ class SBSOverlapPlan(StrictModule):
         stokes_power: ArrayLike,
         acoustic_energy_per_length: ArrayLike,
     ) -> None:
-        if not isinstance(domain_map, SBSSharedDomainMap):
-            raise TypeError("domain_map must be an SBSSharedDomainMap.")
         dimension = domain_map.spatial_dimension
         pump_e = _native_vector_field(
             pump_electric, domain_map.pump_to_volume.shape[1], dimension, "pump_electric"

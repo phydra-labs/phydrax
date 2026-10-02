@@ -12,6 +12,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._capillarity import BalancedCapillaryOperator
 from ._contact_angle import EmbeddedBoundaryContactAngleSet
 from ._dyadic import DyadicFiniteVolumeDiscretization
@@ -492,6 +493,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: UnstructuredFiniteVolumeCouplingPlan,
@@ -502,8 +504,6 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
         *,
         sliding_coupling: PeriodicSlidingCoupling | None = None,
     ) -> None:
-        if not isinstance(plan, UnstructuredFiniteVolumeCouplingPlan):
-            raise TypeError("plan must be UnstructuredFiniteVolumeCouplingPlan.")
         if not isinstance(
             discretization,
             (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),

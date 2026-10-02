@@ -53,6 +53,7 @@ from .._trainable import NonTrainableState
 from ..typing import (
     as_host_array,
     Bool,
+    checked,
     Complex128,
     ConvertibleToArray,
     Dim,
@@ -733,6 +734,7 @@ class ColdPlasmaDielectric(StrictModule, NonTrainableState):
     polarization_tolerance: float = eqx.field(static=True)
     dielectric_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -746,8 +748,6 @@ class ColdPlasmaDielectric(StrictModule, NonTrainableState):
         continuation_steps: int = 64,
         polarization_tolerance: float = 1e-12,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         scope = Scope()
         density = as_host_array(
             densities, HostFloat64[_SpeciesDim], "densities", scope=scope

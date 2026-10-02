@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from phydrax._interpolation import linear_interpolate
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._models import AbstractScatteringComponent, ScatteringResponse
 from ._ports import ElectricalWaveReference, WavePort
 from .io import TouchstoneData
@@ -91,6 +92,7 @@ class SampledScatteringModel(AbstractScatteringComponent):
         self.component_id = identifier
 
     @classmethod
+    @checked
     def from_touchstone(
         cls,
         data: TouchstoneData,
@@ -99,8 +101,6 @@ class SampledScatteringModel(AbstractScatteringComponent):
         policy: ScatteringInterpolationPolicy | None = None,
         component_id: str = "sampled-touchstone",
     ) -> "SampledScatteringModel":
-        if not isinstance(data, TouchstoneData):
-            raise TypeError("data must be TouchstoneData.")
         ports = tuple(
             WavePort(name, ElectricalWaveReference(reference))
             for name, reference in zip(

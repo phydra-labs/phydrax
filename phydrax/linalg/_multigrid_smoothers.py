@@ -18,7 +18,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, DenseLinearOperator
@@ -304,13 +304,12 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
     def default_refresh(self) -> str:
         return "numeric"
 
+    @checked
     def properties_for(
         self,
         setup_operator: AbstractLinearOperator,
         /,
     ) -> PreconditionerProperties:
-        if not isinstance(setup_operator, AbstractLinearOperator):
-            raise TypeError("setup_operator must be an AbstractLinearOperator.")
         if setup_operator.batch_shape or not setup_operator.source.compatible(
             setup_operator.target
         ):

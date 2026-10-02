@@ -29,7 +29,7 @@ from .._trainable import (
     ParameterOwner,
     resolve_array_roles,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -564,6 +564,7 @@ class DomainFunction(StrictModule):
     metadata: frozendict[str, Any]
     explicit_derivative_rule: DerivativeRule | None
 
+    @checked
     def __init__(
         self,
         *,
@@ -573,8 +574,6 @@ class DomainFunction(StrictModule):
         metadata: Mapping[str, Any] | None = None,
         derivative_rule: DerivativeRule | None = None,
     ) -> None:
-        if not isinstance(domain, Domain):
-            raise TypeError("DomainFunction.domain must be a Domain.")
         deps_ = tuple(deps)
         if len(set(deps_)) != len(deps_):
             raise ValueError(

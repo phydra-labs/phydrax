@@ -32,7 +32,7 @@ from ...linalg._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 from ._rational_approximation import (
     CertifiedRationalApproximation,
@@ -48,9 +48,8 @@ class _DiracNormalOperator(AbstractLinearOperator):
 
     dirac: AbstractPseudofermionDiracOperator
 
+    @checked
     def __init__(self, dirac: AbstractPseudofermionDiracOperator, /) -> None:
-        if not isinstance(dirac, AbstractPseudofermionDiracOperator):
-            raise TypeError("dirac must implement AbstractPseudofermionDiracOperator.")
         self.dirac = dirac
         self.source = dirac.source
         self.target = dirac.source

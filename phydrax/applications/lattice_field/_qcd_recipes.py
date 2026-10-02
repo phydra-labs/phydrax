@@ -70,7 +70,7 @@ from ...sampling._rhmc import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._distributed_qcd import (
     DistributedGaugeTheoryPlan,
     DistributedHMCPlan,
@@ -152,6 +152,7 @@ class SU3GaugeGeometry(StrictModule, NonTrainableState):
     execution_scope: RecipeExecutionScope = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         link_space: MatrixGaugeLinkSpace,
@@ -163,20 +164,10 @@ class SU3GaugeGeometry(StrictModule, NonTrainableState):
         *,
         decomposition: LatticeDecompositionPlan | None = None,
     ) -> None:
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, SpecialUnitaryGroup) or (
             link_space.group.dimension != 3
         ):
             raise TypeError("QCD geometry requires an SU(3) link space.")
-        if not isinstance(plaquettes, CellBoundaryPathPlan):
-            raise TypeError("plaquettes must be CellBoundaryPathPlan.")
-        if not isinstance(fermion_boundary, LatticeBoundaryPhasePlan):
-            raise TypeError("fermion_boundary must be LatticeBoundaryPhasePlan.")
-        if not isinstance(transport, GaugeCovariantShiftPlan):
-            raise TypeError("transport must be GaugeCovariantShiftPlan.")
-        if not isinstance(staples, GaugeStaplePlan):
-            raise TypeError("staples must be GaugeStaplePlan.")
         representation = FundamentalGaugeRepresentation(link_space.group)
         if (
             plaquettes.paths.topology_id != link_space.topology.topology_id
@@ -309,6 +300,7 @@ class QuenchedSU3Recipe(StrictModule, NonTrainableState):
     divergence_threshold: float = eqx.field(static=True)
     recipe_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: SU3GaugeGeometry,
@@ -320,10 +312,6 @@ class QuenchedSU3Recipe(StrictModule, NonTrainableState):
         leapfrog_steps: int,
         divergence_threshold: float = 1000.0,
     ) -> None:
-        if not isinstance(geometry, SU3GaugeGeometry):
-            raise TypeError("geometry must be SU3GaugeGeometry.")
-        if not isinstance(measurements, MeasurementSchedule):
-            raise TypeError("measurements must be MeasurementSchedule.")
         beta_ = positive_finite_float(beta, "beta")
         step = positive_finite_float(step_size, "step_size")
         threshold = positive_finite_float(divergence_threshold, "divergence_threshold")
@@ -458,6 +446,7 @@ class WilsonCloverNf2Recipe(StrictModule, NonTrainableState):
     divergence_threshold: float = eqx.field(static=True)
     recipe_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: SU3GaugeGeometry,
@@ -482,10 +471,6 @@ class WilsonCloverNf2Recipe(StrictModule, NonTrainableState):
         rhmc_resources: RHMCResourcePolicy | None = None,
         solves: PseudofermionSolveRoles | None = None,
     ) -> None:
-        if not isinstance(geometry, SU3GaugeGeometry):
-            raise TypeError("geometry must be SU3GaugeGeometry.")
-        if not isinstance(measurements, MeasurementSchedule):
-            raise TypeError("measurements must be MeasurementSchedule.")
         variant = parse(variant, FermionVariant, "variant")
         beta_ = positive_finite_float(beta, "beta")
         mass_ = float(mass)
@@ -746,6 +731,7 @@ class StaggeredHisqStyleRHMCRecipe(StrictModule, NonTrainableState):
     divergence_threshold: float = eqx.field(static=True)
     recipe_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: SU3GaugeGeometry,
@@ -774,10 +760,6 @@ class StaggeredHisqStyleRHMCRecipe(StrictModule, NonTrainableState):
         rhmc_resources: RHMCResourcePolicy | None = None,
         solves: PseudofermionSolveRoles | None = None,
     ) -> None:
-        if not isinstance(geometry, SU3GaugeGeometry):
-            raise TypeError("geometry must be SU3GaugeGeometry.")
-        if not isinstance(measurements, MeasurementSchedule):
-            raise TypeError("measurements must be MeasurementSchedule.")
         beta_ = positive_finite_float(beta, "beta")
         mass_ = float(mass)
         spacing = positive_finite_float(lattice_spacing, "lattice_spacing")

@@ -15,6 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import CalendarSnapshot, FinancialTimestamp
 from ..market._snapshots import ReferenceDataSnapshot
 from ._base import AbstractContract, AbstractResolvedContract
@@ -45,6 +46,7 @@ class ContractResolutionContext(StrictModule, NonTrainableState):
     context_status: ContractResolutionStatus = eqx.field(static=True)
     context_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference_data: ReferenceDataSnapshot,
@@ -54,8 +56,6 @@ class ContractResolutionContext(StrictModule, NonTrainableState):
         *,
         cashflow_capacity: int,
     ) -> None:
-        if not isinstance(reference_data, ReferenceDataSnapshot):
-            raise TypeError("reference_data must be a ReferenceDataSnapshot.")
         calendar_values = tuple(calendars)
         if not calendar_values or not all(
             isinstance(value, CalendarSnapshot) for value in calendar_values
@@ -64,8 +64,6 @@ class ContractResolutionContext(StrictModule, NonTrainableState):
         calendar_ids = tuple(value.calendar_id for value in calendar_values)
         if len(set(calendar_ids)) != len(calendar_ids):
             raise ValueError("Contract resolution calendar IDs must be unique.")
-        if not isinstance(as_of, FinancialTimestamp):
-            raise TypeError("as_of must be a FinancialTimestamp.")
         if (
             isinstance(cashflow_capacity, bool)
             or not isinstance(cashflow_capacity, int)
@@ -121,6 +119,7 @@ class ResolvedContract(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         definition: AbstractContract,
@@ -132,12 +131,6 @@ class ResolvedContract(AbstractResolvedContract):
         resolution_status: int
         | ContractResolutionStatus = ContractResolutionStatus.SUCCESS,
     ) -> None:
-        if not isinstance(definition, AbstractContract):
-            raise TypeError("definition must be an AbstractContract.")
-        if not isinstance(cashflows, CashflowBatch):
-            raise TypeError("cashflows must be a CashflowBatch.")
-        if not isinstance(settlement, SettlementTerms):
-            raise TypeError("settlement must be SettlementTerms.")
         if exercise is not None and not isinstance(exercise, ExerciseSchedule):
             raise TypeError("exercise must be ExerciseSchedule or None.")
         status = ContractResolutionStatus(int(resolution_status))
@@ -218,16 +211,13 @@ class ContractResolutionPlan(StrictModule, NonTrainableState):
     context: ContractResolutionContext
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         definition: AbstractContract,
         context: ContractResolutionContext,
         /,
     ) -> None:
-        if not isinstance(definition, AbstractContract):
-            raise TypeError("definition must be an AbstractContract.")
-        if not isinstance(context, ContractResolutionContext):
-            raise TypeError("context must be a ContractResolutionContext.")
         self.definition = definition
         self.context = context
         self.plan_id = canonical_fingerprint(

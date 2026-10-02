@@ -18,6 +18,7 @@ from ...linalg import (
     ArraySpace,
     OperatorCapabilities,
 )
+from ...typing import checked
 from ._operators import PreparedStencilOperator
 
 
@@ -243,11 +244,8 @@ class StencilExecutionPlan(StrictModule, NonTrainableState):
     report: StencilExecutionReport
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, operator: PreparedStencilOperator, /) -> None:
-        if not isinstance(operator, PreparedStencilOperator):
-            raise TypeError(
-                "Stencil execution lowering requires PreparedStencilOperator."
-            )
         stencil = operator.stencil_set.stencil
         reports = stencil.row_reports
         interior_rows = np.asarray(
@@ -395,9 +393,8 @@ class PreparedStencilExecutionOperator(AbstractLinearOperator):
     target: ArraySpace
     execution: StencilExecutionPlan
 
+    @checked
     def __init__(self, execution: StencilExecutionPlan, /) -> None:
-        if not isinstance(execution, StencilExecutionPlan):
-            raise TypeError("execution must be a StencilExecutionPlan.")
         reference = execution.reference_operator
         self.source = reference.source
         self.target = reference.target

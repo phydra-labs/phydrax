@@ -40,6 +40,7 @@ from ..discretization.lattice_boltzmann._thermal import (
     ThermalLatticeBoltzmannPlan,
     ThermalLatticeBoltzmannState,
 )
+from ..typing import checked
 
 
 ThermalPopulationStream = Callable[[Array], Array]
@@ -53,6 +54,7 @@ class ThermalLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
     boussinesq: BoussinesqCouplingPlan | None
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -69,8 +71,6 @@ class ThermalLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         source = np.asarray(volumetric_source, dtype=np.float64)
         if not name_:
             raise ValueError("Thermal LBM problem name must be nonempty.")
-        if not isinstance(transport, ThermalLatticeBoltzmannPlan):
-            raise TypeError("transport must be a ThermalLatticeBoltzmannPlan.")
         if any(
             not isinstance(value, ThermalBoundaryCondition) for value in boundary_values
         ):
@@ -118,6 +118,7 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
     program_manifest: KineticProgramManifest
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: ThermalLatticeBoltzmannProblemIR,
@@ -133,12 +134,6 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         dx = float(spacing)
         dt = float(step_size)
         measure = np.asarray(cell_measure, dtype=np.float64)
-        if not isinstance(problem, ThermalLatticeBoltzmannProblemIR):
-            raise TypeError("problem must be a ThermalLatticeBoltzmannProblemIR.")
-        if not isinstance(lattice, LatticeBoltzmannVelocitySet):
-            raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
-        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
-            raise TypeError("precision must be a LatticeBoltzmannPrecisionPolicy.")
         if len(shape) != lattice.dimension or any(value <= 0 for value in shape):
             raise ValueError(
                 "spatial_shape must contain one positive size per dimension."

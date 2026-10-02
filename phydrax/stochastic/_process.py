@@ -22,7 +22,7 @@ import phydrax.ein as ein
 from .._probability import _leading_shape, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
 
@@ -339,6 +339,7 @@ class ProcessRealization(StrictModule):
     realization_id: str = eqx.field(static=True)
     uncertainty_source: Literal["process"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_state: ArrayLike,
@@ -356,8 +357,6 @@ class ProcessRealization(StrictModule):
                 f"got {initial.shape}. Random initial conditions must remain a separate "
                 "input-uncertainty axis."
             )
-        if not isinstance(driver, WienerRealization):
-            raise TypeError("Process realizations require a WienerRealization driver.")
         if driver.levy_area != "brownian":
             raise ValueError(
                 "Coefficient process realizations require Brownian increments."
@@ -597,6 +596,7 @@ class LatentGaussianCoefficientProcess(
             process_id=self.process_id,
         )
 
+    @checked
     def evaluate(
         self,
         realization: ProcessRealization,
@@ -607,8 +607,6 @@ class LatentGaussianCoefficientProcess(
         state_axes: Sequence[str] | None = None,
     ) -> StochasticTrajectory:
         """Evaluate a reusable realization as a canonical stochastic trajectory."""
-        if not isinstance(realization, ProcessRealization):
-            raise TypeError("evaluate requires a ProcessRealization.")
         if realization.process_id != self.process_id:
             raise ValueError("Process realization was created by a different process.")
         if realization.state_shape != self.state_shape:

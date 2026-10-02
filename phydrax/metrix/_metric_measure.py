@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._curvature import ricci_tensor
 from ._density import VolumeDensity
@@ -64,14 +65,13 @@ class WeightedRiemannianMeasure(StrictModule):
     metric: RiemannianMetric
     log_weight_function: Callable[[Array], Array]
 
+    @checked
     def __init__(
         self,
         metric: RiemannianMetric,
         log_weight: Callable[[Array], Array],
         /,
     ) -> None:
-        if not isinstance(metric, RiemannianMetric):
-            raise TypeError("WeightedRiemannianMeasure requires a RiemannianMetric.")
         if not callable(log_weight):
             raise TypeError("log_weight must be callable.")
         self.metric = metric

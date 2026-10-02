@@ -30,6 +30,7 @@ from ...discretization.particle import (
     ParticlePairRelation,
     scatter_elastic_pairs,
 )
+from ...typing import checked
 from ._background import FLRWBackground
 from ._dark_sector_species import DarkSectorSpeciesPlan
 from ._distances import FLRWDistancePlan
@@ -263,6 +264,7 @@ class CosmologicalSIDMPlan(StrictModule):
     policy: SIDMCollisionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particle_mesh: CosmologicalParticleMeshPlan,
@@ -276,14 +278,6 @@ class CosmologicalSIDMPlan(StrictModule):
         execution: ParticleExecutionPolicy | None = None,
         time: FLRWDistancePlan | None = None,
     ) -> None:
-        if not isinstance(particle_mesh, CosmologicalParticleMeshPlan):
-            raise TypeError("particle_mesh must be CosmologicalParticleMeshPlan.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
-        if not isinstance(smoothing, CoupledSummationSmoothingLengthPlan):
-            raise TypeError("smoothing must be CoupledSummationSmoothingLengthPlan.")
-        if not isinstance(kernel, AbstractSPHSmoothingKernel):
-            raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
         if not isinstance(
             cross_section, (SIDMCrossSectionPlan, TwoBodyDifferentialKernelPlan)
         ):
@@ -302,8 +296,6 @@ class CosmologicalSIDMPlan(StrictModule):
             raise ValueError(
                 "Cosmological elastic SIDM requires one microscopic incoming species."
             )
-        if not isinstance(policy, SIDMCollisionPolicy):
-            raise TypeError("policy must be SIDMCollisionPolicy.")
         particles = particle_mesh.kinematics.particles
         if neighborhood.particle_discretization_id != particles.prepared_id:
             raise ValueError("SIDM neighborhood and PM must share one particle support.")
@@ -370,6 +362,7 @@ class CosmologicalSIDMPlan(StrictModule):
             background, start_scale_factor, end_scale_factor
         )
 
+    @checked
     def collide(
         self,
         state: CosmologicalParticleState,
@@ -380,8 +373,6 @@ class CosmologicalSIDMPlan(StrictModule):
     ) -> SIDMCollisionResult:
         """Apply one atomic collision stage at the state's fixed scale factor."""
 
-        if not isinstance(state, CosmologicalParticleState):
-            raise TypeError("state must be CosmologicalParticleState.")
         particles = self.particle_mesh.kinematics.particles
         dtype = state.positions.dtype
         active = particles.active_mask
@@ -708,6 +699,7 @@ class CosmologicalSIDMPlan(StrictModule):
             candidate_state, accepted_state, pairs, diagnostics, successful
         )
 
+    @checked
     def rollout(
         self,
         background: FLRWBackground,
@@ -718,10 +710,6 @@ class CosmologicalSIDMPlan(StrictModule):
     ) -> CosmologicalSIDMResult:
         """Apply collision/PM/collision Strang splitting over the PM schedule."""
 
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
-        if not isinstance(state, CosmologicalParticleState):
-            raise TypeError("state must be CosmologicalParticleState.")
         if background.scale.scale_id != self.particle_mesh.kinematics.scale.scale_id:
             raise ValueError("Background and cosmological SIDM scales disagree.")
         initial_scale = self.particle_mesh.scale_factors[0].astype(

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._production import ROMCostEstimate, ROMResourcePolicy
 
 
@@ -93,6 +94,7 @@ class SelectedEvaluationPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     cost: ROMCostEstimate
 
+    @checked
     def __init__(
         self,
         entities: SelectedEntitySet,
@@ -102,10 +104,6 @@ class SelectedEvaluationPlan(StrictModule, NonTrainableState):
         provider_id: str,
         resource_policy: ROMResourcePolicy,
     ) -> None:
-        if not isinstance(entities, SelectedEntitySet):
-            raise TypeError("entities must be a SelectedEntitySet.")
-        if not isinstance(resource_policy, ROMResourcePolicy):
-            raise TypeError("resource_policy must be a ROMResourcePolicy.")
         output = int(residual_output_size)
         provider = str(provider_id)
         workspace = 8 * (

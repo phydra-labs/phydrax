@@ -1,5 +1,11 @@
 # Local-operator variational Monte Carlo
 
+This recipe optimizes a variational amplitude. For sparse signed/complex
+ground-state **coefficient projection**, use the separate
+[projector Monte Carlo recipe](projector_monte_carlo.md); it does not migrate
+VMC/TDVP or quantum-jump behavior. VMC connections retain `H[current, connected]`
+row local-energy semantics, whereas projector columns are `H[target, source]`.
+
 ## Connected discrete example
 
 This recipe minimizes the energy of a two-spin transverse-field Ising model,

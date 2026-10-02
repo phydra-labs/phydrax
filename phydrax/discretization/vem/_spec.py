@@ -16,6 +16,7 @@ from ..._polynomial._orthogonal import standard_vandermonde
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._form_type import FormType, FormValueSpec
+from ...typing import checked
 
 
 def _family_value_spec(family: str, /) -> FormValueSpec:
@@ -44,6 +45,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
     enhanced: bool = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         family: str,
@@ -56,8 +58,6 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         family_ = str(family)
         degree_ = int(degree)
         expected = _family_value_spec(family_)
-        if not isinstance(value_spec, FormValueSpec):
-            raise TypeError("value_spec must be FormValueSpec.")
         if value_spec.value_spec_id != expected.value_spec_id:
             raise ValueError(
                 f"{family_} requires the qualified planar {expected.proxy} form "
@@ -189,6 +189,7 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
     component_shape: tuple[int, ...] = eqx.field(static=True)
     field_spec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -201,8 +202,6 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
         shape = tuple(component_shape)
         if not name_:
             raise ValueError("Virtual-element field name must be non-empty.")
-        if not isinstance(element, VirtualElementSpec):
-            raise TypeError("element must be VirtualElementSpec.")
         if element.value_shape and shape:
             raise ValueError("Declare vector values on the element or field, not both.")
         if any(value <= 0 for value in shape):

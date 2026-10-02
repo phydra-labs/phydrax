@@ -24,6 +24,7 @@ from ....dynamics import (
     DAEPort,
     DAEVariableBlock,
 )
+from ....typing import checked
 
 
 PressureWaveform = Callable[[Array], Array]
@@ -133,6 +134,7 @@ class PressureFlowComponent(StrictModule):
     storage_variable_names: tuple[str, ...] = eqx.field(static=True)
     component_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dae_component: DAEComponent,
@@ -144,8 +146,6 @@ class PressureFlowComponent(StrictModule):
         storage_variable_names: Sequence[str] = (),
         initial_values: Sequence[tuple[str, ArrayLike]] = (),
     ) -> None:
-        if not isinstance(dae_component, DAEComponent):
-            raise TypeError("dae_component must be a DAEComponent.")
         kind = str(component_kind).strip()
         if not kind:
             raise ValueError("component_kind must be non-empty.")

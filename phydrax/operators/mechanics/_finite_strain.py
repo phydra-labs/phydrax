@@ -17,7 +17,7 @@ import phydrax.ein as ein
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ...typing import parse
+from ...typing import checked, parse
 
 
 VolumetricConstraintKind: TypeAlias = Literal["jacobian", "logarithmic"]
@@ -637,9 +637,8 @@ class NeoHookeanLaw(HyperelasticLaw, NonTrainableState):
 
     parameters: NeoHookeanParameters
 
+    @checked
     def __init__(self, parameters: NeoHookeanParameters, /) -> None:
-        if not isinstance(parameters, NeoHookeanParameters):
-            raise TypeError("parameters must be NeoHookeanParameters.")
         self.parameters = parameters
 
     def evaluate(self, deformation_gradient: ArrayLike, /) -> HyperelasticResponse:

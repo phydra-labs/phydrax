@@ -14,6 +14,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..typing import checked
 from ._operators import AbstractLinearOperator
 from ._pairings import AbstractPairing
 from ._prepared import PreparedLinearSolve
@@ -34,6 +35,7 @@ class OperatorPairing(AbstractPairing):
     inverse_action: Callable[[PyTree[Any]], PyTree[Array]] | None
     prepared_inverse: PreparedLinearSolve | None
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -43,8 +45,6 @@ class OperatorPairing(AbstractPairing):
         prepared_inverse: PreparedLinearSolve | None = None,
         pairing_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
             raise ValueError("A Riesz operator must be unbatched.")
         if not operator.source.compatible(operator.target):

@@ -24,6 +24,7 @@ from ...atomistic._many_body import ManyBodyPotential
 from ...atomistic._potential_program import PreparedAtomisticPotentialProgram
 from ...discretization import AbstractPreparedParticleNeighborhood, PeriodicCell
 from ...sparse import EdgeRelation
+from ...typing import checked
 from ...units import derived_unit, ENERGY, LENGTH, UnitDefinition
 
 
@@ -403,6 +404,7 @@ class SecondOrderForceConstants(StrictModule, NonTrainableState):
     convention_id: str = eqx.field(static=True)
     ifc_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -456,8 +458,6 @@ class SecondOrderForceConstants(StrictModule, NonTrainableState):
             raise ValueError("IFC2 arrays must be finite.")
         if not isinstance(unit, UnitDefinition) or unit.dimension != ENERGY / LENGTH**2:
             raise ValueError("IFC2 unit must have energy/length² dimension.")
-        if not isinstance(constraints, IFCConstraintEvidence):
-            raise TypeError("constraints must be IFCConstraintEvidence.")
         reverse = _ifc2_reverse_indices(
             relation, translation.astype(np.int64, copy=False)
         )
@@ -824,6 +824,7 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
     maximum_force_evaluations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         potential: PreparedAtomisticPotentialProgram,
@@ -840,10 +841,6 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
         refinement_tolerance: float = 1.0e-5,
         maximum_force_evaluations: int = 100_000,
     ) -> None:
-        if not isinstance(potential, PreparedAtomisticPotentialProgram):
-            raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be AbstractPreparedParticleNeighborhood.")
         if not all(isinstance(term, ManyBodyPotential) for term in potential.plan.terms):
             raise ValueError(
                 "Native crystalline IFC2 is bounded to EAM, SW, and Tersoff terms."
@@ -860,8 +857,6 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
             raise ValueError(
                 "equilibrium_positions must be finite Cartesian system positions."
             )
-        if not isinstance(image_map, PrimitiveSupercellImageMap):
-            raise TypeError("image_map must be PrimitiveSupercellImageMap.")
         if not np.array_equal(
             np.asarray(image_map.supercell_particle_ids),
             np.asarray(potential.system.plan.particle_ids),
@@ -932,9 +927,8 @@ class PreparedFiniteDisplacementIFC2(StrictModule, NonTrainableState):
     plan: FiniteDisplacementIFC2Plan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FiniteDisplacementIFC2Plan, /) -> None:
-        if not isinstance(plan, FiniteDisplacementIFC2Plan):
-            raise TypeError("plan must be FiniteDisplacementIFC2Plan.")
         self.plan = plan
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-finite-displacement-ifc2", "plan": plan.plan_id}

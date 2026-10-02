@@ -16,6 +16,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._mirror_geometry import ParameterMirrorGeometry
 
 
@@ -50,9 +51,8 @@ class MirrorDescentState(StrictModule):
     step: Array
     metrics: MirrorStepMetrics
 
+    @checked
     def __init__(self, step: Array, metrics: MirrorStepMetrics) -> None:
-        if not isinstance(metrics, MirrorStepMetrics):
-            raise TypeError("metrics must be MirrorStepMetrics.")
         self.step = jnp.asarray(step, dtype=jnp.int32)
         self.metrics = metrics
 
@@ -89,6 +89,7 @@ class MirrorDescent(AbstractMirrorOptimizer):
     learning_rate: MirrorLearningRate = eqx.field(static=True)
     optimizer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameter_geometry: ParameterMirrorGeometry,
@@ -96,8 +97,6 @@ class MirrorDescent(AbstractMirrorOptimizer):
         *,
         learning_rate: MirrorLearningRate = 1e-2,
     ) -> None:
-        if not isinstance(parameter_geometry, ParameterMirrorGeometry):
-            raise TypeError("parameter_geometry must be a ParameterMirrorGeometry.")
         if isinstance(learning_rate, (int, float)):
             scalar = float(learning_rate)
             if not isfinite(scalar) or scalar <= 0.0:
@@ -140,6 +139,7 @@ class MirrorDescent(AbstractMirrorOptimizer):
             MirrorStepMetrics(zero, zero, zero, zero, zero),
         )
 
+    @checked
     def update(
         self,
         gradients: PyTree[Any],
@@ -147,8 +147,6 @@ class MirrorDescent(AbstractMirrorOptimizer):
         parameters: PyTree[Any],
         /,
     ) -> tuple[PyTree[Array], MirrorDescentState]:
-        if not isinstance(state, MirrorDescentState):
-            raise TypeError("MirrorDescent requires MirrorDescentState.")
         self.parameter_geometry.validate(parameters)
         coordinate_gradient_norm = self.parameter_geometry.coordinate_gradient_norm(
             gradients
@@ -201,9 +199,8 @@ class MirrorDescent(AbstractMirrorOptimizer):
         )
         return destination, MirrorDescentState(state.step + 1, metrics)
 
+    @checked
     def step_metrics(self, state: MirrorDescentState, /) -> MirrorStepMetrics:
-        if not isinstance(state, MirrorDescentState):
-            raise TypeError("MirrorDescent requires MirrorDescentState.")
         return state.metrics
 
 

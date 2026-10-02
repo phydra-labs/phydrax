@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 
 
 if TYPE_CHECKING:
@@ -341,16 +341,13 @@ class DFTObserverPlan(AbstractMaxwellObserverPlan):
     acquisition: MaxwellSpectralAcquisition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         probe: FieldProbePlan,
         acquisition: MaxwellSpectralAcquisition,
         /,
     ) -> None:
-        if not isinstance(probe, FieldProbePlan):
-            raise TypeError("probe must be a FieldProbePlan.")
-        if not isinstance(acquisition, MaxwellSpectralAcquisition):
-            raise TypeError("acquisition must be a MaxwellSpectralAcquisition.")
         self.probe = probe
         self.acquisition = acquisition
         self.plan_id = canonical_fingerprint(

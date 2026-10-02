@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._basis import axes_bitmap
+from ...typing import checked
 from .._chart import CoordinateChart
 from .._forms import DifferentialForm
 from .._metric import (
@@ -103,16 +104,13 @@ class CliffordMetricBridge(StrictModule, NonTrainableState):
     metric: AbstractSemiRiemannianMetric
     bridge_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: CliffordAlgebraSpec,
         chart: CoordinateChart,
         /,
     ) -> None:
-        if not isinstance(algebra, CliffordAlgebraSpec):
-            raise TypeError("algebra must be a CliffordAlgebraSpec.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if chart.dimension != algebra.dimension:
             raise ValueError("Clifford algebra and form chart dimensions do not match.")
         if not algebra.nondegenerate:
@@ -147,11 +145,10 @@ class CliffordMetricBridge(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _grade_map(
         self, form: DifferentialForm, /
     ) -> tuple[tuple[int, ...], tuple[int, ...]]:
-        if not isinstance(form, DifferentialForm):
-            raise TypeError("Expected a DifferentialForm.")
         if not form.chart.compatible_with(self.chart):
             raise ValueError("Differential form uses an incompatible coordinate chart.")
         if form.form_type.twist != "untwisted" or form.form_type.fiber_shape:

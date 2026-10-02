@@ -32,6 +32,7 @@ from ..discretization.pic import (
     PreparedPICParticleCochainTransfer,
     RelativisticPushPlan,
 )
+from ..typing import checked
 from ._cochain_electrostatic import CochainElectrostaticPlan, CochainElectrostaticResult
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
@@ -88,6 +89,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: CochainElectrostaticPlan,
@@ -98,8 +100,6 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         background_charge: ArrayLike | None = None,
         maximum_displacement_fraction: float = 0.5,
     ) -> None:
-        if not isinstance(field, CochainElectrostaticPlan):
-            raise TypeError("field must be CochainElectrostaticPlan.")
         values = tuple(transfers)
         if not values or any(
             not isinstance(value, PreparedPICParticleCochainTransfer) for value in values
@@ -331,14 +331,13 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             )
         return total
 
+    @checked
     def step_detailed(
         self,
         state: ElectrostaticPICState,
         step_size: ArrayLike,
         /,
     ) -> ElectrostaticPICStepResult:
-        if not isinstance(state, ElectrostaticPICState):
-            raise TypeError("state must be ElectrostaticPICState.")
         dt = jnp.asarray(step_size, dtype=state.time.dtype).reshape(())
         current_routes = tuple(
             transfer.build(value.position)
@@ -498,9 +497,8 @@ class ElectrostaticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
     plan: ElectrostaticPICPlan
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ElectrostaticPICPlan, /) -> None:
-        if not isinstance(plan, ElectrostaticPICPlan):
-            raise TypeError("plan must be ElectrostaticPICPlan.")
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "electrostatic-pic-fixed-step", "plan": plan.plan_id}

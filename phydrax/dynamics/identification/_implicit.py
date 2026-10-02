@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from .._layout import InputLayout, StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary, FeatureEvaluation, PolynomialFeatureLibrary
@@ -59,6 +60,7 @@ class ImplicitFeatureLibrary(AbstractImplicitFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: AbstractFeatureLibrary,
@@ -66,10 +68,6 @@ class ImplicitFeatureLibrary(AbstractImplicitFeatureLibrary):
         *,
         state_layout: StateLayout,
     ) -> None:
-        if not isinstance(base, AbstractFeatureLibrary):
-            raise TypeError("base must be an AbstractFeatureLibrary.")
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if base.state_layout.size != 2 * state_layout.size:
             raise ValueError(
                 "The base library state layout must contain the flattened state and derivative."
@@ -135,6 +133,7 @@ class PolynomialImplicitFeatureLibrary(AbstractImplicitFeatureLibrary):
     library_id: str = eqx.field(static=True)
     degree: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -146,8 +145,6 @@ class PolynomialImplicitFeatureLibrary(AbstractImplicitFeatureLibrary):
         interaction_only: bool = False,
         max_features: int = 4096,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         augmented_names = state_layout.component_names + tuple(
             f"d({name})/dcoordinate" for name in state_layout.component_names
         )
@@ -187,16 +184,13 @@ class ImplicitSINDyProblem(StrictModule):
     library: AbstractImplicitFeatureLibrary
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
         data: TrajectoryData,
         library: AbstractImplicitFeatureLibrary,
     ) -> None:
-        if not isinstance(data, TrajectoryData):
-            raise TypeError("data must be TrajectoryData.")
-        if not isinstance(library, AbstractImplicitFeatureLibrary):
-            raise TypeError("library must be an AbstractImplicitFeatureLibrary.")
         if data.derivatives is None or data.derivative_valid is None:
             raise ValueError("Implicit SINDy requires attached derivatives and validity.")
         if library.state_layout.layout_id != data.state_layout.layout_id:

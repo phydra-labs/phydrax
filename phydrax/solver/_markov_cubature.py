@@ -28,7 +28,7 @@ from ..stochastic._cubature_path import (
     straight_wiener_cubature_path,
     WienerCubaturePathData,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._differential import DifferentialProblem
 
 
@@ -130,6 +130,7 @@ class MarkovCubaturePlan(StrictModule):
     weak_order: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         temporal_mesh: TemporalMesh,
@@ -144,10 +145,6 @@ class MarkovCubaturePlan(StrictModule):
         collect_history: bool = True,
         throw: bool = True,
     ) -> None:
-        if not isinstance(temporal_mesh, TemporalMesh):
-            raise TypeError("temporal_mesh must be a TemporalMesh.")
-        if not isinstance(increment_rule, GaussianCubatureRule):
-            raise TypeError("increment_rule must be a GaussianCubatureRule.")
         selected_recombination = (
             PolynomialRecombination() if recombination is None else recombination
         )

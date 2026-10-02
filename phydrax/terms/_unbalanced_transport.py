@@ -25,6 +25,7 @@ from ..transport import (
     PreparedUnbalancedSinkhornReference,
     unbalanced_sinkhorn_divergence_against,
 )
+from ..typing import checked
 
 
 SpatialMeasure = (
@@ -42,6 +43,7 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
     weight: Array
     label: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         measure_builder: Callable[[Mapping[str, DomainFunction]], SpatialMeasure],
@@ -55,8 +57,6 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
     ) -> None:
         if not callable(measure_builder):
             raise TypeError("measure_builder must be callable.")
-        if not isinstance(reference, PreparedUnbalancedSinkhornReference):
-            raise TypeError("reference must be a PreparedUnbalancedSinkhornReference.")
         if encoder is not None and not callable(encoder):
             raise TypeError("encoder must be callable or None.")
         weight_ = jnp.asarray(weight, dtype=jnp.float64)

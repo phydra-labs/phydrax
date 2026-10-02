@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._generic import _evaluate_coordinate_map, FiniteElementDiscretization
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec
@@ -66,14 +67,13 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
     geometry_layout_id: str = eqx.field(static=True)
     cell_map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
         block_index: int | None,
         /,
     ) -> None:
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
         if block_index is None:
             index = None
             block = discretization.mesh.blocks[0]

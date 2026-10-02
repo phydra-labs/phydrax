@@ -20,7 +20,7 @@ from .._dtype_names import precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._spaces import AbstractVectorSpace, ArraySpace, PyTreeSpace
 
@@ -323,9 +323,8 @@ class ComplexCartesianCoordinates(AbstractRealCoordinateMap, NonTrainableState):
     source_space: ArraySpace
     pair_axis: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, source_space: ArraySpace, /, *, pair_axis: int = 0) -> None:
-        if not isinstance(source_space, ArraySpace):
-            raise TypeError("source_space must be an ArraySpace.")
         if not jnp.issubdtype(source_space.dtype, jnp.complexfloating):
             raise TypeError("Complex Cartesian coordinates require a complex ArraySpace.")
         axis = int(pair_axis)
@@ -449,6 +448,7 @@ class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableStat
     fixed_coordinate_count: int = eqx.field(static=True)
     conjugate_pair_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_space: ArraySpace,
@@ -458,8 +458,6 @@ class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableStat
         phases: ArrayLike | None = None,
         reality_tolerance: float = 1e-10,
     ) -> None:
-        if not isinstance(source_space, ArraySpace):
-            raise TypeError("source_space must be an ArraySpace.")
         if not jnp.issubdtype(source_space.dtype, jnp.complexfloating):
             raise TypeError(
                 "Hermitian involution coordinates require a complex ArraySpace."

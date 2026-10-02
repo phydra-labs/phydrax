@@ -34,6 +34,7 @@ from ...artifacts import (
     DerivativeEvidence,
     ScientificArtifactEnvelope,
 )
+from ...typing import checked
 
 
 FullDarkSectorDerivativeTarget: TypeAlias = Literal[
@@ -163,11 +164,10 @@ class FullDarkSectorDifferentiationPolicy(StrictModule, NonTrainableState):
         if target not in ("fixed-profile-parameters", "full-path-probability"):
             raise ValueError("Unknown full dark-sector derivative target.")
 
+    @checked
     def constant_artifact_evidence(
         self, artifact: ScientificArtifactEnvelope, /
     ) -> DerivativeEvidence:
-        if not isinstance(artifact, ScientificArtifactEnvelope):
-            raise TypeError("artifact must be ScientificArtifactEnvelope.")
         if artifact.artifact_id not in self.external_artifact_ids:
             raise ValueError("External artifact is not bound by this fixed profile.")
         return DerivativeEvidence(
@@ -281,6 +281,7 @@ class FixedProfileSmoothSensitivityPlan(StrictModule, NonTrainableState):
     relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: FullDarkSectorDifferentiationPolicy,
@@ -292,8 +293,6 @@ class FixedProfileSmoothSensitivityPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-7,
         relative_tolerance: float = 1.0e-4,
     ) -> None:
-        if not isinstance(policy, FullDarkSectorDifferentiationPolicy):
-            raise TypeError("policy must be FullDarkSectorDifferentiationPolicy.")
         policy.require_target("fixed-profile-parameters")
         signature = jax.lax.stop_gradient(
             jnp.asarray(expected_branch_signature, dtype=jnp.int32).reshape((-1,))
@@ -327,9 +326,8 @@ class FixedProfileSmoothSensitivityPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _validate(self, evaluation: FixedProfileEvaluation, name: str, /) -> None:
-        if not isinstance(evaluation, FixedProfileEvaluation):
-            raise TypeError(f"{name} must be FixedProfileEvaluation.")
         if (
             evaluation.values.shape != (self.output_count,)
             or evaluation.branch_signature.shape != self.expected_branch_signature.shape
@@ -487,6 +485,7 @@ class FullPathSampleBatch(StrictModule):
     product_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
@@ -497,8 +496,6 @@ class FullPathSampleBatch(StrictModule):
         successful: ArrayLike,
         product_id: str,
     ) -> None:
-        if not isinstance(law, FullPathProbabilityLaw):
-            raise TypeError("law must be FullPathProbabilityLaw.")
         value = jnp.asarray(values)
         if (
             value.ndim != 2
@@ -582,6 +579,7 @@ class FullPathScoreCRNPlan(StrictModule, NonTrainableState):
     product_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: FullDarkSectorDifferentiationPolicy,
@@ -596,8 +594,6 @@ class FullPathScoreCRNPlan(StrictModule, NonTrainableState):
         bias_absolute_tolerance: float = 0.0,
         bias_standard_error_multiplier: float = 2.0,
     ) -> None:
-        if not isinstance(policy, FullDarkSectorDifferentiationPolicy):
-            raise TypeError("policy must be FullDarkSectorDifferentiationPolicy.")
         policy.require_target("full-path-probability")
         parameters = _positive_integer(parameter_count, "parameter_count")
         if parameters != len(policy.differentiable_parameters):
@@ -651,9 +647,8 @@ class FullPathScoreCRNPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _validate(self, batch: FullPathSampleBatch, name: str, /) -> None:
-        if not isinstance(batch, FullPathSampleBatch):
-            raise TypeError(f"{name} must be FullPathSampleBatch.")
         if (
             batch.values.shape != (self.draw_count, self.output_count)
             or batch.law.parameter_count != self.parameter_count

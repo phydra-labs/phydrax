@@ -18,6 +18,7 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._data import ConformalDataPlan
 
 
@@ -32,6 +33,7 @@ class CrossingSectorPlan(StrictModule):
     maximum_matrix_entries: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         data: ConformalDataPlan,
@@ -43,8 +45,6 @@ class CrossingSectorPlan(StrictModule):
         tolerance: float = 1e-10,
         maximum_matrix_entries: int = 1_000_000,
     ) -> None:
-        if not isinstance(data, ConformalDataPlan):
-            raise TypeError("data must be ConformalDataPlan.")
         labels = tuple(str(value) for value in component_labels)
         gauge = str(basis_gauge_id)
         tolerance_value = float(tolerance)

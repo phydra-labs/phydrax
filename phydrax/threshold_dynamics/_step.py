@@ -34,7 +34,7 @@ from .._validation import finite_real_scalar, positive_integer
 from ..combinatorial import CapacitatedAuctionPlan
 from ..interfacial_transport import InterfaceMobilityMatrix, InterfaceTensionMatrix
 from ..sparse import KeyGroupPlan
-from ..typing import AnyShape, as_host_array, Float64, HostInteger, parse, Scalar
+from ..typing import AnyShape, as_host_array, checked, Float64, HostInteger, parse, Scalar
 from ._contracts import (
     _energy,
     _energy_tolerance,
@@ -180,6 +180,7 @@ class ThresholdDynamicsPlan(StrictModule):
     plan_id: str = eqx.field(static=True)
     coefficient_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tension: InterfaceTensionMatrix,
@@ -192,10 +193,6 @@ class ThresholdDynamicsPlan(StrictModule):
         resource_policy: ThresholdDynamicsResourcePolicy | None = None,
         minimum_resolution_ratio: float = 1.0,
     ) -> None:
-        if not isinstance(tension, InterfaceTensionMatrix):
-            raise TypeError("tension must be an InterfaceTensionMatrix.")
-        if not isinstance(mobility, InterfaceMobilityMatrix):
-            raise TypeError("mobility must be an InterfaceMobilityMatrix.")
         if mobility.label_ids != tension.label_ids:
             raise ValueError("tension and mobility must declare the same label_ids.")
         step = finite_real_scalar(time_step, "time_step")
@@ -306,6 +303,7 @@ class PreparedThresholdDynamics(StrictModule):
     prepared_id: str = eqx.field(static=True)
     coefficient_bytes: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ThresholdDynamicsPlan,
@@ -314,8 +312,6 @@ class PreparedThresholdDynamics(StrictModule):
         *,
         candidate_capacity: int | None = None,
     ) -> None:
-        if not isinstance(plan, ThresholdDynamicsPlan):
-            raise TypeError("plan must be a ThresholdDynamicsPlan.")
         labels = plan.label_count
         match route:
             case AbstractThresholdHeatKernel():
@@ -515,10 +511,9 @@ class PreparedThresholdDynamics(StrictModule):
             raise ValueError("initial_prices must have one value per declared label.")
         return prices
 
+    @checked
     def _validate_state(self, state: LabelFieldState, /) -> LabelFieldState:
         """Refuse a foreign or invalid interpretation before numerical action."""
-        if not isinstance(state, LabelFieldState):
-            raise TypeError("state must be a LabelFieldState.")
         if state.label_ids != self.plan.label_ids:
             raise ValueError("state label_ids must exactly match the prepared label order.")
         if state.route_id != self.route.route_id:

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._tensor_bspline import (
     _validated_multi_index,
     MultiIndex,
@@ -135,9 +136,8 @@ class RationalSplineJet(StrictModule):
     jets: Array
     denominator_jets: Array
 
+    @checked
     def __init__(self, plan: TensorBSplineJetPlan, weights: ArrayLike, /) -> None:
-        if not isinstance(plan, TensorBSplineJetPlan):
-            raise TypeError("RationalSplineJet requires a TensorBSplineJetPlan.")
         weights_ = jnp.asarray(weights)
         if weights_.shape != plan.source_shape:
             raise ValueError(

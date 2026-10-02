@@ -28,7 +28,7 @@ from ...discretization.spectral._dealias import (
     PreparedDealiasingPlan,
 )
 from ...discretization.spectral._space import TensorSpectralDiscretization
-from ...typing import parse
+from ...typing import checked, parse
 from ._background import FLRWBackground
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
@@ -228,6 +228,7 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
     scale: CosmologyScaleContract
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boson_mass: float,
@@ -261,8 +262,6 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
             raise TypeError("step_policy must be WaveDarkMatterStepPolicy or None.")
         if not isinstance(nonlinear, AbstractDealiasingPlan):
             raise TypeError("dealiasing must be an AbstractDealiasingPlan or None.")
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be a CosmologyScaleContract.")
         if scale.length_coordinate_kind != "comoving":
             raise ValueError(
                 "Wave dark matter requires a comoving length scale contract."
@@ -288,6 +287,7 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         discretization: TensorSpectralDiscretization,
@@ -295,10 +295,6 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
         /,
     ) -> PreparedPeriodicWaveDarkMatter:
         """Bind the plan to one local tensor Fourier grid and flat FLRW model."""
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be TensorSpectralDiscretization.")
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         if background.scale.scale_id != self.scale.scale_id:
             raise ValueError("Background and wave-dark-matter scale contracts disagree.")
         if float(np.asarray(background.curvature_density)) != 0.0:
@@ -349,6 +345,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
     potential_convention: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: WaveDarkMatterPlan,
@@ -357,14 +354,6 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         background: FLRWBackground,
         /,
     ) -> None:
-        if not isinstance(plan, WaveDarkMatterPlan):
-            raise TypeError("plan must be WaveDarkMatterPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be TensorSpectralDiscretization.")
-        if not isinstance(dealiasing, PreparedDealiasingPlan):
-            raise TypeError("dealiasing must be PreparedDealiasingPlan.")
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
         rank = len(discretization.axes)
         if rank not in (1, 2, 3) or any(
             axis.family != "fourier" or not axis.periodic for axis in discretization.axes
@@ -452,6 +441,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
             )
         )
 
+    @checked
     def _validate_state(
         self,
         state: WaveDarkMatterState,
@@ -459,8 +449,6 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         *,
         require_schedule_start: bool,
     ) -> WaveDarkMatterState:
-        if not isinstance(state, WaveDarkMatterState):
-            raise TypeError("state must be WaveDarkMatterState.")
         psi = jnp.asarray(state.psi)
         if psi.shape != self.discretization.physical_shape:
             raise ValueError(

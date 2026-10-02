@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
 from ...domain import LocalFieldFamily, SubdomainCover
+from ...typing import checked
 from ._schwarz import SchwarzTraceState, TraceExchangeState
 
 
@@ -26,6 +27,7 @@ class FunctionalDecompositionShardingPlan(StrictModule, NonTrainableState):
     devices: tuple[jax.Device, ...] = eqx.field(static=True)
     assignments: tuple[tuple[str, int], ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cover: SubdomainCover,
@@ -34,8 +36,6 @@ class FunctionalDecompositionShardingPlan(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         assignments: Mapping[str, int] | None = None,
     ) -> None:
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be a SubdomainCover.")
         devices_ = tuple(jax.devices() if devices is None else devices)
         if not devices_:
             raise ValueError("At least one JAX device is required.")

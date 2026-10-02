@@ -17,6 +17,7 @@ from ..._thermodynamics import (
     ThermodynamicForceRepresentation,
 )
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._interfacial import (
     isotropic_divergence,
     isotropic_gradient,
@@ -74,6 +75,7 @@ class PreparedBinaryKineticThermodynamics(StrictModule, NonTrainableState):
     force_representation: ThermodynamicForceRepresentation = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         closure: AbstractKineticThermodynamicClosure,
@@ -81,10 +83,6 @@ class PreparedBinaryKineticThermodynamics(StrictModule, NonTrainableState):
         force_representation: ThermodynamicForceRepresentation,
         /,
     ) -> None:
-        if not isinstance(closure, AbstractKineticThermodynamicClosure):
-            raise TypeError("closure must implement AbstractKineticThermodynamicClosure.")
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be LatticeBoltzmannVelocitySet.")
         if not isinstance(force_representation, ThermodynamicForceRepresentation):
             raise TypeError(
                 "force_representation must be ThermodynamicForceRepresentation."

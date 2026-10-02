@@ -11,6 +11,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class AlgebraResourceBudget(StrictModule, NonTrainableState):
@@ -102,6 +103,7 @@ class AlgebraResourceEvidence(StrictModule, NonTrainableState):
     budget_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -113,8 +115,6 @@ class AlgebraResourceEvidence(StrictModule, NonTrainableState):
         dense_kernel_bytes: int,
         budget: AlgebraResourceBudget,
     ) -> None:
-        if not isinstance(budget, AlgebraResourceBudget):
-            raise TypeError("budget must be AlgebraResourceBudget.")
         values = tuple(
             index(value)
             for value in (

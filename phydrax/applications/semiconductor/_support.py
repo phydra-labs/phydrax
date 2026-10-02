@@ -30,6 +30,7 @@ from ...meshing import (
     MeshingScope,
     MeshPatch,
 )
+from ...typing import checked
 from ...units import derived_unit, METER, ONE, UnitDefinition
 from ._quantities import _si, SQUARE_METER
 
@@ -326,6 +327,7 @@ class TransportSupport(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_meshing(
         cls,
         result: CellMeshingResult,
@@ -334,8 +336,6 @@ class TransportSupport(StrictModule):
         transverse_measure: ArrayLike = 1.0,
         transverse_unit: UnitDefinition | None = None,
     ) -> Self:
-        if not isinstance(result, CellMeshingResult):
-            raise TypeError("from_meshing requires an audited native CellMeshingResult.")
         mesh = result.mesh
         dimension = mesh.topological_dimension
         if dimension not in (1, 2, 3) or mesh.ambient_dimension != dimension:
@@ -458,6 +458,7 @@ class TransportSupport(StrictModule):
         mask = np.asarray(self.boundary_mask) & (positions == coordinate)
         return MeshPatch(name, self.node_scope(np.asarray(self.node_ids)[mask]))
 
+    @checked
     def resolve_scope(self, scope: MeshingScope, /) -> np.ndarray:
         """Host-only exact binding resolution to a nodal mask.
 
@@ -465,8 +466,6 @@ class TransportSupport(StrictModule):
         assignments at an interface therefore require an explicit nodal zone;
         no arbitrary last-writer material ownership is inferred.
         """
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("Selections must use native MeshingScope bindings.")
         if (
             scope.source_id != self.source_id
             or scope.source_revision != self.source_revision

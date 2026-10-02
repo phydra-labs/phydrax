@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import GatherStencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._gr_medium import (
     _runtime_sampling_stencil,
     _sample_medium_fields,
@@ -40,6 +41,7 @@ class FixedGRWorldtubeSamplingPlan(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stencil: GatherStencil,
@@ -52,8 +54,6 @@ class FixedGRWorldtubeSamplingPlan(StrictModule, NonTrainableState):
     ) -> None:
         shape = tuple(event_shape)
         smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
-        if not isinstance(stencil, GatherStencil):
-            raise TypeError("stencil must be a GatherStencil.")
         if stencil.support.shape != shape or smooth.shape != shape:
             raise ValueError("Worldtube stencil and event shapes must match.")
         identifier = str(source_id).strip()
@@ -239,9 +239,8 @@ class MonotoneSlowLightWorldtube(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def sample(self, plan: FixedGRWorldtubeSamplingPlan, /) -> GRMediumSample:
-        if not isinstance(plan, FixedGRWorldtubeSamplingPlan):
-            raise TypeError("plan must be a FixedGRWorldtubeSamplingPlan.")
         if plan.source_id != self.worldtube_id:
             raise ValueError("Sampling plan was prepared for a different worldtube.")
         return _sample_medium_fields(

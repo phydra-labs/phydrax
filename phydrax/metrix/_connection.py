@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._jet import metric_jet, MetricJet
 from ._map import DifferentiableMap
@@ -68,6 +69,7 @@ class CallableAffineConnection(AbstractAffineConnection):
     coefficient_function: Callable[[Array], Array]
     chart: CoordinateChart
 
+    @checked
     def __init__(
         self,
         coefficients: Callable[[Array], Array],
@@ -77,8 +79,6 @@ class CallableAffineConnection(AbstractAffineConnection):
     ) -> None:
         if not callable(coefficients):
             raise TypeError("Connection coefficients must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Connection chart must be a CoordinateChart.")
         self.coefficient_function = coefficients
         self.chart = chart
 
@@ -102,9 +102,8 @@ class LeviCivitaConnection(AbstractAffineConnection):
     metric: AbstractSemiRiemannianMetric
     chart: CoordinateChart
 
+    @checked
     def __init__(self, metric: AbstractSemiRiemannianMetric, /) -> None:
-        if not isinstance(metric, AbstractSemiRiemannianMetric):
-            raise TypeError("LeviCivitaConnection requires a nondegenerate metric.")
         self.metric = metric
         self.chart = metric.chart
 

@@ -36,6 +36,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import checked
 
 
 class MolecularVelocityQuadrature(StrictModule, NonTrainableState):
@@ -143,6 +144,7 @@ class PositiveDiscreteMaxwellianPlan(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: MolecularVelocityQuadrature,
@@ -151,8 +153,6 @@ class PositiveDiscreteMaxwellianPlan(StrictModule):
         tolerance: float = 1.0e-10,
         maximum_steps: int = 40,
     ) -> None:
-        if not isinstance(quadrature, MolecularVelocityQuadrature):
-            raise TypeError("quadrature must be MolecularVelocityQuadrature.")
         tolerance_value = float(tolerance)
         steps = int(maximum_steps)
         if not np.isfinite(tolerance_value) or tolerance_value <= 0.0 or steps <= 0:
@@ -278,9 +278,8 @@ class PopulationUpwindFluxPlan(StrictModule):
     quadrature: MolecularVelocityQuadrature
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, quadrature: MolecularVelocityQuadrature, /) -> None:
-        if not isinstance(quadrature, MolecularVelocityQuadrature):
-            raise TypeError("quadrature must be MolecularVelocityQuadrature.")
         self.quadrature = quadrature
         self.plan_id = canonical_fingerprint(
             {"kind": "population-upwind-flux", "quadrature": quadrature.quadrature_id}
@@ -337,6 +336,7 @@ class MonatomicBGKCollisionPlan(StrictModule):
     dynamic_viscosity: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: MolecularVelocityQuadrature,
@@ -345,8 +345,6 @@ class MonatomicBGKCollisionPlan(StrictModule):
         dynamic_viscosity: float,
     ) -> None:
         viscosity = float(dynamic_viscosity)
-        if not isinstance(quadrature, MolecularVelocityQuadrature):
-            raise TypeError("quadrature must be MolecularVelocityQuadrature.")
         if not np.isfinite(viscosity) or viscosity <= 0.0:
             raise ValueError("dynamic_viscosity must be finite and positive.")
         self.quadrature = quadrature
@@ -510,6 +508,7 @@ class MaxwellGasSurfaceBoundary(StrictModule):
     reflection_indices: Array
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: MolecularVelocityQuadrature,
@@ -520,8 +519,6 @@ class MaxwellGasSurfaceBoundary(StrictModule):
         wall_velocity: npt.ArrayLike = (0.0, 0.0, 0.0),
         accommodation: float = 1.0,
     ) -> None:
-        if not isinstance(quadrature, MolecularVelocityQuadrature):
-            raise TypeError("quadrature must be MolecularVelocityQuadrature.")
         normal = np.asarray(outward_normal, dtype=np.float64)
         velocity = np.asarray(wall_velocity, dtype=np.float64)
         temperature = float(wall_temperature)
@@ -615,6 +612,7 @@ class KineticBreakdownPlan(StrictModule):
     defect_threshold: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         collision: MonatomicBGKCollisionPlan,
@@ -623,8 +621,6 @@ class KineticBreakdownPlan(StrictModule):
         knudsen_threshold: float = 0.01,
         defect_threshold: float = 0.05,
     ) -> None:
-        if not isinstance(collision, MonatomicBGKCollisionPlan):
-            raise TypeError("collision must be MonatomicBGKCollisionPlan.")
         knudsen = float(knudsen_threshold)
         defect = float(defect_threshold)
         if not 0.0 < knudsen or not 0.0 < defect:

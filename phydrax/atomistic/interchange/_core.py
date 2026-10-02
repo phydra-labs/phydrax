@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
+from ...typing import checked
 from ...units import AMOUNT, ENERGY, UnitDefinition
 from .._force_field import AtomisticForceFieldPlan
 from .._sites import AtomisticCoordinateMapPlan
@@ -34,6 +35,7 @@ class AtomisticInterchangeReport(StrictModule, NonTrainableState):
     warnings: tuple[str, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_kind: str,
@@ -52,8 +54,6 @@ class AtomisticInterchangeReport(StrictModule, NonTrainableState):
         warnings_ = tuple(str(value) for value in warnings)
         if not source:
             raise ValueError("source_kind must be non-empty.")
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("Interchange report units must be an AtomisticUnitSystem.")
         if (source_energy_unit is None) != (avogadro_constant_set_id is None):
             raise ValueError(
                 "Molar source unit and Avogadro provenance must be provided together."

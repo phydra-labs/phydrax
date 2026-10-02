@@ -51,6 +51,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
 from ...sparse import KeyGroupPlan
+from ...typing import checked
 from ._bubble_components import ATMOSPHERE_ID, BubbleComponentLabels
 from ._flux_bundle import cell_net_flux, face_donor, TwoPhaseFluxBundle
 from ._vof import PreparedIncompressibleTwoPhaseVOF
@@ -205,6 +206,7 @@ class MultiMarkerPlan(StrictModule, NonTrainableState):
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         two_phase: PreparedIncompressibleTwoPhaseVOF,
@@ -215,8 +217,6 @@ class MultiMarkerPlan(StrictModule, NonTrainableState):
         pair_capacity: int,
         proximity_radius: int = 3,
     ) -> None:
-        if not isinstance(two_phase, PreparedIncompressibleTwoPhaseVOF):
-            raise TypeError("two_phase must be PreparedIncompressibleTwoPhaseVOF.")
         markers = positive_integer(marker_capacity, "marker_capacity")
         if markers < 2:
             raise ValueError("marker_capacity must be at least 2.")

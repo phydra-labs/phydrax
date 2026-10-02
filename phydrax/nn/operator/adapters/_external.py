@@ -29,6 +29,7 @@ from ...._model._array import value_derivative_contract
 from ...._model._component import ExecutionCapabilities, ModelExecutionContract
 from ...._publication import publish_bytes
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ..._keys import EvalKey
 from ..data import OperatorBatch
 from ..engine import AbstractOperatorModel
@@ -282,6 +283,7 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
+    @checked
     def __init__(
         self,
         *,
@@ -299,10 +301,6 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
             or not callable(output_adapter)
         ):
             raise TypeError("runner, input_adapter, and output_adapter must be callable.")
-        if not isinstance(manifest, OperatorCheckpointManifest):
-            raise TypeError("manifest must be an OperatorCheckpointManifest.")
-        if not isinstance(capabilities, ExecutionCapabilities):
-            raise TypeError("capabilities must be ExecutionCapabilities.")
         self.runner = runner
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter

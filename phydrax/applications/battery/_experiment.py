@@ -49,6 +49,7 @@ from ...solver import (
     solve_diffrax,
 )
 from ...solver._dae_events import empty_dae_event_result
+from ...typing import checked
 from ._admission import validate_battery_execution_admission
 from ._protocol import (
     BatteryProtocolPlan,
@@ -340,6 +341,7 @@ class BatteryExperimentPlan(StrictModule, NonTrainableState):
     support_tuple: SupportTuple
     experiment_plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: AbstractBatteryModelAdapter,
@@ -353,10 +355,6 @@ class BatteryExperimentPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(model, AbstractBatteryModelAdapter):
             raise TypeError("model must implement AbstractBatteryModelAdapter.")
-        if not isinstance(protocol, BatteryProtocolPlan):
-            raise TypeError("protocol must be BatteryProtocolPlan.")
-        if not isinstance(outputs, BatteryOutputPlan):
-            raise TypeError("outputs must be BatteryOutputPlan.")
         model_id = _identifier(model.model_id, "Battery model ID")
         if model.equation_form not in ("ode", "dae"):
             raise ValueError("Battery model equation_form must be 'ode' or 'dae'.")
@@ -448,6 +446,7 @@ class BatteryRuntimeInputs(StrictModule):
     stop_thresholds: Array
     protocol_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameters: PyTree,
@@ -458,14 +457,10 @@ class BatteryRuntimeInputs(StrictModule):
         protocol_id: str,
         observation_input_policy: HeldInputPolicy,
     ) -> None:
-        if not isinstance(input_policy, HeldInputPolicy):
-            raise TypeError("input_policy must be HeldInputPolicy.")
         if input_policy.node_side != "right":
             raise ValueError(
                 "Battery execution input policy must use the forward right limit."
             )
-        if not isinstance(observation_input_policy, HeldInputPolicy):
-            raise TypeError("observation_input_policy must be HeldInputPolicy.")
         if (
             observation_input_policy.input_layout.layout_id
             != input_policy.input_layout.layout_id

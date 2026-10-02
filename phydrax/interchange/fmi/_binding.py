@@ -41,7 +41,7 @@ from ...solver.coupling import (
     HostParticipantState,
     HostRollback,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import (
     AMOUNT,
     ANGLE,
@@ -123,13 +123,12 @@ class FMIVariableBinding(StrictModule, NonTrainableState):
     variable: str = eqx.field(static=True)
     realization: FMIPortRealization = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, variable: str, port: CouplingPort, realization: FMIPortRealization, /
     ) -> None:
         if not isinstance(variable, str) or not variable:
             raise ValueError("FMI variable binding requires a variable name.")
-        if not isinstance(port, CouplingPort):
-            raise TypeError("port must be a CouplingPort.")
         realization = parse(realization, FMIPortRealization, "realization")
         direction, temporal_kind = _direction(realization)
         if port.direction != direction or port.temporal_kind != temporal_kind:
@@ -337,6 +336,7 @@ class FMICouplingBinding(StrictModule, NonTrainableState):
     rollback: HostRollback = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: FMIModelDescription,
@@ -345,8 +345,6 @@ class FMICouplingBinding(StrictModule, NonTrainableState):
         *,
         time_unit: UnitDefinition,
     ) -> None:
-        if not isinstance(model, FMIModelDescription):
-            raise TypeError("model must be an FMIModelDescription.")
         bindings = tuple(variables)
         if not bindings or any(
             not isinstance(value, FMIVariableBinding) for value in bindings
@@ -446,6 +444,7 @@ class FMICouplingParticipant(AbstractHostCouplingParticipant):
     rollback: HostRollback = eqx.field(static=True)
     subsystem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         session: FMICoSimulationSession,
@@ -454,10 +453,6 @@ class FMICouplingParticipant(AbstractHostCouplingParticipant):
         *,
         subsystem_id: str,
     ) -> None:
-        if not isinstance(session, FMICoSimulationSession):
-            raise TypeError("session must be an FMICoSimulationSession.")
-        if not isinstance(binding, FMICouplingBinding):
-            raise TypeError("binding must be an FMICouplingBinding.")
         if (
             session.model.archive_sha256 != binding.archive_sha256
             or session.model.guid != binding.guid

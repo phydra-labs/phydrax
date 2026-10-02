@@ -27,6 +27,7 @@ from ...equations import (
     PeriodicLESStepRestriction,
 )
 from ...equations._dynamic_les import LagrangianDynamicLESState
+from ...typing import checked
 from ._forcing import _hermitian_defect, _periodic_modal_geometry
 
 
@@ -181,6 +182,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
     sgs_backscatter_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledIncompressibleSpectralDynamics,
@@ -191,8 +193,6 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         reality_tolerance: float = 1.0e-10,
         solenoidal_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
-            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
         projector = dynamics.projector
         viscosity = float(np.asarray(dynamics.problem.viscosity))
         reality = float(reality_tolerance)
@@ -822,6 +822,7 @@ class SpectralChannelStatisticsPlan(StrictModule, NonTrainableState):
     discretization_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -832,8 +833,6 @@ class SpectralChannelStatisticsPlan(StrictModule, NonTrainableState):
         wall_normal_axis: int = 1,
         reality_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if len(discretization.axes) != 3:
             raise ValueError("Spectral channel statistics require three dimensions.")
         wall_axis = int(wall_normal_axis)
@@ -1078,6 +1077,7 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
     operators_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -1090,8 +1090,6 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         lower_wall_velocity: ArrayLike | None = None,
         upper_wall_velocity: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         dimension = len(operators.discretization.cell_shape)
         wall_axis = int(wall_normal_axis)
         stream_axis = int(streamwise_axis)

@@ -18,7 +18,7 @@ from phydrax import ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 ElectrostaticEnsemble: TypeAlias = Literal["fixed-charge", "fixed-voltage"]
@@ -78,6 +78,7 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
     gauss_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         permittivity: PhasePermittivityLaw,
@@ -86,8 +87,6 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
         ensemble: ElectrostaticEnsemble,
         gauss_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(permittivity, PhasePermittivityLaw):
-            raise TypeError("permittivity must be PhasePermittivityLaw.")
         ensemble = parse(ensemble, ElectrostaticEnsemble, "ensemble")
         tolerance = float(gauss_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:

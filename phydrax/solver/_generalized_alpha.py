@@ -27,6 +27,7 @@ from ..nonlinear import (
     prepare_nonlinear,
     refresh_nonlinear,
 )
+from ..typing import checked
 from ._temporal_method import TemporalMethodCapabilities
 from ._temporal_precision import TemporalPrecisionPolicy
 
@@ -239,6 +240,7 @@ class GeneralizedAlphaSolution(StrictModule):
     time_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -265,8 +267,6 @@ class GeneralizedAlphaSolution(StrictModule):
             or stage_residual_norm.shape != prefix
         ):
             raise ValueError("Generalized-alpha solution arrays do not align.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.times = jnp.asarray(times)
         self.configurations = jnp.asarray(configurations)
         self.velocities = jnp.asarray(velocities)

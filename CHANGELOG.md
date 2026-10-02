@@ -3,6 +3,43 @@
 ## Unreleased
 
 ### Added
+- `phydrax.typing.checked` checks a function's annotated arguments against their
+  input contracts: nominal runtime classes, callables, and Phydrax tensor and
+  metadata forms, in declaration order and one dimension `Scope` per call, after
+  Python's own binding errors. Selectors, conversion inputs, scalars,
+  containers, and protocols stay static-only and remain with their owner;
+  values are forwarded unchanged and returns are not checked. Constructors and
+  methods across the package now declare argument kinds once in their
+  signatures instead of restating them in `isinstance` guards; module-level
+  scientific functions keep their guards because their code is
+  content-addressed. Argument-kind errors now name the function and argument
+  and are raised before the body's own validation.
+  `tools/audit_contract_candidates.py --signatures` reports guards that a
+  checked signature has made redundant.
+  The weak signature registry releases discarded dynamic owner types and
+  wrapped functions instead of retaining them through cached plans.
+- Meshfree examples use the canonical public discretization, coupling, and
+  metric facades rather than private implementation imports.
+- `PosteriorProblem` retains numerical state in prediction, observation-variance,
+  observation-sampling, and Gauss–Newton residual callbacks as dynamic PyTree
+  leaves. Array-bearing bound methods no longer trigger a static-array warning,
+  and updated callback data remains visible under compiled evaluation and
+  differentiation.
+  This corrects the callback PyTree partition and intentionally changes the
+  whole-problem numeric fingerprint, including problems whose optional callbacks
+  are `None`; prior whole-problem fingerprints are not compatibility aliases.
+- Native single-device complex128 projector quantum Monte Carlo: packed rank-free
+  configuration addresses, prepared sparse outgoing columns, probability-corrected
+  raw-route sampling, adaptive semistochastic application, and complete signed
+  annihilation before late threshold compression.
+- Frozen positive guide similarities with original physical metrics, joint
+  correlated projected/replica ratios with denominator refusal, explicit
+  finite-history population-control assumptions, and transactional checkpoint,
+  continuation, and same-draw resource-only replay. These bounded candidate
+  workflows are not generic sign-cure or unbiased stationary-energy claims.
+- Native compact multiword key grouping and seeded deterministic/compensated
+  signed reduction, preserving existing scalar consumers; explicit lifecycle
+  archive limits support the complete retained projector statistical records.
 - Prepared meshfree approximation in `phydrax.discretization.meshfree`: bounded
   certified neighborhoods, batched GMLS/PHS-RBF-FD, enforced stencil admission,
   sparse point-cloud elliptic solves, explicit hyperviscosity, and native
@@ -24,6 +61,16 @@
   conormal/distribution metadata and compatibility names are removed.
 - Negative-offset positive transforms are refused when they cannot certify
   input-convex constitutive potentials.
+- Native randomized leading SVD with explicit typed keys, refresh-addressed sketches
+  and independent audits, bounded QR refinement, original-operator residuals,
+  approximation/leading-subspace certificates, and global rank uncertainty.
+- Compact first-order singular projector and retained-covariance responses, including
+  repeated retained clusters, rectangular null complements, moving Hilbert metrics,
+  and fixed-sketch randomized algorithm differentiation. Weighted PCA/POD,
+  incremental covariance merges, and operator POD share the native owner.
+- Operation-specific ML derivative admission with resolved numerical evidence.
+  Stopped fit basis representatives remain independently trainable; projection
+  responses and current-basis encoder/decoder behavior remain distinct.
 - Native exterior calculus in `phydrax.exterior`: explicit form degree, twist, fiber,
   and proxy semantics; shared exterior algebra; de Rham integration, Whitney chains,
   induced boundary traces, numerical form products, and coefficient systems.

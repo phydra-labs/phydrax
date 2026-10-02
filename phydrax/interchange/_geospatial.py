@@ -25,6 +25,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint, canoni
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import ANGLE, conversion_factor, DEGREE, LENGTH, UnitDefinition
 from ._inspection import _readonly_array
 from ._report import AdapterReport, AdapterStatus
@@ -162,6 +163,7 @@ class GeospatialContract(StrictModule, NonTrainableState):
     coordinate_id: str = eqx.field(static=True)
     geospatial_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spatial: SpatialCoordinateContract,
@@ -188,8 +190,6 @@ class GeospatialContract(StrictModule, NonTrainableState):
         metadata: Mapping[str, Any] | Sequence[tuple[str, Any]] = (),
         transformations: Sequence[GeospatialTransform] = (),
     ) -> None:
-        if not isinstance(spatial, SpatialCoordinateContract):
-            raise TypeError("spatial must be SpatialCoordinateContract.")
         axes = tuple(_label(item, "Horizontal axis") for item in horizontal_axes)
         units = tuple(horizontal_units)
         if len(axes) != 2 or len(units) != 2:
@@ -435,6 +435,7 @@ class GeospatialContract(StrictModule, NonTrainableState):
             self._require_vertical(positive_up=True)
         return self.spatial
 
+    @checked
     def require_compatible(
         self,
         other: GeospatialContract,
@@ -444,8 +445,6 @@ class GeospatialContract(StrictModule, NonTrainableState):
         require_grid: bool = False,
     ) -> None:
         """Require exact qualified Cartesian semantics, never transform implicitly."""
-        if not isinstance(other, GeospatialContract):
-            raise TypeError("other must be GeospatialContract.")
         self.require_cartesian(dimensions=dimensions)
         other.require_cartesian(self.spatial, dimensions=dimensions)
         left, right = self._coordinate_payload(), other._coordinate_payload()
@@ -536,6 +535,7 @@ class QualifiedGeospatialGrid(StrictModule, NonTrainableState):
     report: AdapterReport = eqx.field(static=True)
     grid_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         x: ArrayLike,
@@ -550,11 +550,7 @@ class QualifiedGeospatialGrid(StrictModule, NonTrainableState):
         value_role: str = "scalar",
         resources: Sequence[ResourceManifest] = (),
     ) -> None:
-        if not isinstance(contract, GeospatialContract):
-            raise TypeError("contract must be GeospatialContract.")
         contract.require_grid()
-        if not isinstance(value_unit, UnitDefinition):
-            raise TypeError("value_unit must be UnitDefinition.")
         if value_role not in ("scalar", "vertical"):
             raise ValueError("value_role must be scalar or vertical.")
         if value_role == "vertical":

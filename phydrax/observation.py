@@ -44,6 +44,7 @@ from .measurement import (
     QuantityField,
     RaySampleSupport,
 )
+from .typing import checked
 
 
 class CoordinateLayout(StrictModule, NonTrainableState):
@@ -376,9 +377,8 @@ class PreparedMeanSquareDisplacement(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MeanSquareDisplacementPlan, /) -> None:
-        if not isinstance(plan, MeanSquareDisplacementPlan):
-            raise TypeError("plan must be a MeanSquareDisplacementPlan.")
         lag = jnp.arange(plan.max_lag + 1, dtype=jnp.int32)[:, None]
         source = jnp.arange(plan.sample_count, dtype=jnp.int32)[None, :]
         valid = source + lag < plan.sample_count
@@ -490,9 +490,8 @@ class PreparedAutocorrelation(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: AutocorrelationPlan, /) -> None:
-        if not isinstance(plan, AutocorrelationPlan):
-            raise TypeError("plan must be an AutocorrelationPlan.")
         lag = jnp.arange(plan.max_lag + 1, dtype=jnp.int32)[:, None]
         source = jnp.arange(plan.sample_count, dtype=jnp.int32)[None, :]
         valid = source + lag < plan.sample_count
@@ -629,9 +628,8 @@ class PreparedFluorescenceCorrelation(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FluorescenceCorrelationPlan, /) -> None:
-        if not isinstance(plan, FluorescenceCorrelationPlan):
-            raise TypeError("plan must be a FluorescenceCorrelationPlan.")
         lag = jnp.arange(plan.max_lag + 1, dtype=jnp.int32)[:, None]
         source = jnp.arange(plan.sample_count, dtype=jnp.int32)[None, :]
         valid = source + lag < plan.sample_count
@@ -760,9 +758,8 @@ class PreparedPairCorrelation(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PairCorrelationPlan, /) -> None:
-        if not isinstance(plan, PairCorrelationPlan):
-            raise TypeError("plan must be a PairCorrelationPlan.")
         lag = jnp.arange(-plan.max_lag, plan.max_lag + 1, dtype=jnp.int32)[:, None]
         sample = jnp.arange(plan.sample_count, dtype=jnp.int32)[None, :]
         magnitude = jnp.abs(lag)
@@ -974,9 +971,8 @@ class PreparedDiffusionModel(StrictModule, NonTrainableState):
     plan: DiffusionModelPlan
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: DiffusionModelPlan, /) -> None:
-        if not isinstance(plan, DiffusionModelPlan):
-            raise TypeError("plan must be a DiffusionModelPlan.")
         self.plan = plan
         self.runtime_id = canonical_fingerprint(
             {"kind": "prepared-diffusion-model", "plan": plan.plan_id}
@@ -1237,9 +1233,8 @@ class PreparedBrightnessConditionedTransport(StrictModule, NonTrainableState):
     bin_centers: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: BrightnessConditionedTransportPlan, /) -> None:
-        if not isinstance(plan, BrightnessConditionedTransportPlan):
-            raise TypeError("plan must be a BrightnessConditionedTransportPlan.")
         self.plan = plan
         self.bin_centers = 0.5 * (plan.brightness_edges[:-1] + plan.brightness_edges[1:])
         self.runtime_id = canonical_fingerprint(
@@ -1437,9 +1432,8 @@ class PreparedFluorescencePhotonModel(StrictModule, NonTrainableState):
     response_matrix: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FluorescencePhotonPlan, /) -> None:
-        if not isinstance(plan, FluorescencePhotonPlan):
-            raise TypeError("plan must be a FluorescencePhotonPlan.")
         size = plan.instrument_response.size
         row = jnp.arange(size, dtype=jnp.int32)[:, None]
         column = jnp.arange(size, dtype=jnp.int32)[None, :]
@@ -1657,9 +1651,8 @@ class PreparedDwellTimeLikelihood(StrictModule, NonTrainableState):
     plan: DwellTimeLikelihoodPlan
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: DwellTimeLikelihoodPlan, /) -> None:
-        if not isinstance(plan, DwellTimeLikelihoodPlan):
-            raise TypeError("plan must be a DwellTimeLikelihoodPlan.")
         self.plan = plan
         self.runtime_id = canonical_fingerprint(
             {"kind": "prepared-dwell-time-likelihood", "plan": plan.plan_id}
@@ -1833,9 +1826,8 @@ class PreparedIVReversalInference(StrictModule, NonTrainableState):
     voltage_variation: Array
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: IVReversalPlan, /) -> None:
-        if not isinstance(plan, IVReversalPlan):
-            raise TypeError("plan must be an IVReversalPlan.")
         weight_sum = jnp.sum(plan.weights)
         voltage_mean = jnp.sum(plan.weights * plan.voltages) / weight_sum
         centered = plan.voltages - voltage_mean
@@ -2224,6 +2216,7 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
     noise_model: MeasurementNoiseModel = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observed: PreparedQuantityField,
@@ -2232,8 +2225,6 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         covariance: CovarianceAction | None = None,
         reference_scale: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(observed, PreparedQuantityField):
-            raise TypeError("observed must be PreparedQuantityField.")
         covariance_types = (
             PrecisionCovarianceAction,
             CholeskyCovarianceAction,
@@ -2301,11 +2292,10 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
             case _:
                 assert_never(self.noise_model)
 
+    @checked
     def evaluate(
         self, predicted: PreparedQuantityField, /
     ) -> MeasurementComparisonResult:
-        if not isinstance(predicted, PreparedQuantityField):
-            raise TypeError("predicted must be PreparedQuantityField.")
         expected = self.observed
         if predicted.values.shape != expected.values.shape:
             raise ValueError("Predicted and observed value shapes must match.")

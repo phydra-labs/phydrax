@@ -23,6 +23,7 @@ from ..._numerics._compensated import compensated_sum
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -63,6 +64,7 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractSPHSmoothingKernel,
@@ -74,8 +76,6 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
         name: str = "barotropic-sph",
         method_id: str | None = None,
     ) -> None:
-        if not isinstance(kernel, AbstractSPHSmoothingKernel):
-            raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
         smoothing = float(smoothing_length)
         acoustic = float(acoustic_cfl)
         force = float(force_cfl)
@@ -168,6 +168,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -181,14 +182,6 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         external_potential: ExternalParticlePotential | None = None,
         external_potential_id: str | None = None,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError(
-                "neighborhood must be an AbstractPreparedParticleNeighborhood."
-            )
-        if not isinstance(method, BarotropicSPHMethodPlan):
-            raise TypeError("method must be a BarotropicSPHMethodPlan.")
         if neighborhood.particle_discretization_id != particles.prepared_id:
             raise ValueError(
                 "Particle neighborhood was prepared for a different support."

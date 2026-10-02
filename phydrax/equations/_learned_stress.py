@@ -25,6 +25,7 @@ from ..discretization.spectral import (
     PeriodicLerayProjector,
     TensorSpectralDiscretization,
 )
+from ..typing import checked
 from ._mac_les import (
     _MAC_LES_REGIME,
     _mac_velocity_gradient,
@@ -224,6 +225,7 @@ class PreparedPeriodicLearnedStress(StrictModule, NonTrainableState):
     feature_schema_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PeriodicLearnedStressPlan,
@@ -231,12 +233,6 @@ class PreparedPeriodicLearnedStress(StrictModule, NonTrainableState):
         projector: PeriodicLerayProjector,
         /,
     ) -> None:
-        if not isinstance(plan, PeriodicLearnedStressPlan):
-            raise TypeError("plan must be a PeriodicLearnedStressPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be a PeriodicLerayProjector.")
         if projector.discretization.prepared_id != discretization.prepared_id:
             raise ValueError("Learned stress projector and discretization disagree.")
         if projector.spatial_dimension != 3:

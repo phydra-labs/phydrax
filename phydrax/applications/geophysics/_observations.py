@@ -26,6 +26,7 @@ from ...discretization import (
 )
 from ...linalg import ArraySpace, FunctionLinearOperator
 from ...stochastic import ObservationSequence
+from ...typing import checked
 from ._quantities import GeophysicalQuantity
 from ._time import GeophysicalTimeSpec, TemporalSupport
 
@@ -46,6 +47,7 @@ class GeophysicalObservationOperator(StrictModule, NonTrainableState):
     kind: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: FieldTransfer,
@@ -56,8 +58,6 @@ class GeophysicalObservationOperator(StrictModule, NonTrainableState):
         temporal: TemporalSupport | None = None,
         kind: str = "station",
     ) -> None:
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be a native FieldTransfer.")
         if not isinstance(quantity, GeophysicalQuantity) or not isinstance(
             time, GeophysicalTimeSpec
         ):

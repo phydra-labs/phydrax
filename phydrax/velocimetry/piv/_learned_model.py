@@ -22,7 +22,7 @@ from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ...imaging import image_coordinates
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
 from ._learned_primitives import (
     backward_warp_2d,
@@ -228,9 +228,8 @@ class AbstractDensePIVModel(StrictModule, ParameterOwner):
     def __call__(self, prepared: PreparedLearnedDensePIV, /) -> DensePIVPrediction:
         raise NotImplementedError
 
+    @checked
     def prepare_pair(self, pair: ImagePair2D, /) -> PreparedLearnedDensePIV:
-        if not isinstance(pair, ImagePair2D):
-            raise TypeError("pair must be an ImagePair2D.")
         if pair.geometry.image_shape != self.plan.image_shape:
             raise ValueError("Image pair geometry does not match the learned PIV plan.")
         first = pair.first
@@ -456,9 +455,8 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
             }
         )
 
+    @checked
     def __call__(self, prepared: PreparedLearnedDensePIV, /) -> DensePIVPrediction:
-        if not isinstance(prepared, PreparedLearnedDensePIV):
-            raise TypeError("prepared must be a PreparedLearnedDensePIV.")
         if prepared.plan_id != self.plan.plan_id:
             raise ValueError(
                 "Prepared inputs and model must share the exact learned PIV plan."

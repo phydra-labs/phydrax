@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from .._iteration import IterationEvidence
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._policies import DifferentiationMode, DifferentiationPolicy, MixedPrecisionPolicy
 from ._recycling import RecyclingState
 
@@ -492,6 +492,7 @@ class LinearSolveResult(StrictModule):
     initial_guess: InitialGuessDiagnostics | None
     derivative_contract: DerivativeContract
 
+    @checked
     def __init__(
         self,
         value: PyTree[Array],
@@ -504,12 +505,6 @@ class LinearSolveResult(StrictModule):
         iteration_evidence: IterationEvidence | None = None,
         initial_guess: InitialGuessDiagnostics | None = None,
     ) -> None:
-        if not isinstance(diagnostics, LinearSolveDiagnostics):
-            raise TypeError("diagnostics must be LinearSolveDiagnostics.")
-        if not isinstance(provenance, LinearSolveProvenance):
-            raise TypeError("provenance must be LinearSolveProvenance.")
-        if not isinstance(differentiation, DifferentiationPolicy):
-            raise TypeError("differentiation must be a DifferentiationPolicy.")
         if iteration_evidence is not None and not isinstance(
             iteration_evidence, IterationEvidence
         ):
@@ -562,6 +557,7 @@ class MatrixInversionResult(StrictModule):
     provenance: LinearSolveProvenance
     operation: MatrixInversionKind = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         value: Any,
@@ -571,10 +567,6 @@ class MatrixInversionResult(StrictModule):
         operation: MatrixInversionKind,
         /,
     ) -> None:
-        if not isinstance(diagnostics, LinearSolveDiagnostics):
-            raise TypeError("diagnostics must be LinearSolveDiagnostics.")
-        if not isinstance(provenance, LinearSolveProvenance):
-            raise TypeError("provenance must be LinearSolveProvenance.")
         operation = parse(operation, MatrixInversionKind, "operation")
         matrix = jnp.asarray(value)
         if matrix.ndim < 2:
@@ -744,16 +736,13 @@ class RecycledLinearSolveResult(StrictModule):
     result: LinearSolveResult
     recycling: RecyclingState
 
+    @checked
     def __init__(
         self,
         result: LinearSolveResult,
         recycling: RecyclingState,
         /,
     ) -> None:
-        if not isinstance(result, LinearSolveResult):
-            raise TypeError("result must be a LinearSolveResult.")
-        if not isinstance(recycling, RecyclingState):
-            raise TypeError("recycling must be a RecyclingState.")
         self.result = eqx.tree_at(
             lambda value: value.provenance.recycling_update_count,
             result,

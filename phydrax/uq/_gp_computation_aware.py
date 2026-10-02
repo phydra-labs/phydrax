@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, LinearSolveStatus
+from ..typing import checked
 from ._gp_actions import (
     _ResolvedGaussianProcessActions,
     AbstractGaussianProcessActionPolicy,
@@ -195,6 +196,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
     computation: GaussianProcessComputationPolicy
     diagnostics: ComputationAwareGaussianProcessDiagnostics
 
+    @checked
     def __init__(
         self,
         observation_points: ArrayLike,
@@ -207,8 +209,6 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
     ) -> None:
         points = _validated_factor_points(observation_points)
         _require_state(state)
-        if not isinstance(actions, AbstractGaussianProcessActionPolicy):
-            raise TypeError("actions must implement AbstractGaussianProcessActionPolicy.")
         policy = (
             GaussianProcessComputationPolicy() if computation is None else computation
         )

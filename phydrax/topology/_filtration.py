@@ -19,7 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellComplexTopology
 from ..sparse import EdgeRelation
-from ..typing import parse
+from ..typing import checked, parse
 from ._complex import CellSubcomplex, CellVertexSupport
 
 
@@ -41,6 +41,7 @@ class CellFiltration(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     filtration_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: CellSubcomplex,
@@ -50,8 +51,6 @@ class CellFiltration(StrictModule, NonTrainableState):
         direction: FiltrationDirection = "sublevel",
         source_id: str,
     ) -> None:
-        if not isinstance(complex, CellSubcomplex):
-            raise TypeError("Cell filtrations require a CellSubcomplex.")
         direction = parse(direction, FiltrationDirection, "direction")
         source = str(source_id)
         if not source:
@@ -182,6 +181,7 @@ class PreparedVertexFiltration(StrictModule, NonTrainableState):
     direction: FiltrationDirection = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: CellSubcomplex,
@@ -190,10 +190,6 @@ class PreparedVertexFiltration(StrictModule, NonTrainableState):
         *,
         direction: FiltrationDirection,
     ) -> None:
-        if not isinstance(complex, CellSubcomplex):
-            raise TypeError("Prepared vertex filtrations require a CellSubcomplex.")
-        if not isinstance(support, CellVertexSupport):
-            raise TypeError("support must be a CellVertexSupport.")
         if support.topology_id != complex.topology.topology_id:
             raise ValueError("Vertex support belongs to a different topology.")
         direction = parse(direction, FiltrationDirection, "direction")

@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticUnitSystem
+from ..typing import checked
 from ..units import (
     conversion_factor,
     derived_unit,
@@ -39,9 +40,8 @@ class ChemistryPhysicalConstants(StrictModule, NonTrainableState):
     planck_constant: float = eqx.field(static=True)
     constants_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, units: AtomisticUnitSystem, /) -> None:
-        if not isinstance(units, AtomisticUnitSystem):
-            raise TypeError("units must be AtomisticUnitSystem.")
         if (
             units.constant_set_id != "codata-2018"
             or units.scale.length_unit.reference_system_id != SI_REFERENCE_SYSTEM_ID

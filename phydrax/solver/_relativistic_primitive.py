@@ -23,6 +23,7 @@ from .._trainable import NonTrainableState
 from ..equations._relativistic_hydrodynamics import ValenciaGRHDSystem
 from ..metrix._adm_exchange import ADMGridGeometry
 from ..nonlinear import NonlinearStatus, SmallRootKernel
+from ..typing import checked
 
 
 class GRHDC2PStatus(IntEnum):
@@ -170,9 +171,8 @@ class GRHDC2PResult(StrictModule):
     system_id: str = eqx.field(static=True)
     geometry_lineage_id: str = eqx.field(static=True)
 
+    @checked
     def compatible_with(self, geometry: ADMGridGeometry, /) -> Array:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         static_compatible = (
             self.geometry_lineage_id == geometry.geometry_lineage_id
             and self.primitive.shape[:-1] == geometry.leading_shape
@@ -221,6 +221,7 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
     implicit_differentiation: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: ValenciaGRHDSystem,
@@ -235,8 +236,6 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
         recomposition_tolerance: float = 1.0e-8,
         implicit_differentiation: bool = False,
     ) -> None:
-        if not isinstance(system, ValenciaGRHDSystem):
-            raise TypeError("system must be a ValenciaGRHDSystem.")
         atmosphere_ = AtmosphereFloorPolicy() if atmosphere is None else atmosphere
         if not isinstance(atmosphere_, AtmosphereFloorPolicy):
             raise TypeError("atmosphere must be an AtmosphereFloorPolicy or None.")
@@ -288,11 +287,10 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _check_inputs(
         self, conserved: ArrayLike, geometry: ADMGridGeometry
     ) -> tuple[Array, tuple[int, ...]]:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         value = jnp.asarray(conserved)
         if value.shape != geometry.leading_shape + (self.system.component_count,):
             raise ValueError(

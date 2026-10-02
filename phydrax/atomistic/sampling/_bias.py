@@ -25,6 +25,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
+from ...typing import checked
 from .._dynamics import (
     AtomisticDynamicsState,
     AtomisticEnergyLedgerState,
@@ -344,6 +345,7 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
             self.prepared_id,
         )
 
+    @checked
     def update(
         self,
         state: AbstractAtomisticBiasState,
@@ -355,8 +357,6 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
             raise TypeError("state must be an AtomisticBiasState.")
         if state.bias_id != self.plan.bias_id:
             raise ValueError("Bias state belongs to another bias plan.")
-        if not isinstance(evaluation, AtomisticBiasEvaluation):
-            raise TypeError("evaluation must be an AtomisticBiasEvaluation.")
         if evaluation.bias_id != self.prepared_id:
             raise ValueError("Bias evaluation belongs to another prepared runtime.")
         if self.plan.kind is BiasKind.METADYNAMICS:
@@ -453,6 +453,7 @@ class PreparedBiasedDynamics(StrictModule):
     thermodynamic_states: PreparedThermodynamicStateTable
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: PreparedAtomisticDynamics,
@@ -460,12 +461,6 @@ class PreparedBiasedDynamics(StrictModule):
         thermodynamic_states: PreparedThermodynamicStateTable,
         /,
     ) -> None:
-        if not isinstance(bias, AbstractPreparedAtomisticBias):
-            raise TypeError("bias must implement AbstractPreparedAtomisticBias.")
-        if not isinstance(thermodynamic_states, PreparedThermodynamicStateTable):
-            raise TypeError(
-                "thermodynamic_states must be a PreparedThermodynamicStateTable."
-            )
         if bias.dynamics.prepared_id != base.prepared_id:
             raise ValueError("Bias belongs to another dynamics runtime.")
         thermodynamic_states.validate_dynamics(base)
@@ -642,9 +637,8 @@ class BiasedDynamicsCheckpointPlan(StrictModule, NonTrainableState):
     dynamics: PreparedBiasedDynamics
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, dynamics: PreparedBiasedDynamics, /) -> None:
-        if not isinstance(dynamics, PreparedBiasedDynamics):
-            raise TypeError("dynamics must be PreparedBiasedDynamics.")
         self.dynamics = dynamics
         self.checkpoint_id = canonical_fingerprint(
             {

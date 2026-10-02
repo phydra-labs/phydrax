@@ -16,6 +16,7 @@ from ..geometry._trace_extension import (
 )
 from ..linalg import RankPolicy, SolveResourcePolicy
 from ..linalg._operators import AbstractLinearOperator
+from ..typing import checked
 
 
 class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
@@ -39,6 +40,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
     gauge_certificate_id: str | None = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         restriction_operator: AbstractLinearOperator,
@@ -64,8 +66,6 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
             raise TypeError(
                 "Graph restriction, extension, and residual maps must be linear."
             )
-        if not isinstance(cover, BoundaryCover):
-            raise TypeError("cover must be BoundaryCover.")
         count = int(component_count)
         if count < 1:
             raise ValueError("component_count must be positive.")

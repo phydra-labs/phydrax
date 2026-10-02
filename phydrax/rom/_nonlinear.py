@@ -29,6 +29,7 @@ from ..optim import (
     NonlinearLeastSquaresProblem,
     OptimizationTermination,
 )
+from ..typing import checked
 from ._basis import ReducedBasisArtifact
 from ._empirical_interpolation import (
     EmpiricalInterpolationArtifact,
@@ -65,6 +66,7 @@ class FullResidualGalerkin(StrictModule, NonTrainableState):
     lift: PyTree[Array]
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: TrialTestReduction,
@@ -73,10 +75,6 @@ class FullResidualGalerkin(StrictModule, NonTrainableState):
         *,
         lift: PyTree[Array] | None = None,
     ) -> None:
-        if not isinstance(reduction, TrialTestReduction):
-            raise TypeError("reduction must be a TrialTestReduction.")
-        if not isinstance(provider, AbstractResidualProvider):
-            raise TypeError("provider must be an AbstractResidualProvider.")
         if not provider.state_space.compatible(reduction.trial.full_space):
             raise ValueError("Residual provider state space must match the trial space.")
         if not provider.residual_space.compatible(DualSpace(reduction.test.full_space)):
@@ -170,6 +168,7 @@ class ReducedLSPGProblem(StrictModule, NonTrainableState):
     residual_whitener: Array
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: TrialTestReduction,
@@ -178,10 +177,6 @@ class ReducedLSPGProblem(StrictModule, NonTrainableState):
         *,
         lift: PyTree[Array] | None = None,
     ) -> None:
-        if not isinstance(reduction, TrialTestReduction):
-            raise TypeError("reduction must be a TrialTestReduction.")
-        if not isinstance(provider, AbstractStageResidualProvider):
-            raise TypeError("provider must be an AbstractStageResidualProvider.")
         if not provider.state_space.compatible(reduction.trial.full_space):
             raise ValueError("Stage provider state space must match the trial space.")
         if (
@@ -250,6 +245,7 @@ class ReducedLSPGProblem(StrictModule, NonTrainableState):
         )
         return self.residual_whitener @ coordinates
 
+    @checked
     def solve(
         self,
         initial_reduced_state: ArrayLike,
@@ -259,8 +255,6 @@ class ReducedLSPGProblem(StrictModule, NonTrainableState):
         method: AbstractLeastSquaresMethod | None = None,
         termination: OptimizationTermination | None = None,
     ) -> LeastSquaresResult:
-        if not isinstance(context, LSPGStepContext):
-            raise TypeError("context must be an LSPGStepContext.")
         problem = NonlinearLeastSquaresProblem(
             lambda state, step: self.residual(state, step),
             problem_id=self.problem_id,
@@ -300,6 +294,7 @@ class DEIMArtifact(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def evaluate(
         self,
         provider: AbstractSampledNonlinearProvider,
@@ -307,8 +302,6 @@ class DEIMArtifact(StrictModule, NonTrainableState):
         inputs: Any = None,
         /,
     ) -> Array:
-        if not isinstance(provider, AbstractSampledNonlinearProvider):
-            raise TypeError("provider must be an AbstractSampledNonlinearProvider.")
         if (
             provider.provider_id != self.provider_id
             or provider.support_id != self.support_id
@@ -456,6 +449,7 @@ class GNATLSPGProblem(StrictModule, NonTrainableState):
     gnat: GNATArtifact
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lspg: ReducedLSPGProblem,
@@ -463,12 +457,6 @@ class GNATLSPGProblem(StrictModule, NonTrainableState):
         gnat: GNATArtifact,
         /,
     ) -> None:
-        if not isinstance(lspg, ReducedLSPGProblem):
-            raise TypeError("lspg must be a ReducedLSPGProblem.")
-        if not isinstance(provider, AbstractSampledStageResidualProvider):
-            raise TypeError("provider must be an AbstractSampledStageResidualProvider.")
-        if not isinstance(gnat, GNATArtifact):
-            raise TypeError("gnat must be a GNATArtifact.")
         if provider.provider_id != gnat.provider_id:
             raise ValueError("GNAT sampled provider identity mismatch.")
         if gnat.residual_space_id != lspg.provider.residual_space.space_id:

@@ -18,7 +18,7 @@ from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._algebra_spaces import AlgebraArraySpace
 from ._real_coordinates import AbstractRealCoordinateMap, RealCoordinateEvidence
 from ._spaces import ArraySpace
@@ -88,9 +88,8 @@ class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
     public_axis: int = eqx.field(static=True)
     backend_axis: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: AlgebraCoordinatePlan, base_shape: Sequence[int], /) -> None:
-        if not isinstance(plan, AlgebraCoordinatePlan):
-            raise TypeError("plan must be AlgebraCoordinatePlan.")
         base = tuple(base_shape)
         if any(size <= 0 for size in base):
             raise ValueError("Algebra coordinate base shape must be positive.")

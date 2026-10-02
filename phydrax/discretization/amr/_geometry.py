@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan
+from ...typing import checked
 from .._motion_validity import MotionValidityPlan, MotionValidityPolicy
 from ..fem._geometry_motion import (
     FiniteElementMeshMotionPolicy,
@@ -337,6 +338,7 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
     gcl_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: VariablePatchHierarchyTopology,
@@ -350,8 +352,6 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
     ) -> None:
-        if not isinstance(topology, VariablePatchHierarchyTopology):
-            raise TypeError("Patch geometry requires VariablePatchHierarchyTopology.")
         if not callable(coordinate_map):
             raise TypeError("Patch coordinate_map must be callable.")
         map_id = str(coordinate_map_id)

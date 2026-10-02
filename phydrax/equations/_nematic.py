@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class NematicTensorBasis(StrictModule, NonTrainableState):
@@ -172,9 +173,8 @@ class LandauDeGennesClosure(StrictModule, NonTrainableState):
     basis: NematicTensorBasis
     closure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, basis: NematicTensorBasis, /) -> None:
-        if not isinstance(basis, NematicTensorBasis):
-            raise TypeError("basis must be NematicTensorBasis.")
         self.basis = basis
         self.closure_id = canonical_fingerprint(
             {"kind": "landau-de-gennes-closure", "basis": basis.basis_id}

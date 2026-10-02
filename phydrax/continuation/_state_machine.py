@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree, validate_real_inexact_tree
+from ..typing import checked
 from ._geometry import ContinuationRepresentationPolicy
 
 
@@ -128,6 +129,7 @@ class ContinuationCandidate(StrictModule):
     retry_index: int = eqx.field(static=True)
     candidate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -150,8 +152,6 @@ class ContinuationCandidate(StrictModule):
         attempt_index: int,
         retry_index: int,
     ) -> None:
-        if not isinstance(realization, ParameterRealization):
-            raise TypeError("realization must be a ParameterRealization.")
         state_ = validate_inexact_tree(state, name="continuation candidate state")
         tangent_ = validate_inexact_tree(
             tangent_state,
@@ -369,6 +369,7 @@ class ContinuationAcceptedState(StrictModule):
     accepted_index: int = eqx.field(static=True)
     accepted_state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate: ContinuationCandidate,
@@ -379,8 +380,6 @@ class ContinuationAcceptedState(StrictModule):
         decision_id: str,
         accepted_index: int,
     ) -> None:
-        if not isinstance(candidate, ContinuationCandidate):
-            raise TypeError("candidate must be a ContinuationCandidate.")
         if not bool(candidate.numerical_accepted):
             raise ValueError("Only a numerically accepted candidate can be committed.")
         application_id = str(application_state_id)
@@ -454,6 +453,7 @@ class ContinuationStepResult(StrictModule):
     message: str = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate: ContinuationCandidate,
@@ -470,10 +470,6 @@ class ContinuationStepResult(StrictModule):
         restored_application_state_id: str,
         message: str = "",
     ) -> None:
-        if not isinstance(candidate, ContinuationCandidate):
-            raise TypeError("candidate must be a ContinuationCandidate.")
-        if not isinstance(transfer, ParameterTransferEvidence):
-            raise TypeError("transfer must be ParameterTransferEvidence.")
         if accepted_state is not None and not isinstance(
             accepted_state, ContinuationAcceptedState
         ):

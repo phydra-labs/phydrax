@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._sampling import AbstractChainSampleResult, derive_key, SampleAddress
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._kernel import (
     FactorExecutionEvidence,
     FactorGraphPrecisionPolicy,
@@ -181,6 +181,7 @@ class GibbsSampleResult(AbstractChainSampleResult):
     warmup_sweeps: int = eqx.field(static=True)
     sweeps_per_draw: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -216,8 +217,6 @@ class GibbsSampleResult(AbstractChainSampleResult):
             )
         if final_state.num_chains != chains:
             raise ValueError("final_state chain count must match samples.")
-        if not isinstance(diagnostics, GibbsDiagnostics):
-            raise TypeError("diagnostics must be GibbsDiagnostics.")
         if not isinstance(plan_id, str) or not plan_id:
             raise ValueError("plan_id must be non-empty.")
         if not isinstance(method_id, str) or not method_id:

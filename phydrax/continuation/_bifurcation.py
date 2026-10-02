@@ -25,7 +25,7 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._core import _execution_residual, BranchSeed, ContinuationCurveProblem
 from ._geometry import ContinuationGeometry
 
@@ -322,6 +322,7 @@ class CorrectedBranchSeed(StrictModule):
     successful: Array
     correction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -333,12 +334,6 @@ class CorrectedBranchSeed(StrictModule):
         successful: Any,
         correction_id: str,
     ) -> None:
-        if not isinstance(seed, BranchSeed):
-            raise TypeError("seed must be a BranchSeed.")
-        if not isinstance(correction_state, BranchCorrectionState):
-            raise TypeError("correction_state must be a BranchCorrectionState.")
-        if not isinstance(nonlinear_result, NonlinearResult):
-            raise TypeError("nonlinear_result must be a NonlinearResult.")
         identifier = str(correction_id)
         if not identifier:
             raise ValueError("correction_id must be non-empty.")
@@ -524,6 +519,7 @@ class FoldResult(StrictModule):
     nonlinear_result: NonlinearResult
     provenance: ExtendedSystemProvenance
 
+    @checked
     def __init__(
         self,
         *,
@@ -533,16 +529,6 @@ class FoldResult(StrictModule):
         nonlinear_result: NonlinearResult,
         provenance: ExtendedSystemProvenance,
     ) -> None:
-        if not isinstance(state, FoldState):
-            raise TypeError("state must be a FoldState.")
-        if not isinstance(residual_blocks, FoldResidualBlocks):
-            raise TypeError("residual_blocks must be FoldResidualBlocks.")
-        if not isinstance(convergence, ExtendedSystemCertificate):
-            raise TypeError("convergence must be an ExtendedSystemCertificate.")
-        if not isinstance(nonlinear_result, NonlinearResult):
-            raise TypeError("nonlinear_result must be a NonlinearResult.")
-        if not isinstance(provenance, ExtendedSystemProvenance):
-            raise TypeError("provenance must be ExtendedSystemProvenance.")
         self.state = state
         self.residual_blocks = residual_blocks
         self.convergence = convergence
@@ -563,6 +549,7 @@ class HopfResult(StrictModule):
     nonlinear_result: NonlinearResult
     provenance: ExtendedSystemProvenance
 
+    @checked
     def __init__(
         self,
         *,
@@ -572,16 +559,6 @@ class HopfResult(StrictModule):
         nonlinear_result: NonlinearResult,
         provenance: ExtendedSystemProvenance,
     ) -> None:
-        if not isinstance(state, HopfState):
-            raise TypeError("state must be a HopfState.")
-        if not isinstance(residual_blocks, HopfResidualBlocks):
-            raise TypeError("residual_blocks must be HopfResidualBlocks.")
-        if not isinstance(convergence, ExtendedSystemCertificate):
-            raise TypeError("convergence must be an ExtendedSystemCertificate.")
-        if not isinstance(nonlinear_result, NonlinearResult):
-            raise TypeError("nonlinear_result must be a NonlinearResult.")
-        if not isinstance(provenance, ExtendedSystemProvenance):
-            raise TypeError("provenance must be ExtendedSystemProvenance.")
         self.state = state
         self.residual_blocks = residual_blocks
         self.convergence = convergence
@@ -622,6 +599,7 @@ class FoldProblem(StrictModule):
     reference_nullvector: PyTree[Array]
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: ContinuationCurveProblem,
@@ -631,10 +609,6 @@ class FoldProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(problem, ContinuationCurveProblem):
-            raise TypeError("problem must be a ContinuationCurveProblem.")
-        if not isinstance(state_space, AbstractVectorSpace):
-            raise TypeError("state_space must be an AbstractVectorSpace.")
         reference = state_space.validate(reference_nullvector)
         reference_norm = float(
             jnp.sqrt(jnp.real(state_space.inner(reference, reference)))
@@ -651,14 +625,13 @@ class FoldProblem(StrictModule):
         self.reference_nullvector = reference
         self.problem_id = identifier
 
+    @checked
     def residual_blocks(
         self,
         extended_state: FoldState,
         args: Any = None,
         /,
     ) -> FoldResidualBlocks:
-        if not isinstance(extended_state, FoldState):
-            raise TypeError("extended_state must be a FoldState.")
         state = self.state_space.validate(extended_state.physical_state)
         nullvector = self.state_space.validate(extended_state.nullvector)
         parameter = _validate_scalar(extended_state.parameter, "fold parameter")
@@ -701,6 +674,7 @@ class HopfProblem(StrictModule):
     minimum_frequency: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: ContinuationCurveProblem,
@@ -712,10 +686,6 @@ class HopfProblem(StrictModule):
         minimum_frequency: float = 1e-7,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(problem, ContinuationCurveProblem):
-            raise TypeError("problem must be a ContinuationCurveProblem.")
-        if not isinstance(state_space, AbstractVectorSpace):
-            raise TypeError("state_space must be an AbstractVectorSpace.")
         real_mode = state_space.validate(reference_mode_real)
         imaginary_mode = state_space.validate(reference_mode_imaginary)
         norm_squared = jnp.real(
@@ -740,14 +710,13 @@ class HopfProblem(StrictModule):
         self.minimum_frequency = frequency
         self.problem_id = identifier
 
+    @checked
     def residual_blocks(
         self,
         extended_state: HopfState,
         args: Any = None,
         /,
     ) -> HopfResidualBlocks:
-        if not isinstance(extended_state, HopfState):
-            raise TypeError("extended_state must be a HopfState.")
         state = self.state_space.validate(extended_state.physical_state)
         mode_real = self.state_space.validate(extended_state.mode_real)
         mode_imaginary = self.state_space.validate(extended_state.mode_imaginary)
@@ -870,6 +839,7 @@ class FoldMethod(StrictModule):
     residual_tolerance: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         root_method: AbstractNonlinearMethod,
@@ -879,8 +849,6 @@ class FoldMethod(StrictModule):
         residual_tolerance: float = 1e-7,
         method_id: str = "fold-extended-system",
     ) -> None:
-        if not isinstance(root_method, AbstractNonlinearMethod):
-            raise TypeError("root_method must be an AbstractNonlinearMethod.")
         tolerance = float(residual_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("residual_tolerance must be finite and non-negative.")
@@ -902,6 +870,7 @@ class FoldMethod(StrictModule):
         self.residual_tolerance = tolerance
         self.method_id = identifier
 
+    @checked
     def solve(
         self,
         problem: FoldProblem,
@@ -910,10 +879,6 @@ class FoldMethod(StrictModule):
         *,
         args: Any = None,
     ) -> FoldResult:
-        if not isinstance(problem, FoldProblem):
-            raise TypeError("problem must be a FoldProblem.")
-        if not isinstance(initial_state, FoldState):
-            raise TypeError("initial_state must be a FoldState.")
         nonlinear_result = self.root_method.solve(
             problem.as_nonlinear_problem(),
             initial_state,
@@ -951,6 +916,7 @@ class HopfMethod(StrictModule):
     residual_tolerance: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         root_method: AbstractNonlinearMethod,
@@ -960,8 +926,6 @@ class HopfMethod(StrictModule):
         residual_tolerance: float = 1e-7,
         method_id: str = "hopf-extended-system",
     ) -> None:
-        if not isinstance(root_method, AbstractNonlinearMethod):
-            raise TypeError("root_method must be an AbstractNonlinearMethod.")
         tolerance = float(residual_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("residual_tolerance must be finite and non-negative.")
@@ -983,6 +947,7 @@ class HopfMethod(StrictModule):
         self.residual_tolerance = tolerance
         self.method_id = identifier
 
+    @checked
     def solve(
         self,
         problem: HopfProblem,
@@ -991,10 +956,6 @@ class HopfMethod(StrictModule):
         *,
         args: Any = None,
     ) -> HopfResult:
-        if not isinstance(problem, HopfProblem):
-            raise TypeError("problem must be a HopfProblem.")
-        if not isinstance(initial_state, HopfState):
-            raise TypeError("initial_state must be a HopfState.")
         nonlinear_result = self.root_method.solve(
             problem.as_nonlinear_problem(),
             initial_state,

@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
+from ...typing import checked
 from ._precision import FiniteVolumePrecisionPolicy
 
 
@@ -33,6 +34,7 @@ class FiniteVolumeEntropyDiagnostics(StrictModule):
     admissible: Array
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         *,
@@ -47,8 +49,6 @@ class FiniteVolumeEntropyDiagnostics(StrictModule):
         identifier = str(pair_id)
         if not identifier:
             raise ValueError("pair_id must be non-empty.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
         total = jnp.asarray(total_entropy)
         semidiscrete = jnp.asarray(semidiscrete_entropy_rate)
         source = jnp.asarray(source_entropy_rate)

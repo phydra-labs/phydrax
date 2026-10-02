@@ -14,6 +14,7 @@ from numbers import Integral
 import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..typing import checked
 from ._identity import NuclearSpeciesKey, NuclearSpeciesTable, NuclideKey
 
 
@@ -133,13 +134,12 @@ class NuclideComposition:
             ),
         )
 
+    @checked
     def convert_basis(
         self, basis: CompositionBasis, species: NuclearSpeciesTable, /
     ) -> CompositionConversionResult:
         if not isinstance(basis, CompositionBasis):
             raise TypeError("basis must be CompositionBasis.")
-        if not isinstance(species, NuclearSpeciesTable):
-            raise TypeError("species must be NuclearSpeciesTable.")
         expected = tuple(
             NuclearSpeciesKey.from_nuclide(value).species_id for value in self.nuclides
         )

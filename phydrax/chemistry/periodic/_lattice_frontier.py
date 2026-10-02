@@ -24,6 +24,7 @@ from ...qualification import (
     ScientificCase,
     SupportTuple,
 )
+from ...typing import checked
 from ...units import UnitDefinition
 
 
@@ -124,6 +125,7 @@ class LatticeFrontierContract(StrictModule, NonTrainableState):
     capacity: LatticeFrontierCapacity
     contract_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capability: str,
@@ -134,8 +136,6 @@ class LatticeFrontierContract(StrictModule, NonTrainableState):
         capacity: LatticeFrontierCapacity,
         /,
     ) -> None:
-        if not isinstance(capacity, LatticeFrontierCapacity):
-            raise TypeError("capacity must be LatticeFrontierCapacity.")
         self.capability = _identifier(capability, "capability")
         self.method = _identifier(method, "method")
         self.approximation = _identifier(approximation, "approximation")
@@ -191,6 +191,7 @@ class ElectronPhononCoupling(StrictModule, NonTrainableState):
     hermitian_reverse_residual: Array
     coupling_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vertices: ArrayLike,
@@ -219,8 +220,6 @@ class ElectronPhononCoupling(StrictModule, NonTrainableState):
             channels=value.size,
             bytes_required=value.nbytes,
         )
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         residual = float(hermitian_reverse_residual)
         if not np.isfinite(residual) or residual < 0.0:
             raise ValueError("Hermitian reverse residual must be finite and nonnegative.")
@@ -263,6 +262,7 @@ class SpinPhononCoupling(StrictModule, NonTrainableState):
     reality_residual: Array
     coupling_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         derivatives: ArrayLike,
@@ -290,8 +290,6 @@ class SpinPhononCoupling(StrictModule, NonTrainableState):
             channels=value.size,
             bytes_required=value.nbytes,
         )
-        if not isinstance(derivative_unit, UnitDefinition):
-            raise TypeError("derivative_unit must be UnitDefinition.")
         terms = tuple(_identifier(item, "spin term ID") for item in spin_term_ids)
         if len(terms) != value.shape[0] or len(set(terms)) != len(terms):
             raise ValueError(

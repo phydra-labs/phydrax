@@ -38,7 +38,7 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
     bdf_shift_offset as _general_bdf_shift_offset,
@@ -690,6 +690,7 @@ class DAESolvePlan(StrictModule):
     replay_memory_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: DifferentialAlgebraicProblem,
@@ -699,12 +700,6 @@ class DAESolvePlan(StrictModule):
         *,
         event_plan: Any = None,
     ) -> None:
-        if not isinstance(problem, DifferentialAlgebraicProblem):
-            raise TypeError("problem must be a DifferentialAlgebraicProblem.")
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
-        if not isinstance(policy, DAESolvePolicy):
-            raise TypeError("policy must be a DAESolvePolicy.")
         if event_plan is not None:
             from ._dae_events import DAEEventPlan
 
@@ -1362,6 +1357,7 @@ class DifferentialAlgebraicSolution(StrictModule):
     grid_origin: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -1419,16 +1415,6 @@ class DifferentialAlgebraicSolution(StrictModule):
         ):
             if jnp.asarray(values).shape != node_shape:
                 raise ValueError(f"DAE {name} must have shape {node_shape}.")
-        if not isinstance(step_history, DAEStepHistory):
-            raise TypeError("step_history must be a DAEStepHistory.")
-        if not isinstance(attempt_history, DAEAttemptHistory):
-            raise TypeError("attempt_history must be a DAEAttemptHistory.")
-        if not isinstance(continuation, DAEContinuation):
-            raise TypeError("continuation must be a DAEContinuation.")
-        if not isinstance(regularity, DAERegularityEvidence):
-            raise TypeError("regularity must be DAERegularityEvidence.")
-        if not isinstance(replay, DAEReplayEvidence):
-            raise TypeError("replay must be DAEReplayEvidence.")
         if events is not None:
             from ._dae_events import DAEEventResult
 

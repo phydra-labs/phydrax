@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 from ._fields import PlaneFieldSpace, ScalarPlaneField, TangentialPlaneField
 
 
@@ -57,6 +58,7 @@ class ScalarThinTransmission(StrictModule):
     transmission: Array
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -65,8 +67,6 @@ class ScalarThinTransmission(StrictModule):
         *,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         values = _complex_transmission("transmission", transmission, space.shape)
         generated = canonical_fingerprint(
             {
@@ -114,6 +114,7 @@ class JonesThinTransmission(StrictModule):
     transmission: Array
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: PlaneFieldSpace,
@@ -122,8 +123,6 @@ class JonesThinTransmission(StrictModule):
         *,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(space, PlaneFieldSpace):
-            raise TypeError("space must be a PlaneFieldSpace.")
         shape = space.shape + (2, 2)
         values = _complex_transmission("transmission", transmission, shape)
         generated = canonical_fingerprint(
@@ -145,9 +144,8 @@ class JonesThinTransmission(StrictModule):
     def coefficient_count(self) -> int:
         return prod(self.transmission.shape)
 
+    @checked
     def apply(self, field: TangentialPlaneField, /) -> TangentialPlaneField:
-        if not isinstance(field, TangentialPlaneField):
-            raise TypeError("A Jones thin transmission requires a TangentialPlaneField.")
         if field.space.space_id != self.space.space_id:
             raise ValueError("field and thin transmission must use the same plane space.")
         values = ein.contract("...ij,...j->...i", self.transmission, field.values)

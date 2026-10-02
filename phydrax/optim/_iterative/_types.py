@@ -20,7 +20,7 @@ from ..._iteration import IterationEvidence
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._tree_math import validate_real_inexact_tree as _validate_real_inexact_tree
-from ...typing import parse
+from ...typing import checked, parse
 
 
 class OptimizationStatus(IntEnum):
@@ -752,6 +752,7 @@ class OptimizationStatusEvidence(StrictModule):
     certificate: OptimizationCertificate
     decision_reason: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -762,8 +763,6 @@ class OptimizationStatusEvidence(StrictModule):
         demoted: Any,
         decision_reason: str,
     ) -> None:
-        if not isinstance(certificate, OptimizationCertificate):
-            raise TypeError("certificate must be OptimizationCertificate.")
         reason = str(decision_reason)
         if not reason:
             raise ValueError("decision_reason must be non-empty.")
@@ -863,6 +862,7 @@ class MinimizationResult(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     iteration_evidence: IterationEvidence | None
 
+    @checked
     def __init__(
         self,
         parameters: PyTree[Any],
@@ -880,10 +880,6 @@ class MinimizationResult(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         iteration_evidence: IterationEvidence | None = None,
     ) -> None:
-        if not isinstance(diagnostics, OptimizationDiagnostics):
-            raise TypeError("diagnostics must be OptimizationDiagnostics.")
-        if not isinstance(provenance, OptimizationProvenance):
-            raise TypeError("provenance must be OptimizationProvenance.")
         if certificate is not None and not isinstance(
             certificate,
             ConstrainedOptimalityCertificate,
@@ -948,6 +944,7 @@ class LeastSquaresResult(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     iteration_evidence: IterationEvidence | None
 
+    @checked
     def __init__(
         self,
         parameters: PyTree[Any],
@@ -965,10 +962,6 @@ class LeastSquaresResult(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         iteration_evidence: IterationEvidence | None = None,
     ) -> None:
-        if not isinstance(diagnostics, OptimizationDiagnostics):
-            raise TypeError("diagnostics must be OptimizationDiagnostics.")
-        if not isinstance(provenance, OptimizationProvenance):
-            raise TypeError("provenance must be OptimizationProvenance.")
         if optimality_certificate is not None and not isinstance(
             optimality_certificate,
             OptimizationCertificate,

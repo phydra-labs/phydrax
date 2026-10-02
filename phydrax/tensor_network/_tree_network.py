@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._contraction import ContractionResourcePolicy, plan_contraction
 from ._precision import TensorNetworkPrecisionPolicy
 from ._topology import ContractionStructure
@@ -26,6 +27,7 @@ class TreeTensorNetwork(StrictModule):
     precision: TensorNetworkPrecisionPolicy
     network_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         structure: ContractionStructure,
@@ -34,8 +36,6 @@ class TreeTensorNetwork(StrictModule):
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(structure, ContractionStructure):
-            raise TypeError("structure must be ContractionStructure.")
         arrays = tuple(jnp.asarray(value) for value in tensors)
         if len(arrays) != len(structure.operands):
             raise ValueError("Tree tensor count must equal topology node count.")

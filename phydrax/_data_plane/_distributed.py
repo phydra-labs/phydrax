@@ -14,6 +14,7 @@ import jax
 import numpy as np
 from jax.sharding import Sharding
 
+from ..typing import checked
 from ._epoch import IndexEpochPlan
 
 
@@ -56,6 +57,7 @@ class DistributedIndexEpochPlan:
     global_device_count: int
     local_batch_size: int
 
+    @checked
     def __init__(
         self,
         global_plan: IndexEpochPlan,
@@ -63,8 +65,6 @@ class DistributedIndexEpochPlan:
         process_index: int,
         devices_per_process: int = 1,
     ) -> None:
-        if not isinstance(global_plan, IndexEpochPlan):
-            raise TypeError("global_plan must be an IndexEpochPlan")
         processes = int(process_count)
         process = int(process_index)
         local_devices = int(devices_per_process)

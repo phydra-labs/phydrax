@@ -34,6 +34,7 @@ from ..geometry.multiregion_surface import (
     PreparedMultiRegionSurface,
 )
 from ..sparse import EdgeRelation, route_reduce
+from ..typing import checked
 from ._film_contracts import FilmSurfaceTopology, PreparedFilmSurface
 
 
@@ -146,6 +147,7 @@ class PreparedFilmSheetSlots(StrictModule):
     lineage_id: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedMultiRegionSurface,
@@ -154,10 +156,6 @@ class PreparedFilmSheetSlots(StrictModule):
         *,
         geometry_revision: ArrayLike = 0,
     ) -> None:
-        if not isinstance(prepared, PreparedMultiRegionSurface):
-            raise TypeError("prepared must be PreparedMultiRegionSurface.")
-        if not isinstance(state, MultiRegionSurfaceState):
-            raise TypeError("state must be MultiRegionSurfaceState.")
         topology = prepared.topology
         state.require_topology(topology)
         revision = jnp.asarray(geometry_revision, dtype=jnp.int32)

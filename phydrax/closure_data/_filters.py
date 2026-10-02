@@ -16,7 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations._les_closures import ResolvedLESFilter
-from ..typing import parse
+from ..typing import checked, parse
 
 
 FilterKind: TypeAlias = Literal["identity", "box", "gaussian", "spectral_cutoff"]
@@ -175,9 +175,8 @@ class PreparedFilter(StrictModule, NonTrainableState):
     spatial_rank: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, spec: FilterSpec, spatial_shape: tuple[int, ...], /) -> None:
-        if not isinstance(spec, FilterSpec):
-            raise TypeError("spec must be a FilterSpec.")
         shape = tuple(spatial_shape)
         if not shape or any(value < 2 for value in shape):
             raise ValueError(
@@ -271,9 +270,8 @@ class ReynoldsFilter(StrictModule, NonTrainableState):
     prepared: PreparedFilter
     filter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, prepared: PreparedFilter, /) -> None:
-        if not isinstance(prepared, PreparedFilter):
-            raise TypeError("prepared must be a PreparedFilter.")
         self.prepared = prepared
         self.filter_id = canonical_fingerprint(
             {"kind": "reynolds-filter", "prepared": prepared.prepared_id}
@@ -291,11 +289,10 @@ class FavreFilter(StrictModule, NonTrainableState):
     density_floor: float = eqx.field(static=True)
     filter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, prepared: PreparedFilter, /, *, density_floor: float = 0.0
     ) -> None:
-        if not isinstance(prepared, PreparedFilter):
-            raise TypeError("prepared must be a PreparedFilter.")
         floor = float(density_floor)
         if not np.isfinite(floor) or floor < 0.0:
             raise ValueError("density_floor must be finite and nonnegative.")

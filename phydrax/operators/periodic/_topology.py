@@ -21,6 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._reciprocal import PreparedReciprocalConnectivity
+from ...typing import checked
 from ._family import PeriodicResourceError
 from ._orbital import PreparedPeriodicOrbitalPencil
 from ._spectrum import PeriodicSpectrumResult
@@ -37,6 +38,7 @@ class PeriodicBandManifold(StrictModule, NonTrainableState):
     resolved: bool = eqx.field(static=True)
     manifold_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spectrum: PeriodicSpectrumResult,
@@ -45,8 +47,6 @@ class PeriodicBandManifold(StrictModule, NonTrainableState):
         *,
         gap_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(spectrum, PeriodicSpectrumResult):
-            raise TypeError("spectrum must be PeriodicSpectrumResult.")
         if not bool(spectrum.successful):
             raise ValueError("Band manifolds require a successful periodic spectrum.")
         indices = np.asarray(band_indices)
@@ -109,6 +109,7 @@ class PeriodicCrossKConnection(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     connection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         connectivity: PreparedReciprocalConnectivity,
@@ -120,8 +121,6 @@ class PeriodicCrossKConnection(StrictModule, NonTrainableState):
         reverse_tolerance: float = 1.0e-10,
         maximum_matrix_entries: int = 8_000_000,
     ) -> None:
-        if not isinstance(connectivity, PreparedReciprocalConnectivity):
-            raise TypeError("connectivity must be PreparedReciprocalConnectivity.")
         matrix = np.asarray(matrices)
         basis = str(basis_id).strip()
         source = str(source_id).strip()
@@ -180,6 +179,7 @@ class PeriodicOverlapBundle(StrictModule, NonTrainableState):
     resolved: bool = eqx.field(static=True)
     bundle_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         manifold: PeriodicBandManifold,
@@ -191,8 +191,6 @@ class PeriodicOverlapBundle(StrictModule, NonTrainableState):
         source_id: str | None = None,
         link_singular_value_floor: float = 1.0e-8,
     ) -> None:
-        if not isinstance(manifold, PeriodicBandManifold):
-            raise TypeError("Overlap bundle requires PeriodicBandManifold.")
         connection: PeriodicCrossKConnection | None
         if isinstance(connection_or_connectivity, PeriodicCrossKConnection):
             if raw_overlaps is not None or source_id is not None:
@@ -317,6 +315,7 @@ class PeriodicWilsonPlan(StrictModule, NonTrainableState):
     ordered_edges: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bundle: PeriodicOverlapBundle,
@@ -325,8 +324,6 @@ class PeriodicWilsonPlan(StrictModule, NonTrainableState):
         *,
         maximum_links: int = 1_000_000,
     ) -> None:
-        if not isinstance(bundle, PeriodicOverlapBundle):
-            raise TypeError("bundle must be PeriodicOverlapBundle.")
         edges = np.asarray(ordered_edges)
         connectivity = bundle.connectivity.plan
         if (
@@ -467,6 +464,7 @@ class PeriodicChernPlan(StrictModule, NonTrainableState):
     quantization_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bundle: PeriodicOverlapBundle,
@@ -476,8 +474,6 @@ class PeriodicChernPlan(StrictModule, NonTrainableState):
         require_refinement: bool = False,
         quantization_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(bundle, PeriodicOverlapBundle):
-            raise TypeError("bundle must be PeriodicOverlapBundle.")
         if bundle.connectivity.plaquette_count == 0:
             raise ValueError(
                 "First Chern evaluation requires oriented plaquette connectivity."

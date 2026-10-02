@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...typing import checked
 from ._dem_contact import (
     AbstractDEMRotationalContactPlan,
     DEMContactBatch,
@@ -101,6 +102,7 @@ class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
         self.torsional_friction = jnp.asarray(torsional_friction_)
         self.rotational_law_id = identifier
 
+    @checked
     def evaluate(
         self,
         batch: DEMContactBatch,
@@ -111,8 +113,6 @@ class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
         ambient_dimension: int,
         /,
     ) -> DEMRotationalResponse:
-        if not isinstance(history, DEMRotationalHistory):
-            raise TypeError("history must be a DEMRotationalHistory.")
         rolling_stiffness = _pair_value(
             self.rolling_stiffness,
             context.left_material,

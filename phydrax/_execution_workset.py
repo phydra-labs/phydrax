@@ -32,6 +32,7 @@ from ._identity import NumericRevision
 from ._sampling._addressing import SampleAddress
 from ._strict import StrictModule
 from ._trainable import LaneLayout, NonTrainableState
+from .typing import checked
 
 
 if TYPE_CHECKING:
@@ -179,9 +180,8 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
     item_slot: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ExecutionWorksetPlan, /) -> None:
-        if not isinstance(plan, ExecutionWorksetPlan):
-            raise TypeError("plan must be an ExecutionWorksetPlan.")
         grouped: dict[str, list[int]] = {}
         representatives: dict[str, PoolExecutionSignature] = {}
         for item, signature in enumerate(plan.signatures):
@@ -591,6 +591,7 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
     numeric_revision_ids: tuple[str, ...] = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedExecutionWorksets,
@@ -600,8 +601,6 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         *,
         numeric_revisions: Sequence[NumericRevision],
     ) -> None:
-        if not isinstance(prepared, PreparedExecutionWorksets):
-            raise TypeError("prepared must be PreparedExecutionWorksets.")
         arrays = _item_tree(state, prepared.item_count)
         counters = jnp.asarray(rng_counters, dtype=jnp.uint32)
         if counters.shape != (prepared.item_count,):

@@ -4,6 +4,25 @@
 
 """Canonical finite quantum-lattice compilation and fixed-sector execution."""
 
+from ._address import (
+    AddressWordDim,
+    ConfigurationSiteDim,
+    QuantumAddress,
+    QuantumAddressCodec,
+    QuantumConfigurationDomain,
+)
+from ._column import (
+    QuantumColumn,
+    QuantumColumnSource,
+    QuantumLatticeColumnOperator,
+    RawQuantumExcitation,
+)
+from ._column_compile import (
+    prepare_quantum_lattice_columns,
+    PreparedQuantumLatticeColumns,
+    QuantumColumnResourcePolicy,
+    refresh_quantum_lattice_columns,
+)
 from ._compile import (
     certify_charge_map,
     ChargeMapCertification,
@@ -14,6 +33,12 @@ from ._compile import (
     QuantumLatticeCompilerPlan,
     QuantumLatticeResourcePolicy,
     refresh_quantum_lattice,
+)
+from ._guide import (
+    GuidedQuantumColumnOperator,
+    QuantumGuide,
+    QuantumGuideNodePolicy,
+    QuantumGuideProvider,
 )
 from ._irrep_sector import (
     CovariantOperatorEvidence,
@@ -99,6 +124,23 @@ from ._vmc import lower_quantum_lattice_to_vmc, QuantumLatticeVMCOperator
 
 
 __all__ = [
+    "AddressWordDim",
+    "ConfigurationSiteDim",
+    "GuidedQuantumColumnOperator",
+    "PreparedQuantumLatticeColumns",
+    "QuantumAddress",
+    "QuantumAddressCodec",
+    "QuantumColumn",
+    "QuantumColumnResourcePolicy",
+    "QuantumColumnSource",
+    "QuantumConfigurationDomain",
+    "QuantumGuide",
+    "QuantumGuideNodePolicy",
+    "QuantumGuideProvider",
+    "QuantumLatticeColumnOperator",
+    "RawQuantumExcitation",
+    "prepare_quantum_lattice_columns",
+    "refresh_quantum_lattice_columns",
     "AbstractSectorBasis",
     "CharacterSectorPlan",
     "ChargeMapCertification",

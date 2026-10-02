@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._incompressible import FaceVelocity
 from ._mac_boundary import MACBoundaryStageData
 from ._mac_momentum import (
@@ -85,9 +86,8 @@ class PreparedMACVariationalViscosityAction(StrictModule, NonTrainableState):
     restriction_supported: bool = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, momentum: PreparedMACMomentumOperators, /) -> None:
-        if not isinstance(momentum, PreparedMACMomentumOperators):
-            raise TypeError("momentum must be PreparedMACMomentumOperators.")
         axes = momentum.operators.discretization.grid.structured_axes
         cell_widths = tuple(axis.interval_widths for axis in axes)
         face_widths = tuple(momentum.face_dual_widths)
@@ -516,6 +516,7 @@ class FrozenMACVariationalViscosityAction(StrictModule, NonTrainableState):
     boundary_stage: MACBoundaryStageData
     frozen_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared_action: PreparedMACVariationalViscosityAction,
@@ -523,10 +524,6 @@ class FrozenMACVariationalViscosityAction(StrictModule, NonTrainableState):
         boundary_stage: MACBoundaryStageData,
         /,
     ) -> None:
-        if not isinstance(prepared_action, PreparedMACVariationalViscosityAction):
-            raise TypeError(
-                "prepared_action must be PreparedMACVariationalViscosityAction."
-            )
         self.prepared_action = prepared_action
         self.cell_viscosity = prepared_action._viscosity(cell_viscosity)
         self.boundary_stage = prepared_action.momentum.boundaries.validate_stage(

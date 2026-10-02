@@ -41,6 +41,7 @@ from ...linalg._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ...typing import checked
 from ..geophysics._vertical import HybridPressureCoordinate
 from ._processes import GlobalAtmosphereProcesses, GlobalHeldForcing, GlobalProcessRates
 
@@ -231,6 +232,7 @@ class GlobalPrimitiveEquationPlan(StrictModule):
     maximum_angular_momentum_projection_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: SphericalSpectralDiscretization,
@@ -268,8 +270,6 @@ class GlobalPrimitiveEquationPlan(StrictModule):
             raise TypeError(
                 "Global atmosphere requires a prepared real scalar spherical space."
             )
-        if not isinstance(vertical, HybridPressureCoordinate):
-            raise TypeError("vertical must be a HybridPressureCoordinate.")
         if isinstance(filter_order, bool) or not isinstance(filter_order, int):
             raise TypeError("filter_order must be an integer.")
         if isinstance(water_projection_iterations, bool) or not isinstance(
@@ -523,9 +523,8 @@ class PreparedGlobalAtmosphere(StrictModule):
         below = jnp.flip(jnp.cumsum(jnp.flip(whole, axis=-1), axis=-1), axis=-1) - whole
         return below + thermal * jnp.log(interfaces[..., 1:] / middle)
 
+    @checked
     def view(self, state: GlobalAtmosphereState) -> GlobalAtmosphereView:
-        if not isinstance(state, GlobalAtmosphereState):
-            raise TypeError("state must be a GlobalAtmosphereState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("Atmosphere state belongs to another prepared runtime.")
         east, north = self.vectors.wind(
@@ -1487,10 +1486,9 @@ class PreparedGlobalAtmosphere(StrictModule):
         )
         return rate, process, courant, constraint
 
+    @checked
     def advance(self, continuation: GlobalAtmosphereContinuation) -> GlobalStepResult:
         """One IMEX midpoint attempt; rejection preserves state, time, forcing and ledgers."""
-        if not isinstance(continuation, GlobalAtmosphereContinuation):
-            raise TypeError("continuation must be a GlobalAtmosphereContinuation.")
         if continuation.prepared_id != self.prepared_id:
             raise ValueError(
                 "Continuation belongs to another prepared atmosphere runtime."

@@ -58,7 +58,7 @@ from ...domain.decomposition import (
 from ...geometry.multiregion_surface import MultiRegionSheetView, MultiRegionSheetViews
 from ...geometry.surface import InterfaceSide
 from ...meshing import MeshAssembly, MeshInterfaceAttachment, MeshPart
-from ...typing import parse
+from ...typing import checked, parse
 
 
 InterfaceIncidence: TypeAlias = Literal["two-sided", "junction", "overlap", "embedded"]
@@ -333,10 +333,9 @@ class InterfaceSource(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def paired_support(cls, cover: SubdomainCover, pairing_id: str, /) -> InterfaceSource:
         """The analytic cover as the authority of one of its paired supports."""
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be SubdomainCover.")
         pairing = cover.pairing(_identifier(pairing_id, "pairing_id"))
         return cls(cover.cover_id, cover.revision, (pairing.pairing_id,))
 
@@ -384,6 +383,7 @@ class PairedSupportAttachment(StrictModule, NonTrainableState):
     witness_id: str = eqx.field(static=True)
     attachment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cover: SubdomainCover,
@@ -394,8 +394,6 @@ class PairedSupportAttachment(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be SubdomainCover.")
         pairing = cover.pairing(_identifier(pairing_id, "pairing_id"))
         patch = _identifier(patch_id, "patch_id")
         if patch == pairing.left_patch_id:
@@ -467,10 +465,9 @@ class PairedSupportAttachment(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def require_current(self, cover: SubdomainCover, /) -> None:
         """Refuse a cover that is not the exact revision this attachment binds."""
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be SubdomainCover.")
         if cover.cover_id != self.cover_id:
             raise ValueError(f"Cover {cover.cover_id!r} does not own this attachment.")
         if cover.revision != self.cover_revision:
@@ -557,10 +554,9 @@ class SheetViewAttachment(StrictModule, NonTrainableState):
             case _:
                 return None
 
+    @checked
     def require_current(self, views: MultiRegionSheetViews, /) -> None:
         """Refuse a view set that is not the exact revision this attachment binds."""
-        if not isinstance(views, MultiRegionSheetViews):
-            raise TypeError("views must be MultiRegionSheetViews.")
         if views.views_id != self.views_id:
             raise ValueError("The sheet view set does not own this attachment.")
         if _sheet_revision(views) != self.surface_revision:
@@ -1041,6 +1037,7 @@ class InterfaceBinding(StrictModule, NonTrainableState):
     measure_id: str | None = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interface_id: str,
@@ -1053,8 +1050,6 @@ class InterfaceBinding(StrictModule, NonTrainableState):
         measure_id: str | None = None,
     ) -> None:
         identifier = _identifier(interface_id, "interface_id")
-        if not isinstance(source, InterfaceSource):
-            raise TypeError("source must be InterfaceSource.")
         incidence_ = parse(incidence, InterfaceIncidence, "incidence")
         facts = _endpoint_facts(endpoints)
         _check_sources(source, endpoints, facts)

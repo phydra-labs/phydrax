@@ -22,6 +22,7 @@ from .._fingerprint import canonical_fingerprint
 from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import (
     derived_unit,
     HERTZ,
@@ -169,9 +170,8 @@ class ThermalSynchrotronUnitContract(StrictModule, NonTrainableState):
     specific_intensity_unit: UnitDefinition = eqx.field(static=True)
     units_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, scale: ElectromagneticScaleContract, /) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         if scale.scale_id != _SI_ELECTROMAGNETIC_SCALE.scale_id:
             raise ValueError(
                 "Thermal synchrotron SI units require the CODATA 2022 SI "

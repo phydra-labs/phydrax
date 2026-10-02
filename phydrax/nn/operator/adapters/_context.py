@@ -24,6 +24,7 @@ from ...._model._ports import (
     resolve_port_mapping,
 )
 from ...._trainable import fixed_field
+from ....typing import checked
 from ..._base import _AbstractBaseModel
 from ..._contracts import model_regularity
 from ..._keys import EvalKey
@@ -105,6 +106,7 @@ class OperatorContextModel(_AbstractBaseModel):
     in_size: int
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
+    @checked
     def __init__(
         self,
         operator: Any,
@@ -119,8 +121,6 @@ class OperatorContextModel(_AbstractBaseModel):
     ) -> None:
         from ..training._trained_operator import TrainedOperator
 
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("OperatorContextModel requires an OperatorBatch.")
         base_operator = (
             operator.model if isinstance(operator, ModelWithLoss) else operator
         )

@@ -48,6 +48,7 @@ from ..discretization.finite_volume import (
 from ..discretization.iga import IsogeometricPlan
 from ..discretization.spatial import hilbert_encode_integer, morton_encode_integer
 from ..sparse import EdgeRelation, gather_routes, route_reduce, RouteReduction
+from ..typing import checked
 from ._assembly import MeshPart
 from ._lineage import MeshLineage
 from ._metis import metis_identity, metis_partition, MetisPartitionError
@@ -889,6 +890,7 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
     lineage_id: str = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MeshDistribution,
@@ -904,8 +906,6 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
             target, MeshDistribution
         ):
             raise TypeError("Transition endpoints must be MeshDistribution values.")
-        if not isinstance(lineage, MeshLineage):
-            raise TypeError("lineage must be MeshLineage.")
         parts = source.partition.part_count
         if target.partition.part_count != parts:
             raise ValueError("Distribution transitions keep the part count.")

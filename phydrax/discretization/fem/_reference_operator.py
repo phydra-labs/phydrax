@@ -19,7 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import compound_matrix
-from ...typing import parse
+from ...typing import checked, parse
 from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from ._high_order import ReferenceNodalFamily, TensorProductTabulation
 from ._precision import FiniteElementPrecisionPolicy
@@ -424,6 +424,7 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
     report: FiniteElementReferenceReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         element: FiniteElementSpec,
@@ -443,8 +444,6 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
             ReferenceQuadrilateralRule,
         )
 
-        if not isinstance(element, FiniteElementSpec):
-            raise TypeError("element must be FiniteElementSpec.")
         if element.cell_kind not in (
             "triangle",
             "quadrilateral",
@@ -458,8 +457,6 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
             raise ValueError("Reference nodal actions require point-value coefficients.")
         if element.value_shape:
             raise ValueError("Reference nodal actions require a scalar finite element.")
-        if not isinstance(precision, FiniteElementPrecisionPolicy):
-            raise TypeError("precision must be FiniteElementPrecisionPolicy.")
         action_set = _canonical_actions(actions)
         topology = reference_cell_topology(element.cell_kind)
         expected_facets = len(topology.entities[element.topological_dimension - 1])

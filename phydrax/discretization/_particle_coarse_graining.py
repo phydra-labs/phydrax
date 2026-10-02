@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._measure import DiscreteMeasure
 from .particle._core import ParticleDiscretization, ParticleSetPlan
 from .particle._pairwise import particle_pair_geometry, ParticlePairRelation
@@ -66,6 +67,7 @@ class ParticleCoarseGrainingPlan(StrictModule, NonTrainableState):
     quadrature_order: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         splat: ParticleGridSplatPlan,
@@ -74,8 +76,6 @@ class ParticleCoarseGrainingPlan(StrictModule, NonTrainableState):
         quadrature_order: int = 4,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(splat, ParticleGridSplatPlan):
-            raise TypeError("splat must be a ParticleGridSplatPlan.")
         order = int(quadrature_order)
         if order < 2 or order > 16:
             raise ValueError("quadrature_order must lie in [2, 16].")
@@ -110,6 +110,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
     ambient_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ParticleCoarseGrainingPlan,
@@ -117,10 +118,6 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         pair_capacity: int,
         /,
     ) -> None:
-        if not isinstance(plan, ParticleCoarseGrainingPlan):
-            raise TypeError("plan must be a ParticleCoarseGrainingPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         capacity = int(pair_capacity)
         if capacity <= 0:
             raise ValueError("pair_capacity must be positive.")
@@ -164,6 +161,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         positions: ArrayLike,
@@ -196,8 +194,6 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             )
         if active.shape != mass.shape:
             raise ValueError("active_mask must have particle-capacity shape.")
-        if not isinstance(pair_relation, ParticlePairRelation):
-            raise TypeError("pair_relation must be a ParticlePairRelation.")
         if pair_relation.capacity != self.pair_capacity:
             raise ValueError(
                 "Pair relation capacity does not match coarse-graining preparation."

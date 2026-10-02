@@ -42,7 +42,7 @@ from ..tensor_network._environments import (
 )
 from ..tensor_network._models import FixedStructureMPOCoefficients
 from ..tensor_network._split import truncated_svd
-from ..typing import parse
+from ..typing import checked, parse
 
 
 FiniteTDVPMode: TypeAlias = Literal["real-time", "imaginary-time"]
@@ -64,6 +64,7 @@ class FiniteTDVPProblem(StrictModule):
     hamiltonian: MatrixProductOperator | FixedStructureMPOCoefficients
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_state: MatrixProductState,
@@ -72,8 +73,6 @@ class FiniteTDVPProblem(StrictModule):
         *,
         problem_id: str = "finite-matrix-product-tdvp",
     ) -> None:
-        if not isinstance(initial_state, MatrixProductState):
-            raise TypeError("initial_state must be a MatrixProductState.")
         if not isinstance(
             hamiltonian, (MatrixProductOperator, FixedStructureMPOCoefficients)
         ):

@@ -13,6 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._holomorphic_linear import MultivariableHolomorphicPotentialProvider
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._kahler_potential import KahlerPotentialGeometry
 
 
@@ -52,6 +53,7 @@ class KahlerHolomorphicGauge(StrictModule):
     branch: int = eqx.field(static=True)
     gauge_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: KahlerPotentialGeometry,
@@ -60,8 +62,6 @@ class KahlerHolomorphicGauge(StrictModule):
         *,
         branch: int = 0,
     ) -> None:
-        if not isinstance(base, KahlerPotentialGeometry):
-            raise TypeError("base must be KahlerPotentialGeometry.")
         if not isinstance(provider, MultivariableHolomorphicPotentialProvider):
             raise TypeError(
                 "provider must implement MultivariableHolomorphicPotentialProvider."

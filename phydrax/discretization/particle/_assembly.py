@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._core import ParticleDiscretization
 from ._pairwise import ParticlePairGeometry, ParticlePairRelation
 
@@ -37,6 +37,7 @@ class ParticlePopulation(StrictModule, NonTrainableState):
     particles: ParticleDiscretization
     state_shape: tuple[int, ...] | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -50,8 +51,6 @@ class ParticlePopulation(StrictModule, NonTrainableState):
         name_ = str(name)
         if not name_:
             raise ValueError("Particle population name must be non-empty.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         role = parse(role, ParticlePopulationRole, "role")
         shape = None if state_shape is None else tuple(state_shape)
         if shape is not None and (not shape or any(size <= 0 for size in shape)):
@@ -257,6 +256,7 @@ class ParticleExchangeLedger(StrictModule):
     relation_schema_id: str = eqx.field(static=True)
 
     @classmethod
+    @checked
     def from_exchange(
         cls,
         pairs: ParticlePairRelation,
@@ -267,10 +267,6 @@ class ParticleExchangeLedger(StrictModule):
         *,
         velocities: ArrayLike | None = None,
     ) -> "ParticleExchangeLedger":
-        if not isinstance(pairs, ParticlePairRelation):
-            raise TypeError("pairs must be ParticlePairRelation.")
-        if not isinstance(geometry, ParticlePairGeometry):
-            raise TypeError("geometry must be ParticlePairGeometry.")
         if geometry.relation_schema_id != pairs.relation_schema_id:
             raise ValueError("Pair relation and geometry schemas differ.")
         exchange = jnp.asarray(pair_values)

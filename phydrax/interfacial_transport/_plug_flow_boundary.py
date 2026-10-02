@@ -42,7 +42,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field, parameter_field, ParameterOwner
-from ..typing import ConvertibleToArray, parse
+from ..typing import checked, ConvertibleToArray, parse
 from ._film_contracts import PreparedFilmSurface
 
 
@@ -126,6 +126,7 @@ class PlugFlowBoundary(StrictModule, ParameterOwner):
     topology_id: str = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedFilmSurface,
@@ -137,8 +138,6 @@ class PlugFlowBoundary(StrictModule, ParameterOwner):
         inflow_surface_concentration_mol_m2: ArrayLike = 0.0,
         inflow_dissolved_concentration_mol_m3: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(surface, PreparedFilmSurface):
-            raise TypeError("surface must be a PreparedFilmSurface.")
         if not isinstance(boundary_vertices, Mapping):
             raise TypeError("boundary_vertices must map boundary kinds to vertex ids.")
         topology = surface.topology

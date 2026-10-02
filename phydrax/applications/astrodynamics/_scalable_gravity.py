@@ -20,7 +20,7 @@ from ...solver._particle_gravity import (
     ParticleOctreePlan3D,
     PreparedParticleOctree3D,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._status import AstrodynamicsStatus
 
 
@@ -181,6 +181,7 @@ class BarnesHutGravityPlan3D(StrictModule, NonTrainableState):
     core: BarnesHutGravityPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         tree: PreparedOctree3D,
@@ -191,8 +192,6 @@ class BarnesHutGravityPlan3D(StrictModule, NonTrainableState):
         opening_angle: float = 0.5,
         softening: float = 1.0e-15,
     ) -> None:
-        if not isinstance(tree, PreparedOctree3D):
-            raise TypeError("tree must be PreparedOctree3D.")
         mass = jnp.asarray(masses)
         if mass.shape != tree.masses.shape:
             raise ValueError("Barnes-Hut masses must match the prepared tree.")

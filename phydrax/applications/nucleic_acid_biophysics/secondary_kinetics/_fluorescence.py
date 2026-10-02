@@ -29,6 +29,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ...._validation import canonical_identifier, positive_finite_float
 from ....qualification import ReferenceArtifactManifest, ScientificCampaign
+from ....typing import checked
 from ....uq import (
     AbstractPosteriorTerm,
     find_map,
@@ -167,6 +168,7 @@ class ReporterCalibration(StrictModule, NonTrainableState):
     requested_use: tuple[tuple[str, bool], ...] = eqx.field(static=True)
     calibration_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reporter_id: str,
@@ -181,8 +183,6 @@ class ReporterCalibration(StrictModule, NonTrainableState):
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
     ) -> None:
-        if not isinstance(campaign, ScientificCampaign):
-            raise TypeError("campaign must be a ScientificCampaign.")
         gain_ = jnp.asarray(gain, dtype=jnp.float64)
         background_ = jnp.asarray(background, dtype=jnp.float64)
         delay = jnp.asarray(delay_parameters, dtype=jnp.float64)
@@ -288,6 +288,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
     observation_model_id: str = eqx.field(static=True)
     uncertainty_limitations: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calibration: ReporterCalibration,
@@ -298,10 +299,6 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         *,
         intensity_unit_id: str = "instrument-fluorescence-unit",
     ) -> None:
-        if not isinstance(calibration, ReporterCalibration):
-            raise TypeError("calibration must be a ReporterCalibration.")
-        if not isinstance(campaign, ScientificCampaign):
-            raise TypeError("campaign must be a ScientificCampaign.")
         if calibration.campaign_id != campaign.campaign_id:
             raise ValueError(
                 "Reporter calibration and observation model must share one campaign."
@@ -630,11 +627,8 @@ class EffectiveDisplacementRateModel(StrictModule, NonTrainableState):
     parameter_plan_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, fit: StrandDisplacementModelFit, /) -> None:
-        if not isinstance(fit, StrandDisplacementModelFit):
-            raise TypeError(
-                "Effective displacement models require a StrandDisplacementModelFit."
-            )
         prepared = fit.selected_prepared
         if not isinstance(prepared, PreparedEffectiveDisplacementInference):
             raise ValueError("Fit did not select an effective mass-action model.")
@@ -731,11 +725,8 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
     channel_capacity: int = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, fit: StrandDisplacementModelFit, /) -> None:
-        if not isinstance(fit, StrandDisplacementModelFit):
-            raise TypeError(
-                "Mechanistic displacement models require a StrandDisplacementModelFit."
-            )
         template = fit.selected_prepared
         if not isinstance(template, PreparedMechanisticDisplacementInference):
             raise ValueError("Fit did not select an exhaustive mechanistic model.")
@@ -1089,6 +1080,7 @@ class PreparedEffectiveDisplacementInference(StrictModule, NonTrainableState):
     fit_case_ids: tuple[str, ...] = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         traces: Sequence[FluorescenceTimeTrace],
@@ -1111,8 +1103,6 @@ class PreparedEffectiveDisplacementInference(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Effective inference parameter plan must contain only {_PARAMETER_NAME!r}."
             )
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         reactants = _identifiers(tuple(reactant_construct_ids), "reactant_construct_ids")
         if len(reactants) != 2:
             raise ValueError("Effective inference requires exactly two reactants.")
@@ -1270,9 +1260,8 @@ class EffectiveFluorescencePosteriorTerm(AbstractPosteriorTerm):
 
     prepared: PreparedEffectiveDisplacementInference
 
+    @checked
     def __init__(self, prepared: PreparedEffectiveDisplacementInference) -> None:
-        if not isinstance(prepared, PreparedEffectiveDisplacementInference):
-            raise TypeError("prepared must be PreparedEffectiveDisplacementInference.")
         self.prepared = prepared
         self.label = "strand-displacement-effective-raw-fluorescence"
 
@@ -1305,6 +1294,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
     fit_case_ids: tuple[str, ...] = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         traces: Sequence[FluorescenceTimeTrace],
@@ -1336,12 +1326,6 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mechanistic inference parameter plan must contain only 'rate_scale'."
             )
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
-        if not isinstance(prepared, PreparedSecondaryKinetics):
-            raise TypeError("prepared must be PreparedSecondaryKinetics.")
-        if not isinstance(product_target, CompiledSecondaryTarget):
-            raise TypeError("product_target must be a CompiledSecondaryTarget.")
         if product_target.process_id != prepared.process.process_id:
             raise ValueError(
                 "Product target belongs to a different prepared kinetics process."
@@ -1555,9 +1539,8 @@ class MechanisticFluorescencePosteriorTerm(AbstractPosteriorTerm):
 
     prepared: PreparedMechanisticDisplacementInference
 
+    @checked
     def __init__(self, prepared: PreparedMechanisticDisplacementInference) -> None:
-        if not isinstance(prepared, PreparedMechanisticDisplacementInference):
-            raise TypeError("prepared must be PreparedMechanisticDisplacementInference.")
         self.prepared = prepared
         self.label = "strand-displacement-mechanistic-raw-fluorescence"
 

@@ -17,6 +17,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FieldTransfer
 from ...linalg import AbstractVectorSpace
+from ...typing import checked
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -125,6 +126,7 @@ class InterfaceTransferProbe(StrictModule):
     reverse_derivative_reference: Any
     probe_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: FieldTransfer,
@@ -142,8 +144,6 @@ class InterfaceTransferProbe(StrictModule):
         *,
         probe_id: str,
     ) -> None:
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be a FieldTransfer.")
         source = transfer.source.vector_space
         target = transfer.target.vector_space
         self.source_value = source.validate(source_value)
@@ -201,6 +201,7 @@ class InterfaceTransferCertificate(StrictModule, NonTrainableState):
     probe_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: FieldTransfer,
@@ -220,12 +221,6 @@ class InterfaceTransferCertificate(StrictModule, NonTrainableState):
         common_quadrature_id: str,
         probe_id: str,
     ) -> None:
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be a FieldTransfer.")
-        if not isinstance(evidence, InterfaceTransferEvidence):
-            raise TypeError("evidence must be InterfaceTransferEvidence.")
-        if not isinstance(tolerance, InterfaceTransferTolerance):
-            raise TypeError("tolerance must be InterfaceTransferTolerance.")
         sign = int(orientation_sign)
         if sign not in (-1, 1):
             raise ValueError("Interface orientation_sign must be -1 or +1.")

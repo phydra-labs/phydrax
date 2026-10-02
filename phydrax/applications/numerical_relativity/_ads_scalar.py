@@ -18,6 +18,7 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 class ConformalAdSScalarPlan(StrictModule):
@@ -104,6 +105,7 @@ class ConformalAdSScalarState(StrictModule):
     valid: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ConformalAdSScalarPlan,
@@ -115,8 +117,6 @@ class ConformalAdSScalarState(StrictModule):
         step_index: ArrayLike = 0,
         valid: ArrayLike = True,
     ) -> None:
-        if not isinstance(plan, ConformalAdSScalarPlan):
-            raise TypeError("plan must be ConformalAdSScalarPlan.")
         field_value = jnp.asarray(field, dtype=plan.radial_points.dtype)
         momentum_value = jnp.asarray(momentum, dtype=field_value.dtype)
         if (

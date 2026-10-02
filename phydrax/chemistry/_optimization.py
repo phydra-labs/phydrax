@@ -26,6 +26,7 @@ from ..optim import (
     OptimizationTermination,
     SciPyMinimize,
 )
+from ..typing import checked
 from ._surface import (
     AbstractPreparedPotentialEnergySurface,
     PotentialEnergySurfaceEvaluation,
@@ -101,6 +102,7 @@ class MolecularGeometryOptimizationResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_structure: AtomicStructure,
@@ -118,10 +120,6 @@ class MolecularGeometryOptimizationResult(StrictModule, NonTrainableState):
             final_structure, AtomicStructure
         ):
             raise TypeError("Geometry optimization structures must be AtomicStructure.")
-        if not isinstance(final_evaluation, PotentialEnergySurfaceEvaluation):
-            raise TypeError("final_evaluation must be PotentialEnergySurfaceEvaluation.")
-        if not isinstance(optimization, MinimizationResult):
-            raise TypeError("optimization must be MinimizationResult.")
         maximum = jnp.asarray(maximum_force).reshape(())
         rms = jnp.asarray(rms_force, dtype=maximum.dtype).reshape(())
         evaluations = jnp.asarray(provider_evaluations, dtype=jnp.int32).reshape(())
@@ -162,6 +160,7 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
     convergence: MolecularGeometryConvergencePlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AtomisticSystemPlan,
@@ -171,10 +170,6 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         method: AbstractMinimizationMethod | None = None,
         convergence: MolecularGeometryConvergencePlan | None = None,
     ) -> None:
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
-        if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
-            raise TypeError("surface must be a prepared potential-energy surface.")
         if surface.system_id != system.system_id:
             raise ValueError("Geometry surface belongs to another system.")
         if surface.units.unit_system_id != system.units.unit_system_id:
@@ -216,13 +211,12 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def run(
         self,
         structure: AtomicStructure,
         /,
     ) -> MolecularGeometryOptimizationResult:
-        if not isinstance(structure, AtomicStructure):
-            raise TypeError("structure must be AtomicStructure.")
         _require_structure_matches_system(structure, self.system)
         initial = np.asarray(
             structure.positions, dtype=np.dtype(self.system.coordinate_dtype)

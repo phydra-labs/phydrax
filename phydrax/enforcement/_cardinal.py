@@ -20,7 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import inverse_distance_stencil
 from .._strict import StrictModule
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._observation import PointObservationAction
 
 
@@ -470,6 +470,7 @@ class CardinalCorrectionPlan(StrictModule):
     _preservation_positions: tuple[int, ...] = eqx.field(static=True)
     _multiplier_at_anchors: Array
 
+    @checked
     def __init__(
         self,
         action: PointObservationAction,
@@ -487,10 +488,6 @@ class CardinalCorrectionPlan(StrictModule):
         envelope_scale: ArrayLike = 1.0,
         preservation_weight: DomainFunction | None = None,
     ) -> None:
-        if not isinstance(action, PointObservationAction):
-            raise TypeError("CardinalCorrectionPlan requires PointObservationAction.")
-        if not isinstance(domain, Domain):
-            raise TypeError("CardinalCorrectionPlan requires a Domain.")
         interpolation = parse(interpolation, CardinalInterpolation, "interpolation")
         count = action.observation_count
         anchors = _anchor_coordinates(domain, action)

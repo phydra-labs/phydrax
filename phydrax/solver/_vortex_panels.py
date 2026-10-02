@@ -26,6 +26,7 @@ from ..operators.integral.vortex._panels2d import (
     panel_influence_matrix_2d,
     RigidPanelMotion2D,
 )
+from ..typing import checked
 
 
 class VortexPanelResult2D(StrictModule):
@@ -51,6 +52,7 @@ class VortexPanelFlowPlan2D(StrictModule, NonTrainableState):
     linear_policy: LinearSolvePolicy
     solver_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: FlowPanelGeometry2D,
@@ -61,8 +63,6 @@ class VortexPanelFlowPlan2D(StrictModule, NonTrainableState):
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(geometry, FlowPanelGeometry2D):
-            raise TypeError("geometry must be FlowPanelGeometry2D.")
         count = geometry.length.size
         trailing = None
         if trailing_edge_panels is not None:

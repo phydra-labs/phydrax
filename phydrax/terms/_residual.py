@@ -50,7 +50,7 @@ from ..operators.differential._requests import (
 )
 from ..operators.differential._runtime import derivative_execution_context
 from ..sampling.collocation._adaptive import AbstractCollocationPolicy
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._data_metrics import supervised_data_metrics
 from ._integrated import (
     checked_estimate_field,
@@ -333,6 +333,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
     label: str | None = eqx.field(static=True)
     data_accuracy_eps: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         condition: AbstractResidualCondition,
@@ -345,8 +346,6 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ) -> None:
-        if not isinstance(condition, AbstractResidualCondition):
-            raise TypeError("ResidualPenalty requires an AbstractResidualCondition.")
         if not isinstance(source, _SOURCE_TYPES):
             raise TypeError("ResidualPenalty requires a typed IntegrationSource.")
         validate_condition_source(condition.on, source)
@@ -473,6 +472,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             raise ValueError("Pointwise residual scalarization left event dimensions.")
         return score
 
+    @checked
     def quadratic_reduction_coefficients(
         self,
         realization: IntegrationRealization,
@@ -484,8 +484,6 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         exclude ``self.scale`` so likelihood interpretations can retain the
         distinction between the global penalty multiplier and integration weights.
         """
-        if not isinstance(realization, IntegrationRealization):
-            raise TypeError("realization must be an IntegrationRealization.")
         resolved = resolve_term_realization(
             self.source,
             key=DOC_KEY0,

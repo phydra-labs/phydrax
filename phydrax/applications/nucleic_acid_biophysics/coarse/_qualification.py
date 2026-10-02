@@ -21,6 +21,7 @@ from ....qualification import (
     ScientificCampaign,
     ScientificClaimProfile,
 )
+from ....typing import checked
 from ....units import UnitDefinition
 from ._mechanics import PreparedNucleotideModel
 
@@ -57,6 +58,7 @@ class NucleotideMechanicalResponseData:
     parameter_manifest_id: str
     response_id: str
 
+    @checked
     def __init__(
         self,
         case_ids: tuple[str, ...],
@@ -123,12 +125,6 @@ class NucleotideMechanicalResponseData:
             raise ValueError(
                 "Mechanical response needs finite (case, force/twist) values, positive errors, and sensitivities."
             )
-        if not isinstance(source, ReferenceArtifactManifest):
-            raise TypeError(
-                "Mechanical observations require a ReferenceArtifactManifest."
-            )
-        if not isinstance(model, PreparedNucleotideModel):
-            raise TypeError("model must be a PreparedNucleotideModel.")
         source.require_rights()
         source.require_uncertainty()
         for name, value in (
@@ -209,6 +205,7 @@ class NucleotideMechanicsAssessment:
             return "inconclusive"
         return "ready-for-claim-evaluation"
 
+    @checked
     def evaluate_claim(
         self,
         claim: ScientificClaimProfile,
@@ -227,8 +224,6 @@ class NucleotideMechanicsAssessment:
         issued_at: int,
         expires_at: int,
     ) -> QualificationEvidence:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
         if (
             claim.capability_name != self.capability_name
             or claim.observable_ids != self.observable_ids

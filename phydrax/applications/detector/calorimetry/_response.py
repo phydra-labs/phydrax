@@ -19,7 +19,7 @@ from phydrax import ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from .._core import DigitBank
 from ._geometry import CalorimeterGeometry
 from ._truth import CalorimeterTruth
@@ -35,6 +35,7 @@ class CalorimeterResponsePlan(StrictModule, NonTrainableState):
     maximum_adc: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CalorimeterGeometry,
@@ -47,8 +48,6 @@ class CalorimeterResponsePlan(StrictModule, NonTrainableState):
         threshold: float,
         maximum_adc: int,
     ) -> None:
-        if not isinstance(geometry, CalorimeterGeometry):
-            raise TypeError("geometry must be CalorimeterGeometry.")
         gain_ = np.asarray(gain, dtype=np.float64)
         noise = np.asarray(noise_standard_deviation, dtype=np.float64)
         crosstalk_ = np.asarray(crosstalk, dtype=np.float64)

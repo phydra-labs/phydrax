@@ -30,7 +30,7 @@ from ...operators.periodic._family import (
     PreparedPeriodicTranslationFamily,
 )
 from ...sparse import EdgeRelation
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import ENERGY, LENGTH, UnitDefinition
 
 
@@ -67,6 +67,7 @@ class PeriodicOrbitalBasisPlan(StrictModule, NonTrainableState):
     cell_id: str = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell: PeriodicCell,
@@ -78,8 +79,6 @@ class PeriodicOrbitalBasisPlan(StrictModule, NonTrainableState):
         *,
         spin_order: SpinOrderKind = "spinless",
     ) -> None:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("Periodic orbital bases require PeriodicCell.")
         labels_ = tuple(str(value).strip() for value in labels)
         centers = np.asarray(centers_fractional)
         if (
@@ -152,6 +151,7 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
     maximum_overlap_condition: float = eqx.field(static=True)
     pencil_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: PeriodicOrbitalBasisPlan,
@@ -165,8 +165,6 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
         overlap_eigenvalue_floor: float = 1.0e-10,
         maximum_overlap_condition: float = 1.0e10,
     ) -> None:
-        if not isinstance(basis, PeriodicOrbitalBasisPlan):
-            raise TypeError("basis must be PeriodicOrbitalBasisPlan.")
         prepared_h = prepare_periodic_translation_family(
             hamiltonian_plan, hamiltonian_state
         )
@@ -195,8 +193,6 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic Hamiltonian and overlap families must share one Fourier convention."
             )
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         if energy_unit.dimension != ENERGY:
             raise ValueError(
                 "Periodic orbital pencil energy_unit must have energy dimension."
@@ -277,9 +273,8 @@ class PreparedPeriodicOrbitalPencil(StrictModule, NonTrainableState):
     overlap: PreparedPeriodicTranslationFamily
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: PeriodicOrbitalPencilPlan, /) -> None:
-        if not isinstance(plan, PeriodicOrbitalPencilPlan):
-            raise TypeError("plan must be PeriodicOrbitalPencilPlan.")
         hamiltonian = prepare_periodic_translation_family(
             plan.hamiltonian_plan, plan.hamiltonian_state
         )

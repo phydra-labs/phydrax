@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 ExponentialFamilyStatus: TypeAlias = Literal[0, 1, 2, 3, 4, 5, 6, 7]
@@ -129,9 +129,8 @@ class NaturalCoordinates(StrictModule):
     values: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
+    @checked
     def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature) -> None:
-        if not isinstance(signature, ExponentialFamilySignature):
-            raise TypeError("signature must be an ExponentialFamilySignature.")
         self.values = _coordinate_array(values, signature)
         self.signature = signature
 
@@ -146,9 +145,8 @@ class MeanCoordinates(StrictModule):
     values: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
+    @checked
     def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature) -> None:
-        if not isinstance(signature, ExponentialFamilySignature):
-            raise TypeError("signature must be an ExponentialFamilySignature.")
         self.values = _coordinate_array(values, signature)
         self.signature = signature
 
@@ -164,14 +162,13 @@ class StatisticBatch(StrictModule):
     valid: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         values: ArrayLike,
         valid: ArrayLike,
         signature: ExponentialFamilySignature,
     ) -> None:
-        if not isinstance(signature, ExponentialFamilySignature):
-            raise TypeError("signature must be an ExponentialFamilySignature.")
         statistics = _coordinate_array(values, signature)
         validity = jnp.broadcast_to(
             jnp.asarray(valid, dtype=jnp.bool_), statistics.shape[:-1]
@@ -550,13 +547,12 @@ class ExponentialFamilyLaw(AbstractProbabilityLaw):
     family: AbstractExponentialFamily
     natural: NaturalCoordinates
 
+    @checked
     def __init__(
         self,
         family: AbstractExponentialFamily,
         natural: NaturalCoordinates,
     ) -> None:
-        if not isinstance(family, AbstractExponentialFamily):
-            raise TypeError("family must implement AbstractExponentialFamily.")
         _require_signature(natural.signature, family.signature)
         self.family = family
         self.natural = natural

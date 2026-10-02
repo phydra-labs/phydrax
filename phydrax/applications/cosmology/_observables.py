@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._background import FLRWBackground
 from ._distances import FLRWDistancePlan
 from ._products import LagrangianGrowthHistory, MatterField, MatterPowerTable
@@ -62,9 +62,8 @@ class RedshiftDistribution(StrictModule):
     values: Array
     bin_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, grid: RadialGrid, values: ArrayLike, bin_id: str, /) -> None:
-        if not isinstance(grid, RadialGrid):
-            raise TypeError("grid must be RadialGrid.")
         identifier = str(bin_id).strip()
         distribution = jnp.asarray(values, dtype=grid.redshifts.dtype)
         if distribution.shape != grid.redshifts.shape or not identifier:
@@ -91,6 +90,7 @@ class LinearDensityTracer(StrictModule):
     power_field: MatterField = eqx.field(static=True)
     tracer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         distribution: RedshiftDistribution,
@@ -99,8 +99,6 @@ class LinearDensityTracer(StrictModule):
         *,
         power_field: MatterField = "total_matter",
     ) -> None:
-        if not isinstance(distribution, RedshiftDistribution):
-            raise TypeError("distribution must be RedshiftDistribution.")
         bias_ = jnp.asarray(bias, dtype=distribution.values.dtype)
         if bias_.shape == ():
             bias_ = jnp.broadcast_to(bias_, distribution.values.shape)
@@ -130,6 +128,7 @@ class LensingConvergenceTracer(StrictModule):
     multiplicative_calibration: Array
     tracer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         distribution: RedshiftDistribution,
@@ -137,8 +136,6 @@ class LensingConvergenceTracer(StrictModule):
         *,
         multiplicative_calibration: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(distribution, RedshiftDistribution):
-            raise TypeError("distribution must be RedshiftDistribution.")
         calibration = jnp.asarray(
             multiplicative_calibration, dtype=distribution.values.dtype
         )

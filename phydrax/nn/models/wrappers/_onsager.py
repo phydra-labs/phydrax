@@ -19,6 +19,7 @@ from ...._trainable import (
     ParameterOwner,
     require_parameter_roles,
 )
+from ....linalg._svd_contracts import DenseSVD, require_exact_svd_rank
 from ....ml._numerics import fit_weighted_subspace
 from ..._keys import EvalKey, fold_in_eval_key
 from ...parameters import ParameterSubspace
@@ -256,14 +257,21 @@ class FixedSubspaceOnsagerModel(StrictModule, ParameterOwner):
             if sample_weights is None
             else jnp.asarray(sample_weights, dtype=values.real.dtype)
         )
-        fit = fit_weighted_subspace(values, weights, rank=int(latent_size), centered=True)
+        fit = fit_weighted_subspace(
+            values,
+            weights,
+            rank=int(latent_size),
+            centered=True,
+            method=DenseSVD(),
+            differentiate="none",
+        )
         if not bool(fit.valid):
             raise ValueError("Weighted subspace fitting did not produce a valid basis.")
         basis = jnp.swapaxes(fit.components, -1, -2)
         report = FixedSubspaceProjectionReport(
             fit.retained_energy,
             fit.residual_energy,
-            fit.numerical_rank,
+            require_exact_svd_rank(fit.rank_evidence),
             fit.orthogonality_error,
             fit.valid,
         )

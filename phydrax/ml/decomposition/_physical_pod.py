@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractVectorSpace, LinearSubspace
+from ...typing import checked
 
 
 class PhysicalPODResult(StrictModule, NonTrainableState):
@@ -107,6 +108,7 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def fit(
         self,
         space: AbstractVectorSpace,
@@ -116,8 +118,6 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
         sample_weights: ArrayLike | None = None,
         source_artifact_ids: Sequence[str],
     ) -> PhysicalPODResult:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         values = jnp.asarray(snapshots)
         if values.ndim != 2 or values.shape[1] != space.size:
             raise ValueError("snapshots must have shape (samples, space.size).")

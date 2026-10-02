@@ -45,7 +45,7 @@ from ...linalg import (
     prepare_linearization,
     PreparedLinearization,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from .._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from .._integration_domain import IntegrationDomain
 from .._reference_cell import FacetShape
@@ -1148,6 +1148,7 @@ class PreparedNonlinearFaceTrace(StrictModule, NonTrainableState):
     normals: Array
     support_rows: Array
 
+    @checked
     def __init__(
         self,
         descriptor: SideActionDescriptor,
@@ -1160,14 +1161,8 @@ class PreparedNonlinearFaceTrace(StrictModule, NonTrainableState):
         normals: ArrayLike,
         support_rows: ArrayLike,
     ) -> None:
-        if not isinstance(descriptor, SideActionDescriptor):
-            raise TypeError("descriptor must be a SideActionDescriptor.")
         if descriptor.representation != "face-state" or descriptor.quantity != "value":
             raise ValueError("Nonlinear face traces publish value face states.")
-        if not isinstance(coefficient_space, ArraySpace):
-            raise TypeError("coefficient_space must be an ArraySpace.")
-        if not isinstance(evaluator, _AbstractFaceStateEvaluator):
-            raise TypeError("evaluator must be a finite-volume face-state evaluator.")
         sites_ = np.asarray(sites)
         weights_ = np.asarray(weights)
         normals_ = np.asarray(normals)

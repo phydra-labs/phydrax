@@ -34,6 +34,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import checked
 
 
 class _MaskedMACPressureAction(StrictModule, NonTrainableState):
@@ -116,6 +117,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -127,8 +129,6 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
             MACBoundaryPlan(operators).prepare()
             if boundaries is None

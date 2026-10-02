@@ -17,6 +17,7 @@ from ..integration._targets import (
     DiscreteMeasureTarget,
     WeightedSampleTarget,
 )
+from ..typing import checked
 from ._costs import AbstractGroundCost, GroundCost, PrecomputedCost
 from ._geometry import cost_matrix
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
@@ -38,6 +39,7 @@ class UnbalancedTransportProblem(StrictModule):
     target_marginal_penalty: Array
     provenance: TransportProblemProvenance
 
+    @checked
     def __init__(
         self,
         source: _FiniteTransportMeasure,
@@ -48,10 +50,6 @@ class UnbalancedTransportProblem(StrictModule):
         source_marginal_penalty: ArrayLike,
         target_marginal_penalty: ArrayLike,
     ) -> None:
-        if not isinstance(source, _FiniteTransportMeasure):
-            raise TypeError("source must be a canonical finite transport measure.")
-        if not isinstance(target, _FiniteTransportMeasure):
-            raise TypeError("target must be a canonical finite transport measure.")
         if not isinstance(cost, (AbstractGroundCost, PrecomputedCost)):
             raise TypeError("cost must be an AbstractGroundCost or PrecomputedCost.")
         if isinstance(cost, PrecomputedCost):

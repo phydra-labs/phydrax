@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._data import DetectorNetworkData
 from ._detector import DetectorResponsePlan, DetectorResponseResult
 from ._likelihood import (
@@ -96,6 +97,7 @@ class LinearQuadraticCompressedLikelihood(AbstractGravitationalWaveLikelihood):
     likelihood_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: GravitationalWaveLikelihoodPlan,
@@ -107,8 +109,6 @@ class LinearQuadraticCompressedLikelihood(AbstractGravitationalWaveLikelihood):
         *,
         approximation_id: str,
     ) -> None:
-        if not isinstance(base, GravitationalWaveLikelihoodPlan):
-            raise TypeError("base must be the exact GravitationalWaveLikelihoodPlan.")
         if base.calibration_fn is not None:
             raise ValueError(
                 "Reduced linear/quadratic likelihood does not support calibration callbacks."
@@ -240,18 +240,13 @@ class QualifiedGravitationalWaveLikelihood(AbstractGravitationalWaveLikelihood):
     likelihood_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate: AbstractGravitationalWaveLikelihood,
         qualification: LikelihoodApproximationReport,
         /,
     ) -> None:
-        if not isinstance(candidate, AbstractGravitationalWaveLikelihood):
-            raise TypeError(
-                "candidate must implement AbstractGravitationalWaveLikelihood."
-            )
-        if not isinstance(qualification, LikelihoodApproximationReport):
-            raise TypeError("qualification must be LikelihoodApproximationReport.")
         if qualification.approximate_likelihood_id != candidate.likelihood_id:
             raise ValueError("Approximation report belongs to a different likelihood.")
         if not qualification.passed:

@@ -31,6 +31,7 @@ from ...metrix._gauge_representation import (
     AdjointGaugeRepresentation,
     U1ChargeRepresentation,
 )
+from ...typing import checked
 from ..cosmology._quantum_dark_kinetics import QuantumKineticState
 
 
@@ -113,6 +114,7 @@ class GaugeCovariantWignerPlan(StrictModule, NonTrainableState):
     unit_contract_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quantum_support: QuantumKineticState,
@@ -125,14 +127,6 @@ class GaugeCovariantWignerPlan(StrictModule, NonTrainableState):
         maximum_work_bytes: int = 256_000_000,
         production_evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(quantum_support, QuantumKineticState):
-            raise TypeError("quantum_support must be a QuantumKineticState.")
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be the existing MatrixGaugeLinkSpace owner.")
-        if not isinstance(representation, AbstractGaugeRepresentation):
-            raise TypeError("representation must implement AbstractGaugeRepresentation.")
-        if not isinstance(paths, OrientedEdgePathPlan):
-            raise TypeError("paths must be an OrientedEdgePathPlan.")
         if paths.topology_id != link_space.topology.topology_id:
             raise ValueError(
                 "Wilson paths and gauge links must share exact topology identity."

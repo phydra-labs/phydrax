@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._boundary import (
     LatticeBoltzmannBoundaryParameters,
     PreparedLatticeBoltzmannBoundary,
@@ -129,6 +130,7 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
     implicit_acceleration: VelocityDependentAccelerationPlan | None
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -142,10 +144,6 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
         acceleration_id: str | None = None,
         implicit_acceleration: VelocityDependentAccelerationPlan | None = None,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be an LBM discretization.")
-        if not isinstance(scaling, LatticeBoltzmannScaling):
-            raise TypeError("scaling must be LatticeBoltzmannScaling.")
         if not isinstance(
             method, (LatticeBoltzmannMethodPlan, PreparedLatticeBoltzmannMethodPlan)
         ):

@@ -32,6 +32,7 @@ from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellBlock, CellMesh, CellPartition
+from ...typing import checked
 from .._assembly import MeshPart
 from .._association import BRepAssociationTransfer
 from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
@@ -279,6 +280,7 @@ class OmegaHField(StrictModule, NonTrainableState):
     diffusion_tolerance: float | None = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -293,8 +295,6 @@ class OmegaHField(StrictModule, NonTrainableState):
             raise ValueError("Omega_h field names must be nonempty strings.")
         if not isinstance(transfer, OmegaHFieldTransfer):
             raise TypeError("transfer must be OmegaHFieldTransfer.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         array = np.asarray(values)
         if array.dtype.kind != "f":
             raise TypeError("Omega_h field values must be floating point.")
@@ -389,6 +389,7 @@ class OmegaHFieldEvidence(StrictModule, NonTrainableState):
     integral_after: Array | None
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field: OmegaHField,
@@ -397,8 +398,6 @@ class OmegaHFieldEvidence(StrictModule, NonTrainableState):
         integral_after: ArrayLike | None,
         /,
     ) -> None:
-        if not isinstance(field, OmegaHField):
-            raise TypeError("field must be OmegaHField.")
         before = (
             None if integral_before is None else np.asarray(integral_before, np.float64)
         )
@@ -511,9 +510,8 @@ class OmegaHPartition(StrictModule, NonTrainableState):
     fields: tuple[Array, ...]
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, rank: int, arrays: _RankArrays, /) -> None:
-        if not isinstance(arrays, _RankArrays):
-            raise TypeError("arrays must be validated Omega_h rank arrays.")
         self.rank = _integer(rank, "rank", 0, _LOCAL_INDEX_LIMIT)
         self.vertex_global_ids = jnp.asarray(arrays.vertex_global_ids)
         self.coordinates = jnp.asarray(arrays.coordinates)
@@ -582,6 +580,7 @@ class OmegaHAdaptationEvidence(StrictModule, NonTrainableState):
     peak_rss_bytes: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         options: OmegaHOptions,
@@ -591,8 +590,6 @@ class OmegaHAdaptationEvidence(StrictModule, NonTrainableState):
         identity_id: str,
         /,
     ) -> None:
-        if not isinstance(options, OmegaHOptions):
-            raise TypeError("options must be OmegaHOptions.")
         if not all(isinstance(value, OmegaHFieldEvidence) for value in fields):
             raise TypeError("fields must contain OmegaHFieldEvidence values.")
         self.options = options

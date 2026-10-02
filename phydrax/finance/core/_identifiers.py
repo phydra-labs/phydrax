@@ -11,6 +11,7 @@ import equinox as eqx
 
 from phydrax._strict import StrictModule
 
+from ...typing import checked
 from ._currency import Currency
 
 
@@ -74,6 +75,7 @@ class AssetReference(StrictModule):
     currency: Currency = eqx.field(static=True)
     description: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         identifier: FinancialIdentifier,
@@ -82,10 +84,6 @@ class AssetReference(StrictModule):
         description: str,
         /,
     ) -> None:
-        if not isinstance(identifier, FinancialIdentifier):
-            raise TypeError("identifier must be a FinancialIdentifier.")
-        if not isinstance(currency, Currency):
-            raise TypeError("currency must be a Currency.")
         self.identifier = identifier
         self.asset_class = _token(asset_class, "asset_class")
         self.currency = currency
@@ -105,6 +103,7 @@ class InstrumentReference(StrictModule):
     quote_unit: str = eqx.field(static=True)
     description: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         identifier: FinancialIdentifier,
@@ -114,8 +113,6 @@ class InstrumentReference(StrictModule):
         description: str,
         /,
     ) -> None:
-        if not isinstance(identifier, FinancialIdentifier):
-            raise TypeError("identifier must be a FinancialIdentifier.")
         if isinstance(underlying_ids, (str, bytes)) or not isinstance(
             underlying_ids, Sequence
         ):
@@ -128,8 +125,6 @@ class InstrumentReference(StrictModule):
         canonical = tuple(item.canonical for item in underlyings)
         if len(set(canonical)) != len(canonical):
             raise ValueError("underlying_ids must be unique.")
-        if not isinstance(settlement_currency, Currency):
-            raise TypeError("settlement_currency must be a Currency.")
         self.identifier = identifier
         self.underlying_ids = underlyings
         self.settlement_currency = settlement_currency

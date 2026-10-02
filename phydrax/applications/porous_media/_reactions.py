@@ -20,6 +20,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import checked
 from ._speciation import (
     _chemical_method,
     _chemical_termination,
@@ -83,6 +84,7 @@ class MineralKinetics(StrictModule):
     rate_constants: Array
     allow_nucleation: tuple[bool, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         chemistry: MassActionSystem,
@@ -93,8 +95,6 @@ class MineralKinetics(StrictModule):
         *,
         allow_nucleation: tuple[bool, ...] | None = None,
     ) -> None:
-        if not isinstance(chemistry, MassActionSystem):
-            raise TypeError("MineralKinetics requires a declared MassActionSystem.")
         if chemistry.charge_balance_component is not None:
             raise ValueError(
                 "Conservative mineral kinetics requires every component balance; "

@@ -23,7 +23,7 @@ from ..stochastic._path_ensemble import (
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 class WeakObservable(StrictModule):
@@ -53,6 +53,7 @@ class ParticleFokkerPlanckPlan(StrictModule):
     validation_grid: Array
     confidence_level: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ensemble_plan: StochasticPathEnsemblePlan,
@@ -62,8 +63,6 @@ class ParticleFokkerPlanckPlan(StrictModule):
         /,
     ) -> None:
         selected = tuple(observables)
-        if not isinstance(ensemble_plan, StochasticPathEnsemblePlan):
-            raise TypeError("ensemble_plan must be a StochasticPathEnsemblePlan.")
         if not selected or any(not isinstance(item, WeakObservable) for item in selected):
             raise TypeError("observables must contain WeakObservable values.")
         confidence = float(confidence_level)

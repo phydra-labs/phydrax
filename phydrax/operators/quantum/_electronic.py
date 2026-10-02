@@ -25,7 +25,7 @@ from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ...units import BOHR, conversion_factor, HARTREE
 from ._amplitude import LogAmplitude
 from ._electronic_advanced import ElectronicVMCResourcePlan
@@ -168,6 +168,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
     operator_id: str = eqx.field(static=True)
     electron_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         nuclei: AtomicStructure,
@@ -178,8 +179,6 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         resource_plan: ElectronicVMCResourcePlan | None = None,
         operator_id: str | None = None,
     ) -> None:
-        if not isinstance(nuclei, AtomicStructure):
-            raise TypeError("nuclei must be an AtomicStructure.")
         if nuclei.has_periodic_metadata:
             raise ValueError(
                 "ElectronicCoulombHamiltonian supports finite nonperiodic molecules "

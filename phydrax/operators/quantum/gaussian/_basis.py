@@ -19,6 +19,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....atomistic import AtomisticSystemPlan
 from ....ein import contract
+from ....typing import checked
 from ._shell import (
     cartesian_angular_exponents,
     cartesian_primitive_normalization,
@@ -261,11 +262,8 @@ class PreparedGaussianBasis(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: GaussianBasisPlan, system: AtomisticSystemPlan, /) -> None:
-        if not isinstance(plan, GaussianBasisPlan):
-            raise TypeError("plan must be GaussianBasisPlan.")
-        if not isinstance(system, AtomisticSystemPlan):
-            raise TypeError("system must be AtomisticSystemPlan.")
         available = {
             int(particle_id): index
             for index, (particle_id, active, element) in enumerate(

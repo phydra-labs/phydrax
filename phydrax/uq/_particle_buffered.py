@@ -19,6 +19,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import checked
 from ._minibatch_posterior import LikelihoodBatch, MinibatchPosteriorProblem
 from ._parameterized_state_space import ParameterizedStateSpaceProblem
 from ._state_space_buffered import StateSpaceWindowBatch, StateSpaceWindowPlan
@@ -74,6 +75,7 @@ class ParticleBoundaryCorrection(StrictModule):
     correction_id: str = eqx.field(static=True)
     anchor_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -90,8 +92,6 @@ class ParticleBoundaryCorrection(StrictModule):
     ) -> None:
         if not callable(score_terms):
             raise TypeError("score_terms must be callable.")
-        if not isinstance(diagnostics, BufferedParticleCorrectionDiagnostics):
-            raise TypeError("diagnostics must be BufferedParticleCorrectionDiagnostics.")
         left = _normalized_weights(left_weights, "left_weights")
         right = _normalized_weights(right_weights, "right_weights")
         left_ids = jnp.asarray(left_ancestry, dtype=jnp.int32)
@@ -134,6 +134,7 @@ class BufferedParticleBoundaryPlan(StrictModule):
     maximum_paired_buffer_error: float = eqx.field(static=True)
     accept_approximate: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         window_plan: StateSpaceWindowPlan,
@@ -147,8 +148,6 @@ class BufferedParticleBoundaryPlan(StrictModule):
         maximum_paired_buffer_error: float,
         accept_approximate: bool = False,
     ) -> None:
-        if not isinstance(window_plan, StateSpaceWindowPlan):
-            raise TypeError("window_plan must be StateSpaceWindowPlan.")
         if not callable(provider):
             raise TypeError("provider must be callable.")
         left, right, particles = map(
@@ -182,6 +181,7 @@ class BufferedParticleGradientEstimator(AbstractStochasticGradientEstimator):
     window_plan: StateSpaceWindowPlan
     correction_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         parameterized: ParameterizedStateSpaceProblem,
@@ -189,16 +189,12 @@ class BufferedParticleGradientEstimator(AbstractStochasticGradientEstimator):
         window_plan: StateSpaceWindowPlan,
         /,
     ) -> None:
-        if not isinstance(parameterized, ParameterizedStateSpaceProblem):
-            raise TypeError("parameterized must be ParameterizedStateSpaceProblem.")
         if not isinstance(
             correction, (ExactStateSpaceBoundaryCorrection, ParticleBoundaryCorrection)
         ):
             raise TypeError(
                 "correction must be an exact or particle boundary correction."
             )
-        if not isinstance(window_plan, StateSpaceWindowPlan):
-            raise TypeError("window_plan must be StateSpaceWindowPlan.")
         self.parameterized = parameterized
         self.correction = correction
         self.window_plan = window_plan

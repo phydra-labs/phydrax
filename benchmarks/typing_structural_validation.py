@@ -9,6 +9,12 @@ construction (plan compilation), warmed construction of opted-in modules against
 unchecked twins, explicit validation, tracing and lowering time with the number
 of traced equations, boundary parsing and conversion, plan memory, and import
 time. Capacities vary contract fields per class and classes per cache.
+
+Checked signatures are measured per call against the same function without
+checks and with the equivalent hand-written `isinstance` guards: cold first call
+(plan compilation), warmed nominal and shared-dimension calls, traced equations
+inside `jit`, and plan memory. Capacities vary checked parameters per function and
+functions per cache.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import sys
 import tracemalloc
 from collections.abc import Callable
 from pathlib import Path
+from types import FunctionType
 from typing import Literal, TypeAlias
 
 import jax
@@ -31,14 +38,22 @@ from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment, DurationDistribution, measure_host
 from phydrax import StrictModule
 from phydrax._typing_plan import _CLASS_PLANS, class_plan
+from phydrax._typing_signature import compile_signature
 
 
 FIELD_COUNTS = (1, 4, 16, 64)
 CLASS_COUNTS = (100, 1_000, 10_000)
+PARAMETER_COUNTS = (1, 4, 16)
+FUNCTION_COUNTS = (100, 1_000, 10_000)
+_CALLS_PER_SAMPLE = 1_000
 _Basis: TypeAlias = Literal["nodal", "modal"]
 
 
 class _NodeDim(pt.Dim, minimum=1):
+    pass
+
+
+class _Operand(StrictModule):
     pass
 
 
@@ -65,7 +80,7 @@ def _module_class(field_count: int, *, opted: bool) -> type[StrictModule]:
 
 
 def _plans(field_counts: tuple[int, ...], repeats: int, /) -> list[dict[str, object]]:
-    records = []
+    records: list[dict[str, object]] = []
     for count in field_counts:
         values = tuple(jnp.zeros((8,)) for _ in range(count))
         cold = []
@@ -139,7 +154,7 @@ def _parse_and_convert(repeats: int, /) -> dict[str, object]:
             device, pt.HostFloat64[_NodeDim], "host"
         ),
     }
-    records = {}
+    records: dict[str, object] = {}
     for name, operation in operations.items():
         jax.block_until_ready(operation())
         records[name] = _host_samples(
@@ -149,7 +164,7 @@ def _parse_and_convert(repeats: int, /) -> dict[str, object]:
 
 
 def _cache_memory(class_counts: tuple[int, ...], /) -> list[dict[str, object]]:
-    records = []
+    records: list[dict[str, object]] = []
     for count in class_counts:
         classes = [_module_class(1, opted=True) for _ in range(count)]
         tracemalloc.start()
@@ -163,6 +178,105 @@ def _cache_memory(class_counts: tuple[int, ...], /) -> list[dict[str, object]]:
                 "classes": count,
                 "plan_bytes": after - before,
                 "bytes_per_class": (after - before) / count,
+            }
+        )
+    return records
+
+
+def _per_call_samples(
+    operation: Callable[[], object], repeats: int, /
+) -> DurationDistribution:
+    """Per-call durations, each averaged over a fixed batch of host calls."""
+
+    def batch() -> None:
+        for _ in range(_CALLS_PER_SAMPLE):
+            operation()
+
+    samples = []
+    for _ in range(repeats):
+        _, elapsed = measure_host(batch)
+        samples.append(elapsed / _CALLS_PER_SAMPLE)
+    return DurationDistribution(tuple(samples))
+
+
+def _plain(*values: jax.Array | _Operand) -> jax.Array | _Operand:
+    return values[0]
+
+
+def _guarded(*values: _Operand) -> _Operand:
+    for value in values:
+        if not isinstance(value, _Operand):
+            raise TypeError("expected _Operand.")
+    return values[0]
+
+
+def _nominal() -> FunctionType:
+    """Return a fresh function whose variadic members each name a runtime class."""
+
+    def nominal(*values: _Operand) -> _Operand:
+        return values[0]
+
+    return nominal
+
+
+def _shared_dimension(*values: pt.Float64[_NodeDim]) -> jax.Array:
+    return values[0]
+
+
+def _signature_record(count: int, repeats: int, /) -> dict[str, object]:
+    operands = tuple(_Operand() for _ in range(count))
+    arrays = tuple(jnp.zeros((8,), dtype=jnp.float64) for _ in range(count))
+    cold = []
+    for _ in range(repeats):
+        fresh = pt.checked(_nominal())
+        _, elapsed = measure_host(lambda fresh=fresh: fresh(*operands))
+        cold.append(elapsed)
+    nominal = pt.checked(_nominal())
+    shared = pt.checked(_shared_dimension)
+    nominal(*operands)
+    shared(*arrays)
+    traced_plain = jax.make_jaxpr(lambda *values: 2.0 * jnp.asarray(_plain(*values)))
+    traced_checked = jax.make_jaxpr(lambda *values: 2.0 * jnp.asarray(shared(*values)))
+    return {
+        "checked_arguments": count,
+        "cold_first_call": DurationDistribution(tuple(cold)).to_milliseconds_dict(),
+        "warm_plain_call": _per_call_samples(
+            lambda: _plain(*operands), repeats
+        ).to_milliseconds_dict(),
+        "warm_guarded_call": _per_call_samples(
+            lambda: _guarded(*operands), repeats
+        ).to_milliseconds_dict(),
+        "warm_checked_nominal_call": _per_call_samples(
+            lambda: nominal(*operands), repeats
+        ).to_milliseconds_dict(),
+        "warm_plain_array_call": _per_call_samples(
+            lambda: _plain(*arrays), repeats
+        ).to_milliseconds_dict(),
+        "warm_checked_shared_dimension_call": _per_call_samples(
+            lambda: shared(*arrays), repeats
+        ).to_milliseconds_dict(),
+        "plain_traced_equations": len(traced_plain(*arrays).jaxpr.eqns),
+        "checked_traced_equations": len(traced_checked(*arrays).jaxpr.eqns),
+    }
+
+
+def _signature_plan_memory(
+    function_counts: tuple[int, ...], /
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for count in function_counts:
+        functions = [_nominal() for _ in range(count)]
+        tracemalloc.start()
+        before = tracemalloc.get_traced_memory()[0]
+        plans = [compile_signature(function) for function in functions]
+        after = tracemalloc.get_traced_memory()[0]
+        tracemalloc.stop()
+        del plans
+        records.append(
+            {
+                "functions": count,
+                "plan_bytes": after - before,
+                "bytes_per_function": (after - before) / count,
             }
         )
     return records
@@ -199,6 +313,8 @@ def _import_microseconds(module: str, /) -> dict[str, int]:
 def run(*, quick: bool, repeats: int) -> dict[str, object]:
     field_counts = FIELD_COUNTS[:2] if quick else FIELD_COUNTS
     class_counts = CLASS_COUNTS[:1] if quick else CLASS_COUNTS
+    parameter_counts = PARAMETER_COUNTS[:2] if quick else PARAMETER_COUNTS
+    function_counts = FUNCTION_COUNTS[:1] if quick else FUNCTION_COUNTS
     return {
         "benchmark": "typing_structural_validation",
         "environment": capture_environment().to_dict(),
@@ -210,6 +326,8 @@ def run(*, quick: bool, repeats: int) -> dict[str, object]:
         "plans": _plans(field_counts, repeats),
         "boundaries": _parse_and_convert(repeats),
         "plan_cache_memory": _cache_memory(class_counts),
+        "signatures": [_signature_record(count, repeats) for count in parameter_counts],
+        "signature_plan_memory": _signature_plan_memory(function_counts),
         "import_cumulative_microseconds": _import_microseconds("phydrax.typing"),
     }
 

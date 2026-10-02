@@ -85,6 +85,26 @@ local registries and sealed CI secrets; it is not a claim that any candidate shi
 with signed evidence. `ReferenceArtifactManifest` separately binds offline reference
 files, checksums, provenance, units, and nondimensionalization.
 
+### Projector Monte Carlo evidence
+
+The [projector owner](guides_projector_monte_carlo.md) adds exact unreleased
+configuration-column, positive-guide, and projector support tuples through
+`quantum_lattice_candidate_profiles`. Applicable gates retain resource
+admission/refusal, fermionic sign/phase conventions, physical raw-route
+probability and null-attempt expectation, complete raw histories, matching
+inverse-guide metric, joint covariance/denominator safety, same-draw
+checkpoint/resource replay, and independent locked references.
+
+Accepted propagation, a bounded ratio confidence set, and conditional
+per-step spawning/compression expectation are different observations; none
+certifies unbiased stationary energy or removes population/history/timestep/
+sign systematics. A small error bar does not prove stationarity. The native
+qualification and phase-separated benchmark drivers publish their own measured
+records, never fabricate release evidence or infer accelerator/distributed
+parity. Candidate declarations remain `released=False` until exact current
+gate evidence and the existing release authority admit them.
+
+
 ### LES evidence
 
 `tools/large_eddy_simulation_qualification.py` must publish through these same generic

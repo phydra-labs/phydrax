@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 from ._electrochemistry import FARADAY_CONSTANT
@@ -232,6 +233,7 @@ class IonizedMultitemperatureEulerSystem(
     thermodynamics: IonizedMixtureThermodynamicsPlan
     base: TwoTemperatureMixtureEulerSystem
 
+    @checked
     def __init__(
         self,
         thermodynamics: IonizedMixtureThermodynamicsPlan,
@@ -241,8 +243,6 @@ class IonizedMultitemperatureEulerSystem(
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
     ) -> None:
-        if not isinstance(thermodynamics, IonizedMixtureThermodynamicsPlan):
-            raise TypeError("thermodynamics must be IonizedMixtureThermodynamicsPlan.")
         base = TwoTemperatureMixtureEulerSystem(
             thermodynamics.base,
             dimension,

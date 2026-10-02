@@ -45,6 +45,7 @@ from ..linalg import (
 )
 from ..linalg.eigen import general_eigensolve, GeneralEigenproblem
 from ..nonlinear import NonlinearTermination, scalar_root, ScalarRootProblem, TOMS748
+from ..typing import checked
 from ._maxwell import (
     CompatibleMaxwellState,
     MaxwellAuxiliaryState,
@@ -154,6 +155,7 @@ class CompatibleMaxwellDispersionAudit(StrictModule):
     cyclotron_step_phase: Array
     audit_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedCompatibleMaxwell,
@@ -161,10 +163,6 @@ class CompatibleMaxwellDispersionAudit(StrictModule):
         step_size: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(prepared, PreparedCompatibleMaxwell):
-            raise TypeError("Dispersion audit requires a PreparedCompatibleMaxwell.")
-        if not isinstance(region, MaxwellMaterialRegion):
-            raise TypeError("region must be a MaxwellMaterialRegion.")
         capabilities = prepared.capabilities
         if capabilities.nonlinear or not capabilities.linear_time_invariant:
             raise ValueError("Dispersion audit requires linear time-invariant dynamics.")
@@ -742,6 +740,7 @@ class CherenkovRegimePlan(StrictModule):
     termination: NonlinearTermination
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         audit: CompatibleMaxwellDispersionAudit,
@@ -753,8 +752,6 @@ class CherenkovRegimePlan(StrictModule):
         vacuum_speed_of_light: float = 1.0,
         termination: NonlinearTermination | None = None,
     ) -> None:
-        if not isinstance(audit, CompatibleMaxwellDispersionAudit):
-            raise TypeError("audit must be a CompatibleMaxwellDispersionAudit.")
         if audit.prepared.layout.polarization != "full_3d":
             raise ValueError("Cherenkov regime analysis requires a full_3d audit.")
         speed = np.asarray(velocity, dtype=np.float64)

@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._realization import (
     is_stochastic_realization,
     realization_independence_labels,
@@ -690,6 +690,7 @@ class StochasticTransitionView(StrictModule):
     source_indices: Array
     target_indices: Array
 
+    @checked
     def __init__(
         self,
         trajectory: StochasticTrajectory,
@@ -697,8 +698,6 @@ class StochasticTransitionView(StrictModule):
         target_indices: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(trajectory, StochasticTrajectory):
-            raise TypeError("trajectory must be a StochasticTrajectory.")
         sources = jnp.asarray(source_indices, dtype=jnp.int32).reshape((-1,))
         targets = jnp.asarray(target_indices, dtype=jnp.int32).reshape((-1,))
         if sources.shape != targets.shape or sources.size <= 0:

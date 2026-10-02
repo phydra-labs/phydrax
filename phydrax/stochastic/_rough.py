@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._fractional import FractionalGaussianRealization
 
 
@@ -219,13 +220,12 @@ class GeometricRoughPath(AbstractRoughControl):
         )
 
     @classmethod
+    @checked
     def from_fractional_gaussian(
         cls,
         realization: FractionalGaussianRealization,
         /,
     ) -> GeometricRoughPath:
-        if not isinstance(realization, FractionalGaussianRealization):
-            raise TypeError("realization must be a FractionalGaussianRealization.")
         return cls.from_values(
             realization.grid,
             realization.values,

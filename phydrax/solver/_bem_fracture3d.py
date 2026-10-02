@@ -15,6 +15,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractLinearOperator
+from ..typing import checked
 
 
 class BEMFractureProblem3D(StrictModule, NonTrainableState):
@@ -29,6 +30,7 @@ class BEMFractureProblem3D(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         traction_operator: AbstractLinearOperator,
@@ -41,10 +43,6 @@ class BEMFractureProblem3D(StrictModule, NonTrainableState):
         relaxation: float = 0.1,
         maximum_iterations: int = 100,
     ) -> None:
-        if not isinstance(traction_operator, AbstractLinearOperator):
-            raise TypeError(
-                "traction_operator must be a prepared conforming BEM operator."
-            )
         normal = np.asarray(normals, dtype=np.float64)
         gap = np.asarray(initial_gap, dtype=np.float64)
         if (

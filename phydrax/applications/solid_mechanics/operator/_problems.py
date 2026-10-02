@@ -32,7 +32,7 @@ from ....nn.operator.training._risk import (
     MechanicsCaseReduction,
     MechanicsCaseReductionResult,
 )
-from ....typing import parse, PRNGKey
+from ....typing import checked, parse, PRNGKey
 from ._cases import (
     MechanicsCaseBuilder,
     MechanicsOperatorCase,
@@ -221,6 +221,7 @@ class _MechanicsOperatorProblem:
     problem_fingerprint: str
 
     @classmethod
+    @checked
     def create(
         cls,
         case_builder: MechanicsCaseBuilder,
@@ -232,8 +233,6 @@ class _MechanicsOperatorProblem:
         problem_id: str,
         allowed_kinds: tuple[MechanicsCaseFunctionalKind, ...],
     ) -> "_MechanicsOperatorProblem":
-        if not isinstance(case_builder, MechanicsCaseBuilder):
-            raise TypeError("case_builder must be a MechanicsCaseBuilder.")
         resolved_adapters = tuple(adapters)
         if not resolved_adapters or any(
             not isinstance(adapter, OperatorTrialFieldAdapter)

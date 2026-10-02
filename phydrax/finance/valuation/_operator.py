@@ -20,6 +20,7 @@ from ...nn.operator.capabilities import (
 )
 from ...nn.operator.data import OperatorBatch, OperatorPrediction
 from ...nn.operator.protocols import OperatorModel
+from ...typing import checked
 from ..core import FinanceEvidenceBinding, PricingLaw
 
 
@@ -39,6 +40,7 @@ class OperatorValuationApplicability(StrictModule):
     constraint_tolerance: float = eqx.field(static=True)
     maximum_output_values: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pricing_law: PricingLaw,
@@ -56,10 +58,6 @@ class OperatorValuationApplicability(StrictModule):
         constraint_tolerance: float,
         maximum_output_values: int,
     ) -> None:
-        if not isinstance(pricing_law, PricingLaw):
-            raise TypeError("pricing_law must be a PricingLaw.")
-        if not isinstance(problem_spec, OperatorProblemSpec):
-            raise TypeError("problem_spec must be an OperatorProblemSpec.")
         identifiers = tuple(
             str(value)
             for value in (

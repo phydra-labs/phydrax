@@ -30,7 +30,7 @@ from ..lifecycle import (
     CompositionRole,
     CompositionTransport,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._hybrid_event import HybridReplayPolicy
 from ._partitioned_coupling_graph import PreparedCoupling
 from ._partitioned_coupling_runtime import (
@@ -157,6 +157,7 @@ class AdaptiveCouplingRolloutPlan(StrictModule, NonTrainableState):
     retention: AdaptiveCouplingRetention = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         maximum_windows: int,
@@ -172,8 +173,6 @@ class AdaptiveCouplingRolloutPlan(StrictModule, NonTrainableState):
             raise ValueError("maximum_windows must fit the DCD segment capacity.")
         if segment_policy.maximum_steps_per_segment < window_policy.maximum_attempts:
             raise ValueError("DCD step capacity must cover every window attempt.")
-        if not isinstance(replay_policy, HybridReplayPolicy):
-            raise TypeError("replay_policy must be HybridReplayPolicy.")
         retention = parse(retention, AdaptiveCouplingRetention, "retention")
         self.maximum_windows = windows
         self.segment_policy = segment_policy

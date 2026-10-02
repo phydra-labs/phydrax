@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._fields import (
     _angular_frequency,
     _complex_field_values,
@@ -47,6 +47,7 @@ class PulseEnvelopeField(StrictModule):
     longitudinal_coordinate: Array
     polarization: PulseEnvelopePolarization = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plane_space: PlaneFieldSpace,
@@ -58,10 +59,6 @@ class PulseEnvelopeField(StrictModule):
         *,
         polarization: PulseEnvelopePolarization = "scalar",
     ) -> None:
-        if not isinstance(plane_space, PlaneFieldSpace):
-            raise TypeError("plane_space must be a PlaneFieldSpace.")
-        if not isinstance(time_space, PulseTimeSpace):
-            raise TypeError("time_space must be a PulseTimeSpace.")
         polarization = parse(polarization, PulseEnvelopePolarization, "polarization")
         expected = (
             plane_space.shape + time_space.shape
@@ -94,6 +91,7 @@ class PulseEnvelopeBridgePlan(StrictModule, NonTrainableState):
     spectral_support_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_space: PulseTimeSpace,
@@ -103,8 +101,6 @@ class PulseEnvelopeBridgePlan(StrictModule, NonTrainableState):
         carrier_grid_tolerance: float = 1.0e-10,
         spectral_support_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(time_space, PulseTimeSpace):
-            raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
             raise ValueError("Exact envelope bridging requires periodic-cell pulse time.")
         grid_tolerance = float(carrier_grid_tolerance)
@@ -389,6 +385,7 @@ class GaussianPulseEnvelopePlan(StrictModule, NonTrainableState):
     spectral_edge_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plane_space: PlaneFieldSpace,
@@ -408,10 +405,6 @@ class GaussianPulseEnvelopePlan(StrictModule, NonTrainableState):
         boundary_tolerance: float = 1.0e-6,
         spectral_edge_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(plane_space, PlaneFieldSpace):
-            raise TypeError("plane_space must be a PlaneFieldSpace.")
-        if not isinstance(time_space, PulseTimeSpace):
-            raise TypeError("time_space must be a PulseTimeSpace.")
         polarization = parse(polarization, PulseEnvelopePolarization, "polarization")
 
         def real_array(name: str, value: ArrayLike, shape: tuple[int, ...]) -> Array:

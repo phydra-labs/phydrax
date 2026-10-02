@@ -33,6 +33,7 @@ from ...transport.dynamic._martingale import (
     MartingaleSchrodingerBridgeResult,
     MartingaleSchrodingerBridgeSolver,
 )
+from ...typing import checked
 from ..core import FinanceEvidenceBinding, PricingLaw
 
 
@@ -50,6 +51,7 @@ class NumeraireOptionMarginal(StrictModule):
     market_snapshot_id: str = eqx.field(static=True)
     option_evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         asset_values: ArrayLike,
@@ -65,10 +67,6 @@ class NumeraireOptionMarginal(StrictModule):
         market_snapshot_id: str,
         option_evidence_id: str,
     ) -> None:
-        if not isinstance(pricing_law, PricingLaw):
-            raise TypeError(
-                "pricing_law must be a PricingLaw, not a physical/stress law."
-            )
         values = jnp.asarray(asset_values, dtype=jnp.float64)
         if values.ndim == 1:
             values = values[:, None]

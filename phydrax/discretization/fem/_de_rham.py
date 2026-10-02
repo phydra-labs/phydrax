@@ -34,7 +34,7 @@ from ...linalg._complexes import (
     HodgeLaplacianPart,
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
-from ...typing import parse
+from ...typing import checked, parse
 from .._cell_de_rham import AbstractCellDeRhamComplex
 from .._cell_mesh import CellMesh
 from .._cochain_hodge import SparseHodge
@@ -594,6 +594,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     primal_twist: FormTwist = eqx.field(static=True)
     realization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -605,8 +606,6 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         hodge_solve: LinearSolvePolicy | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         selected = parse(family, FormElementFamily, "family")
         twist_ = parse(twist, FormTwist, "twist")
         minimum_order = 0 if selected == "full" else 1
@@ -1035,6 +1034,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             f"{self.realization_id}:vector-interpolation:{degree}:{boundary}",
         )
 
+    @checked
     def transfer(
         self,
         target: FiniteElementDeRhamComplex,
@@ -1048,8 +1048,6 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         Child containment and the commuting interpolation are admitted here;
         this map does not claim a nonoverlap or whole-domain coverage certificate.
         """
-        if not isinstance(target, FiniteElementDeRhamComplex):
-            raise TypeError("target must be a FiniteElementDeRhamComplex.")
         if target.dimension != self.dimension or target.primal_twist != self.primal_twist:
             raise ValueError("FE transfer requires the same dimension and twist.")
         parents = None if parent_cells is None else np.asarray(parent_cells)

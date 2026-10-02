@@ -17,7 +17,7 @@ import jax.numpy as jnp
 
 from ...._fingerprint import canonical_fingerprint
 from ...._trainable import NonTrainableState
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from .._charge_state import PICSpeciesPlan, PICSpeciesState
 from .._process import (
     AbstractPICProcess,
@@ -79,9 +79,8 @@ class CoulombCollisionProcess(AbstractPICProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CoulombCollisionPlan, species: int, /) -> None:
-        if not isinstance(plan, CoulombCollisionPlan):
-            raise TypeError("plan must be CoulombCollisionPlan.")
         index = int(species)
         self.plan = plan
         self.species = index
@@ -128,9 +127,8 @@ class BackgroundCollisionProcess(AbstractPICProcess, NonTrainableState):
     radiation_ownership: RadiationOwnership | None = eqx.field(static=True)
     species_indices: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: BackgroundMCCPlan, species: int, /) -> None:
-        if not isinstance(plan, BackgroundMCCPlan):
-            raise TypeError("plan must be BackgroundMCCPlan.")
         index = int(species)
         self.plan = plan
         self.species = index

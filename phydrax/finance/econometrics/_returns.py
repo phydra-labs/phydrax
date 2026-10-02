@@ -14,7 +14,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from ..core import Currency, FinancialTimestamp
 from ..market import DataLineage, QuoteTiePolicy
 from ..market._transforms import (
@@ -46,6 +46,7 @@ class CorporateActionBinding(StrictModule):
     quote_key_id: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quote_key_id: str,
@@ -59,14 +60,6 @@ class CorporateActionBinding(StrictModule):
     ) -> None:
         if not isinstance(quote_key_id, str) or not quote_key_id.strip():
             raise ValueError("quote_key_id must be nonempty.")
-        if not isinstance(series, CorporateActionSeries):
-            raise TypeError("series must be a canonical CorporateActionSeries.")
-        if not isinstance(price_currency, Currency):
-            raise TypeError("price_currency must be a Currency.")
-        if not isinstance(input_lineage, DataLineage):
-            raise TypeError("input_lineage must be a DataLineage.")
-        if not isinstance(decision_time, FinancialTimestamp):
-            raise TypeError("decision_time must be a FinancialTimestamp.")
         if not isinstance(tie_policy, QuoteTiePolicy):
             raise TypeError("tie_policy must be a QuoteTiePolicy.")
         self.series = series

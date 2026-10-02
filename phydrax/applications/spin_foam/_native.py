@@ -28,6 +28,7 @@ from ...operators.quantum.lattice import (
     SU2CouplingTreePlan,
     SU2SectorResourcePolicy,
 )
+from ...typing import checked
 from ._eprl import EPRL_TRIANGLES, EPRLVertexPlan
 
 
@@ -207,6 +208,7 @@ class NativeB4BoosterPlan(StrictModule):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         boundary_twice_spins: Sequence[int],
@@ -243,8 +245,6 @@ class NativeB4BoosterPlan(StrictModule):
             or tolerance_ <= 0.0
         ):
             raise ValueError("B4 quadrature, Immirzi parameter, or tolerance is invalid.")
-        if not isinstance(resources, SU2SectorResourcePolicy):
-            raise TypeError("resources must be SU2SectorResourcePolicy.")
         _intertwiner_tensor(boundary, int(boundary_twice_intertwiner), resources)
         _intertwiner_tensor(internal, int(internal_twice_intertwiner), resources)
         content = {
@@ -460,6 +460,7 @@ class NativeEPRLVertexData(StrictModule):
     booster_error_bounds: Array
     data_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: EPRLVertexPlan,
@@ -469,8 +470,6 @@ class NativeEPRLVertexData(StrictModule):
         booster_error_bounds: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, EPRLVertexPlan):
-            raise TypeError("plan must be EPRLVertexPlan.")
         support = np.asarray(support_twice_spins, dtype=np.int32)
         intertwiners = np.asarray(internal_twice_intertwiners, dtype=np.int32)
         boosters = np.asarray(booster_values, dtype=np.complex128)

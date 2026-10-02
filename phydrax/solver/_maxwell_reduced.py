@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparedTensorGrid
 from ..discretization._reduced_differences import backward_difference, forward_difference
+from ..typing import checked
 from ._maxwell_boundaries import MaxwellBoundaryPlan
 from ._maxwell_pml import (
     _graded_profile,
@@ -76,6 +77,7 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MaxwellCPMLPlan,
@@ -85,8 +87,6 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
         wave_speed: float,
         /,
     ) -> None:
-        if not isinstance(plan, MaxwellCPMLPlan):
-            raise TypeError("plan must be MaxwellCPMLPlan.")
         shape = tuple(shape)
         periodic = tuple(bool(value) for value in periodic)
         spacing = tuple(float(value) for value in spacing)
@@ -191,9 +191,8 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def validate_state(self, state: MaxwellCPMLState, /) -> None:
-        if not isinstance(state, MaxwellCPMLState):
-            raise TypeError("Reduced Maxwell CPML state must be MaxwellCPMLState.")
         electric_shapes = tuple(term.indices.shape for term in self.electric_terms)
         magnetic_shapes = tuple(term.indices.shape for term in self.magnetic_terms)
         if (

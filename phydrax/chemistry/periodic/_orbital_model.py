@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...operators.periodic._orbital import PeriodicOrbitalBasisPlan
+from ...typing import checked
 from ...units import ENERGY, UnitDefinition
 
 
@@ -29,6 +30,7 @@ class PeriodicHubbardMeanFieldPlan(StrictModule, NonTrainableState):
     energy_unit: UnitDefinition
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: PeriodicOrbitalBasisPlan,
@@ -38,8 +40,6 @@ class PeriodicHubbardMeanFieldPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         /,
     ) -> None:
-        if not isinstance(basis, PeriodicOrbitalBasisPlan):
-            raise TypeError("basis must be PeriodicOrbitalBasisPlan.")
         hubbard = np.asarray(onsite_hubbard)
         reference = np.asarray(reference_populations)
         ionic = np.asarray(ionic_energy)
@@ -54,8 +54,6 @@ class PeriodicHubbardMeanFieldPlan(StrictModule, NonTrainableState):
             or not np.isfinite(ionic)
         ):
             raise ValueError("Hubbard, reference, and ionic fields are invalid.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         if energy_unit.dimension != ENERGY:
             raise ValueError(
                 "Periodic Hubbard mean-field energy_unit must have energy dimension."

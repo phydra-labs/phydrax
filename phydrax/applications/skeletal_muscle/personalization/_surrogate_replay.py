@@ -25,6 +25,7 @@ from ....control import (
     ControlResult,
     ControlTrajectory,
 )
+from ....typing import checked
 
 
 class SkeletalReplayObservationOperator(StrictModule, NonTrainableState):
@@ -47,9 +48,8 @@ class SkeletalReplayObservationOperator(StrictModule, NonTrainableState):
         self.observation = observation
         self.operator_id = identifier
 
+    @checked
     def evaluate(self, trajectory: ControlTrajectory, /) -> ArrayLike:
-        if not isinstance(trajectory, ControlTrajectory):
-            raise TypeError("trajectory must be ControlTrajectory.")
         return self.observation(trajectory)
 
 
@@ -86,6 +86,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
     relative_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_problem: ControlProblem,
@@ -99,18 +100,8 @@ class SkeletalSurrogateReplayPlan(StrictModule):
         absolute_tolerance: float,
         relative_tolerance: float,
     ) -> None:
-        if not isinstance(source_problem, ControlProblem):
-            raise TypeError("source_problem must be ControlProblem.")
-        if not isinstance(parameterization, AbstractControlParameterization):
-            raise TypeError(
-                "parameterization must implement AbstractControlParameterization."
-            )
         if parameterization.control_shape != source_problem.control_shape:
             raise ValueError("Parameterization and source problem control shapes differ.")
-        if not isinstance(observation_operator, SkeletalReplayObservationOperator):
-            raise TypeError(
-                "observation_operator must be SkeletalReplayObservationOperator."
-            )
         identifiers = tuple(str(value).strip() for value in (surrogate_id, quantity_id))
         if any(not value for value in identifiers):
             raise ValueError("Surrogate and quantity IDs must be nonempty.")

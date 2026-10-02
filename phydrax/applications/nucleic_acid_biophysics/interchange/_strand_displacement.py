@@ -38,6 +38,7 @@ from ....qualification import (
     ScientificCampaign,
     ScientificCase,
 )
+from ....typing import checked
 from ....units import conversion_factor, MOLE_PER_CUBIC_METER, UnitDefinition
 
 
@@ -179,6 +180,7 @@ class FluorescenceTimeTrace:
     intensity_unit_id: str
     trace_id: str
 
+    @checked
     def __init__(
         self,
         case_id: str,
@@ -199,8 +201,6 @@ class FluorescenceTimeTrace:
         saturation_threshold_intensity: float | None,
         intensity_unit_id: str = "instrument-fluorescence-unit",
     ) -> None:
-        if not isinstance(identity, PlateWellIdentity):
-            raise TypeError("identity must be a PlateWellIdentity.")
         case = canonical_identifier(case_id, "case_id")
         times = np.asarray(time_seconds, dtype=np.float64)
         values = np.asarray(intensity, dtype=np.float64)

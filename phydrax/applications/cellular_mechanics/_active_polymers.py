@@ -37,6 +37,7 @@ from ...discretization.particle._relations import (
     PreparedDynamicPairRelations,
     PreparedPairSpringEnergy,
 )
+from ...typing import checked
 
 
 def _probability(rate: float, dt: Array) -> Array:
@@ -317,9 +318,8 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ChromatinDynamicsPlan, /) -> None:
-        if not isinstance(plan, ChromatinDynamicsPlan):
-            raise TypeError("plan must be a ChromatinDynamicsPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
         springs = plan.spring.prepare(relations, ambient_dimension=plan.ambient_dimension)
         self.plan = plan
@@ -874,9 +874,8 @@ class PreparedActinNetwork(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ActinNetworkPlan, /) -> None:
-        if not isinstance(plan, ActinNetworkPlan):
-            raise TypeError("plan must be an ActinNetworkPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
         self.plan = plan
         self.relations = relations
@@ -1588,9 +1587,8 @@ class PreparedMotorCrosslinkers(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MotorCrosslinkerPlan, /) -> None:
-        if not isinstance(plan, MotorCrosslinkerPlan):
-            raise TypeError("plan must be a MotorCrosslinkerPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
         self.plan = plan
         self.relations = relations
@@ -1944,9 +1942,8 @@ class PreparedFocalAdhesions(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FocalAdhesionPlan, /) -> None:
-        if not isinstance(plan, FocalAdhesionPlan):
-            raise TypeError("plan must be a FocalAdhesionPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
         self.plan = plan
         self.relations = relations

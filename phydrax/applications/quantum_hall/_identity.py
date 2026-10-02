@@ -14,6 +14,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class HallComponentKey(StrictModule, NonTrainableState):
@@ -82,6 +83,7 @@ class MonopoleOrbitalKey(StrictModule, NonTrainableState):
     twice_orbital_projection: int = eqx.field(static=True)
     orbital_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         component: HallComponentKey,
@@ -89,8 +91,6 @@ class MonopoleOrbitalKey(StrictModule, NonTrainableState):
         twice_orbital_projection: int,
         /,
     ) -> None:
-        if not isinstance(component, HallComponentKey):
-            raise TypeError("component must be HallComponentKey.")
         level = int(landau_level)
         projection = int(twice_orbital_projection)
         if level < 0:
@@ -118,6 +118,7 @@ class MonopoleLandauLevel(StrictModule, NonTrainableState):
     one_body_energy: float = eqx.field(static=True)
     manifold_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         twice_monopole_strength: int,
@@ -130,8 +131,6 @@ class MonopoleLandauLevel(StrictModule, NonTrainableState):
         flux = int(twice_monopole_strength)
         level = int(landau_level)
         energy = float(one_body_energy)
-        if not isinstance(component, HallComponentKey):
-            raise TypeError("component must be HallComponentKey.")
         if flux < 1 or level < 0 or not isfinite(energy):
             raise ValueError("Monopole strength, Landau level, or energy is invalid.")
         self.twice_monopole_strength = flux

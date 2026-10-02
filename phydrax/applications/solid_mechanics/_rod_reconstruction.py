@@ -26,7 +26,7 @@ from ...linalg import (
     FunctionLinearOperator,
 )
 from ...metrix import QuaternionPoseStateGeometry
-from ...typing import parse
+from ...typing import checked, parse
 from ._rod_reduction import (
     PreparedReducedRod,
     ReducedRodEvaluation,
@@ -174,6 +174,7 @@ class RodReconstructionPlan(StrictModule, NonTrainableState):
     chart_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         queries: RodFrameQueryPlan,
@@ -184,8 +185,6 @@ class RodReconstructionPlan(StrictModule, NonTrainableState):
         quadrature_tolerance: float = 1.0e-6,
         chart_margin: float = 1.0e-5,
     ) -> None:
-        if not isinstance(queries, RodFrameQueryPlan):
-            raise TypeError("queries must be a RodFrameQueryPlan.")
         method_ = parse(method, RodReconstructionMethod, "method")
         refinement_ = int(refinement)
         if refinement_ < 1 or refinement_ != refinement:
@@ -368,16 +367,13 @@ class PreparedRodReconstruction(StrictModule, NonTrainableState):
     route_id: str = eqx.field(static=True)
     reconstruction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduced: PreparedReducedRod,
         plan: RodReconstructionPlan,
         /,
     ) -> None:
-        if not isinstance(reduced, PreparedReducedRod):
-            raise TypeError("reduced must be a PreparedReducedRod.")
-        if not isinstance(plan, RodReconstructionPlan):
-            raise TypeError("plan must be a RodReconstructionPlan.")
         if reduced.rod.plan.dimension != 3:
             raise ValueError("Rod reconstruction requires a spatial PreparedReducedRod.")
         if reduced.plan.base_policy not in ("reference", "fixed"):

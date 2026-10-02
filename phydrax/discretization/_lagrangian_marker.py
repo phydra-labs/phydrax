@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import ArraySpace, DiagonalPairing
+from ..typing import checked
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -194,11 +195,10 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, LagrangianMarkerSetPlan):
-            raise TypeError("plan must be a LagrangianMarkerSetPlan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be nonempty.")
@@ -395,11 +395,10 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
             self.prepared_id,
         )
 
+    @checked
     def validate_kinematics(
         self, kinematics: LagrangianMarkerKinematics, /
     ) -> LagrangianMarkerKinematics:
-        if not isinstance(kinematics, LagrangianMarkerKinematics):
-            raise TypeError("kinematics must be LagrangianMarkerKinematics.")
         if kinematics.markers_id != self.prepared_id:
             raise ValueError("Marker kinematics belongs to another discretization.")
         return self.kinematics(kinematics.position, kinematics.velocity)

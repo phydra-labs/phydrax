@@ -18,6 +18,7 @@ import phydrax.linalg as la
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 class SphericalShellGeometry(StrictModule, NonTrainableState):
@@ -172,6 +173,7 @@ class SphericalThermomechanicalPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: SphericalShellGeometry,
@@ -187,8 +189,6 @@ class SphericalThermomechanicalPlan(StrictModule, NonTrainableState):
         momentum_factory_id: str,
         thermal_rate_id: str,
     ) -> None:
-        if not isinstance(geometry, SphericalShellGeometry):
-            raise TypeError("Geodynamics requires spherical shell geometry.")
         if not isinstance(velocity_space, la.ArraySpace) or not isinstance(
             pressure_space, la.ArraySpace
         ):

@@ -23,7 +23,7 @@ from ..lifecycle import (
     RevisionLineage,
     RunRecord,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._committee import (
     AcquisitionPlan,
     AcquisitionRecord,
@@ -239,6 +239,7 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
     committee_reduction: CommitteeReductionPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -250,12 +251,6 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
         committee_reduction: CommitteeReductionPolicy,
         /,
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
-        if not isinstance(provider, AbstractExternalAtomisticProvider):
-            raise TypeError("provider must implement AbstractExternalAtomisticProvider.")
-        if not isinstance(acquisition, AcquisitionPlan):
-            raise TypeError("acquisition must be AcquisitionPlan.")
         if (
             not isinstance(graph_execution, AtomisticGraphExecutionPlan)
             or graph_execution.backend != "dense"
@@ -266,10 +261,6 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
             or runtime_graph_execution.backend != "particle"
         ):
             raise TypeError("runtime_graph_execution must be a particle graph plan.")
-        if not isinstance(training, AtomisticTrainingPolicy):
-            raise TypeError("training must be AtomisticTrainingPolicy.")
-        if not isinstance(committee_reduction, CommitteeReductionPolicy):
-            raise TypeError("committee_reduction must be CommitteeReductionPolicy.")
         self.system = system
         self.provider = provider
         self.acquisition = acquisition
@@ -297,6 +288,7 @@ class AtomisticLearningCampaignState(StrictModule, NonTrainableState):
     round_index: int = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         labels: AtomisticLabelSet,
@@ -305,8 +297,6 @@ class AtomisticLearningCampaignState(StrictModule, NonTrainableState):
         committee: CommitteeAtomisticPotential | None = None,
         round_index: int = 0,
     ) -> None:
-        if not isinstance(labels, AtomisticLabelSet):
-            raise TypeError("labels must be AtomisticLabelSet.")
         if committee is not None and not isinstance(
             committee, CommitteeAtomisticPotential
         ):

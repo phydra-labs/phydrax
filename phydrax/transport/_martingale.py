@@ -21,6 +21,7 @@ from ..optim import (
     LinearProgram,
     solve_linear_program,
 )
+from ..typing import checked
 from ._problem import DiscreteTransportProblem
 
 
@@ -122,6 +123,7 @@ class MartingaleTransportProblem(StrictModule):
     constraint_tolerance: float = eqx.field(static=True)
     constraint_kind: str = eqx.field(static=True, default="martingale")
 
+    @checked
     def __init__(
         self,
         transport: DiscreteTransportProblem,
@@ -131,8 +133,6 @@ class MartingaleTransportProblem(StrictModule):
         target_coordinates: ArrayLike | None = None,
         constraint_tolerance: float = 1e-7,
     ) -> None:
-        if not isinstance(transport, DiscreteTransportProblem):
-            raise TypeError("transport must be a DiscreteTransportProblem.")
         tolerance = float(constraint_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("constraint_tolerance must be finite and nonnegative.")

@@ -22,7 +22,7 @@ from .._interpolation import (
     NearestTiePolicy,
 )
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._sampled import SampledSeries
 from ._types import (
     SeriesEvaluation,
@@ -87,6 +87,7 @@ class SampledSeriesReconstruction(StrictModule):
     snap_tolerance: float = eqx.field(static=True)
     fill_value: Array | None
 
+    @checked
     def __init__(
         self,
         series: SampledSeries,
@@ -99,8 +100,6 @@ class SampledSeriesReconstruction(StrictModule):
         snap_tolerance: float = 0.0,
         fill_value: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(series, SampledSeries):
-            raise TypeError("series must be a SampledSeries.")
         interpolation = parse(interpolation, SeriesInterpolation, "interpolation")
         if bounds not in ("clip", "error", "extrapolate", "fill"):
             raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")

@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver._photon_transport import PhotonTransportPlan, PhotonTransportResult
+from ...typing import checked
 from ._detector import PlanarXRayDetectorPlan, PlanarXRayDetectorResult
 from ._sources import DiagnosticXRaySourcePlan, PhotonSourceBatch
 
@@ -31,6 +32,7 @@ class DiagnosticXRayExperimentPlan(StrictModule, NonTrainableState):
     detector: PlanarXRayDetectorPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: DiagnosticXRaySourcePlan,
@@ -38,12 +40,6 @@ class DiagnosticXRayExperimentPlan(StrictModule, NonTrainableState):
         detector: PlanarXRayDetectorPlan,
         /,
     ) -> None:
-        if not isinstance(source, DiagnosticXRaySourcePlan):
-            raise TypeError("source must be DiagnosticXRaySourcePlan.")
-        if not isinstance(transport, PhotonTransportPlan):
-            raise TypeError("transport must be PhotonTransportPlan.")
-        if not isinstance(detector, PlanarXRayDetectorPlan):
-            raise TypeError("detector must be PlanarXRayDetectorPlan.")
         if (
             source.spectrum.energy_unit.unit_id
             != transport.cross_sections.energy_unit.unit_id

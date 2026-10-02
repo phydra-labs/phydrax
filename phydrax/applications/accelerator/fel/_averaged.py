@@ -77,6 +77,7 @@ from ....optics.wave import (
 )
 from ....typing import (
     Bool,
+    checked,
     Complex128,
     Float64,
     Identifier,
@@ -166,9 +167,8 @@ class FELWakeLoss(StrictModule, NonTrainableState):
     structure_length: float = eqx.field(static=True)
     wake_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, wake: WakeFunctionPlan, /, *, structure_length: float) -> None:
-        if not isinstance(wake, WakeFunctionPlan):
-            raise TypeError("wake must be a WakeFunctionPlan.")
         if wake.kind != "longitudinal":
             raise ValueError("The time-independent FEL applies longitudinal wakes only.")
         self.wake = wake
@@ -384,6 +384,7 @@ class FELPlan(StrictModule, NonTrainableState):
     cell_area: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         lattice: FELUndulatorLattice,
@@ -402,10 +403,6 @@ class FELPlan(StrictModule, NonTrainableState):
         maximum_phase_step: float = 0.5,
         gain_fit_window: tuple[float, float] = (1.0e-4, 1.0e-2),
     ) -> None:
-        if not isinstance(lattice, FELUndulatorLattice):
-            raise TypeError("lattice must be an FELUndulatorLattice.")
-        if not isinstance(loading, FELLoading):
-            raise TypeError("loading must be FELLoading.")
         if seed is not None and not isinstance(seed, FELSeed):
             raise TypeError("seed must be FELSeed or None.")
         if wake is not None and not isinstance(wake, FELWakeLoss):

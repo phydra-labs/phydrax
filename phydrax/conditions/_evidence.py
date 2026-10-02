@@ -10,6 +10,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._ir import ConditionQuantifier
 
 
@@ -64,6 +65,7 @@ class ConditionEvidence(StrictModule):
     residual_norm: Array
     satisfied: Array
 
+    @checked
     def __init__(
         self,
         stamp: ConditionRealizationStamp,
@@ -73,10 +75,6 @@ class ConditionEvidence(StrictModule):
         *,
         evidence_id: str,
     ) -> None:
-        if not isinstance(stamp, ConditionRealizationStamp):
-            raise TypeError(
-                "ConditionEvidence.stamp must be a ConditionRealizationStamp."
-            )
         satisfied_ = _scalar(satisfied, "satisfied")
         if satisfied_.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("ConditionEvidence.satisfied must have boolean dtype.")
@@ -197,6 +195,7 @@ class ProbabilisticConditioningEvidence(StrictModule):
     effective_sample_size: Array
     accepted_probability: Array
 
+    @checked
     def __init__(
         self,
         stamp: ConditionRealizationStamp,
@@ -207,10 +206,6 @@ class ProbabilisticConditioningEvidence(StrictModule):
         *,
         evidence_id: str,
     ) -> None:
-        if not isinstance(stamp, ConditionRealizationStamp):
-            raise TypeError(
-                "Probabilistic evidence requires a ConditionRealizationStamp."
-            )
         self.stamp = stamp
         self.evidence_id = _identifier(evidence_id, "evidence_id")
         self.log_normalizer = _scalar(log_normalizer, "log_normalizer")

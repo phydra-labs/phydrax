@@ -27,6 +27,7 @@ from ...equations._relativistic_radiation_interaction import (
     GRGrayOpacityEvaluation,
 )
 from ...solver._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
+from ...typing import checked
 
 
 def _fields(
@@ -178,6 +179,7 @@ class ThermalBremsstrahlungGrayOpacityPlan(AbstractGRGrayOpacityPlan):
     model: ThermalFreeFreeModel
     electron_mass_per_particle: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -186,8 +188,6 @@ class ThermalBremsstrahlungGrayOpacityPlan(AbstractGRGrayOpacityPlan):
         electron_mass_per_particle: float,
         ion_charge_number: float = 1.0,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be ElectromagneticScaleContract.")
         mass = float(electron_mass_per_particle)
         if not np.isfinite(mass) or mass <= 0.0:
             raise ValueError("electron_mass_per_particle must be finite and positive.")
@@ -252,6 +252,7 @@ class ThermalSynchrotronGrayOpacityPlan(AbstractGRGrayOpacityPlan):
     model: ThermalSynchrotronModel
     electron_mass_per_particle: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -259,8 +260,6 @@ class ThermalSynchrotronGrayOpacityPlan(AbstractGRGrayOpacityPlan):
         *,
         electron_mass_per_particle: float,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be ElectromagneticScaleContract.")
         if scale.charge_unit.reference_system_id != "si":
             raise ValueError("scale units must be referenced to the SI system.")
         mass = float(electron_mass_per_particle)
@@ -446,6 +445,7 @@ class GRPhotonNumberPlan(StrictModule, NonTrainableState):
     balance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteVolumeDiscretization,
@@ -455,10 +455,6 @@ class GRPhotonNumberPlan(StrictModule, NonTrainableState):
         minimum_number: float = 1.0e-30,
         balance_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be FiniteVolumeDiscretization.")
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
         minimum = float(minimum_number)
         tolerance = float(balance_tolerance)
         if (
@@ -504,6 +500,7 @@ class GRPhotonNumberPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=jnp.int32),
         )
 
+    @checked
     def advance(
         self,
         state: GRPhotonNumberState,
@@ -513,8 +510,6 @@ class GRPhotonNumberPlan(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         /,
     ) -> GRPhotonNumberResult:
-        if not isinstance(state, GRPhotonNumberState):
-            raise TypeError("state must be GRPhotonNumberState.")
         radiation = jnp.asarray(radiation_state)
         shape = tuple(self.discretization.cell_shape)
         if radiation.shape != shape + (4,) or state.densitized_number.shape != shape:

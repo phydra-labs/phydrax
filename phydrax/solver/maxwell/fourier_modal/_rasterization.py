@@ -21,6 +21,7 @@ from ...._trainable import NonTrainableState
 from ....discretization.spectral import LatticeHarmonicDiscretization
 from ....geometry import CompiledGeometry, GeometryCapability
 from ....geometry._interface import regularized_heaviside_values
+from ....typing import checked
 from ._contracts import FrequencyMaxwellMaterial
 
 
@@ -63,14 +64,13 @@ class FourierModalRasterizationPlan(StrictModule, NonTrainableState):
     policy: FourierModalRasterizationPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         harmonics: LatticeHarmonicDiscretization,
         policy: FourierModalRasterizationPolicy | None = None,
         /,
     ) -> None:
-        if not isinstance(harmonics, LatticeHarmonicDiscretization):
-            raise TypeError("harmonics must be a LatticeHarmonicDiscretization.")
         if harmonics.periodic_dimension != 2:
             raise ValueError("Geometry rasterization currently requires a 2-D lattice.")
         policy_ = FourierModalRasterizationPolicy() if policy is None else policy

@@ -22,6 +22,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -111,6 +112,7 @@ class OneClassSVMModel(AbstractFittedModel):
     out_size: str = eqx.field(static=True)
     _input_binding: ClassVar[ModelBinding] = _BLOCKWISE_BINDING
 
+    @checked
     def __init__(
         self,
         training_features: ArrayLike,
@@ -121,8 +123,6 @@ class OneClassSVMModel(AbstractFittedModel):
         *,
         case_shape: tuple[int, ...],
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be a native AbstractPositiveDefiniteKernel.")
         train = jnp.asarray(training_features)
         self.training_features = train
         self.dual_coefficients = jnp.asarray(dual_coefficients)

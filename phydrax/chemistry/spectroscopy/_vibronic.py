@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure
+from ...typing import checked
 from ..vibration import VibrationalAnalysisResult
 
 
@@ -284,6 +285,7 @@ class DuschinskyFranckCondonPlan(StrictModule, NonTrainableState):
     maximum_quadrature_points: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         initial_angular_frequencies: ArrayLike,
@@ -295,8 +297,6 @@ class DuschinskyFranckCondonPlan(StrictModule, NonTrainableState):
         quadrature_order: int = 12,
         maximum_quadrature_points: int = 2_000_000,
     ) -> None:
-        if not isinstance(duschinsky, DuschinskyResult):
-            raise TypeError("duschinsky must be DuschinskyResult.")
         initial = jnp.asarray(initial_angular_frequencies)
         final = jnp.asarray(final_angular_frequencies, dtype=initial.dtype)
         hbar_ = float(hbar)

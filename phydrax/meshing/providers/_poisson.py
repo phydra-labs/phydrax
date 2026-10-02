@@ -22,6 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...logging import emit
+from ...typing import checked
 from .._audit import CellMeshAuditPolicy
 from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
 from .._contracts import (
@@ -71,6 +72,7 @@ class OrientedPointCloud(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     cloud_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinates: ArrayLike,
@@ -81,8 +83,6 @@ class OrientedPointCloud(StrictModule, NonTrainableState):
         source_id: str,
         source_revision: str,
     ) -> None:
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if (
             coordinate_contract.length_coordinate_kind != "physical"
             or coordinate_contract.coordinate_system != "cartesian"
@@ -267,6 +267,7 @@ class PoissonProvider:
             execution_modes=(MeshingExecutionMode.IN_PROCESS,),
         )
 
+    @checked
     def execute(
         self,
         source: OrientedPointCloud,
@@ -275,16 +276,12 @@ class PoissonProvider:
         *,
         audit_policy: CellMeshAuditPolicy | None = None,
     ) -> CellMeshingResult:
-        if not isinstance(source, OrientedPointCloud):
-            raise TypeError("source must be OrientedPointCloud.")
         if isinstance(specification, SurfaceMeshingSpec):
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
                 "Poisson does not enforce surface size, protected-feature, periodic, "
                 "or deterministic meshing contracts; use PoissonReconstructionSpec.",
             )
-        if not isinstance(specification, PoissonReconstructionSpec):
-            raise TypeError("specification must be PoissonReconstructionSpec.")
         match specification.boundary:
             case PoissonBoundaryCondition.NEUMANN:
                 pass

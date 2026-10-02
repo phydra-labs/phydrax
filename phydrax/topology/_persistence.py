@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._coefficients import PrimeField
 from ._complex import CellComplexPair, CellSubcomplex, compact_boundary, CompactCellLayout
 from ._diagram import PackedPersistenceDiagram, PersistenceDiagram
@@ -319,6 +319,7 @@ class FrozenPersistencePairing(StrictModule, NonTrainableState):
     direction: str = eqx.field(static=True)
     frozen_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         result: PersistenceResult,
@@ -327,10 +328,6 @@ class FrozenPersistencePairing(StrictModule, NonTrainableState):
         *,
         direction: str,
     ) -> None:
-        if not isinstance(result, PersistenceResult):
-            raise TypeError("Frozen pairing requires a PersistenceResult.")
-        if not isinstance(layout, CompactCellLayout):
-            raise TypeError("layout must be a CompactCellLayout.")
         if result.pairing.layout_id != layout.layout_id:
             raise ValueError(
                 "Frozen pairing layout does not match the persistence result."

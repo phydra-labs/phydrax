@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization
+from ..typing import checked
 
 
 def _interaction_table(
@@ -209,13 +210,10 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
     particle_discretization_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: MolecularTopologyPlan, particles: ParticleDiscretization, /
     ) -> None:
-        if not isinstance(plan, MolecularTopologyPlan):
-            raise TypeError("plan must be a MolecularTopologyPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         particle_ids = np.asarray(particles.particle_ids, dtype=np.int64)
         active = np.asarray(particles.active_mask, dtype=np.bool_)
         if np.unique(particle_ids).size != particle_ids.size:

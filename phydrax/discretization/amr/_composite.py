@@ -21,6 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DiagonalPairing, PyTreeSpace
+from ...typing import checked
 from ._core import BlockHierarchyState, BlockHierarchyTopology
 
 
@@ -57,6 +58,7 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
     topology_fingerprint: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: BlockHierarchyTopology,
@@ -66,8 +68,6 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
         dtype: Any = np.float64,
         dummy_weight: float = 1.0,
     ) -> None:
-        if not isinstance(topology, BlockHierarchyTopology):
-            raise TypeError("Composite AMR layout requires BlockHierarchyTopology.")
         components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("Composite AMR component dimensions must be positive.")
@@ -183,9 +183,8 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
             raise RuntimeError("Composite AMR cell space lost its tuple level structure.")
         return checked
 
+    @checked
     def bind_state(self, state: BlockHierarchyState, /) -> tuple[Array, ...]:
-        if not isinstance(state, BlockHierarchyState):
-            raise TypeError("Composite AMR layout can bind only BlockHierarchyState.")
         self.require_topology(state.topology)
         return self.validate(tuple(level.values for level in state.levels))
 

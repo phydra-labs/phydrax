@@ -30,6 +30,7 @@ from ..discretization import (
 )
 from ..linalg import DenseLinearOperator, OperatorProperties
 from ..linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ..typing import checked
 from ..units import UnitDefinition
 from ._many_body import ManyBodyPotential
 from ._potential_program import PreparedAtomisticPotentialProgram
@@ -157,6 +158,7 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
     elastic_symmetry_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         potential: PreparedAtomisticPotentialProgram,
@@ -169,10 +171,6 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         stress_symmetry_tolerance: float = 1.0e-9,
         elastic_symmetry_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(potential, PreparedAtomisticPotentialProgram):
-            raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be AbstractPreparedParticleNeighborhood.")
         if not potential.plan.terms or not all(
             isinstance(term, ManyBodyPotential) for term in potential.plan.terms
         ):

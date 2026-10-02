@@ -19,6 +19,7 @@ from jaxtyping import PyTree
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import checked
 
 
 class AbstractBijector(StrictModule):
@@ -435,13 +436,13 @@ class PosteriorProblem(StrictModule):
 
     parameter_space: ParameterSpace
     log_likelihood_fn: Callable[[PyTree[Any]], ArrayLike]
-    predict_fn: Callable[..., Any] | None = eqx.field(static=True)
-    observation_variance_fn: Callable[..., Any] | None = eqx.field(static=True)
-    sample_observation_fn: Callable[..., Any] | None = eqx.field(static=True)
-    gauss_newton_residual_fn: Callable[[PyTree[Any]], PyTree[Any]] | None = eqx.field(
-        static=True
-    )
+    # Callback PyTrees may own arrays; filtering must retain those numerical leaves.
+    predict_fn: Callable[..., Any] | None
+    observation_variance_fn: Callable[..., Any] | None
+    sample_observation_fn: Callable[..., Any] | None
+    gauss_newton_residual_fn: Callable[[PyTree[Any]], PyTree[Any]] | None
 
+    @checked
     def __init__(
         self,
         parameter_space: ParameterSpace,
@@ -453,8 +454,6 @@ class PosteriorProblem(StrictModule):
         sample_observation: Callable[..., Any] | None = None,
         gauss_newton_residual: Callable[[PyTree[Any]], PyTree[Any]] | None = None,
     ) -> None:
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         if not callable(log_likelihood):
             raise TypeError("log_likelihood must be callable.")
         if predict is not None and not callable(predict):

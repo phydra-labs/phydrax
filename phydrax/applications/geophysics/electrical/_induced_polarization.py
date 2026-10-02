@@ -18,6 +18,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....geometry.simplicial import AffineSimplexMap
+from ....typing import checked
 from ._finite_patch import FinitePatchDCPlan
 
 
@@ -172,9 +173,8 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, finite_patch: FinitePatchDCPlan, /) -> None:
-        if not isinstance(finite_patch, FinitePatchDCPlan):
-            raise TypeError("Spectral IP requires FinitePatchDCPlan geometry and survey.")
         cells = np.concatenate(
             [
                 np.asarray(block.vertices, dtype=np.int32)

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
+from ...typing import checked
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas, TrimDomain
 from ._patches import AbstractSurfacePatch
 
@@ -283,6 +284,7 @@ class BRepModel(StrictModule):
     report: BRepImportReport = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -299,12 +301,6 @@ class BRepModel(StrictModule):
         physical_tags: tuple[str, ...],
         report: BRepImportReport,
     ) -> None:
-        if not isinstance(topology, BRepTopology):
-            raise TypeError("topology must be a BRepTopology.")
-        if not isinstance(report, BRepImportReport):
-            raise TypeError("report must be a BRepImportReport.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
         if coordinate_contract.spatial_id != report.coordinate_contract.spatial_id:
             raise ValueError(
                 "The model and import report coordinate contracts must match."

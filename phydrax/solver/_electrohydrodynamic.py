@@ -19,6 +19,7 @@ from ..discretization.finite_volume._incompressible import (
     PreparedMACOperators,
 )
 from ..discretization.finite_volume._mac_electrochemical import mac_cell_to_faces
+from ..typing import checked
 from ._mac_poisson_nernst_planck import MACPoissonNernstPlanckEvaluation
 from ._poisson_nernst_planck import PoissonNernstPlanckEvaluation
 
@@ -43,9 +44,8 @@ class CochainElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
     head_indices: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, bridge: StructuredCochainBridge, /) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
         incidence = bridge.cochain.topology.incidences[0]
         valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         source = np.asarray(incidence.relation.source_indices)[valid]
@@ -70,6 +70,7 @@ class CochainElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         pnp: PoissonNernstPlanckEvaluation,
@@ -77,8 +78,6 @@ class CochainElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
         *,
         edge_velocity: tuple[Array, ...] | None = None,
     ) -> CochainElectrohydrodynamicEvaluation:
-        if not isinstance(pnp, PoissonNernstPlanckEvaluation):
-            raise TypeError("pnp must be PoissonNernstPlanckEvaluation.")
         charge = pnp.electrochemical.charge_density
         edge_charge = 0.5 * (charge[self.tail_indices] + charge[self.head_indices])
         osmotic_gradient = self.bridge.cochain.exterior_derivative(
@@ -162,9 +161,8 @@ class MACElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
     operators: PreparedMACOperators
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, operators: PreparedMACOperators, /) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
         self.operators = operators
         self.plan_id = canonical_fingerprint(
             {
@@ -174,6 +172,7 @@ class MACElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         pnp: MACPoissonNernstPlanckEvaluation,
@@ -181,8 +180,6 @@ class MACElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
         *,
         face_velocity: FaceVelocity | None = None,
     ) -> MACElectrohydrodynamicEvaluation:
-        if not isinstance(pnp, MACPoissonNernstPlanckEvaluation):
-            raise TypeError("pnp must be MACPoissonNernstPlanckEvaluation.")
         if pnp.electrostatic.operators_id != self.operators.prepared_id:
             raise ValueError("MAC PNP and force plans use different operator layouts.")
         charge = pnp.electrochemical.charge_density

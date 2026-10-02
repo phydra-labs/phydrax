@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..stochastic import OrnsteinUhlenbeckRealization
+from ..typing import checked
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -117,6 +118,7 @@ class ModalOUForcingPlan(AbstractBalanceLawProcessPlan):
     rms_acceleration: float = eqx.field(static=True)
     realization_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: ModalForcingBasis,
@@ -126,8 +128,6 @@ class ModalOUForcingPlan(AbstractBalanceLawProcessPlan):
         rms_acceleration: float = 1.0,
         realization_name: str = "modal_ou_forcing",
     ) -> None:
-        if not isinstance(basis, ModalForcingBasis):
-            raise TypeError("basis must be ModalForcingBasis.")
         correlation = float(correlation_time)
         rms = float(rms_acceleration)
         name = str(realization_name)
@@ -166,16 +166,13 @@ class PreparedModalOUForcing(AbstractPreparedBalanceLawProcess):
     momentum_indices: tuple[int, ...] = eqx.field(static=True)
     energy_index: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ModalOUForcingPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
     ) -> None:
-        if not isinstance(plan, ModalOUForcingPlan):
-            raise TypeError("plan must be ModalOUForcingPlan.")
-        if not isinstance(transport, AbstractPreparedBalanceLawTransport):
-            raise TypeError("transport must be a prepared balance-law transport.")
         names = transport.component_names
         momentum = tuple(
             index for index, name in enumerate(names) if name.startswith("momentum_")

@@ -90,6 +90,7 @@ from ..discretization.pic import (
 )
 from ..electromagnetics import ChargedTrajectory
 from ..geometry import Box
+from ..typing import checked
 from ._electromagnetic_pic import (
     ElectromagneticPICPlan,
     ElectromagneticPICState,
@@ -177,6 +178,7 @@ class BoostedFramePlan(StrictModule, NonTrainableState):
     lab_upper: tuple[float, float, float] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frame: LorentzFrame,
@@ -185,12 +187,6 @@ class BoostedFramePlan(StrictModule, NonTrainableState):
         *,
         relativity: RelativityScaleContract = PIC_CODE_RELATIVITY,
     ) -> None:
-        if not isinstance(frame, LorentzFrame):
-            raise TypeError("frame must be a LorentzFrame.")
-        if not isinstance(lab_domain, Box):
-            raise TypeError("lab_domain must be a phydrax.geometry.Box.")
-        if not isinstance(relativity, RelativityScaleContract):
-            raise TypeError("relativity must be a RelativityScaleContract.")
         axis, beta = _frame_boost(frame)
         center = np.asarray(lab_domain.center, dtype=np.float64)
         size = np.asarray(lab_domain.size, dtype=np.float64)
@@ -376,6 +372,7 @@ class BoostedFramePlan(StrictModule, NonTrainableState):
         """Gather-only boosted view of a lab-frame `ExternalFieldSource`."""
         return BoostedExternalField(self, source)
 
+    @checked
     def boost_antenna(
         self,
         antenna: SampledPlaneCurrentAntennaPlan,
@@ -392,8 +389,6 @@ class BoostedFramePlan(StrictModule, NonTrainableState):
         boosted time zero. Requires the normal axis to be the boost axis and the
         vacuum of ``scale`` (the antenna's own scale by default).
         """
-        if not isinstance(antenna, SampledPlaneCurrentAntennaPlan):
-            raise TypeError("antenna must be a SampledPlaneCurrentAntennaPlan.")
         if antenna.normal_axis != self.axis:
             raise ValueError(
                 "Only antennas normal to the boost axis move along their normal in the "
@@ -474,9 +469,8 @@ class BoostedExternalField(StrictModule, NonTrainableState):
     source: ExternalFieldSource
     source_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, frame: BoostedFramePlan, source: ExternalFieldSource, /) -> None:
-        if not isinstance(frame, BoostedFramePlan):
-            raise TypeError("frame must be a BoostedFramePlan.")
         if not isinstance(source, ExternalFieldSource):
             raise TypeError("source must implement ExternalFieldSource.")
         self.frame = frame
@@ -737,6 +731,7 @@ class PreparedBoostedFrame(StrictModule, NonTrainableState):
     nci_energy_fraction: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frame: BoostedFramePlan,
@@ -748,10 +743,6 @@ class PreparedBoostedFrame(StrictModule, NonTrainableState):
         nci_energy_fraction: float,
         /,
     ) -> None:
-        if not isinstance(frame, BoostedFramePlan):
-            raise TypeError("frame must be a BoostedFramePlan.")
-        if not isinstance(pic, ElectromagneticPICPlan):
-            raise TypeError("pic must be an ElectromagneticPICPlan.")
         solver = pic.solver
         if not isinstance(solver, PreparedSpectralMaxwell):
             raise TypeError(
@@ -1072,12 +1063,11 @@ class PreparedBoostedFrame(StrictModule, NonTrainableState):
 
     # -- stepping ------------------------------------------------------------------------
 
+    @checked
     def step_detailed(
         self, state: BoostedFrameState, step_size: ArrayLike, /
     ) -> BoostedFrameStepResult:
         """One PIC step under the NCI guard, recording back-transformed snapshots."""
-        if not isinstance(state, BoostedFrameState):
-            raise TypeError("state must be a BoostedFrameState.")
         result = self.pic.step_detailed(state.pic, step_size)
         candidate_pic = result.candidate_state
         sample = self.nci.sample(candidate_pic.field)
@@ -1397,6 +1387,7 @@ class PreparedBoostedFrame(StrictModule, NonTrainableState):
             (boosted.id_hi, boosted.id_lo),
         )
 
+    @checked
     def lab_far_field(
         self,
         state: BoostedFrameState,
@@ -1411,8 +1402,6 @@ class PreparedBoostedFrame(StrictModule, NonTrainableState):
         after every observer's acquisition window closed, with ``J = 0`` met on
         the surfaces at every attempted step.
         """
-        if not isinstance(far_field, MaxwellFarFieldResult):
-            raise TypeError("far_field must be a MaxwellFarFieldResult.")
         if self.galilean or not self.solver.huygens:
             raise ValueError(
                 "Boosted Huygens far fields require a standard spectral grid with "
@@ -1465,9 +1454,8 @@ class PreparedBoostedFrame(StrictModule, NonTrainableState):
         pic = self.pic.checkpoint(state.pic)
         return PICRestartCheckpoint((*pic.components, self.restart_component(state)))
 
+    @checked
     def restore(self, checkpoint: PICRestartCheckpoint, /) -> BoostedFrameState:
-        if not isinstance(checkpoint, PICRestartCheckpoint):
-            raise TypeError("checkpoint must be PICRestartCheckpoint.")
         boosted = [
             value for value in checkpoint.components if value.name == _RESTART_NAME
         ]

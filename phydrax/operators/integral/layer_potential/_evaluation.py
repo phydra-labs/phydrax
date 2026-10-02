@@ -16,6 +16,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....integration import AdaptiveQuadraturePlan, IntegrationStatus
+from ....typing import checked
 from ._core import LayerPotentialTargetReport
 
 
@@ -108,6 +109,7 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
     failed_panel_count: int = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -124,8 +126,6 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
         far_panel_count: int = 0,
         failed_panel_count: int = 0,
     ) -> None:
-        if not isinstance(plan, LayerEvaluationPlan2D):
-            raise TypeError("plan must be a LayerEvaluationPlan2D.")
         if not representation_id or not error_kind:
             raise ValueError("Layer evaluation identifiers must be nonempty.")
         self.method = plan.method
@@ -172,6 +172,7 @@ class LayerEvaluationResult(StrictModule, NonTrainableState):
     target_report: LayerPotentialTargetReport
     evaluation_report: LayerEvaluationReport
 
+    @checked
     def __init__(
         self,
         *,
@@ -179,10 +180,6 @@ class LayerEvaluationResult(StrictModule, NonTrainableState):
         target_report: LayerPotentialTargetReport,
         evaluation_report: LayerEvaluationReport,
     ) -> None:
-        if not isinstance(target_report, LayerPotentialTargetReport):
-            raise TypeError("target_report must be a LayerPotentialTargetReport.")
-        if not isinstance(evaluation_report, LayerEvaluationReport):
-            raise TypeError("evaluation_report must be a LayerEvaluationReport.")
         if (
             evaluation_report.target_fingerprint != target_report.target_fingerprint
             or evaluation_report.target_count != target_report.target_count

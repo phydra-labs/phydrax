@@ -24,7 +24,7 @@ from ..._holomorphic_linear import (
     HolomorphicMultiJet,
 )
 from ..._holomorphic_taylor import multijet_from_normalized, taylor_exp
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity
 from .._keys import EvalKey
@@ -200,14 +200,13 @@ class HolomorphicMLP(_AbstractBaseModel):
         )
         return mapped - active[:, None] * bias
 
+    @checked
     def multi_jet(
         self,
         coordinates: Array,
         index_set: HolomorphicMultiIndexSet,
         /,
     ) -> HolomorphicMultiJet:
-        if not isinstance(index_set, HolomorphicMultiIndexSet):
-            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         if index_set.complex_dimension != self.in_size:
             raise ValueError("HolomorphicMLP and multijet dimensions differ.")
         if not index_set.downward_closed:

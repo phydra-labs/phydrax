@@ -30,6 +30,7 @@ from ..dynamics._system import (
     DiscreteTransitionResult,
 )
 from ..linalg import ArraySpace, PreparedLinearization
+from ..typing import checked
 
 
 HERMITIAN_COORDINATE_INVALID = -1
@@ -113,16 +114,13 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
     eventful: bool = eqx.field(static=True)
     stochastic: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
         coordinates: HermitianSpectralCoordinates,
         /,
     ) -> None:
-        if not isinstance(evolution, AbstractDifferentiableEvolution):
-            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
-        if not isinstance(coordinates, HermitianSpectralCoordinates):
-            raise TypeError("coordinates must be HermitianSpectralCoordinates.")
         if evolution.state_layout.shape != coordinates.state_shape:
             raise ValueError("Evolution and Hermitian spectral state shapes must match.")
         if evolution.system.input_layout is not None:

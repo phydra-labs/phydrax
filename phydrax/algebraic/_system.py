@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._grading import PolynomialVariableGroup
 
 
@@ -197,14 +198,13 @@ class SparsePolynomialSystem(StrictModule):
     coefficients: Array
     system_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: SparsePolynomialSupport,
         coefficients: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(support, SparsePolynomialSupport):
-            raise TypeError("support must be SparsePolynomialSupport.")
         coefficients_ = jnp.asarray(coefficients)
         if coefficients_.shape != (support.term_count,):
             raise ValueError(
@@ -418,9 +418,8 @@ class PolynomialScaling(StrictModule, NonTrainableState):
         )
         return SparsePolynomialSystem(system.support, coefficients)
 
+    @checked
     def _validate_system(self, system: SparsePolynomialSystem, /) -> None:
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be SparsePolynomialSystem.")
         if (
             system.support.variable_count != self.variable_count
             or system.support.equation_count != self.equation_count

@@ -70,6 +70,7 @@ from ...sparse import (
     SparsePattern,
 )
 from ...sparse._coloring import native_coloring
+from ...typing import checked
 from ._coupled import ClassicalPhysics
 from ._device import DevicePlan
 from ._quantities import ELEMENTARY_CHARGE_SI
@@ -258,9 +259,8 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
     coloring: SparseColoring
     poisson_coloring: SparseColoring
 
+    @checked
     def __init__(self, plan: DevicePlan) -> None:
-        if not isinstance(plan, DevicePlan):
-            raise TypeError("plan must be a DevicePlan.")
         count = plan.support.volumes.shape[0]
         nodes = np.arange(count, dtype=np.int32)
         tail = np.asarray(plan.support.tail)
@@ -485,6 +485,7 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
             precision=precision,
         )
 
+    @checked
     def refresh(
         self, prepared: PreparedNonlinearSolve, voltages: Any, initial: Any
     ) -> PreparedNonlinearSolve:
@@ -495,8 +496,6 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
         Opaque user-supplied explicit/sparse derivative policies cannot be
         rebound safely: prepare a new solve for those policies.
         """
-        if not isinstance(prepared, PreparedNonlinearSolve):
-            raise TypeError("prepared must be a PreparedNonlinearSolve.")
         u = self._coordinates(
             initial.coordinates
             if isinstance(initial, SemiconductorOperatingPoint)

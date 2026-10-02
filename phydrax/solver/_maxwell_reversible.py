@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._maxwell import CompatibleMaxwellState, PreparedCompatibleMaxwell
 
 
@@ -37,6 +38,7 @@ class MaxwellReversibleAdjointPlan(StrictModule):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedCompatibleMaxwell,
@@ -46,8 +48,6 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         checkpoint_count: int = 0,
         tolerance: float = 1e-8,
     ) -> None:
-        if not isinstance(runtime, PreparedCompatibleMaxwell):
-            raise TypeError("runtime must be PreparedCompatibleMaxwell.")
         count = int(steps)
         checkpoints = int(checkpoint_count)
         tolerance_ = float(tolerance)

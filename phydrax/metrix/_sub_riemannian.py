@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._density import VolumeDensity
 from ._metric import _metric_inverse
@@ -29,6 +30,7 @@ class HorizontalCometric(StrictModule):
     chart: CoordinateChart
     rank: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frame_function: Callable[[Array], Array],
@@ -42,8 +44,6 @@ class HorizontalCometric(StrictModule):
             raise TypeError("frame_function must be callable.")
         if control_metric is not None and not callable(control_metric):
             raise TypeError("control_metric must be callable when supplied.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("chart must be a CoordinateChart.")
         if int(rank) <= 0 or int(rank) > chart.dimension:
             raise ValueError("Horizontal rank must lie between one and chart dimension.")
         self.frame_function = frame_function

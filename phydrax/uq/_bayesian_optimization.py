@@ -25,6 +25,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..optim import FiniteProductSpace
+from ..typing import checked
 from ._gp_kernel_fit import (
     fit_gaussian_process_kernel,
     GaussianProcessKernelFitPolicy,
@@ -197,6 +198,7 @@ class BayesianOptimizationProblem(StrictModule):
     )
     pending: tuple[BayesianOptimizationPoint, ...]
 
+    @checked
     def __init__(
         self,
         objective: Callable[[BayesianOptimizationPoint], ArrayLike],
@@ -208,8 +210,6 @@ class BayesianOptimizationProblem(StrictModule):
     ) -> None:
         if not callable(objective):
             raise TypeError("objective must be callable.")
-        if not isinstance(domain, BayesianOptimizationDomain):
-            raise TypeError("domain must be a BayesianOptimizationDomain.")
         constraint_tuple = tuple(constraints)
         if any(not callable(constraint) for constraint in constraint_tuple):
             raise TypeError("Every constraint must be callable.")
@@ -243,6 +243,7 @@ class GaussianProcessBayesianOptimization(StrictModule):
     fantasy_count: int = eqx.field(static=True)
     minimum_separation: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         max_evaluations: int,
@@ -270,10 +271,6 @@ class GaussianProcessBayesianOptimization(StrictModule):
             raise ValueError("initial_evaluations cannot exceed max_evaluations.")
         if batch > maximum:
             raise ValueError("batch_size cannot exceed max_evaluations.")
-        if not isinstance(objective_surrogate, GaussianProcessLikelihoodState):
-            raise TypeError(
-                "objective_surrogate must be a GaussianProcessLikelihoodState."
-            )
         constraints = tuple(constraint_surrogates)
         if any(
             not isinstance(state, GaussianProcessLikelihoodState) for state in constraints

@@ -22,6 +22,7 @@ from .....discretization.spectral import (
     SphericalRotationPlan,
     SphericalSpectralDiscretization,
 )
+from .....typing import checked
 
 
 class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
@@ -53,6 +54,7 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
     maximum_materialization_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: SphericalSpectralDiscretization,
@@ -65,8 +67,6 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
         orientation_weights: ArrayLike | None = None,
         maximum_materialization_bytes: int = 512 * 1024**2,
     ) -> None:
-        if not isinstance(discretization, SphericalSpectralDiscretization):
-            raise TypeError("discretization must be SphericalSpectralDiscretization.")
         angles = jnp.asarray(orientations, dtype=jnp.float64)
         if angles.ndim != 2 or angles.shape[-1] != 3 or angles.shape[0] == 0:
             raise ValueError("orientations must have shape (orientation, 3).")
@@ -239,14 +239,13 @@ class DirectionalSphericalWaveletLayer(StrictModule):
     plan: DirectionalSphericalWaveletPlan
     wavelets: Array
 
+    @checked
     def __init__(
         self,
         plan: DirectionalSphericalWaveletPlan,
         wavelets: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(plan, DirectionalSphericalWaveletPlan):
-            raise TypeError("plan must be DirectionalSphericalWaveletPlan.")
         filters = jnp.asarray(wavelets)
         expected = (len(plan.scales),) + plan.discretization.layout.coefficient_shape
         if filters.shape != expected:
@@ -347,9 +346,8 @@ class SphericalWaveletScattering(StrictModule):
 
     layer: DirectionalSphericalWaveletLayer
 
+    @checked
     def __init__(self, layer: DirectionalSphericalWaveletLayer, /) -> None:
-        if not isinstance(layer, DirectionalSphericalWaveletLayer):
-            raise TypeError("layer must be DirectionalSphericalWaveletLayer.")
         self.layer = layer
 
     def __call__(self, coefficients: ArrayLike, /) -> Array:

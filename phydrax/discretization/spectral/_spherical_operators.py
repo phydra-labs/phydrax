@@ -17,7 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._spectral._spherical import SphericalHarmonicPlan
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._spherical import SphericalSpectralDiscretization
 from ._spherical_layout import SphericalModeLayout
 
@@ -68,16 +68,13 @@ class PreparedSphericalSpinOperator(StrictModule, NonTrainableState):
     target_spin: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: SphericalSpinOperatorPlan,
         discretization: SphericalSpectralDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, SphericalSpinOperatorPlan):
-            raise TypeError("plan must be a SphericalSpinOperatorPlan.")
-        if not isinstance(discretization, SphericalSpectralDiscretization):
-            raise TypeError("discretization must be spherical spectral.")
         source = discretization.layout
         target_spin = source.spin + (1 if plan.kind == "raise" else -1)
         if abs(target_spin) >= source.bandlimit:

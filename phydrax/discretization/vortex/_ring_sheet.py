@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class VortexRingSheetTopology(StrictModule, NonTrainableState):
@@ -132,6 +133,7 @@ class VortexRingSheetState(StrictModule):
     edge_core_radius: Array
     edge_age: Array
 
+    @checked
     def __init__(
         self,
         topology: VortexRingSheetTopology,
@@ -141,8 +143,6 @@ class VortexRingSheetState(StrictModule):
         edge_age: ArrayLike | None = None,
         /,
     ) -> None:
-        if not isinstance(topology, VortexRingSheetTopology):
-            raise TypeError("topology must be VortexRingSheetTopology.")
         vertex = jnp.asarray(vertices)
         gamma = jnp.asarray(ring_circulation, dtype=vertex.dtype)
         core = jnp.asarray(edge_core_radius, dtype=vertex.dtype)

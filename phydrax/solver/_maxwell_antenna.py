@@ -69,6 +69,7 @@ from ..discretization import (
 from ..typing import (
     as_array,
     Bool,
+    checked,
     Complex128,
     ConvertibleToArray,
     Dim,
@@ -214,6 +215,7 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
     provenance_id: str | None = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -233,8 +235,6 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
         scale: ElectromagneticScaleContract | None = None,
         provenance_id: str | None = None,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
         if bridge.dimension != 3:
             raise ValueError("Plane current antennas require a three-dimensional bridge.")
         if isinstance(normal_axis, bool) or normal_axis not in (0, 1, 2):
@@ -354,13 +354,12 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
     def lorentz_factor(self) -> float:
         return 1.0 / math.sqrt(1.0 - self.beta * self.beta)
 
+    @checked
     def prepare(
         self, bridge: AbstractCellDeRhamComplex, layout: MaxwellCochainLayout, /
     ) -> PreparedSampledPlaneCurrentAntenna:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("Sampled-plane antennas require a structured cochain bridge.")
-        if not isinstance(layout, MaxwellCochainLayout):
-            raise TypeError("Antenna preparation requires a MaxwellCochainLayout.")
         if bridge.bridge_id != self.bridge.bridge_id:
             raise ValueError("The antenna was planned on a different cochain bridge.")
         if layout.polarization != "full_3d":
@@ -979,9 +978,8 @@ class MaxwellAntennaWorkObserverPlan(AbstractMaxwellObserverPlan):
     antenna: SampledPlaneCurrentAntennaPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, antenna: SampledPlaneCurrentAntennaPlan, /) -> None:
-        if not isinstance(antenna, SampledPlaneCurrentAntennaPlan):
-            raise TypeError("antenna must be a SampledPlaneCurrentAntennaPlan.")
         self.antenna = antenna
         self.plan_id = canonical_fingerprint(
             {"kind": "maxwell-antenna-work-observer-plan", "antenna": antenna.source_id}

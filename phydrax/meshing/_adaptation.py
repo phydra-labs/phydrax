@@ -42,6 +42,7 @@ from ..discretization.fem import (
     refine_tensor_hp_cells,
 )
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
+from ..typing import checked
 from ._assembly import MeshPart
 from ._association import BRepAssociationTransfer
 from ._audit import CellMeshAuditPolicy
@@ -228,9 +229,8 @@ class MetricMeshAdaptation(StrictModule, NonTrainableState):
     metric: MeshMetricField
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, metric: MeshMetricField, /) -> None:
-        if not isinstance(metric, MeshMetricField):
-            raise TypeError("metric must be MeshMetricField.")
         self.metric = metric
         self.request_id = canonical_fingerprint(
             {"kind": "metric-mesh-adaptation", "metric": metric.metric_id}
@@ -244,9 +244,8 @@ class RelocationMeshAdaptation(StrictModule, NonTrainableState):
     metric: MeshMetricField
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, metric: MeshMetricField, /) -> None:
-        if not isinstance(metric, MeshMetricField):
-            raise TypeError("metric must be MeshMetricField.")
         self.metric = metric
         self.request_id = canonical_fingerprint(
             {"kind": "relocation-mesh-adaptation", "metric": metric.metric_id}

@@ -48,6 +48,7 @@ from ...solver import (
     ProductionRunPlan,
     RobustRetryPolicy,
 )
+from ...typing import checked
 from ._binary import PhaseFieldProductionCase
 from ._mobility import AbstractPhaseFieldMobility, as_phase_field_mobility
 
@@ -204,6 +205,7 @@ class GrandPotentialMixtureModel(StrictModule, NonTrainableState):
     mobility: AbstractPhaseFieldMobility
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         catalog: GrandPotentialMaterialCatalog,
@@ -214,8 +216,6 @@ class GrandPotentialMixtureModel(StrictModule, NonTrainableState):
         kinetic_coefficient: ArrayLike,
         mobility: AbstractPhaseFieldMobility | ArrayLike,
     ) -> None:
-        if not isinstance(catalog, GrandPotentialMaterialCatalog):
-            raise TypeError("catalog must be GrandPotentialMaterialCatalog.")
         scalars = tuple(
             np.asarray(value)
             for value in (barrier_scale, gradient_coefficient, kinetic_coefficient)
@@ -466,6 +466,7 @@ class GrandPotentialFEMPlan(StrictModule, NonTrainableState):
     component_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: GrandPotentialMixtureModel,
@@ -478,8 +479,6 @@ class GrandPotentialFEMPlan(StrictModule, NonTrainableState):
         relative_energy_tolerance: float = 1.0e-8,
         component_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(model, GrandPotentialMixtureModel):
-            raise TypeError("model must be GrandPotentialMixtureModel.")
         values = tuple(
             float(value)
             for value in (
@@ -538,6 +537,7 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
     chemical_index: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: GrandPotentialFEMPlan,
@@ -546,8 +546,6 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
         chemical_field: str,
         /,
     ) -> None:
-        if not isinstance(plan, GrandPotentialFEMPlan):
-            raise TypeError("plan must be GrandPotentialFEMPlan.")
         phase_index = discretization._field_index(phase_field)
         chemical_index = discretization._field_index(chemical_field)
         phase_space = discretization.field_spaces[phase_index].vector_space
@@ -680,6 +678,7 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
             phase, chemical, components, components, energy
         )
 
+    @checked
     def step_detailed(
         self,
         step_index: Array,
@@ -690,8 +689,6 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
         /,
     ) -> GrandPotentialStepResult:
         del step_index
-        if not isinstance(state, DenseGrandPotentialAcceptedState):
-            raise TypeError("state must be DenseGrandPotentialAcceptedState.")
         step = jnp.asarray(step_size, dtype=state.phase_logits.dtype)
         step = eqx.error_if(
             step,
@@ -824,14 +821,13 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
             jnp.zeros((), dtype=state.phase_logits.dtype),
         )
 
+    @checked
     def production_case(
         self,
         case_name: str,
         initial_state: DenseGrandPotentialAcceptedState,
         /,
     ) -> PhaseFieldProductionCase:
-        if not isinstance(initial_state, DenseGrandPotentialAcceptedState):
-            raise TypeError("Grand-potential production case requires initialized state.")
         if not bool(np.asarray(tree_allfinite(initial_state))):
             raise ValueError("Grand-potential production state must be finite.")
         return PhaseFieldProductionCase(

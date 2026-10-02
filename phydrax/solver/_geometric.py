@@ -16,7 +16,7 @@ from jax import Array
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
-from ..typing import parse
+from ..typing import checked, parse
 
 
 if TYPE_CHECKING:
@@ -177,9 +177,8 @@ class GeometricEuler(AbstractGeometricSolver):
         GeometricLocalInterpolation
     )
 
+    @checked
     def __init__(self, geometry: AbstractStateGeometry, /) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("GeometricEuler geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "GeometricEuler")
         self.geometry = geometry
         self.solver_id = f"solver:geometric-euler:{geometry.geometry_id}"
@@ -394,6 +393,7 @@ class RKMK(AbstractGeometricSolver):
     )
     method: RKMKMethod = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: AbstractStateGeometry,
@@ -401,8 +401,6 @@ class RKMK(AbstractGeometricSolver):
         *,
         method: RKMKMethod = "rk4",
     ) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("RKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "RKMK")
         method = parse(method, RKMKMethod, "method")
         self.geometry = geometry
@@ -554,6 +552,7 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
     )
     tableau: CommutatorFreeTableau
 
+    @checked
     def __init__(
         self,
         geometry: AbstractStateGeometry,
@@ -561,10 +560,6 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         *,
         tableau: CommutatorFreeTableau | None = None,
     ) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError(
-                "CommutatorFreeSolver geometry must be an AbstractStateGeometry."
-            )
         _require_exact_differential(geometry, "CommutatorFreeSolver")
         if not geometry.supports_exact_inverse:
             raise ValueError(
@@ -662,9 +657,8 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         GeometricLocalInterpolation
     )
 
+    @checked
     def __init__(self, geometry: AbstractStateGeometry, /) -> None:
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("SRKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "SRKMK")
         self.geometry = geometry
         self.solver_id = f"solver:srkmk:{geometry.geometry_id}"

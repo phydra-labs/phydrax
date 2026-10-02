@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import Currency
 from ._risk_factors import MarketState, RiskFactorKey
 from ._status import MarketStatus
@@ -95,6 +96,7 @@ class FXConversionPath(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def convert(
         self,
         amounts: ArrayLike,
@@ -106,8 +108,6 @@ class FXConversionPath(StrictModule, NonTrainableState):
     ) -> FXConversionResult:
         """Apply this route only when its endpoints and every factor are accepted."""
 
-        if not isinstance(market, MarketState):
-            raise TypeError("market must be a MarketState.")
         if not isinstance(source_currency, Currency) or not isinstance(
             target_currency, Currency
         ):

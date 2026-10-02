@@ -24,6 +24,7 @@ from ..linalg import (
     LinearSystem,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._constrained_model import prepare_constrained_model
 from ._interpolation_model import (
     coordinate_interpolation_points,
@@ -119,6 +120,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             implicit_differentiation=False,
         )
 
+    @checked
     def solve(
         self,
         problem: MinimizationProblem,
@@ -128,8 +130,6 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> MinimizationResult:
-        if not isinstance(problem, MinimizationProblem):
-            raise TypeError("problem must be MinimizationProblem.")
         self.precision.validate_tolerance(termination.absolute_optimality)
         if self.kind == "bobyqa" and problem.bounds is None:
             raise ValueError("BOBYQA requires parameter bounds.")

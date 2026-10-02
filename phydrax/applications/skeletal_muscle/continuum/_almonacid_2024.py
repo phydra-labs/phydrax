@@ -46,6 +46,7 @@ from ....nonlinear import (
     NonlinearTermination,
 )
 from ....operators.mechanics import finite_strain_kinematics
+from ....typing import checked
 from ._almonacid_2024_geometry import (
     Almonacid2024Geometry,
     prepare_geometry,
@@ -328,6 +329,7 @@ class Almonacid2024Candidate(StrictModule, NonTrainableState):
             & finite
         )
 
+    @checked
     def commit(
         self,
         current_prepared: PreparedAlmonacid2024MuscleAponeurosis,
@@ -341,10 +343,6 @@ class Almonacid2024Candidate(StrictModule, NonTrainableState):
         must still match the proposal's origin. No caller-supplied receipt is
         trusted as an accepted state or an acceptance flag.
         """
-        if not isinstance(current_prepared, PreparedAlmonacid2024MuscleAponeurosis):
-            raise TypeError(
-                "current_prepared must be PreparedAlmonacid2024MuscleAponeurosis."
-            )
         if jax.tree_util.tree_structure(current_prepared) != jax.tree_util.tree_structure(
             self.origin
         ):
@@ -379,6 +377,7 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
     provenance: SemanticProvenance
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: Almonacid2024Geometry,
@@ -391,8 +390,6 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
         method: NewtonKrylov | None = None,
         termination: NonlinearTermination | None = None,
     ) -> None:
-        if not isinstance(geometry, Almonacid2024Geometry):
-            raise TypeError("geometry must be Almonacid2024Geometry.")
         if not str(control_source_id).strip() or pulling_face_id not in range(1, 8):
             raise ValueError(
                 "A source identity and source pulling face in 1..7 are required."
@@ -447,13 +444,10 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
         )
         self.plan_id = self.provenance.semantic_id
 
+    @checked
     def prepare(
         self, parameters: Almonacid2024MuscleAponeurosisParameters, /
     ) -> PreparedAlmonacid2024MuscleAponeurosis:
-        if not isinstance(parameters, Almonacid2024MuscleAponeurosisParameters):
-            raise TypeError(
-                "parameters must be Almonacid2024MuscleAponeurosisParameters."
-            )
         if not bool(jax.config.read("jax_enable_x64")):
             raise ValueError("The source-matched continuum requires JAX float64 enabled.")
         geometry = prepare_geometry(self.geometry, self.pulling_face_id)
@@ -772,6 +766,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             physical[2] / (stress * cell_volume[:, None]),
         )
 
+    @checked
     def propose(self, control: Almonacid2024Control, /) -> Almonacid2024Candidate:
         if any(
             value.dtype != self.state.time_s.dtype
@@ -780,8 +775,6 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             raise ValueError("Parameters cannot change the prepared numeric dtype.")
         parameters = self._trajectory_parameters()
         prepared = eqx.tree_at(lambda value: value.parameters, self, parameters)
-        if not isinstance(control, Almonacid2024Control):
-            raise TypeError("control must be Almonacid2024Control.")
         if control.source_id != prepared.plan.control_source_id:
             raise ValueError("Control belongs to a foreign input source.")
         if any(

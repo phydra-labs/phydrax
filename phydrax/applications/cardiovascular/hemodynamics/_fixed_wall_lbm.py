@@ -37,6 +37,7 @@ from ....discretization.lattice_boltzmann import (
 )
 from ....discretization.lattice_boltzmann._collision import macroscopic_raw_moments
 from ....discretization.lattice_boltzmann._link_topology import BoundarySide
+from ....typing import checked
 from ._domain import (
     FixedWallLumenRegion,
     FixedWallScope,
@@ -233,6 +234,7 @@ class FixedWallLBMPlan(StrictModule, NonTrainableState):
     trt_magic_parameter: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -245,16 +247,10 @@ class FixedWallLBMPlan(StrictModule, NonTrainableState):
         limits: HemodynamicsValidityLimits | None = None,
         trt_magic_parameter: float = 3.0 / 16.0,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if discretization.velocity_set.name != "D3Q19":
             raise ValueError(
                 "Fixed-wall cardiovascular LBM requires the certified D3Q19 lattice."
             )
-        if not isinstance(scaling, HemodynamicsScaling):
-            raise TypeError("scaling must be HemodynamicsScaling.")
-        if not isinstance(lumen, FixedWallLumenRegion):
-            raise TypeError("lumen must be FixedWallLumenRegion.")
         if lumen.shape != discretization.grid.shape:
             raise ValueError("Lumen mask and lattice shapes do not match.")
         if not np.isclose(
@@ -585,9 +581,8 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def _validate_state(self, state: FixedWallLBMState, /) -> None:
-        if not isinstance(state, FixedWallLBMState):
-            raise TypeError("state must be FixedWallLBMState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("State belongs to another prepared fixed-wall workflow.")
         self.discretization.validate_populations(state.populations)
@@ -1112,6 +1107,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def commit(
         self,
         accepted_state: FixedWallLBMState,
@@ -1121,8 +1117,6 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
         """Commit an admissible candidate; otherwise retain the accepted state."""
 
         self._validate_state(accepted_state)
-        if not isinstance(candidate, FixedWallLBMCandidate):
-            raise TypeError("candidate must be FixedWallLBMCandidate.")
         if candidate.prepared_id != self.prepared_id:
             raise ValueError("Candidate belongs to another prepared workflow.")
         selected = candidate.evidence.successful
@@ -1176,9 +1170,8 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
             self.boundary.topology.topology_id,
         )
 
+    @checked
     def restore(self, checkpoint: FixedWallLBMCheckpoint, /) -> FixedWallLBMState:
-        if not isinstance(checkpoint, FixedWallLBMCheckpoint):
-            raise TypeError("checkpoint must be FixedWallLBMCheckpoint.")
         if (
             checkpoint.prepared_id != self.prepared_id
             or checkpoint.topology_id != self.boundary.topology.topology_id

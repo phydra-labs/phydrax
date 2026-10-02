@@ -36,6 +36,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float, positive_integer
 from ...discretization import FacetTraceRule, PreparedTraceAction
+from ...typing import checked
 
 
 def _lagrange_weights(nodes: np.ndarray, parameters: np.ndarray, /) -> np.ndarray:
@@ -201,6 +202,7 @@ class InterfaceSideQuadrature(StrictModule, NonTrainableState):
     resampling: FacetResampling
     parameters: Array
 
+    @checked
     def __init__(
         self,
         trace: PreparedTraceAction,
@@ -208,10 +210,6 @@ class InterfaceSideQuadrature(StrictModule, NonTrainableState):
         parameters: np.ndarray,
         /,
     ) -> None:
-        if not isinstance(trace, PreparedTraceAction):
-            raise TypeError("trace must be a PreparedTraceAction.")
-        if not isinstance(resampling, FacetResampling):
-            raise TypeError("resampling must be a FacetResampling.")
         values = np.asarray(parameters, dtype=np.float64)
         if (
             resampling.facet_count != trace.output_shape[0]
@@ -255,6 +253,7 @@ class InterfaceQuadrature(StrictModule, NonTrainableState):
     evidence: InterfaceCoverageEvidence
     quadrature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         points: np.ndarray,
@@ -283,8 +282,6 @@ class InterfaceQuadrature(StrictModule, NonTrainableState):
                 raise TypeError("sides must be InterfaceSideQuadrature values.")
             if side.parameters.shape != weights_.shape:
                 raise ValueError("Every side must resample every common point.")
-        if not isinstance(evidence, InterfaceCoverageEvidence):
-            raise TypeError("evidence must be InterfaceCoverageEvidence.")
         if np.any(weights_ <= 0.0):
             raise ValueError("Interface quadrature weights must be positive.")
         self.points = jnp.asarray(points_)

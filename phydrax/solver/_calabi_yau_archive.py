@@ -19,6 +19,7 @@ from ..geometry.complex import (
     HypersurfaceKahlerGeometry,
     ProjectiveHypersurface,
 )
+from ..typing import checked
 from ._calabi_yau import CalabiYauMetricResult
 from ._calabi_yau_evidence import CalabiYauMetricEvidence
 
@@ -39,6 +40,7 @@ class CalabiYauMetricArtifact(StrictModule):
     metric_evidence: CalabiYauMetricEvidence | None
     precision_policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         potential_model: Any,
@@ -64,10 +66,6 @@ class CalabiYauMetricArtifact(StrictModule):
         self.objective_history = jnp.asarray(objective_history)
         self.residual_history = jnp.asarray(residual_history)
         self.positivity_history = jnp.asarray(positivity_history)
-        if not isinstance(precision, GeometryPrecisionPolicy):
-            raise TypeError("precision must be a GeometryPrecisionPolicy.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         if precision.policy_id != str(precision_policy_id):
             raise ValueError("Calabi-Yau artifact precision identity changed.")
         self.precision = precision

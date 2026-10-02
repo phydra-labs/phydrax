@@ -19,6 +19,7 @@ from ...domain import (
     partition_of_unity_field,
     SubdomainCover,
 )
+from ...typing import checked
 from .._functional_correction import freeze_domain_function
 
 
@@ -220,6 +221,7 @@ class TrainableAxisPartition(StrictModule):
     overlap_fraction: float = eqx.field(static=True)
     periodic: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: AxisPartition,
@@ -227,8 +229,6 @@ class TrainableAxisPartition(StrictModule):
         *,
         minimum_fraction: float = 1.0e-3,
     ) -> None:
-        if not isinstance(partition, AxisPartition):
-            raise TypeError("partition must be an AxisPartition.")
         minimum = float(minimum_fraction)
         if (
             not math.isfinite(minimum)

@@ -68,6 +68,7 @@ from ...linalg import (
 )
 from ...linalg.eigen import GeneralizedEigenproblem
 from ...sparse import EdgeRelation, scatter_local, SparseCoordinateOperator
+from ...typing import checked
 from .._variational import (
     BoundaryLoadAction,
     DiffusionAction,
@@ -537,6 +538,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         form: VirtualElementForm,
@@ -547,10 +549,6 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
         execution_policy: VirtualElementExecutionPolicy | None = None,
     ) -> None:
-        if not isinstance(form, VirtualElementForm):
-            raise TypeError("form must be VirtualElementForm.")
-        if not isinstance(discretization, VirtualElementDiscretization):
-            raise TypeError("discretization must be VirtualElementDiscretization.")
         if form.field_name != discretization.field.name:
             raise ValueError("VEM form field does not match the discretization.")
         family = discretization.field.element.family
@@ -901,9 +899,8 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             else self.constraint.constraint_map.pullback_dual(residual)
         )
 
+    @checked
     def _require_side_trace(self, trace: PreparedTraceAction, /) -> None:
-        if not isinstance(trace, PreparedTraceAction):
-            raise TypeError("trace must be a PreparedTraceAction.")
         if (
             trace.descriptor.owner_id != self.discretization.prepared_id
             or trace.descriptor.field_space_id

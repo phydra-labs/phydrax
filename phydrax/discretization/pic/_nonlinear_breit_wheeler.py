@@ -69,7 +69,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
 from ...special import synchrotron_f, synchrotron_g, synchrotron_h
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ._nonlinear_compton import (
     _formation_time,
     _identity_words,
@@ -182,6 +182,7 @@ class NonlinearBreitWheelerPlan(StrictModule, NonTrainableState):
     rate_scale: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -198,10 +199,6 @@ class NonlinearBreitWheelerPlan(StrictModule, NonTrainableState):
     ) -> None:
         conservation_ = parse(conservation, QEDConservation, "conservation")
         polarization_ = parse(polarization, QEDPolarizationModel, "polarization")
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
-        if not isinstance(table, QEDTable):
-            raise TypeError("table must be a QEDTable.")
         if table.process != "nonlinear-breit-wheeler":
             raise ValueError(
                 "NonlinearBreitWheelerPlan requires a 'nonlinear-breit-wheeler' table."

@@ -28,6 +28,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import hermitian_exp
+from ....typing import checked
 
 
 class GrowthStatus(IntEnum):
@@ -286,11 +287,8 @@ class PreparedGrowth(StrictModule, NonTrainableState):
     direction_projectors: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: GrowthPlan, epoch: GrowthReferenceEpoch, /) -> None:
-        if not isinstance(plan, GrowthPlan):
-            raise TypeError("plan must be a GrowthPlan.")
-        if not isinstance(epoch, GrowthReferenceEpoch):
-            raise TypeError("epoch must be a GrowthReferenceEpoch.")
         if plan.material_point_ids != epoch.material_point_ids:
             raise ValueError(
                 "Growth material-point IDs do not match the reference epoch; "
@@ -1003,6 +1001,7 @@ class GrowthEpochTransfer(StrictModule, NonTrainableState):
     requirements: GrowthEpochRebuildRequirements
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: PreparedGrowth,
@@ -1012,8 +1011,6 @@ class GrowthEpochTransfer(StrictModule, NonTrainableState):
         /,
     ) -> None:
         _validate_growth_state(source, source_state)
-        if not isinstance(target, PreparedGrowth):
-            raise TypeError("target must be PreparedGrowth.")
         if source.epoch.epoch_id == target.epoch.epoch_id:
             raise ValueError("Epoch transfer requires a distinct target epoch.")
         if source.plan.direction_ids != target.plan.direction_ids:

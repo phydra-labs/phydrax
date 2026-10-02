@@ -24,6 +24,7 @@ from ..optim import (
     LevenbergMarquardt,
     OptimizationTermination,
 )
+from ..typing import checked
 
 
 class SymmetricWaringStatus(IntEnum):
@@ -288,6 +289,7 @@ class SymmetricWaringPlan(StrictModule):
     cost: SymmetricWaringCostEstimate
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: SymmetricWaringProblem,
@@ -303,16 +305,6 @@ class SymmetricWaringPlan(StrictModule):
         cost: SymmetricWaringCostEstimate,
         /,
     ) -> None:
-        if not isinstance(problem, SymmetricWaringProblem):
-            raise TypeError("problem must be a SymmetricWaringProblem.")
-        if not isinstance(rank_policy, SymmetricWaringRankPolicy):
-            raise TypeError("rank_policy must be a SymmetricWaringRankPolicy.")
-        if not isinstance(resources, SymmetricWaringResourcePolicy):
-            raise TypeError("resources must be a SymmetricWaringResourcePolicy.")
-        if not isinstance(refinement, SymmetricWaringRefinement):
-            raise TypeError("refinement must be a SymmetricWaringRefinement.")
-        if not isinstance(cost, SymmetricWaringCostEstimate):
-            raise TypeError("cost must be a SymmetricWaringCostEstimate.")
         axes = tuple(chart_axes)
         if not axes or len(set(axes)) != len(axes):
             raise ValueError("chart_axes must be nonempty and unique.")
@@ -440,6 +432,7 @@ class SymmetricWaringResult(StrictModule):
     evidence: SymmetricWaringEvidence
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -463,8 +456,6 @@ class SymmetricWaringResult(StrictModule):
             raise ValueError("weights and factors must contain the same rank.")
         if reconstruction_.shape != residual_.shape:
             raise ValueError("reconstruction and residual shapes must agree.")
-        if not isinstance(evidence, SymmetricWaringEvidence):
-            raise TypeError("evidence must be SymmetricWaringEvidence.")
         identifier = str(plan_id)
         if not identifier:
             raise ValueError("plan_id must be non-empty.")

@@ -55,6 +55,7 @@ from ..linalg import LinearSolvePolicy
 from ..sparse import EdgeRelation, SparseColoring, SparseLinearMap
 from ..typing import (
     Bool,
+    checked,
     Complex128,
     ConvertibleToArray,
     Dim,
@@ -181,6 +182,7 @@ class MaxwellMovingChargePlan(StrictModule):
     direction: Float64[_AxisDim]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -192,10 +194,6 @@ class MaxwellMovingChargePlan(StrictModule):
         origin: ConvertibleToArray,
         direction: ConvertibleToArray,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
-        if not isinstance(layout, MaxwellCochainLayout):
-            raise TypeError("layout must be a MaxwellCochainLayout.")
         if layout.polarization == "tmz":
             raise ValueError(
                 "A moving charge carries in-plane current; use the tez or full_3d layout."
@@ -588,6 +586,7 @@ class FrequencyMovingChargePlan(StrictModule):
     method: FrequencyMaxwellSolveMethod = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MaxwellMovingChargePlan | PreparedMaxwellMovingCharge,
@@ -613,8 +612,6 @@ class FrequencyMovingChargePlan(StrictModule):
             raise TypeError(
                 "source must be a MaxwellMovingChargePlan or its preparation."
             )
-        if not isinstance(constitutive, AbstractPreparedMaxwellConstitutive):
-            raise TypeError("constitutive must be prepared Maxwell material data.")
         if constitutive.layout_id != prepared.plan.layout.layout_id:
             raise ValueError("Constitutive law and moving-charge layout do not match.")
         match formulation:

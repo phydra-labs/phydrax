@@ -24,6 +24,7 @@ from .._trainable import NonTrainableState
 from ..metrix import CoordinateChart, HessianGeometry
 from ..metrix._utils import _pointwise_jacfwd
 from ..metrix._validation import MetricValidationReport, validate_metric
+from ..typing import checked
 from ._hyperbolic_systems import (
     AbstractConservationSystem,
     CompressibleNavierStokesSystem,
@@ -98,6 +99,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
     entropy_id: str = eqx.field(static=True)
     pair_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: AbstractConservationSystem,
@@ -109,8 +111,6 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
         *,
         entropy_id: str,
     ) -> None:
-        if not isinstance(system, AbstractConservationSystem):
-            raise TypeError("system must be an AbstractConservationSystem.")
         for function, name in (
             (entropy, "entropy"),
             (entropy_variables, "entropy_variables"),
@@ -459,6 +459,7 @@ class ConvexEntropyValidationReport(StrictModule):
     axes: tuple[int, ...] = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         *,
@@ -475,10 +476,6 @@ class ConvexEntropyValidationReport(StrictModule):
         axes: Sequence[int],
         precision_evidence: PrecisionEvidenceEnvelope,
     ) -> None:
-        if not isinstance(metric_validation, MetricValidationReport):
-            raise TypeError("metric_validation must be a MetricValidationReport.")
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.admissible = jnp.asarray(admissible, dtype=jnp.bool_)

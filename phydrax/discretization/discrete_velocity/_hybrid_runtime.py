@@ -35,6 +35,7 @@ from ...solver._finite_volume_runtime import (
     FiniteVolumeStageFluxTrace,
     PreparedFiniteVolumeRuntime,
 )
+from ...typing import checked
 from ._hybrid import (
     CommonFVKineticFluxEvidence,
     FixedConformingFVKineticInterfacePlan,
@@ -70,6 +71,7 @@ class FixedPartitionHybridState(StrictModule):
     kinetic: SmoothCompressibleKineticState
     checkpoint_eligible: Array
 
+    @checked
     def __init__(
         self,
         finite_volume: FiniteVolumeRuntimeState,
@@ -78,10 +80,6 @@ class FixedPartitionHybridState(StrictModule):
         *,
         checkpoint_eligible: ArrayLike = True,
     ) -> None:
-        if not isinstance(finite_volume, FiniteVolumeRuntimeState):
-            raise TypeError("finite_volume must be FiniteVolumeRuntimeState.")
-        if not isinstance(kinetic, SmoothCompressibleKineticState):
-            raise TypeError("kinetic must be SmoothCompressibleKineticState.")
         eligible = jnp.asarray(checkpoint_eligible, dtype=jnp.bool_)
         if eligible.shape != ():
             raise ValueError("checkpoint_eligible must be scalar.")
@@ -307,6 +305,7 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
     ownership_differentiability: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         finite_volume: PreparedFiniteVolumeRuntime,
@@ -321,26 +320,16 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
         *,
         conservation_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(finite_volume, PreparedFiniteVolumeRuntime):
-            raise TypeError("finite_volume must be PreparedFiniteVolumeRuntime.")
         if not isinstance(finite_volume.dynamics, PreparedFiniteVolumeDynamics):
             raise ValueError("Fixed hybrid coupling requires stationary structured FV.")
         if finite_volume.stage_flux_provider is not None:
             raise ValueError("Hybrid runtime requires an unbound FV stage-flux provider.")
         if finite_volume.policy.maximum_retries != 0:
             raise ValueError("Fixed hybrid coupling forbids finite-volume retries.")
-        if not isinstance(spatial, PreparedSmoothCompressibleD2V17SpatialDynamics):
-            raise TypeError(
-                "spatial must be PreparedSmoothCompressibleD2V17SpatialDynamics."
-            )
         if spatial.boundary is not None or spatial.forcing is not None:
             raise ValueError(
                 "Fixed hybrid runtime owns its interface routing and currently "
                 "requires an unforced spatial collision plan."
-            )
-        if not isinstance(learned_energy, PreparedLearnedEnergyEquilibriumBinding):
-            raise TypeError(
-                "learned_energy must be PreparedLearnedEnergyEquilibriumBinding."
             )
         interfaces_ = tuple(interfaces)
         axes = tuple(finite_volume_face_axes)
@@ -548,9 +537,8 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
         self._validate_state(state)
         return state
 
+    @checked
     def _validate_state(self, state: FixedPartitionHybridState, /) -> None:
-        if not isinstance(state, FixedPartitionHybridState):
-            raise TypeError("state must be FixedPartitionHybridState.")
         if (
             state.finite_volume.content_state.geometry_layout_id
             != self.finite_volume.geometry_layout_id
@@ -1005,11 +993,10 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
             payload_id,
         )
 
+    @checked
     def restore(
         self, checkpoint: FixedPartitionHybridCheckpoint, /
     ) -> FixedPartitionHybridState:
-        if not isinstance(checkpoint, FixedPartitionHybridCheckpoint):
-            raise TypeError("checkpoint must be FixedPartitionHybridCheckpoint.")
         if (
             checkpoint.runtime_id != self.runtime_id
             or checkpoint.learned_energy_artifact_id != self.learned_energy.prepared_id
@@ -1079,6 +1066,7 @@ class DynamicHybridCompositeState(StrictModule):
     ownership: DynamicHybridOwnershipState
     checkpoint_eligible: Array
 
+    @checked
     def __init__(
         self,
         finite_volume_conserved: ArrayLike,
@@ -1089,10 +1077,6 @@ class DynamicHybridCompositeState(StrictModule):
         checkpoint_eligible: ArrayLike = True,
     ) -> None:
         conserved = jnp.asarray(finite_volume_conserved)
-        if not isinstance(kinetic, SmoothCompressibleKineticState):
-            raise TypeError("kinetic must be SmoothCompressibleKineticState.")
-        if not isinstance(ownership, DynamicHybridOwnershipState):
-            raise TypeError("ownership must be DynamicHybridOwnershipState.")
         eligible = jnp.asarray(checkpoint_eligible, dtype=jnp.bool_)
         if eligible.shape != ():
             raise ValueError("checkpoint_eligible must be scalar.")
@@ -1157,6 +1141,7 @@ class DynamicHybridOwnershipPlan(StrictModule):
     ownership_differentiability: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: SmoothCompressibleD2VKineticMethod,
@@ -1171,12 +1156,6 @@ class DynamicHybridOwnershipPlan(StrictModule):
         kinetic_reach: tuple[int, int],
         population_floor: float = 0.0,
     ) -> None:
-        if not isinstance(method, SmoothCompressibleD2VKineticMethod):
-            raise TypeError("method must be SmoothCompressibleD2VKineticMethod.")
-        if not isinstance(learned_energy, PreparedLearnedEnergyEquilibriumBinding):
-            raise TypeError(
-                "learned_energy must be PreparedLearnedEnergyEquilibriumBinding."
-            )
         shape = tuple(spatial_shape)
         stencil = tuple(finite_volume_stencil_radius)
         reach = tuple(kinetic_reach)
@@ -1273,6 +1252,7 @@ class DynamicHybridOwnershipPlan(StrictModule):
             dilated = dilated | jnp.roll(mask, shift=shift, axis=(0, 1))
         return dilated
 
+    @checked
     def propose(
         self,
         state: DynamicHybridOwnershipState,
@@ -1280,8 +1260,6 @@ class DynamicHybridOwnershipPlan(StrictModule):
         shock_mask: ArrayLike,
         /,
     ) -> DynamicHybridOwnershipDecision:
-        if not isinstance(state, DynamicHybridOwnershipState):
-            raise TypeError("state must be DynamicHybridOwnershipState.")
         if state.finite_volume_owned.shape != self.spatial_shape:
             raise ValueError("Ownership state does not match this plan.")
         scores = jax.lax.stop_gradient(jnp.asarray(score))
@@ -1312,6 +1290,7 @@ class DynamicHybridOwnershipPlan(StrictModule):
             plan_id=self.plan_id,
         )
 
+    @checked
     def migrate(
         self,
         state: DynamicHybridCompositeState,
@@ -1319,10 +1298,6 @@ class DynamicHybridOwnershipPlan(StrictModule):
         accepted_boundary: ArrayLike,
         /,
     ) -> DynamicHybridMigrationResult:
-        if not isinstance(state, DynamicHybridCompositeState):
-            raise TypeError("state must be DynamicHybridCompositeState.")
-        if not isinstance(decision, DynamicHybridOwnershipDecision):
-            raise TypeError("decision must be DynamicHybridOwnershipDecision.")
         if decision.plan_id != self.plan_id:
             raise ValueError("Dynamic ownership decision belongs to another plan.")
         if state.ownership.finite_volume_owned.shape != self.spatial_shape:
@@ -1430,14 +1405,13 @@ class DynamicHybridOwnershipPlan(StrictModule):
             ),
         )
 
+    @checked
     def checkpoint(
         self,
         state: DynamicHybridCompositeState,
         checkpoint_id: str,
         /,
     ) -> DynamicHybridCheckpoint:
-        if not isinstance(state, DynamicHybridCompositeState):
-            raise TypeError("state must be DynamicHybridCompositeState.")
         if not bool(np.asarray(state.checkpoint_eligible)):
             raise ValueError(
                 "Only accepted dynamic ownership states may be checkpointed."
@@ -1463,11 +1437,10 @@ class DynamicHybridOwnershipPlan(StrictModule):
             payload_id,
         )
 
+    @checked
     def restore(
         self, checkpoint: DynamicHybridCheckpoint, /
     ) -> DynamicHybridCompositeState:
-        if not isinstance(checkpoint, DynamicHybridCheckpoint):
-            raise TypeError("checkpoint must be DynamicHybridCheckpoint.")
         if (
             checkpoint.plan_id != self.plan_id
             or checkpoint.learned_energy_artifact_id != self.learned_energy.prepared_id

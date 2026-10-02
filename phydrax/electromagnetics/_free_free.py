@@ -33,6 +33,7 @@ from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..special import kve
+from ..typing import checked
 from ._gray_means import gray_mean_opacities, GrayMeanOpacities
 
 
@@ -94,6 +95,7 @@ class ThermalFreeFreeModel(StrictModule, NonTrainableState):
     rydberg_energy: float = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -103,8 +105,6 @@ class ThermalFreeFreeModel(StrictModule, NonTrainableState):
         maximum_born_parameter: float = 0.1,
         maximum_temperature_ratio: float = 0.05,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         values = (
             float(ion_charge_number),
             float(maximum_born_parameter),

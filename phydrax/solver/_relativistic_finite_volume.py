@@ -36,7 +36,7 @@ from ..equations._relativistic_hydrodynamics import (
 )
 from ..linalg import inverse_small_linear, SmallLinearSolvePlan
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
-from ..typing import parse
+from ..typing import checked, parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._relativistic_primitive import (
@@ -125,6 +125,7 @@ class GRHDFaceFluxPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         system: ValenciaGRHDSystem,
@@ -134,10 +135,6 @@ class GRHDFaceFluxPlan(StrictModule, NonTrainableState):
         axis: int,
         /,
     ) -> GRHDFaceFluxResult:
-        if not isinstance(system, ValenciaGRHDSystem):
-            raise TypeError("system must be a ValenciaGRHDSystem.")
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         axis_ = int(axis)
         if not 0 <= axis_ < 3:
             raise ValueError("GRHD face axis is out of range.")
@@ -221,9 +218,8 @@ class GRHDBoundaryTrace(StrictModule):
     boundary_id: str = eqx.field(static=True)
     geometry_lineage_id: str = eqx.field(static=True)
 
+    @checked
     def compatible_with(self, geometry: ADMGridGeometry, /) -> Array:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be an ADMGridGeometry.")
         static_compatible = (
             self.geometry_lineage_id == geometry.geometry_lineage_id
             and self.interior_primitive.shape[:-1] == geometry.leading_shape
@@ -459,6 +455,7 @@ class ValenciaFiniteVolumeStageGeometry(StrictModule, NonTrainableState):
     time: Array
     stage_geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: ValenciaGeometrySource,
@@ -466,8 +463,6 @@ class ValenciaFiniteVolumeStageGeometry(StrictModule, NonTrainableState):
         time: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(source, ValenciaGeometrySource):
-            raise TypeError("source must be a ValenciaGeometrySource.")
         faces_ = tuple(faces)
         if not faces_ or any(not isinstance(value, ADMGridGeometry) for value in faces_):
             raise TypeError("faces must contain ADMGridGeometry values.")
@@ -740,6 +735,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
     runtime_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: ValenciaGRHDSystem,
@@ -755,12 +751,8 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         maximum_step_atmosphere_mass: float = 1.0e30,
         maximum_step_atmosphere_energy: float = 1.0e30,
     ) -> None:
-        if not isinstance(system, ValenciaGRHDSystem):
-            raise TypeError("system must be a ValenciaGRHDSystem.")
         if not isinstance(c2p, GRHDC2PPolicy) or c2p.system.system_id != system.system_id:
             raise ValueError("c2p must target the supplied ValenciaGRHDSystem.")
-        if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("discretization must be a FiniteVolumeDiscretization.")
         if discretization.component_count != system.component_count:
             raise ValueError("GRHD system and finite-volume component counts must agree.")
         if len(discretization.cell_shape) not in (1, 2, 3):
@@ -850,9 +842,8 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         )
         self.method_id = self.runtime_id
 
+    @checked
     def _check_geometry(self, stage: ValenciaFiniteVolumeStageGeometry, /) -> None:
-        if not isinstance(stage, ValenciaFiniteVolumeStageGeometry):
-            raise TypeError("stage geometry must be a ValenciaFiniteVolumeStageGeometry.")
         if stage.cell.leading_shape != self.discretization.cell_shape:
             raise ValueError("GRHD stage cell geometry does not match the grid.")
         if len(stage.faces) != len(self.discretization.cell_shape):

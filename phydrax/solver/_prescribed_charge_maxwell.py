@@ -53,7 +53,7 @@ from ..discretization.pic._current import (
     PICMaxwellCurrentArguments,
 )
 from ..discretization.pic._types import PICCurrentDepositResult
-from ..typing import Bool, Dim, Float64, Int32, parse, Scalar, Scope, Size
+from ..typing import Bool, checked, Dim, Float64, Int32, parse, Scalar, Scope, Size
 from ._maxwell import (
     _fixed_step,
     _PreparedMaxwellFixedStep,
@@ -549,6 +549,7 @@ class PrescribedChargeMaxwellPlan(StrictModule):
     ledger_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared_maxwell: PreparedCompatibleMaxwell,
@@ -561,8 +562,6 @@ class PrescribedChargeMaxwellPlan(StrictModule):
         defect_tolerance: float = 1.0e-9,
         ledger_tolerance: float = 1.0e-2,
     ) -> None:
-        if not isinstance(prepared_maxwell, PreparedCompatibleMaxwell):
-            raise TypeError("prepared_maxwell must be a PreparedCompatibleMaxwell.")
         _require_compatible(current_plan, trajectory)
         if prepared_maxwell.layout.polarization != "full_3d":
             raise ValueError("Prescribed charges require a full_3d Maxwell layout.")

@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...discretization import PreparedFiniteVolumeDynamics
 from ...solver import ParticleMeshGravityPlan
+from ...typing import checked
 from ._background import FLRWBackground
 from ._particles import CosmologicalKDKPlan, CosmologicalParticleState
 
@@ -51,6 +52,7 @@ class ComovingEulerPlan(StrictModule):
     substeps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedFiniteVolumeDynamics,
@@ -61,8 +63,6 @@ class ComovingEulerPlan(StrictModule):
         cfl: float = 0.3,
         substeps: int = 4,
     ) -> None:
-        if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
-            raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         gamma = float(adiabatic_index)
         expansion_dimension_ = int(expansion_dimension)
         cfl_ = float(cfl)
@@ -152,6 +152,7 @@ class ComovingEulerPlan(StrictModule):
         rate = rate.at[..., 1 : 1 + self.dimension].add(momentum_source)
         return rate.at[..., -1].add(energy_source)
 
+    @checked
     def advance(
         self,
         background: FLRWBackground,
@@ -162,10 +163,6 @@ class ComovingEulerPlan(StrictModule):
         args: Any = None,
         /,
     ) -> tuple[ComovingEulerState, ComovingEulerDiagnostics]:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
-        if not isinstance(state, ComovingEulerState):
-            raise TypeError("state must be ComovingEulerState.")
         end = jnp.asarray(end_scale_factor, dtype=state.scale_factor.dtype)
         if end.shape != ():
             raise ValueError("Comoving Euler end scale factor must be scalar.")
@@ -288,6 +285,7 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
     scale_factors: Array = fixed_field()
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         gas: ComovingEulerPlan,
@@ -296,12 +294,6 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
         scale_factors: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(gas, ComovingEulerPlan):
-            raise TypeError("gas must be ComovingEulerPlan.")
-        if not isinstance(particles, CosmologicalKDKPlan):
-            raise TypeError("particles must be CosmologicalKDKPlan.")
-        if not isinstance(gravity, ParticleMeshGravityPlan):
-            raise TypeError("gravity must be ParticleMeshGravityPlan.")
         if particles.particles.prepared_id != gravity.transfer.particles.prepared_id:
             raise ValueError("Gas-particle coupling must share one particle support.")
         if (
@@ -375,6 +367,7 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
             successful,
         )
 
+    @checked
     def rollout(
         self,
         background: FLRWBackground,
@@ -382,10 +375,6 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
         args: Any = None,
         /,
     ) -> CosmologicalGasParticleResult:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
-        if not isinstance(state, CosmologicalGasParticleState):
-            raise TypeError("state must be CosmologicalGasParticleState.")
         initial_scale = background.require_flat(
             self.scale_factors[0].astype(state.gas.scale_factor.dtype)
         )

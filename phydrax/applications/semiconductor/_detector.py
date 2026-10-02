@@ -31,6 +31,7 @@ from ...solver._cochain_electrostatic import (
     CochainElectrostaticResult,
     ElectrostaticBoundaryKind,
 )
+from ...typing import checked
 from ...units import (
     COULOMB,
     derived_unit,
@@ -196,6 +197,7 @@ class SemiconductorDetectorPlan(StrictModule, NonTrainableState):
     electrode_names: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -210,10 +212,6 @@ class SemiconductorDetectorPlan(StrictModule, NonTrainableState):
         transverse_unit: UnitDefinition | None = None,
         evidence_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
-        if not isinstance(resources, DetectorResourcePolicy):
-            raise TypeError("resources must be DetectorResourcePolicy.")
         values = tuple(electrodes)
         if not values or not all(
             isinstance(value, DetectorElectrode) for value in values
@@ -358,6 +356,7 @@ class DetectorBiasElectrostaticPlan(StrictModule, NonTrainableState):
     electrostatic: CochainElectrostaticPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         detector: SemiconductorDetectorPlan,
@@ -366,8 +365,6 @@ class DetectorBiasElectrostaticPlan(StrictModule, NonTrainableState):
         *,
         voltage_unit: UnitDefinition = VOLT,
     ) -> None:
-        if not isinstance(detector, SemiconductorDetectorPlan):
-            raise TypeError("detector must be SemiconductorDetectorPlan.")
         voltages = _si(electrode_voltages, voltage_unit, VOLT)
         if voltages.shape != (detector.electrode_count,):
             raise ValueError("electrode_voltages must contain one value per electrode.")
@@ -500,9 +497,8 @@ class DetectorWeightingFieldPlan(StrictModule, NonTrainableState):
     electrostatics: tuple[CochainElectrostaticPlan, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, detector: SemiconductorDetectorPlan, /) -> None:
-        if not isinstance(detector, SemiconductorDetectorPlan):
-            raise TypeError("detector must be SemiconductorDetectorPlan.")
         # All physical boundary vertices are Dirichlet for weighting solves.
         # Undeclared vertices are an explicit grounded remainder.  Consequently
         # sum(phi_w) == 1 is certified only when declared electrodes are complete.

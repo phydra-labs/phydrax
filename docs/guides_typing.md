@@ -14,7 +14,7 @@ The layers of the architecture own different facts:
 
 | Layer | Owns |
 |---|---|
-| `phydrax.typing` | static forms, explicit host/device conversion, structural field contracts, selector parsing |
+| `phydrax.typing` | static forms, explicit host/device conversion, structural field and signature contracts, selector parsing |
 | Scientific owners | axis identity (`phydrax.axes`), units (`phydrax.units`), vector spaces, model ports, dtype names, exact PyTree schemas |
 | Status and evidence | numerical validity, support, rank, conditioning, convergence, provenance |
 
@@ -170,6 +170,59 @@ the error.
 through its fields, tuples, lists, and mappings. Model artifacts restored from
 array recipes and operator artifacts are validated once after complete
 reconstruction.
+
+## Checked signatures
+
+`checked` reads a function's annotations as input contracts, so a constructor or
+method states each argument kind once instead of restating it in a
+hand-written `isinstance` guard:
+
+```python
+class AxisFactorizedField(StrictModule):
+    @pt.checked
+    def __init__(
+        self,
+        factors: Sequence[AxisFactor],
+        plan: AxisContractionPlan,
+        /,
+    ) -> None:
+        ...  # factor uniqueness and plan coverage stay explicit
+```
+
+Signature inputs are checked with a different grammar from stored fields,
+because an input is what a caller may pass and a field is what the owner stores:
+
+| Annotation | Checked as |
+|---|---|
+| a runtime class, such as `AbstractLinearOperator` or `Plan[T]` | `isinstance`, subclasses included |
+| `Callable[...]` | `callable`; signature and results are not inspected |
+| tensor, key, `Size`, `Identifier`, and `Identifiers` forms | the contract language above, in one `Scope` per call |
+| optional values, unions, and fixed tuples of the above | each member, deterministically |
+| `Literal`/`Enum` selectors, `Like`, `ConvertibleToArray`, `ArrayLike`, NumPy and JAX array types, builtin scalars and containers, protocols, type variables | static-only: the owner parses, converts, or normalizes them |
+
+A union or tuple with a static-only member is static-only as a whole, so a
+value accepted by its owner is never refused by a partial check; a contract
+form beside a static-only member is refused. Phydrax forms nested in other
+containers are refused.
+
+Arguments are checked in declaration order, omitted defaults included, before
+the body runs. Python's binding errors (missing, duplicate, or unexpected
+arguments) are reported first. Values are forwarded unchanged: `checked` never
+converts, canonicalizes, transfers, or traces anything, does not check the
+return value, and adds no JAX operations. Under `jit` the check runs while
+tracing; outside a compiled callable it runs on every call. Annotations resolve
+lazily on the first call, so they may name classes defined later in the
+module, but they must resolve at runtime: a `TYPE_CHECKING`-only name is refused
+with the function and argument in the error.
+
+Apply `checked` directly to the function, beneath `staticmethod`,
+`classmethod`, `property`, and transformations such as `jax.jit` or
+`jax.custom_jvp`, which then see the checked primal. A checked function is a
+wrapper: it is opaque to content-addressed callable identity, so module-level
+functions whose code identifies a scientific callable keep their own guards.
+The repository declaration test compiles every checked boundary and refuses one
+without an effective check, and `tools/audit_contract_candidates.py --signatures`
+reports any guard that a checked signature has made redundant.
 
 ## Worked example: a component catalog
 

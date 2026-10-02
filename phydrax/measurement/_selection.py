@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import checked
 from ._asset import DataStage, DerivationRecord, MeasurementAsset
 from ._collection import MeasurementCollection, MeasurementRoleAssignment
 from ._field import IndependentStandardUncertainty, QualityFlag, QuantityField
@@ -63,9 +64,8 @@ class MeasurementSelectionPlan:
             ),
         )
 
+    @checked
     def apply(self, collection: MeasurementCollection, /) -> MeasurementCollection:
-        if not isinstance(collection, MeasurementCollection):
-            raise TypeError("collection must be MeasurementCollection.")
         selected = tuple(collection.asset(value) for value in self.asset_ids)
         result_assets = tuple(
             _slice_asset(value, self.start, self.stop, self.plan_id) for value in selected

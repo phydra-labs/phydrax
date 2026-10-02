@@ -17,7 +17,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....typing import parse
+from ....typing import checked, parse
 
 
 MechanicsParameterRole: TypeAlias = Literal[
@@ -346,6 +346,7 @@ class MechanicsParameterRealization(StrictModule, NonTrainableState):
     stratum_id: str = eqx.field(static=True)
     realization_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spec: MechanicsParameterSpec,
@@ -358,8 +359,6 @@ class MechanicsParameterRealization(StrictModule, NonTrainableState):
         realization_id: str | None = None,
         stratum_id: str | None = None,
     ) -> None:
-        if not isinstance(spec, MechanicsParameterSpec):
-            raise TypeError("spec must be a MechanicsParameterSpec.")
         if probability_weight is not None and importance_weight is not None:
             raise ValueError(
                 "A realization cannot carry both probability and importance weight."
@@ -423,6 +422,7 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
     distribution_id: str = eqx.field(static=True)
     distribution_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spec: MechanicsParameterSpec,
@@ -431,8 +431,6 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
         *,
         distribution_id: str | None = None,
     ) -> None:
-        if not isinstance(spec, MechanicsParameterSpec):
-            raise TypeError("spec must be a MechanicsParameterSpec.")
         resolved = tuple(realizations)
         if not resolved:
             raise ValueError("Mechanics parameter distributions require realizations.")

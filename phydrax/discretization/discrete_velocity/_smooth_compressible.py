@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...equations._materials import IdealGasMaterial
 from ...equations._transport_closures import AbstractTransportClosure, TransportProperties
+from ...typing import checked
 from ..lattice_boltzmann._program import (
     KineticProgramManifest,
     smooth_compressible_dvm_manifest,
@@ -166,6 +167,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
     program_manifest: KineticProgramManifest
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         quadrature: CertifiedDiscreteVelocityQuadrature,
@@ -173,8 +175,6 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
         transport: AbstractTransportClosure,
         /,
     ) -> None:
-        if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
-            raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2 or quadrature.population_count not in (17, 37):
             raise ValueError(
                 "Smooth compressible research methods require D2V17 or D2V37."
@@ -183,12 +183,6 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
             raise ValueError(
                 "Smooth compressible D2V methods require fourth-degree certification."
             )
-        if not isinstance(material, IdealGasMaterial):
-            raise TypeError(
-                "material must implement the certified IdealGasMaterial interface."
-            )
-        if not isinstance(transport, AbstractTransportClosure):
-            raise TypeError("transport must implement AbstractTransportClosure.")
         velocities = np.asarray(quadrature.velocities)
         particle_moment_matrix = np.concatenate(
             (np.ones((1, quadrature.population_count)), velocities.T), axis=0
@@ -260,9 +254,8 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
             }
         )
 
+    @checked
     def validate_state(self, state: SmoothCompressibleKineticState, /) -> None:
-        if not isinstance(state, SmoothCompressibleKineticState):
-            raise TypeError("state must be SmoothCompressibleKineticState.")
         self.quadrature.validate_populations(state.particle_populations)
         self.quadrature.validate_populations(state.total_energy_populations)
         if state.particle_populations.shape != state.total_energy_populations.shape:
@@ -523,6 +516,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
             self._analytic_energy_equilibrium(total_energy, pressure, velocity),
         )
 
+    @checked
     def equilibrium_from_energy_dual_with_evidence(
         self,
         conserved: ArrayLike,
@@ -533,8 +527,6 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
         SmoothCompressibleKineticState,
         SmoothCompressibleLearnedEquilibriumEvidence,
     ]:
-        if not isinstance(plan, PositiveEnergyEquilibriumPlan):
-            raise TypeError("plan must be a PositiveEnergyEquilibriumPlan.")
         if plan.quadrature.quadrature_id != self.quadrature.quadrature_id:
             raise ValueError(
                 "Energy-equilibrium plan and kinetic quadrature do not match."

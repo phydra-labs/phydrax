@@ -17,6 +17,7 @@ from ...._physical import ElectromagneticScaleContract
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import GeospatialContract
+from ....typing import checked
 from ._gravity import GravityQuadratureSource
 
 
@@ -89,6 +90,7 @@ class FreeSpaceMagneticPlan(StrictModule, NonTrainableState):
     coordinates: GeospatialContract
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: GravityQuadratureSource,
@@ -99,12 +101,6 @@ class FreeSpaceMagneticPlan(StrictModule, NonTrainableState):
         *,
         minimum_separation_m: float,
     ) -> None:
-        if not isinstance(source, GravityQuadratureSource):
-            raise TypeError(
-                "Magnetic plan requires gravity-compatible volume quadrature."
-            )
-        if not isinstance(coordinates, GeospatialContract):
-            raise TypeError("Magnetic observations require GeospatialContract.")
         coordinates.require_cartesian(dimensions=3)
         observations = np.asarray(observations_m, dtype=np.float64)
         reference = np.asarray(reference_direction, dtype=np.float64)
@@ -144,14 +140,13 @@ class FreeSpaceMagneticPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         material: MagneticMaterial,
         inducing_field_A_m: ArrayLike,
         /,
     ) -> MagneticResult:
-        if not isinstance(material, MagneticMaterial):
-            raise TypeError("Magnetic evaluation requires MagneticMaterial.")
         if material.remanent_magnetization_A_m.shape[0] != self.source.cell_count:
             raise ValueError("Magnetic material does not match source cells.")
         cell_magnetization = material.magnetization(inducing_field_A_m)

@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...observation import CoordinateLayout, LinearObservationPlan, TheoryVector
+from ...typing import checked
 from ._observation_status import AstrophysicsObservationStatus
 from ._photometry import ObservationDataProvenance
 
@@ -186,9 +187,8 @@ class StaticFieldOperatorSequence(StrictModule, NonTrainableState):
             {"kind": "static-field-operator-sequence", "operators": list(identifiers)}
         )
 
+    @checked
     def apply(self, state: ComplexFieldState, /) -> tuple[ComplexFieldState, ...]:
-        if not isinstance(state, ComplexFieldState):
-            raise TypeError("state must be ComplexFieldState.")
         outputs = [state]
         current = state
         for operator in self.operators:

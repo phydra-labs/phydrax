@@ -19,7 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ml import AbstractRecipe, FeatureSchema, MLBatch, TargetSchema
 from ..ml.model_selection import AbstractSplitPlan
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._core import CausalProblem, TargetPopulationKind
 from ._identify import AdjustmentExpression, IdentificationCertificate
 
@@ -78,6 +78,7 @@ class NuisancePlan(StrictModule):
     split_plan: AbstractSplitPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -85,14 +86,10 @@ class NuisancePlan(StrictModule):
         split_plan: AbstractSplitPlan,
         propensity_recipe: AbstractRecipe | None = None,
     ) -> None:
-        if not isinstance(outcome_recipe, AbstractRecipe):
-            raise TypeError("outcome_recipe must be an AbstractRecipe.")
         if propensity_recipe is not None and not isinstance(
             propensity_recipe, AbstractRecipe
         ):
             raise TypeError("propensity_recipe must be an AbstractRecipe when supplied.")
-        if not isinstance(split_plan, AbstractSplitPlan):
-            raise TypeError("split_plan must be an AbstractSplitPlan.")
         payload = {
             "outcome": strict_module_payload(outcome_recipe),
             "propensity": (

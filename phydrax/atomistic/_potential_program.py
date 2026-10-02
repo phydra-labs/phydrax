@@ -20,6 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import ParticleNeighborhoodState, PeriodicCell
+from ..typing import checked
 from ._graph import (
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
@@ -150,6 +151,7 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
+    @checked
     def __init__(
         self,
         potential: AbstractAtomisticPotential,
@@ -159,8 +161,6 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
         force_group: int = 0,
         allow_periodic: bool = False,
     ) -> None:
-        if not isinstance(potential, AbstractAtomisticPotential):
-            raise TypeError("potential must implement AbstractAtomisticPotential.")
         identifier = str(name).strip()
         group = int(force_group)
         if not identifier or group < 0:
@@ -471,6 +471,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
     control_layout_id: str = eqx.field(static=True)
     coefficients: Array
 
+    @checked
     def __init__(
         self,
         plan: AtomisticPotentialProgram,
@@ -479,10 +480,6 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         *,
         graph_execution: AtomisticGraphExecutionPlan | None,
     ) -> None:
-        if not isinstance(plan, AtomisticPotentialProgram):
-            raise TypeError("plan must be an AtomisticPotentialProgram.")
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be a PreparedAtomisticSystem.")
         if plan.requirements.directed_graph:
             if (
                 not isinstance(graph_execution, AtomisticGraphExecutionPlan)
@@ -531,6 +528,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
             }
         )
 
+    @checked
     def context(
         self,
         positions: ArrayLike,
@@ -544,8 +542,6 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> AtomisticPotentialContext:
-        if not isinstance(neighborhood, ParticleNeighborhoodState):
-            raise TypeError("neighborhood must be a ParticleNeighborhoodState.")
         position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
         expected = (self.system.capacity, 3)
         if position.shape != expected:

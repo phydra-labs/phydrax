@@ -17,6 +17,7 @@ from ..._trainable import NonTrainableState
 from ...imaging import ImagePlaneSupport
 from ...imaging.camera import CameraRig
 from ...rendering import CameraStackRenderResult, ParticleImageFormation
+from ...typing import checked
 from ._ipr import (
     IPR_CAPACITY_EXHAUSTED,
     IPR_NONFINITE,
@@ -51,6 +52,7 @@ class STBPlan(StrictModule, NonTrainableState):
     observation_variance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ipr: IPRPlan,
@@ -61,12 +63,6 @@ class STBPlan(StrictModule, NonTrainableState):
         minimum_active_amplitude: float = 0.0,
         observation_variance: float = 1.0e-4,
     ) -> None:
-        if not isinstance(ipr, IPRPlan):
-            raise TypeError("ipr must be IPRPlan.")
-        if not isinstance(shake, ShakePlan):
-            raise TypeError("shake must be ShakePlan.")
-        if not isinstance(track_link, TrackLinkPlan):
-            raise TypeError("track_link must be TrackLinkPlan.")
         if track_link.maximum_tracks != ipr.particle_capacity:
             raise ValueError("Track and IPR particle capacities must match.")
         promotion = int(promotion_steps)

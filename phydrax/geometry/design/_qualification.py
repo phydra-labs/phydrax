@@ -10,6 +10,7 @@ from enum import Enum
 
 from ..._differentiation import DerivativeContract
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 
 
 class DerivativeTier(str, Enum):
@@ -160,10 +161,9 @@ class DesignQualificationEvidence:
         }
         object.__setattr__(self, "evidence_id", canonical_fingerprint(payload))
 
+    @checked
     def coarse_contract_allows(self, contract: DerivativeContract, /) -> bool:
         """Check only the necessary coarse capability; this never replaces evidence."""
-        if not isinstance(contract, DerivativeContract):
-            raise TypeError("contract must be a DerivativeContract.")
         if not self.tier.is_derivative:
             return True
         return bool(contract.supported_surfaces)

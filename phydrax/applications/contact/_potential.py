@@ -22,6 +22,7 @@ from ...discretization.contact import (
     point_point_distance,
     PreparedCollisionScene,
 )
+from ...typing import checked
 from ._barrier import physical_clamped_log_barrier
 
 
@@ -106,13 +107,10 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
     internal_vertex: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: ConvergentContactPotentialPlan, scene: PreparedCollisionScene, /
     ) -> None:
-        if not isinstance(plan, ConvergentContactPotentialPlan):
-            raise TypeError("plan must be ConvergentContactPotentialPlan.")
-        if not isinstance(scene, PreparedCollisionScene):
-            raise TypeError("scene must be PreparedCollisionScene.")
         edges = np.empty((scene.edge_count, 2), dtype=np.int32)
         edges[...] = np.asarray(scene.edges)
         faces = np.empty((scene.face_count, 3), dtype=np.int32)
@@ -398,6 +396,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             minimum_feature,
         )
 
+    @checked
     def energy(
         self,
         positions: ArrayLike,
@@ -407,8 +406,6 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         rest_positions: ArrayLike | None = None,
         stiffness: ArrayLike | None = None,
     ) -> Array:
-        if not isinstance(epoch, ContactCandidateEpoch):
-            raise TypeError("epoch must be ContactCandidateEpoch.")
         current = jnp.asarray(
             positions, dtype=self.scene.surfaces[0].precision.geometry_dtype
         )

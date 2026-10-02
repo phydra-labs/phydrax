@@ -20,6 +20,7 @@ from ..._holomorphic_linear import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 def _multi_factorial(value: MultiIndex, /) -> int:
@@ -83,6 +84,7 @@ class HolomorphicPolynomialFrame(StrictModule, NonTrainableState):
     complex_output_size: int = eqx.field(static=True)
     _certificate: HolomorphicLinearFrameCertificate
 
+    @checked
     def __init__(
         self,
         index_set: HolomorphicMultiIndexSet,
@@ -91,8 +93,6 @@ class HolomorphicPolynomialFrame(StrictModule, NonTrainableState):
         *,
         normalization: ComplexAffineNormalization | None = None,
     ) -> None:
-        if not isinstance(index_set, HolomorphicMultiIndexSet):
-            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         output_size = int(complex_output_size)
         if output_size <= 0:
             raise ValueError("Holomorphic polynomial frame output size must be positive.")

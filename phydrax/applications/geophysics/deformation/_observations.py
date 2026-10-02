@@ -18,6 +18,7 @@ from ....observation import (
     LinearNuisancePlan,
     NuisanceProjectionResult,
 )
+from ....typing import checked
 from ..potential_fields import RegionalTrendPlan
 
 
@@ -102,6 +103,7 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
     nuisance: LinearNuisancePlan | None
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         forward: GeodeticDeformationObservationPlan,
@@ -112,8 +114,6 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
         coordinates_xy_m: ArrayLike | None = None,
         ramp_degree: int | None = None,
     ) -> None:
-        if not isinstance(forward, GeodeticDeformationObservationPlan):
-            raise TypeError("InSAR observation requires geodetic forward plan.")
         observed = jnp.asarray(observed_los_m)
         count = forward.insar_matrix.shape[0]
         if observed.shape != (count,) or covariance.layout.size != count:

@@ -26,6 +26,7 @@ from ...operators.integral.vortex._panels2d import (
     FlowPanelGeometry2D,
     panel_influence_matrix_2d,
 )
+from ...typing import checked
 from ._population import VortexPopulationState
 from ._wall import (
     BoundarySheetParticleTransferPlan2D,
@@ -58,11 +59,10 @@ class BoundaryIntegralVorticityFluxPlan2D(StrictModule, NonTrainableState):
     policy: LinearSolvePolicy
     solver_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, geometry: FlowPanelGeometry2D, /, *, policy: LinearSolvePolicy | None = None
     ) -> None:
-        if not isinstance(geometry, FlowPanelGeometry2D):
-            raise TypeError("geometry must be FlowPanelGeometry2D.")
         self.geometry = geometry
         self.policy = LinearSolvePolicy(DenseSVD()) if policy is None else policy
         self.solver_id = canonical_fingerprint(

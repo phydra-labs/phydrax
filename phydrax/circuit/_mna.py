@@ -34,6 +34,7 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import checked
 from ._ports import ElectricalWaveReference
 from ._relation_graph import plan_linear_routes
 
@@ -49,6 +50,7 @@ class NodalPort(StrictModule):
     positive: NodeId = eqx.field(static=True)
     negative: NodeId = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         port_id: str,
@@ -62,8 +64,6 @@ class NodalPort(StrictModule):
             raise ValueError("Nodal port and node IDs must be non-empty.")
         if values[1] == values[2]:
             raise ValueError("Nodal port positive and negative nodes must differ.")
-        if not isinstance(reference, ElectricalWaveReference):
-            raise TypeError("Nodal ports require ElectricalWaveReference.")
         self.port_id, self.positive, self.negative = values
         self.reference = reference
 
@@ -127,6 +127,7 @@ class CircuitInstance(StrictModule):
     instance_id: str = eqx.field(static=True)
     nodes: tuple[NodeId, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         instance_id: str,
@@ -138,8 +139,6 @@ class CircuitInstance(StrictModule):
         node_tuple = tuple(str(node) for node in nodes)
         if not identifier or any(not node for node in node_tuple):
             raise ValueError("MNA instance and node IDs must be non-empty.")
-        if not isinstance(component, AbstractMNAComponent):
-            raise TypeError("component must be AbstractMNAComponent.")
         if len(node_tuple) != component.terminal_count:
             raise ValueError("MNA instance node count must match component terminals.")
         self.component = component

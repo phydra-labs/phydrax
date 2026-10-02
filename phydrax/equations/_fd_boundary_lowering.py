@@ -25,7 +25,7 @@ from ..discretization import (
     PreparedTensorGrid,
 )
 from ..discretization.finite_difference._boundary_runtime import GhostConditionKind
-from ..typing import parse
+from ..typing import checked, parse
 from ._ir import PDECondition, PDEExpression, PDEProblemIR, PDERegion
 
 
@@ -132,9 +132,8 @@ class BoundaryTarget(StrictModule, NonTrainableState):
     expression: PDEExpression = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, expression: PDEExpression, /) -> None:
-        if not isinstance(expression, PDEExpression):
-            raise TypeError("Boundary target must be a PDEExpression.")
         if expression.op == "constant" and expression.value is not None:
             kind: BoundaryTargetKind = "constant"
             value = float(expression.value)
@@ -161,6 +160,7 @@ class BoundaryTarget(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         context: BoundaryStageContext,
@@ -169,8 +169,6 @@ class BoundaryTarget(StrictModule, NonTrainableState):
         field_shape: tuple[int, ...],
         /,
     ) -> Array:
-        if not isinstance(context, BoundaryStageContext):
-            raise TypeError("Boundary target requires BoundaryStageContext.")
         return _evaluate_target_expression(
             self.expression,
             context,
@@ -811,6 +809,7 @@ class PreparedFDInterface(StrictModule, NonTrainableState):
     runtime: ConformingInterfaceRuntime
     interface_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -820,8 +819,6 @@ class PreparedFDInterface(StrictModule, NonTrainableState):
         bindings: Sequence[FDInterfaceBinding],
         /,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("Prepared interface requires a PreparedTensorGrid.")
         bindings_ = tuple(bindings)
         field = tuple(value for value in bindings_ if value.kind == "field_jump")
         flux = tuple(value for value in bindings_ if value.kind == "flux_jump")

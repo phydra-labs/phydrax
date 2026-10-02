@@ -22,29 +22,29 @@ import numpy as np
 from jax import Array
 
 from benchmarks._runtime import logical_array_bytes
-from phydrax._strict import StrictModule
+from phydrax import StrictModule
 from phydrax.discretization import (
     PointCloudPlan,
     prepare_point_cloud_field_reconstruction,
 )
-from phydrax.discretization.meshfree._exterior import PreparedMeshfreeExteriorCalculus
-from phydrax.discretization.meshfree._exterior_metric import MeshfreeMetricPolicy
-from phydrax.discretization.meshfree._surface import (
+from phydrax.discretization.meshfree import (
+    ImplicitSurfaceGeometry,
+    MeshfreeMetricPolicy,
+    PreparedMeshfreeExteriorCalculus,
     PreparedSurfacePointCloud,
     SurfacePointCloudPlan,
+    SurfaceQuadraturePolicy,
 )
-from phydrax.discretization.meshfree._surface_geometry import ImplicitSurfaceGeometry
-from phydrax.discretization.meshfree._surface_quadrature import SurfaceQuadraturePolicy
 from phydrax.geometry import Ball
 from phydrax.interfacial_transport import AdsorptionKinetics
 from phydrax.metrix import RegularLevelSetManifold
-from phydrax.solver._partitioned_coupling_types import CouplingWindow
-from phydrax.solver.coupling._contributions import ContributionEndpoint
-from phydrax.solver.coupling._meshfree_components import MeshfreeComponent
-from phydrax.solver.coupling._method_participants import MethodParticipantState
-from phydrax.solver.coupling._surface_exchange import (
+from phydrax.solver.coupling import (
+    ContributionEndpoint,
+    CouplingWindow,
     LangmuirAdsorptionFlux,
     MeshfreeBulkSurfaceMethod,
+    MeshfreeComponent,
+    MethodParticipantState,
     SurfaceExchangeLaw,
 )
 from phydrax.sparse import SparseCoordinateOperator

@@ -53,7 +53,7 @@ from ...solver import (
     PreparedSHAKERATTLEPlan,
     SHAKERATTLEPlan,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._air import RegionPressureAirEvidence, RegionPressureAirPlan
 from ._contracts import FoamMaterialPlan
 from ._equilibrium import (
@@ -232,6 +232,7 @@ class FoamDynamicsState(StrictModule):
     unresolved_rim_content: Array
     time: Array
 
+    @checked
     def __init__(
         self,
         surface: MultiRegionSurfaceState,
@@ -241,8 +242,6 @@ class FoamDynamicsState(StrictModule):
         unresolved_rim_content: ArrayLike = 0.0,
         time: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(surface, MultiRegionSurfaceState):
-            raise TypeError("surface must be a MultiRegionSurfaceState.")
         if gas is not None and not isinstance(gas, BubbleGasState):
             raise TypeError("gas must be BubbleGasState or None.")
         rim = jnp.asarray(unresolved_rim_content, dtype=surface.positions.dtype)
@@ -412,6 +411,7 @@ class PreparedFoamDynamics(StrictModule):
     kinematic_mechanics: PreparedSHAKERATTLEPlan
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: FoamDynamicsPlan,
@@ -421,16 +421,6 @@ class PreparedFoamDynamics(StrictModule):
         state: FoamDynamicsState,
         /,
     ) -> None:
-        if not isinstance(plan, FoamDynamicsPlan):
-            raise TypeError("plan must be a FoamDynamicsPlan.")
-        if not isinstance(surface, PreparedMultiRegionSurface):
-            raise TypeError("surface must be PreparedMultiRegionSurface.")
-        if not isinstance(material, FoamMaterialPlan):
-            raise TypeError("material must be FoamMaterialPlan.")
-        if not isinstance(air, RegionPressureAirPlan):
-            raise TypeError("air must be RegionPressureAirPlan.")
-        if not isinstance(state, FoamDynamicsState):
-            raise TypeError("state must be FoamDynamicsState.")
         topology = surface.topology
         state.surface.require_topology(topology)
         finite = topology.finite_region_indices
@@ -1173,17 +1163,17 @@ class PreparedFoamDynamics(StrictModule):
         )
         return candidate, evidence
 
+    @checked
     def fixed_topology_step(
         self, state: FoamDynamicsState, /
     ) -> tuple[FoamDynamicsState, _FixedStepEvidence]:
         """One differentiable fixed-topology step with atomic rollback."""
-        if not isinstance(state, FoamDynamicsState):
-            raise TypeError("state must be FoamDynamicsState.")
         state.surface.require_topology(self.surface.topology)
         if self.plan.route == "overdamped":
             return self._overdamped_step(state)
         return self._inertia_step(state)
 
+    @checked
     def constrained_kinematic_step(
         self,
         state: FoamDynamicsState,
@@ -1192,8 +1182,6 @@ class PreparedFoamDynamics(StrictModule):
         /,
     ) -> FoamKinematicStep:
         """Advance a prescribed velocity with the prepared volume/wire constraints."""
-        if not isinstance(state, FoamDynamicsState):
-            raise TypeError("state must be FoamDynamicsState.")
         state.surface.require_topology(self.surface.topology)
         if self.air.route != "incompressible":
             raise ValueError(
@@ -1343,6 +1331,7 @@ class PreparedFoamDynamics(StrictModule):
         )
         return target_gas, amount_ok and energy_ok
 
+    @checked
     def advance(
         self,
         state: FoamDynamicsState,
@@ -1352,8 +1341,6 @@ class PreparedFoamDynamics(StrictModule):
         event_policy: SurfaceEventPolicy | None = None,
     ) -> FoamDynamicsResult:
         """Advance fixed topology, then atomically apply any E3/E4 event pass."""
-        if not isinstance(state, FoamDynamicsState):
-            raise TypeError("state must be FoamDynamicsState.")
         state.surface.require_topology(self.surface.topology)
         current = state
         first_energy = self._energy(state.surface.positions, state.gas)

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._topology import TensorTopology
 
 
@@ -44,6 +45,7 @@ class LatticeBoundaryPhasePlan(StrictModule, NonTrainableState):
     complex_phases: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: TensorTopology,
@@ -52,8 +54,6 @@ class LatticeBoundaryPhasePlan(StrictModule, NonTrainableState):
         *,
         maximum_displacement: int = 1,
     ) -> None:
-        if not isinstance(topology, TensorTopology):
-            raise TypeError("topology must be TensorTopology.")
         values = np.asarray(phases)
         dimension = len(topology.axis_sizes)
         if values.shape != (dimension,):
@@ -155,9 +155,8 @@ class CheckerboardEntityLayout(StrictModule, NonTrainableState):
     site_count: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, topology: TensorTopology, /, *, origin_parity: int = 0) -> None:
-        if not isinstance(topology, TensorTopology):
-            raise TypeError("topology must be TensorTopology.")
         origin = int(origin_parity)
         if origin not in (0, 1):
             raise ValueError("origin_parity must be zero or one.")

@@ -27,7 +27,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
 )
 from ..stochastic._state_space_input import AbstractStateSpaceInput
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._conditional_moments import _condition_affine_gaussian_diagonal
 from ._covariance import (
     _factor_and_solve_covariance_system,
@@ -79,6 +79,7 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         nonlinear_prior: AbstractStatePrior,
@@ -93,12 +94,6 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         model_id: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(nonlinear_prior, AbstractStatePrior):
-            raise TypeError("nonlinear_prior must implement AbstractStatePrior.")
-        if not isinstance(nonlinear_transition, AbstractTransitionKernel):
-            raise TypeError(
-                "nonlinear_transition must implement AbstractTransitionKernel."
-            )
         if nonlinear_prior.state_shape != nonlinear_transition.state_shape:
             raise ValueError("Nonlinear prior and transition state shapes must agree.")
         for name, function in (
@@ -215,6 +210,7 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
     args: Any
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: RaoBlackwellizedStateSpaceModel,
@@ -226,10 +222,6 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
         args: Any = None,
         input_signal: AbstractStateSpaceInput | None = None,
     ) -> None:
-        if not isinstance(model, RaoBlackwellizedStateSpaceModel):
-            raise TypeError("model must be a RaoBlackwellizedStateSpaceModel.")
-        if not isinstance(observations, ObservationSequence):
-            raise TypeError("observations must be an ObservationSequence.")
         if model.nonlinear_prior.batch_shape != observations.case_shape:
             raise ValueError(
                 "Nonlinear prior batch_shape must equal the observation case_shape."

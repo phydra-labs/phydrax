@@ -21,7 +21,7 @@ from ..stochastic._path_ensemble import (
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._spde import SemidiscreteSPDE
 
 
@@ -35,6 +35,7 @@ class SPDEApproximationLevel(StrictModule):
     work: float = eqx.field(static=True)
     level_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spde: SemidiscreteSPDE,
@@ -46,8 +47,6 @@ class SPDEApproximationLevel(StrictModule):
         *,
         level_id: str,
     ) -> None:
-        if not isinstance(spde, SemidiscreteSPDE):
-            raise TypeError("spde must be a SemidiscreteSPDE.")
         if not isinstance(temporal_mesh, TimeGrid):
             raise TypeError("temporal_mesh must be a TimeGrid.")
         if not callable(transfer_to_reference):

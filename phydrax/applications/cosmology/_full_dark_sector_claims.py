@@ -37,7 +37,7 @@ from ...qualification import (
     SupportTuple,
 )
 from ...qualification._registry import SupportValue
-from ...typing import parse
+from ...typing import checked, parse
 from ..relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
     RelativisticUnitContract,
@@ -1341,6 +1341,7 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
     admitted: bool = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         claim: ScientificClaimProfile,
@@ -1354,12 +1355,6 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
         admitted: bool,
         /,
     ) -> None:
-        if not isinstance(claim, ScientificClaimProfile):
-            raise TypeError("claim must be ScientificClaimProfile.")
-        if not isinstance(promotion, PromotionState):
-            raise TypeError("promotion must be PromotionState.")
-        if not isinstance(differentiation, DerivativeContract):
-            raise TypeError("differentiation must be DerivativeContract.")
         definition = _definition_for_claim(claim)
         expected_differentiation = definition.differentiation.contract()
         if differentiation.contract_id != expected_differentiation.contract_id:

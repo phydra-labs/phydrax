@@ -32,6 +32,7 @@ from .._iteration import (
     IterationSession,
 )
 from .._strict import StrictModule
+from ..typing import checked
 from ._branch_and_bound import (
     AbstractBranchAndBoundProblem,
     branch_and_bound,
@@ -658,6 +659,7 @@ class FiniteAdaptiveSearch(StrictModule):
     bound: FiniteCertifiedLowerBound
     policy: BranchAndBoundPolicy
 
+    @checked
     def __init__(
         self,
         bound: FiniteCertifiedLowerBound,
@@ -665,8 +667,6 @@ class FiniteAdaptiveSearch(StrictModule):
         *,
         policy: BranchAndBoundPolicy | None = None,
     ) -> None:
-        if not isinstance(bound, FiniteCertifiedLowerBound):
-            raise TypeError("bound must be a FiniteCertifiedLowerBound.")
         identifier = str(bound.certificate_id)
         if not identifier:
             raise ValueError("Finite lower-bound certificate_id must be non-empty.")

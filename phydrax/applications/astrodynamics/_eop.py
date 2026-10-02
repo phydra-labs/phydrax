@@ -15,6 +15,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._data import AstrodynamicsDataProvenance
 from ._status import AstrodynamicsStatus
 
@@ -152,11 +153,10 @@ class PreparedEarthOrientation(StrictModule, NonTrainableState):
     reference_jd_utc: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, records: EarthOrientationRecordSet, reference_jd_utc: float, /
     ) -> None:
-        if not isinstance(records, EarthOrientationRecordSet):
-            raise TypeError("records must be an EarthOrientationRecordSet.")
         reference = float(reference_jd_utc)
         if not np.isfinite(reference):
             raise ValueError("reference_jd_utc must be finite.")

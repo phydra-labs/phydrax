@@ -25,6 +25,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import ScientificArtifactEnvelope
 from ...qualification import ReferenceArtifactManifest
+from ...typing import checked
 from ...units import derived_unit
 from ..relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
@@ -191,6 +192,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
     frame_realization_id: str = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         temperature: ArrayLike,
@@ -223,8 +225,6 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         thermodynamic_tolerance: float = 5.0e-3,
         covariance_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be a RelativisticUnitContract.")
         if (
             not isinstance(frame, LocalRelativisticFramePlan)
             or frame.units.contract_id != units.contract_id
@@ -577,6 +577,7 @@ class HTLPolarizationPlan(StrictModule, NonTrainableState):
     frame: LocalRelativisticFramePlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         debye_mass_squared: float,
@@ -592,8 +593,6 @@ class HTLPolarizationPlan(StrictModule, NonTrainableState):
             raise ValueError("debye_mass_squared must be finite and nonnegative.")
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("ward_tolerance must be finite and positive.")
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be RelativisticUnitContract.")
         if (
             not isinstance(frame, LocalRelativisticFramePlan)
             or frame.units.contract_id != units.contract_id
@@ -739,6 +738,7 @@ class LPMIntegralPlan(StrictModule, NonTrainableState):
     rate_unit_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis_nodes: ArrayLike,
@@ -797,8 +797,6 @@ class LPMIntegralPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "The collision-plus-formation LPM operator must be nonsingular."
             )
-        if not isinstance(units, RelativisticUnitContract):
-            raise TypeError("units must be RelativisticUnitContract.")
         if (
             not isinstance(frame, LocalRelativisticFramePlan)
             or frame.units.contract_id != units.contract_id
@@ -939,9 +937,8 @@ class ThermalDarkRatePlan(StrictModule, NonTrainableState):
     heat_capacity: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, artifact: ThermalKernelArtifact, /) -> None:
-        if not isinstance(artifact, ThermalKernelArtifact):
-            raise TypeError("artifact must be ThermalKernelArtifact.")
         if not artifact.evidence.qualified:
             raise ValueError("Thermal rate evaluation requires a qualified artifact.")
         heat_capacity = np.gradient(

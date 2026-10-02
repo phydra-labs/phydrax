@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 MergeStatus: TypeAlias = Literal["complete", "incomplete"]
@@ -102,6 +103,7 @@ class EnsembleManifest(StrictModule, NonTrainableState):
     measurement_randomness_id: str = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schedule: MeasurementSchedule,
@@ -115,8 +117,6 @@ class EnsembleManifest(StrictModule, NonTrainableState):
         update_randomness_id: str,
         measurement_randomness_id: str,
     ) -> None:
-        if not isinstance(schedule, MeasurementSchedule):
-            raise TypeError("schedule must be MeasurementSchedule.")
         identifiers = tuple(
             _identifier(value, name)
             for value, name in (

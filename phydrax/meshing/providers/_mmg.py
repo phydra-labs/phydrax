@@ -38,6 +38,7 @@ from ...discretization import (
 )
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ...logging import emit
+from ...typing import checked
 from .._association import BRepAssociationTransfer
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
@@ -1222,6 +1223,7 @@ class MmgAdaptationResult(StrictModule, NonTrainableState):
     session: MmgSessionEvidence
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan_id: str,
@@ -1234,8 +1236,6 @@ class MmgAdaptationResult(StrictModule, NonTrainableState):
         /,
     ) -> None:
         plan = normalized_identifier(plan_id, "plan_id")
-        if not isinstance(mesh, CellMeshingResult):
-            raise TypeError("mesh must be CellMeshingResult.")
         if metric is not None and (
             not isinstance(metric, MeshMetricField)
             or metric.scope.source_id != mesh.mesh.mesh_id
@@ -1246,10 +1246,6 @@ class MmgAdaptationResult(StrictModule, NonTrainableState):
             raise ValueError("metric_representation must be none, scalar, or tensor.")
         if fields is not None and not isinstance(fields, MmgFieldTransfer):
             raise TypeError("fields must be MmgFieldTransfer or None.")
-        if not isinstance(references, MmgReferenceRetention):
-            raise TypeError("references must be MmgReferenceRetention.")
-        if not isinstance(session, MmgSessionEvidence):
-            raise TypeError("session must be MmgSessionEvidence.")
         self.plan_id = plan
         self.mesh = mesh
         self.metric = metric
@@ -1912,9 +1908,8 @@ class MmgProvider:
             )
         )
 
+    @checked
     def execute(self, plan: MmgAdaptationPlan, /) -> MmgAdaptationResult:
-        if not isinstance(plan, MmgAdaptationPlan):
-            raise TypeError("plan must be MmgAdaptationPlan.")
         encoding = plan._encoding
         emit(
             "DEBUG",

@@ -15,7 +15,7 @@ from ...stochastic import (
     BSDEProblem,
     evaluate_bsde,
 )
-from ...typing import parse, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from ..core import PricingLaw
 
 
@@ -40,6 +40,7 @@ class ExposureBSDERoute(StrictModule):
     quadrature: BSDEQuadrature = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: BSDEProblem,
@@ -52,12 +53,6 @@ class ExposureBSDERoute(StrictModule):
         quadrature: BSDEQuadrature,
         route_id: str,
     ) -> None:
-        if not isinstance(problem, BSDEProblem):
-            raise TypeError("problem must be a BSDEProblem.")
-        if not isinstance(pricing_law, PricingLaw):
-            raise TypeError(
-                "pricing_law must be a PricingLaw; P and stress laws are invalid."
-            )
         layout = _identifier(factor_layout_id, "factor_layout_id")
         if pricing_law.factor_layout_id != layout:
             raise ValueError(

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...typing import checked
 from ._basis import TensorSplineBasisSpec
 from ._geometry import NURBSGeometryState
 
@@ -61,6 +62,7 @@ class TensorNURBSVolume:
     patch_id: str
     numeric_revision: str
 
+    @checked
     def __init__(
         self,
         block_id: str,
@@ -75,10 +77,6 @@ class TensorNURBSVolume:
         revision = str(numeric_revision)
         if not identifier or not revision:
             raise ValueError("Block identity and numeric revision must be non-empty.")
-        if not isinstance(basis, TensorSplineBasisSpec):
-            raise TypeError("basis must be a TensorSplineBasisSpec.")
-        if not isinstance(geometry, NURBSGeometryState):
-            raise TypeError("geometry must be a NURBSGeometryState.")
         if geometry.control_shape != basis.control_shape:
             raise ValueError("NURBS geometry and basis control shapes must agree.")
         object.__setattr__(self, "block_id", identifier)
@@ -163,9 +161,8 @@ class TensorNURBSVolume:
         flat = points.reshape((-1, points.shape[-1]))
         return np.min(flat, axis=0), np.max(flat, axis=0)
 
+    @checked
     def _validate_facet(self, facet: BoundaryFacetId, /) -> None:
-        if not isinstance(facet, BoundaryFacetId):
-            raise TypeError("facet must be a BoundaryFacetId.")
         if facet.block_id != self.block_id:
             raise ValueError("Boundary facet belongs to a different tensor block.")
         if facet.axis >= self.parametric_dimension:

@@ -21,6 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._spacetime_conventions import RelativityConvention
+from ...typing import checked
 from ._mots import MOTSSolvePlan, MOTSSolveResult
 from ._surfaces import (
     SphericalSpectralSurface,
@@ -140,6 +141,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
     candidate_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mots_plan: MOTSSolvePlan,
@@ -150,8 +152,6 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         equivalence_tolerance: float = 1.0e-5,
         nesting_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(mots_plan, MOTSSolvePlan):
-            raise TypeError("mots_plan must be a MOTSSolvePlan.")
         radii = np.asarray(seed_radii, dtype=np.float64).reshape((-1,))
         active_ = (
             np.ones(radii.shape, dtype=np.bool_)
@@ -389,6 +389,7 @@ class HorizonTrackerPlan(StrictModule, NonTrainableState):
     maximum_relative_area_change: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mots_plan: MOTSSolvePlan,
@@ -396,8 +397,6 @@ class HorizonTrackerPlan(StrictModule, NonTrainableState):
         *,
         maximum_relative_area_change: float = 0.25,
     ) -> None:
-        if not isinstance(mots_plan, MOTSSolvePlan):
-            raise TypeError("mots_plan must be a MOTSSolvePlan.")
         maximum_change = float(maximum_relative_area_change)
         if maximum_change <= 0.0:
             raise ValueError("maximum_relative_area_change must be positive.")

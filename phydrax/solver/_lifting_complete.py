@@ -23,6 +23,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..operators.integral.vortex._filament3d import regularized_filament_velocity_3d
+from ..typing import checked
 from ._vortex_loads import (
     KuttaJoukowskiLoadPlan,
     TrefftzInducedDragPlan,
@@ -59,6 +60,7 @@ class CompleteLiftingSystemPlan(StrictModule, NonTrainableState):
     linear_policy: LinearSolvePolicy | None
     solver_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: PreparedMultiLiftingSurface,
@@ -71,8 +73,6 @@ class CompleteLiftingSystemPlan(StrictModule, NonTrainableState):
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
     ) -> None:
-        if not isinstance(surface, PreparedMultiLiftingSurface):
-            raise TypeError("surface must be PreparedMultiLiftingSurface.")
         method_ = str(method)
         if method_ not in ("horseshoe-vlm", "ring-vlm", "lifting-line"):
             raise ValueError("Unsupported lifting method.")

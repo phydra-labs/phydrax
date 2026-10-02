@@ -21,6 +21,7 @@ from ._fingerprint import canonical_fingerprint
 from ._identity import ArtifactBindingIdentity
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 
 
 class DerivativeEstimatorKind(StrEnum):
@@ -53,6 +54,7 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         contract: DerivativeContract,
@@ -65,8 +67,6 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
         support_id: str,
         evidence_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(contract, DerivativeContract):
-            raise TypeError("contract must be DerivativeContract.")
         if not isinstance(estimator, DerivativeEstimatorKind):
             raise TypeError("estimator must be DerivativeEstimatorKind.")
 

@@ -26,6 +26,7 @@ from ...solver import (
     solve_jump_differential,
 )
 from ...stochastic import PoissonClockRealization
+from ...typing import checked
 from ._profiles import LayeredTerrestrialProfile
 from ._rates import spherical_surface_crossings, SurfaceCrossingMeasure
 from ._scattering import ElasticScatteringTable
@@ -382,6 +383,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
     def detector_radius_m(self) -> Array:
         return self.profile.radius_m - self.detector_depth_m
 
+    @checked
     def simulate(
         self,
         initial_paths: WeightedSampleBatch,
@@ -394,10 +396,6 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
         Sample columns are ``(x_m, y_m, z_m, vx_m_s, vy_m_s, vz_m_s)`` in
         ``profile.frame_id``. Event histories are not pathwise gradients.
         """
-        if not isinstance(initial_paths, WeightedSampleBatch):
-            raise TypeError("initial_paths must be a WeightedSampleBatch.")
-        if not isinstance(poisson, PoissonClockRealization):
-            raise TypeError("poisson must be a PoissonClockRealization.")
         raw_states = jnp.asarray(initial_paths.samples, dtype=jnp.float64)
         if raw_states.ndim != 2 or raw_states.shape[0] == 0 or raw_states.shape[1] != 6:
             raise ValueError("initial path samples must have nonempty shape (path, 6).")

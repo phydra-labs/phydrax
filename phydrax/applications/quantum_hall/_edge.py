@@ -28,6 +28,7 @@ from ...operators.periodic import (
     PeriodicFiniteOrbitalPlan,
     PreparedPeriodicOrbitalPencil,
 )
+from ...typing import checked
 
 
 class HallRibbonSpectrumResult(StrictModule, NonTrainableState):
@@ -53,6 +54,7 @@ class HallRibbonPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pencil: PreparedPeriodicOrbitalPencil,
@@ -63,8 +65,6 @@ class HallRibbonPlan(StrictModule, NonTrainableState):
         twist_count: int = 81,
         residual_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
-            raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         width_ = int(width)
         axis = int(open_axis)
         count = int(twist_count)

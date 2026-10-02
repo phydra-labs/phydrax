@@ -18,6 +18,7 @@ from ..equations._relativistic_neutrino import (
     GRNeutrinoMatterExchange,
 )
 from ..metrix._adm_exchange import StressEnergyProjection
+from ..typing import checked
 from ._gr_multigroup_radiation import (
     FixedGridGRMultigroupM1SSPRK3Plan,
     GRMultigroupM1State,
@@ -74,6 +75,7 @@ class FixedGridGRNeutrinoM1Plan(StrictModule, NonTrainableState):
     interaction: GRNeutrinoInteractionPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: GRNeutrinoM1System,
@@ -81,15 +83,11 @@ class FixedGridGRNeutrinoM1Plan(StrictModule, NonTrainableState):
         interaction: GRNeutrinoInteractionPlan,
         /,
     ) -> None:
-        if not isinstance(system, GRNeutrinoM1System):
-            raise TypeError("system must be GRNeutrinoM1System.")
         plans = tuple(species_transport)
         if len(plans) != system.species_count or any(
             not isinstance(value, FixedGridGRMultigroupM1SSPRK3Plan) for value in plans
         ):
             raise TypeError("One multigroup transport is required per neutrino species.")
-        if not isinstance(interaction, GRNeutrinoInteractionPlan):
-            raise TypeError("interaction must be GRNeutrinoInteractionPlan.")
         for species_system, transport in zip(system.species_systems, plans, strict=True):
             if transport.system.system_id != species_system.system_id:
                 raise ValueError("Neutrino species and transport systems differ.")
@@ -176,6 +174,7 @@ class FixedGridGRNeutrinoM1Plan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=jnp.int32),
         )
 
+    @checked
     def advance(
         self,
         state: GRNeutrinoM1State,
@@ -195,8 +194,6 @@ class FixedGridGRNeutrinoM1Plan(StrictModule, NonTrainableState):
         magnetic_squared: ArrayLike = 0.0,
         transport_extinction: ArrayLike = 0.0,
     ) -> GRNeutrinoM1StepResult:
-        if not isinstance(state, GRNeutrinoM1State):
-            raise TypeError("state must be GRNeutrinoM1State.")
         expected = self.cell_shape + (
             self.system.species_count,
             self.system.group_count,

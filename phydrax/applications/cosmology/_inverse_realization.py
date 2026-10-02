@@ -21,7 +21,7 @@ from ...solver._multiphysics_inference import (
     FieldObservationPlan,
     SimulationSensitivityReport,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 ParticleTargetKind: TypeAlias = Literal["density", "extensive-content"]
@@ -57,6 +57,7 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
     box_lengths: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedParticleGridSplat,
@@ -66,10 +67,6 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
         target_kind: ParticleTargetKind = "density",
         plan_id: str,
     ) -> None:
-        if not isinstance(transfer, PreparedParticleGridSplat):
-            raise TypeError("transfer must be PreparedParticleGridSplat.")
-        if not isinstance(observation, FieldObservationPlan):
-            raise TypeError("observation must be FieldObservationPlan.")
         if transfer.plan.execution.geometry_ad != "piecewise":
             raise ValueError(
                 "Particle position inference requires piecewise geometry AD."

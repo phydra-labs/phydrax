@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, OperatorProperties
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ...typing import checked
 from ._finite import PeriodicFiniteOrbitalRealization
 
 
@@ -41,6 +42,7 @@ class BottIndexPlan(StrictModule, NonTrainableState):
     maximum_matrix_elements: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         realization: PeriodicFiniteOrbitalRealization,
@@ -51,8 +53,6 @@ class BottIndexPlan(StrictModule, NonTrainableState):
         quantization_tolerance: float = 1.0e-6,
         maximum_matrix_elements: int = 4_000_000,
     ) -> None:
-        if not isinstance(realization, PeriodicFiniteOrbitalRealization):
-            raise TypeError("realization must be PeriodicFiniteOrbitalRealization.")
         occupied = int(occupied_count)
         dimension = realization.hamiltonian.input_size
         gap = float(spectral_gap_tolerance)

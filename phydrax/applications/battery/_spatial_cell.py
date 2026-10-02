@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._dfn import DFNParameters, DFNState, IsothermalDFNPlan
 
 
@@ -58,6 +59,7 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
     site_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         local_plan: IsothermalDFNPlan,
@@ -67,10 +69,6 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
         *,
         current_weights: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(local_plan, IsothermalDFNPlan):
-            raise TypeError("local_plan must be an IsothermalDFNPlan.")
-        if not isinstance(parameters, DFNParameters):
-            raise TypeError("parameters must be DFNParameters.")
         coordinates = np.asarray(site_coordinates, dtype=np.float64)
         if (
             coordinates.ndim != 2
@@ -145,6 +143,7 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
             jnp.zeros((self.site_count,), dtype=local.time_s.dtype),
         )
 
+    @checked
     def step(
         self,
         state: SpatialBatteryCellState,
@@ -152,8 +151,6 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
         step_size_s: ArrayLike,
         /,
     ) -> SpatialBatteryCellStepResult:
-        if not isinstance(state, SpatialBatteryCellState):
-            raise TypeError("state must be SpatialBatteryCellState.")
         total_current = jnp.asarray(total_current_density_a_m2).reshape(())
         step_size = jnp.asarray(step_size_s).reshape(())
         local_currents = total_current * self.site_count * self.current_weights

@@ -16,6 +16,7 @@ from phydrax import ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._unstructured_thermal import UnstructuredTwoMaterialThermalDiffusionPlan
 from ._unstructured_vof import JAXPLICStageReconstruction, UnstructuredVOFPlan
 
@@ -190,6 +191,7 @@ class VOFPhaseChangePlan(StrictModule, NonTrainableState):
             stage_plic.plan_id,
         )
 
+    @checked
     def evaluate_stage(
         self,
         state: ArrayLike,
@@ -200,8 +202,6 @@ class VOFPhaseChangePlan(StrictModule, NonTrainableState):
         heat_flux0: ArrayLike = 0.0,
         heat_flux1: ArrayLike = 0.0,
     ) -> VOFPhaseChangeStageEvaluation:
-        if not isinstance(stage_plic, JAXPLICStageReconstruction):
-            raise TypeError("stage_plic must be JAXPLICStageReconstruction.")
         if stage_plic.plan_id != self.vof.plan_id:
             raise ValueError("PLIC stage belongs to another VOF plan.")
         value = self.phase_change.system._state(state)

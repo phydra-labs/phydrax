@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 
 
 class InjectiveDensityResult(StrictModule):
@@ -44,6 +44,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
     maximum_dimension: int = eqx.field(static=True)
     law_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         latent_law: AbstractProbabilityLaw,
@@ -57,8 +58,6 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
         maximum_dimension: int = 64,
         law_id: str | None = None,
     ) -> None:
-        if not isinstance(latent_law, AbstractProbabilityLaw):
-            raise TypeError("latent_law must be an AbstractProbabilityLaw.")
         if not callable(map) or not callable(left_inverse):
             raise TypeError("map and left_inverse must be callable.")
         target_shape = tuple(event_shape)

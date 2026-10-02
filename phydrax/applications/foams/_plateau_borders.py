@@ -57,7 +57,7 @@ from ...geometry.multiregion_surface import (
 )
 from ...interfacial_transport import PreparedFilmSheetSlots, SurfaceFilmEvidence
 from ...sparse import EdgeRelation, gather_routes, route_reduce
-from ...typing import ConvertibleToArray
+from ...typing import checked, ConvertibleToArray
 from ._rupture import apply_foam_rupture, FoamRupturePlan, FoamRuptureResult
 
 
@@ -443,6 +443,7 @@ class PreparedPlateauBorder(StrictModule):
     quad_point_count: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PlateauBorderPlan,
@@ -453,14 +454,6 @@ class PreparedPlateauBorder(StrictModule):
         *,
         geometry_revision: ArrayLike = 0,
     ) -> None:
-        if not isinstance(plan, PlateauBorderPlan):
-            raise TypeError("plan must be PlateauBorderPlan.")
-        if not isinstance(surface, PreparedMultiRegionSurface):
-            raise TypeError("surface must be PreparedMultiRegionSurface.")
-        if not isinstance(film_slots, PreparedFilmSheetSlots):
-            raise TypeError("film_slots must be PreparedFilmSheetSlots.")
-        if not isinstance(state, MultiRegionSurfaceState):
-            raise TypeError("state must be MultiRegionSurfaceState.")
         topology = surface.topology
         state.require_topology(topology)
         if film_slots.topology_id != topology.topology_id:
@@ -1120,9 +1113,8 @@ class PreparedPlateauBorder(StrictModule):
         length = jnp.where(self.border_active, length, 1.0)
         return length, 0.5 * (first + second)
 
+    @checked
     def _check_state_shape(self, state: PlateauBorderState) -> None:
-        if not isinstance(state, PlateauBorderState):
-            raise TypeError("state must be PlateauBorderState.")
         topology = self.surface.topology
         slot_shape = (topology.vertex_capacity, topology.slot_width)
         border_shape = (self.plan.border_edge_capacity,)
@@ -1143,12 +1135,11 @@ class PreparedPlateauBorder(StrictModule):
         if state.geometry_revision.shape != ():
             raise ValueError("geometry_revision must be a scalar.")
 
+    @checked
     def _check_shapes(
         self, state: PlateauBorderState, boundary: PlateauBorderBoundaryFlux, /
     ) -> None:
         self._check_state_shape(state)
-        if not isinstance(boundary, PlateauBorderBoundaryFlux):
-            raise TypeError("boundary must be PlateauBorderBoundaryFlux.")
         topology = self.surface.topology
         if boundary.sheet_to_border_liquid_m3_s.shape != (
             self.film_slots.boundary_route_capacity,
@@ -1185,6 +1176,7 @@ class PlateauBorderAdaptation(StrictModule):
     refined_border_count: int = eqx.field(static=True)
     adaptation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedPlateauBorder,
@@ -1195,12 +1187,6 @@ class PlateauBorderAdaptation(StrictModule):
         retained_border_count: int,
         refined_border_count: int,
     ) -> None:
-        if not isinstance(prepared, PreparedPlateauBorder):
-            raise TypeError("prepared must be PreparedPlateauBorder.")
-        if not isinstance(transfer, ConservativeFieldTransfer):
-            raise TypeError("transfer must be ConservativeFieldTransfer.")
-        if not isinstance(transition, TopologyEpochTransition):
-            raise TypeError("transition must be TopologyEpochTransition.")
         retained = nonnegative_integer(retained_border_count, "retained_border_count")
         refined = nonnegative_integer(refined_border_count, "refined_border_count")
         self.prepared = prepared

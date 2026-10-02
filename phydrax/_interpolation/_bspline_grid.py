@@ -18,6 +18,7 @@ from .._dtype_names import inexact_result_type
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 class BSplineGrid(StrictModule, NonTrainableState):
@@ -248,6 +249,7 @@ class TrainableBSplineGrid(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_grid(
         cls,
         grid: BSplineGrid,
@@ -256,8 +258,6 @@ class TrainableBSplineGrid(StrictModule):
         minimum_span: float | None = None,
     ) -> TrainableBSplineGrid:
         """Initialize logits from a simple open fixed grid."""
-        if not isinstance(grid, BSplineGrid):
-            raise TypeError("grid must be a BSplineGrid.")
         knots_host = np.asarray(grid.knots)
         lower, upper = (float(value) for value in grid.active_interval)
         if (

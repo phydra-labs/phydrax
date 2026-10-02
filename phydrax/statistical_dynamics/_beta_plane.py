@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations._barotropic_beta_plane import BarotropicBetaPlane
+from ..typing import checked
 from ._cumulants import (
     cumulants_from_ensemble,
     DenseCumulantState,
@@ -38,16 +39,13 @@ class BetaPlaneStatisticalCoordinates(StrictModule, NonTrainableState):
     coordinate_size: int = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: BarotropicBetaPlane,
         partition: InteractionPartition,
         /,
     ) -> None:
-        if not isinstance(problem, BarotropicBetaPlane):
-            raise TypeError("problem must be a BarotropicBetaPlane.")
-        if not isinstance(partition, InteractionPartition):
-            raise TypeError("partition must be an InteractionPartition.")
         if partition.state_shape != problem.state_shape:
             raise ValueError("Interaction partition and beta-plane modal shapes differ.")
         coordinates = problem.coordinates

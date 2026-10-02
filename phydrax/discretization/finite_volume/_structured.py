@@ -14,6 +14,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
+from ...typing import checked
 from .._axis import broadcasted_grid
 from .._core import (
     DiscretizationCapability,
@@ -78,6 +79,7 @@ class FiniteVolumePlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -88,8 +90,6 @@ class FiniteVolumePlan(AbstractDiscretizationPlan):
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("FiniteVolumePlan requires a PreparedTensorGrid.")
         if any(axis.primary_entity != "interval" for axis in grid.structured_axes):
             raise ValueError("Finite-volume grids require interval-primary axes.")
         field = str(field_name)
@@ -166,6 +166,7 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
+    @checked
     def __init__(
         self,
         plan: FiniteVolumePlan,
@@ -173,8 +174,6 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
         *,
         numeric_version: str = "0",
     ) -> None:
-        if not isinstance(plan, FiniteVolumePlan):
-            raise TypeError("plan must be a FiniteVolumePlan.")
         grid = plan.grid
         cell_layout = grid.cells()
         face_layouts = tuple(grid.faces(name) for name in grid.axis_names)

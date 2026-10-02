@@ -48,7 +48,7 @@ from ..linalg.eigen import (
     GeneralizedEigenproblem,
     prepare_eigensolve,
 )
-from ..typing import parse
+from ..typing import checked, parse
 
 
 type HodgeLaplaceFormulation = Literal["mixed", "primal"]
@@ -88,6 +88,7 @@ class HodgeLaplacePlan(StrictModule):
     formulation: HodgeLaplaceFormulation = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: AbstractDeRhamComplex,
@@ -99,8 +100,6 @@ class HodgeLaplacePlan(StrictModule):
         harmonic: HarmonicSubspace,
         preconditioner: PreconditioningPolicy | None = None,
     ) -> None:
-        if not isinstance(complex, AbstractDeRhamComplex):
-            raise TypeError("complex must be an AbstractDeRhamComplex.")
         boundary = parse(boundary, ComplexBoundary, "boundary")
         formulation = parse(formulation, HodgeLaplaceFormulation, "formulation")
         if (
@@ -109,8 +108,6 @@ class HodgeLaplacePlan(StrictModule):
             or not 0 <= k <= complex.dimension
         ):
             raise ValueError("k must be an integer degree in the complex.")
-        if not isinstance(harmonic, HarmonicSubspace):
-            raise TypeError("harmonic must be a complete HarmonicSubspace.")
         hilbert = complex.hilbert_complex(boundary=boundary)
         if harmonic.complex_id != hilbert.complex_id or harmonic.degree != k:
             raise ValueError(

@@ -18,6 +18,7 @@ from ...discretization import CellMesh, PolygonalConnectivity, TetrahedralConnec
 from ...geometry.simplicial import TriangleMesh, TriangleMeshQueryIndex
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...logging import emit
+from ...typing import checked
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
@@ -212,12 +213,11 @@ class FTetWildProvider:
             closed=not bool(np.any(np.asarray(connectivity.boundary_edges))),
         )
 
+    @checked
     def validate(
         self, source: SurfaceModel, specification: VolumeMeshingSpec, /
     ) -> ProviderSupportReport:
         descriptor = self.inspect_source(source)
-        if not isinstance(specification, VolumeMeshingSpec):
-            raise TypeError("specification must be VolumeMeshingSpec.")
         unsupported = []
         scope = self.whole_scope(source)
         if specification.boundary_scope.scope_id != scope.scope_id:
@@ -295,9 +295,8 @@ class FTetWildProvider:
             self.validate(source, specification),
         )
 
+    @checked
     def execute(self, plan: FTetWildMeshingPlan, /) -> CellMeshingResult:
-        if not isinstance(plan, FTetWildMeshingPlan):
-            raise TypeError("plan must be FTetWildMeshingPlan.")
         self.validate(plan.source, plan.specification).require_supported()
         started = time.perf_counter()
         emit(

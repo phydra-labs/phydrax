@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._nematic import NematicTensorBasis
 
 
@@ -42,6 +43,7 @@ class NematicAnchoringPlan(StrictModule, NonTrainableState):
     scalar_order: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         basis: NematicTensorBasis,
@@ -54,8 +56,6 @@ class NematicAnchoringPlan(StrictModule, NonTrainableState):
         strength: ArrayLike = 1.0,
         scalar_order: ArrayLike = 1.0,
     ) -> None:
-        if not isinstance(basis, NematicTensorBasis):
-            raise TypeError("basis must be NematicTensorBasis.")
         if not isinstance(kind, NematicAnchoringKind):
             raise TypeError("kind must be NematicAnchoringKind.")
         mask = jnp.asarray(boundary_mask, dtype=jnp.bool_)

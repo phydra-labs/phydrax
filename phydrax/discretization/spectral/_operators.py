@@ -19,6 +19,7 @@ from ...linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ...typing import checked
 from .._spaces import DiscreteFieldSpace
 from ._space import TensorSpectralDiscretization
 
@@ -35,6 +36,7 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
     exact: bool = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -47,8 +49,6 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
         classification: str,
         exact: bool = True,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if not isinstance(source_space, DiscreteFieldSpace) or not isinstance(
             target_space, DiscreteFieldSpace
         ):

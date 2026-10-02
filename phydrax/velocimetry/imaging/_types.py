@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...imaging import ImagePlaneSupport
+from ...typing import checked
 
 
 class ImagePair2D(StrictModule, NonTrainableState):
@@ -29,6 +30,7 @@ class ImagePair2D(StrictModule, NonTrainableState):
     pair_id: str = eqx.field(static=True)
     provenance: tuple[str, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         first: ArrayLike,
@@ -42,8 +44,6 @@ class ImagePair2D(StrictModule, NonTrainableState):
         pair_id: str | None = None,
         provenance: Sequence[str] = (),
     ) -> None:
-        if not isinstance(geometry, ImagePlaneSupport):
-            raise TypeError("geometry must be an ImagePlaneSupport.")
         first_ = jnp.asarray(first)
         second_ = jnp.asarray(second)
         if first_.shape != geometry.image_shape or second_.shape != geometry.image_shape:

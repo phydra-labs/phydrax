@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class SourceSampleKind(str, Enum):
@@ -481,6 +482,7 @@ class PolynomialImageAnalysisResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         status: PolynomialImageAnalysisStatus,
@@ -502,14 +504,6 @@ class PolynomialImageAnalysisResult(StrictModule, NonTrainableState):
             raise TypeError("status must be PolynomialImageAnalysisStatus.")
         if not isinstance(source_kind, SourceSampleKind):
             raise TypeError("source_kind must be SourceSampleKind.")
-        if not isinstance(jacobian_rank, JacobianRankEvidence):
-            raise TypeError("jacobian_rank must be JacobianRankEvidence.")
-        if not isinstance(relations, TargetRelationEvidence):
-            raise TypeError("relations must be TargetRelationEvidence.")
-        if not isinstance(resources, PolynomialImageResourceEvidence):
-            raise TypeError("resources must be PolynomialImageResourceEvidence.")
-        if not isinstance(claims, PolynomialImageClaimEvidence):
-            raise TypeError("claims must be PolynomialImageClaimEvidence.")
         map_id_ = str(map_id)
         plan_id_ = str(plan_id)
         if not map_id_ or not plan_id_:
@@ -612,6 +606,7 @@ class ExactPolynomialContainmentResult(StrictModule, NonTrainableState):
     relation_system_id: str = eqx.field(static=True)
     proof_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         remainders: Sequence[ExactCompositionRemainder],
@@ -626,8 +621,6 @@ class ExactPolynomialContainmentResult(StrictModule, NonTrainableState):
             not isinstance(value, ExactCompositionRemainder) for value in values
         ):
             raise TypeError("Exact containment needs non-empty composition remainders.")
-        if not isinstance(claims, PolynomialImageClaimEvidence):
-            raise TypeError("claims must be PolynomialImageClaimEvidence.")
         map_id_ = str(map_id)
         relation_id = str(relation_system_id)
         if not map_id_ or not relation_id:

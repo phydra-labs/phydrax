@@ -15,6 +15,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite
 from ..discretization.particle import ParticleConversionState
+from ..typing import checked
 from ._particle_conversion import (
     ParticleConversionEvaluation,
     PreparedParticleConversionDynamics,
@@ -83,9 +84,8 @@ class CellwiseReactiveFluidImplicitPlan(StrictModule, NonTrainableState):
     def species_count(self) -> int:
         return self.species_storage.shape[1]
 
+    @checked
     def validate_state(self, state: ReactiveFluidImplicitState, /) -> Array:
-        if not isinstance(state, ReactiveFluidImplicitState):
-            raise TypeError("state must be ReactiveFluidImplicitState.")
         valid_shape = (
             state.velocity.ndim == 2
             and state.velocity.shape[0] == self.cell_count
@@ -161,6 +161,7 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
     drag_coefficient: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fluid: CellwiseReactiveFluidImplicitPlan,
@@ -169,12 +170,6 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
         drag_coefficient: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(fluid, CellwiseReactiveFluidImplicitPlan):
-            raise TypeError("fluid must be CellwiseReactiveFluidImplicitPlan.")
-        if not isinstance(conversion, PreparedParticleConversionDynamics):
-            raise TypeError("conversion must be PreparedParticleConversionDynamics.")
-        if not isinstance(continuum_exchange, ParticleContinuumExchangePlan):
-            raise TypeError("continuum_exchange must be ParticleContinuumExchangePlan.")
         drag = np.asarray(drag_coefficient, dtype=np.float64)
         capacity = continuum_exchange.transfer.particle_capacity
         if drag.shape != (capacity,) or np.any(~np.isfinite(drag)) or np.any(drag < 0.0):
@@ -231,13 +226,10 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
             stage.previous_conversion.state_id,
         )
 
+    @checked
     def evaluate(
         self, unknown: ReactiveMonolithicUnknown, stage: ReactiveMonolithicStage, /
     ) -> ReactiveMonolithicResidualEvaluation:
-        if not isinstance(unknown, ReactiveMonolithicUnknown):
-            raise TypeError("unknown must be ReactiveMonolithicUnknown.")
-        if not isinstance(stage, ReactiveMonolithicStage):
-            raise TypeError("stage must be ReactiveMonolithicStage.")
         dt = stage.step_size
         candidate_conversion = self.conversion_state(unknown, stage)
         thermodynamics = tuple(

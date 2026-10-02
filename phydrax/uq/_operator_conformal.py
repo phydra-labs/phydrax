@@ -14,6 +14,7 @@ import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ..nn.operator.data import OperatorPrediction
+from ..typing import checked
 from ._conformal import FunctionalConformal
 from ._operator import (
     _output_mask,
@@ -32,6 +33,7 @@ class OperatorFunctionalConformal(StrictModule):
     case_axis: str = eqx.field(static=True)
     field_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calibrator: FunctionalConformal,
@@ -40,8 +42,6 @@ class OperatorFunctionalConformal(StrictModule):
         case_axis: str,
         field_name: str,
     ) -> None:
-        if not isinstance(calibrator, FunctionalConformal):
-            raise TypeError("calibrator must be a FunctionalConformal.")
         axis = str(case_axis)
         name = str(field_name)
         if not axis or not name:
@@ -51,6 +51,7 @@ class OperatorFunctionalConformal(StrictModule):
         self.field_name = name
 
     @classmethod
+    @checked
     def calibrate(
         cls,
         center: OperatorPrediction,
@@ -64,8 +65,6 @@ class OperatorFunctionalConformal(StrictModule):
         score: Literal["max", "l2"] = "max",
         min_scale: float = 1e-8,
     ) -> OperatorFunctionalConformal:
-        if not isinstance(center, OperatorPrediction):
-            raise TypeError("center must be an OperatorPrediction.")
         selected_name, center_field, query = _select_prediction_field(
             center,
             field_name,
@@ -130,14 +129,13 @@ class OperatorFunctionalConformal(StrictModule):
             field_name=selected_name,
         )
 
+    @checked
     def interval(
         self,
         center: OperatorPrediction,
         scale: OperatorPrediction | None = None,
         /,
     ) -> OperatorPredictionInterval:
-        if not isinstance(center, OperatorPrediction):
-            raise TypeError("center must be an OperatorPrediction.")
         _, center_field, query = _select_prediction_field(
             center,
             self.field_name,

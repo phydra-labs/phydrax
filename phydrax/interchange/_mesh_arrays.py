@@ -12,6 +12,7 @@ from numpy.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
+from ..typing import checked
 from ..units import UnitDefinition
 
 
@@ -320,6 +321,7 @@ class MeshArrayArtifact:
     patches: tuple[MeshArraySelection, ...]
     artifact_id: str
 
+    @checked
     def __init__(
         self,
         points: ArrayLike,
@@ -392,8 +394,6 @@ class MeshArrayArtifact:
             raise ValueError(
                 "Mesh array field names must be unique within each association."
             )
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not source or not format_ or not version:
             raise ValueError(
                 "Mesh array source identity, format, and numeric version must be non-empty."

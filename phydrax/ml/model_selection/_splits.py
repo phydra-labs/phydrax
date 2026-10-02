@@ -21,6 +21,7 @@ from ..._differentiation import (
 )
 from ..._strict import StrictModule
 from ...data_utils._splits import kfold_indices
+from ...typing import checked
 from .._batch import MLBatch
 
 
@@ -473,11 +474,8 @@ class NestedFoldRecord(StrictModule):
     outer_fold: FoldRecord
     inner_split: SplitPlanResult
 
+    @checked
     def __init__(self, outer_fold: FoldRecord, inner_split: SplitPlanResult, /) -> None:
-        if not isinstance(outer_fold, FoldRecord):
-            raise TypeError("outer_fold must be a FoldRecord.")
-        if not isinstance(inner_split, SplitPlanResult):
-            raise TypeError("inner_split must be a SplitPlanResult.")
         if bool(
             jnp.any(jnp.isin(inner_split.sample_indices, outer_fold.validation_indices))
         ):

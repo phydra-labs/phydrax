@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._chemical_jump import ChemicalJumpProcess, ChemicalJumpRuntime
 
 
@@ -76,16 +77,13 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
     parameters: RelaxedChemicalJumpParameters
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         process: ChemicalJumpProcess,
         parameters: RelaxedChemicalJumpParameters,
         /,
     ) -> None:
-        if not isinstance(process, ChemicalJumpProcess):
-            raise TypeError("process must be ChemicalJumpProcess.")
-        if not isinstance(parameters, RelaxedChemicalJumpParameters):
-            raise TypeError("parameters must be RelaxedChemicalJumpParameters.")
         self.process = process
         self.parameters = parameters
         self.plan_id = canonical_fingerprint(
@@ -135,6 +133,7 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         )
         return intensities, valid
 
+    @checked
     def simulate(
         self,
         initial_state: ArrayLike,
@@ -145,8 +144,6 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         state = jnp.asarray(initial_state)
         if state.shape != self.process.state_shape:
             raise ValueError("initial_state must match chemical jump state shape.")
-        if not isinstance(runtime, ChemicalJumpRuntime):
-            raise TypeError("runtime must be ChemicalJumpRuntime.")
         keys = jax.random.split(key, self.parameters.maximum_events * 2).reshape(
             self.parameters.maximum_events, 2
         )

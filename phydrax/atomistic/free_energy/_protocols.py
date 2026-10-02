@@ -20,6 +20,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._values import (
     DESTINATION_MINUS_SOURCE,
     FreeEnergyCorrectionKind,
@@ -488,14 +489,13 @@ class MappedRelativeTransformationPlan(StrictModule, NonTrainableState):
     mapping_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         leg: FreeEnergyProtocolLegPlan,
         mapping_id: str,
         /,
     ) -> None:
-        if not isinstance(leg, FreeEnergyProtocolLegPlan):
-            raise TypeError("Mapped transformations require a protocol leg.")
         mapping = str(mapping_id).strip()
         if not mapping:
             raise ValueError("mapping_id must be non-empty.")

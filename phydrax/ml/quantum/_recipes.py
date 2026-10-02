@@ -34,7 +34,7 @@ from ..._training_kernel import (
 )
 from ..._training_objective import _ObjectiveContribution
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
-from ...typing import parse
+from ...typing import checked, parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -62,6 +62,7 @@ class FittedCircuitFeatureTransform(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: DenseCircuitExpectationModel,
@@ -69,8 +70,6 @@ class FittedCircuitFeatureTransform(AbstractFittedModel):
         output_schema: FeatureSchema,
         /,
     ) -> None:
-        if not isinstance(model, DenseCircuitExpectationModel):
-            raise TypeError("model must be DenseCircuitExpectationModel.")
         if len(input_schema.names) != model.in_size:
             raise ValueError("Input feature schema does not match the circuit model.")
         if len(output_schema.names) != model.out_size:
@@ -125,6 +124,7 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
     output_names: tuple[str, ...] = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: DenseCircuitExpectationModel,
@@ -133,8 +133,6 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
         output_names: Sequence[str] = (),
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if not isinstance(model, DenseCircuitExpectationModel):
-            raise TypeError("model must be DenseCircuitExpectationModel.")
         names = tuple(str(name) for name in output_names)
         if names and len(names) != model.out_size:
             raise ValueError("output_names must match the circuit observable count.")
@@ -143,10 +141,9 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
         self.output_names = names
         self.weight_policy = weight_policy
 
+    @checked
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
-        if not isinstance(batch, MLBatch):
-            raise TypeError("batch must be an MLBatch.")
         if batch.feature_count != self.model.in_size:
             raise ValueError("Batch feature count does not match the circuit model.")
         features = batch.dense_features()
@@ -240,6 +237,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
     tolerance: float = eqx.field(static=True)
     l2_strength: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         feature_model: DenseCircuitExpectationModel,
@@ -252,8 +250,6 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2_strength: float = 0.0,
     ) -> None:
-        if not isinstance(feature_model, DenseCircuitExpectationModel):
-            raise TypeError("feature_model must be DenseCircuitExpectationModel.")
         labels = (float(class_labels[0]), float(class_labels[1]))
         values = (
             float(learning_rate),
@@ -280,9 +276,8 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         self.tolerance = values[1]
         self.l2_strength = values[2]
 
+    @checked
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        if not isinstance(batch, MLBatch):
-            raise TypeError("batch must be an MLBatch.")
         if key is None:
             raise ValueError("Variational circuit fitting requires an explicit JAX key.")
         if batch.case_shape:

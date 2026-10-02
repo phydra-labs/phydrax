@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from ...._fingerprint import canonical_fingerprint, canonical_mapping
+from ....typing import checked
 
 
 class ClinicalResearchUse(Enum):
@@ -183,6 +184,7 @@ class ClinicalResearchValidationPlan:
     acceptance_criteria: tuple[str, ...]
     plan_id: str = field(init=False)
 
+    @checked
     def __init__(
         self,
         context: ClinicalResearchContext,
@@ -200,8 +202,6 @@ class ClinicalResearchValidationPlan:
         failure_analysis_plan: str,
         acceptance_criteria: Sequence[str],
     ) -> None:
-        if not isinstance(context, ClinicalResearchContext):
-            raise TypeError("context must be a ClinicalResearchContext.")
         training = _text(training_cohort_id, "training_cohort_id")
         calibration = _text(calibration_cohort_id, "calibration_cohort_id")
         validation = _text(validation_cohort_id, "validation_cohort_id")
@@ -269,6 +269,7 @@ class ClinicalResearchValidationRecord:
     failure_analysis_results: Mapping[str, Any]
     record_content_id: str = field(init=False)
 
+    @checked
     def __init__(
         self,
         record_id: str,
@@ -287,8 +288,6 @@ class ClinicalResearchValidationRecord:
         clinical_decision_claim: bool = False,
         regulated_claim: bool = False,
     ) -> None:
-        if not isinstance(plan, ClinicalResearchValidationPlan):
-            raise TypeError("plan must be a ClinicalResearchValidationPlan.")
         if bool(contains_phi):
             raise ValueError(
                 "ClinicalResearchValidationRecord refuses protected health information."
@@ -362,11 +361,10 @@ class ClinicalResearchValidationEvidence:
     record_complete: bool
 
     @classmethod
+    @checked
     def from_record(
         cls, record: ClinicalResearchValidationRecord, /
     ) -> "ClinicalResearchValidationEvidence":
-        if not isinstance(record, ClinicalResearchValidationRecord):
-            raise TypeError("record must be a ClinicalResearchValidationRecord.")
         plan = record.plan
         context = plan.context
         question = bool(context.research_question and context.study_context)

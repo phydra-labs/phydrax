@@ -20,7 +20,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import (
     ANGSTROM,
     conversion_factor,
@@ -145,6 +145,7 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
     provider_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         calculation: ElectronicCalculationPlan,
@@ -154,8 +155,6 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         provider_id: str,
         /,
     ) -> None:
-        if not isinstance(capabilities, ElectronicProviderCapabilities):
-            raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
         self.capabilities = capabilities
         self.calculator_factory = calculator_factory
@@ -321,6 +320,7 @@ class ASECalculatorProvider(AbstractElectronicProvider):
     provider_id: str = eqx.field(static=True)
     capabilities: ElectronicProviderCapabilities
 
+    @checked
     def __init__(
         self,
         calculator_factory: ASECalculatorFactory,
@@ -336,8 +336,6 @@ class ASECalculatorProvider(AbstractElectronicProvider):
         name = str(provider_name).strip()
         if not name:
             raise ValueError("provider_name must be non-empty.")
-        if not isinstance(state_binding, ASEElectronicStateBinding):
-            raise TypeError("state_binding must be ASEElectronicStateBinding.")
         model_id = str(model_chemistry_id).strip()
         if not model_id:
             raise ValueError("model_chemistry_id must be non-empty.")

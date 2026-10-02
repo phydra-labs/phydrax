@@ -15,7 +15,32 @@ import numpy.typing as npt
 import phydrax as phx
 import phydrax.typing as pt
 from phydrax.equations import ChemicalComponentCatalog
+from phydrax.linalg.svd import (
+    prepare_svd,
+    PreparedSVDSolve,
+    projector_action,
+    RandomizedSVD,
+    SingularSubspaceResponse,
+    svd,
+    SVDProblem,
+    SVDRankEvidence,
+    SVDSolvePolicy,
+    SVDSolveResult,
+)
 from phydrax.precision import precision_dtype_name, ScalarPrecisionDType
+from phydrax.solver import (
+    analyze_projector_monte_carlo,
+    initialize_projector_monte_carlo,
+    PreparedProjectorMonteCarlo,
+    ProjectorEstimatorPolicy,
+    ProjectorMonteCarloAnalysis,
+    ProjectorMonteCarloResult,
+    ProjectorMonteCarloState,
+    ProjectorMonteCarloStepResult,
+    solve_projector_monte_carlo,
+    step_projector_monte_carlo,
+)
+from phydrax.uq import CorrelatedRatioResult
 
 
 class ComponentDim(pt.Dim, minimum=1):
@@ -61,3 +86,53 @@ def constructors() -> None:
         weights=1,  # ty: ignore[unknown-argument]
     )
     phx.typing.validate(catalog)
+
+
+@pt.checked
+def scaled_masses(catalog: ChemicalComponentCatalog, scale: float, /) -> jax.Array:
+    return scale * catalog.molar_masses
+
+
+def checked_signatures(catalog: ChemicalComponentCatalog) -> None:
+    assert_type(scaled_masses(catalog, 2.0), jax.Array)
+    scaled_masses(catalog)  # ty: ignore[missing-argument]
+    scaled_masses("catalog", 2.0)  # ty: ignore[invalid-argument-type]
+
+
+def singular_subspaces(problem: SVDProblem, key: pt.PRNGKey, probe: jax.Array) -> None:
+    policy = SVDSolvePolicy(RandomizedSVD(), count=2, differentiation="projector")
+    prepared = prepare_svd(problem, policy, key=key)
+    assert_type(prepared, PreparedSVDSolve)
+    result = svd(prepared)
+    assert_type(result, SVDSolveResult)
+    assert_type(result.rank_evidence, SVDRankEvidence)
+    assert_type(result.right_response, SingularSubspaceResponse)
+    assert_type(result.derivative_valid, jax.Array)
+    assert_type(
+        projector_action(result.right_coordinates, result.right_response, probe),
+        jax.Array,
+    )
+
+
+def projector_consumer(
+    prepared: PreparedProjectorMonteCarlo,
+    key: pt.PRNGKey,
+    result: ProjectorMonteCarloResult,
+) -> None:
+    state = initialize_projector_monte_carlo(prepared, key)
+    assert_type(state, ProjectorMonteCarloState)
+    assert_type(state.support_keys, jax.Array)
+    assert_type(state.root_key, jax.Array)
+    assert_type(
+        step_projector_monte_carlo(prepared, state), ProjectorMonteCarloStepResult
+    )
+    assert_type(
+        solve_projector_monte_carlo(prepared, state, steps=1), ProjectorMonteCarloResult
+    )
+    analysis = analyze_projector_monte_carlo(
+        prepared, result, policy=ProjectorEstimatorPolicy()
+    )
+    assert_type(analysis, ProjectorMonteCarloAnalysis)
+    assert_type(analysis.projected, CorrelatedRatioResult)
+    assert_type(analysis.projected.mean_covariance, jax.Array)
+    initialize_projector_monte_carlo(prepared, 1)  # ty: ignore[invalid-argument-type]

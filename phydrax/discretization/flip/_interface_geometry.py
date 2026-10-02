@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_support import PreparedTensorGrid
 from ..finite_volume._mac_interface_state import MACFreeSurfaceGeometryState
 
@@ -58,6 +59,7 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
     spacing: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -67,8 +69,6 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         narrow_band_cells: int = 4,
         minimum_ghost_fraction: float = 1.0e-2,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be PreparedTensorGrid.")
         radius = float(particle_radius)
         band = int(narrow_band_cells)
         minimum = float(minimum_ghost_fraction)

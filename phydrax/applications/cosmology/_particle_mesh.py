@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...solver import ParticleMeshGravityPlan
+from ...typing import checked
 from ._background import FLRWBackground
 from ._particles import (
     CosmologicalKDKPlan,
@@ -121,6 +122,7 @@ class CosmologicalParticleMeshPlan(StrictModule):
     scale_factors: Array = fixed_field()
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kinematics: CosmologicalKDKPlan,
@@ -128,10 +130,6 @@ class CosmologicalParticleMeshPlan(StrictModule):
         scale_factors: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(kinematics, CosmologicalKDKPlan):
-            raise TypeError("kinematics must be CosmologicalKDKPlan.")
-        if not isinstance(gravity, ParticleMeshGravityPlan):
-            raise TypeError("gravity must be ParticleMeshGravityPlan.")
         if kinematics.particles.prepared_id != gravity.transfer.particles.prepared_id:
             raise ValueError("Cosmological KDK and PM must share one particle support.")
         grid = gravity.transfer.plan.target
@@ -165,6 +163,7 @@ class CosmologicalParticleMeshPlan(StrictModule):
             }
         )
 
+    @checked
     def rollout(
         self,
         background: FLRWBackground,
@@ -172,10 +171,6 @@ class CosmologicalParticleMeshPlan(StrictModule):
         args: Any = None,
         /,
     ) -> CosmologicalParticleMeshResult:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
-        if not isinstance(state, CosmologicalParticleState):
-            raise TypeError("state must be CosmologicalParticleState.")
         if background.scale.scale_id != self.kinematics.scale.scale_id:
             raise ValueError("Background and cosmological PM scales disagree.")
         initial_scale = self.scale_factors[0].astype(state.scale_factor.dtype)

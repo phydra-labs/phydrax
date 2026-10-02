@@ -37,6 +37,7 @@ from .._training_kernel import (
 )
 from .._training_objective import _ObjectiveContribution
 from ..kernels import AbstractPositiveDefiniteKernel
+from ..typing import checked
 from ._minibatch_posterior import (
     AbstractObservationFactor,
     LikelihoodBatch,
@@ -132,6 +133,7 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
     regularization: Array
     likelihood_samples: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kernel: AbstractPositiveDefiniteKernel,
@@ -141,12 +143,6 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
         regularization: ArrayLike = 0.0,
         likelihood_samples: int = 8,
     ) -> None:
-        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("kernel must be an AbstractPositiveDefiniteKernel.")
-        if not isinstance(observation_factor, AbstractObservationFactor):
-            raise TypeError(
-                "observation_factor must implement AbstractObservationFactor."
-            )
         if observation_factor.semantics != "normalized_likelihood":
             raise ValueError("SVGP ELBO requires normalized_likelihood semantics.")
         regularization_array = jnp.asarray(regularization, dtype=jnp.float64).reshape(())
@@ -243,6 +239,7 @@ class SparseVariationalGaussianProcessResult(StrictModule):
     source_fingerprint: str = eqx.field(static=True)
     training_checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -256,8 +253,6 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         trace = jnp.asarray(objective_trace, dtype=jnp.float64)
         if trace.ndim != 1 or trace.size == 0:
             raise ValueError("objective_trace must be a nonempty vector.")
-        if not isinstance(training_state, TrainingKernelState):
-            raise TypeError("training_state must be a TrainingKernelState.")
         self.state = state
         self.training_state = training_state
         self.objective_trace = trace

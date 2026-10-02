@@ -23,6 +23,7 @@ from ..metrix import (
     InformationMetricOperator,
     pulled_back_information_operator,
 )
+from ..typing import checked
 
 
 class ExponentialFamilyInformationGeometry(StrictModule):
@@ -31,6 +32,7 @@ class ExponentialFamilyInformationGeometry(StrictModule):
     family: AbstractExponentialFamily
     precision: GeometryPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         family: AbstractExponentialFamily,
@@ -38,21 +40,18 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         *,
         precision: GeometryPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(family, AbstractExponentialFamily):
-            raise TypeError("family must implement AbstractExponentialFamily.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, GeometryPrecisionPolicy):
             raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
         self.family = family
         self.precision = precision_
 
+    @checked
     def _computed_natural(
         self,
         natural: NaturalCoordinates,
         /,
     ) -> NaturalCoordinates:
-        if not isinstance(natural, NaturalCoordinates):
-            raise TypeError("natural must be NaturalCoordinates.")
         if natural.signature.key != self.family.signature.key:
             raise ValueError(
                 "Natural-coordinate signature does not match the geometry family."

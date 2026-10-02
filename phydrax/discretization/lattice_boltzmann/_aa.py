@@ -14,6 +14,7 @@ from jax import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._lattice import LatticeBoltzmannVelocitySet
 
 
@@ -50,9 +51,8 @@ class AALatticeBoltzmannPlan(StrictModule, NonTrainableState):
     velocity_set: LatticeBoltzmannVelocitySet
     addressing_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, velocity_set: LatticeBoltzmannVelocitySet, /) -> None:
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         self.velocity_set = velocity_set
         self.addressing_id = canonical_fingerprint(
             {
@@ -86,9 +86,8 @@ class AALatticeBoltzmannPlan(StrictModule, NonTrainableState):
             "AA parity must be zero (even) or one (odd).",
         )
 
+    @checked
     def _state(self, state: AALatticeBoltzmannParityState, /) -> None:
-        if not isinstance(state, AALatticeBoltzmannParityState):
-            raise TypeError("state must be AALatticeBoltzmannParityState.")
         if state.addressing_id != self.addressing_id:
             raise ValueError("AA state was created by a different addressing plan.")
         self._populations(state.storage)
@@ -184,13 +183,12 @@ class AALatticeBoltzmannPlan(StrictModule, NonTrainableState):
             identity,
         )
 
+    @checked
     def restore(
         self, checkpoint: AALatticeBoltzmannCheckpoint, /
     ) -> AALatticeBoltzmannParityState:
         """Restore the exact raw representation, including its next-step parity."""
 
-        if not isinstance(checkpoint, AALatticeBoltzmannCheckpoint):
-            raise TypeError("checkpoint must be AALatticeBoltzmannCheckpoint.")
         if checkpoint.addressing_id != self.addressing_id:
             raise ValueError("AA checkpoint belongs to a different addressing plan.")
         state = AALatticeBoltzmannParityState(

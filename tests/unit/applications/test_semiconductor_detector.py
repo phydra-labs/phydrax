@@ -114,7 +114,7 @@ def test_semiconductor_detector_scenario_1() -> None:
     np.testing.assert_allclose(bias.charge_closure_defect, 0.0, atol=1e-20)
 
     route = DetectorTrajectoryRoute(StateLayout((1,)), (0,))
-    with pytest.raises(TypeError, match="bias results cannot substitute"):
+    with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         PrescribedShockleyRamoPlan(weighting_plan, bias, route)
     inner, outer, length = 0.4, 2.5, 1.7

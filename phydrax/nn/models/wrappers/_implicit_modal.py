@@ -30,7 +30,7 @@ from ....discretization.spectral import (
 )
 from ....discretization.spectral._modal_discovery import PreparedModalSupport
 from ....domain import Domain, DomainFunction
-from ....typing import parse
+from ....typing import checked, parse
 from ..._keys import EvalKey
 from ...parameters import PositiveTransform, TransformedParameter
 
@@ -71,6 +71,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
     point_count: int = eqx.field(static=True)
     grid_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: TensorSpectralDiscretization,
@@ -79,8 +80,6 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
         mode_scales: ArrayLike | None,
         maximum_query_points: int,
     ) -> None:
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         maximum = index(maximum_query_points)
         point_count = math.prod(discretization.modal_shape)
         if maximum < 1:
@@ -343,6 +342,7 @@ class ImplicitModalField(StrictModule, ParameterOwner):
     real_field: bool = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         model: Any,
@@ -359,8 +359,6 @@ class ImplicitModalField(StrictModule, ParameterOwner):
     ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         components = _component_shape(component_shape)
         grid = _ModalCoordinateGrid(
             discretization,
@@ -506,6 +504,7 @@ class ImplicitModalField(StrictModule, ParameterOwner):
             real_output=real_output,
         )
 
+    @checked
     def as_domain_function(
         self,
         domain: Domain,
@@ -514,8 +513,6 @@ class ImplicitModalField(StrictModule, ParameterOwner):
         time_label: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> DomainFunction:
-        if not isinstance(domain, Domain):
-            raise TypeError("domain must be a Domain.")
         label = (
             domain.labels[0]
             if time_label is None and len(domain.labels) == 1
@@ -548,14 +545,13 @@ class SparseImplicitModalField(StrictModule, ParameterOwner):
     modal_shape: tuple[int, ...] = eqx.field(static=True)
     support_epoch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: PreparedModalSupport,
         modal_shape: Sequence[int],
         /,
     ) -> None:
-        if not isinstance(support, PreparedModalSupport):
-            raise TypeError("support must be PreparedModalSupport.")
         shape = tuple(modal_shape)
         if not shape or any(value <= 0 for value in shape):
             raise ValueError("modal_shape must be positive.")

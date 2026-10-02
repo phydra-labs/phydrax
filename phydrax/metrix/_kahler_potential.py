@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives
 from ._metric import RiemannianMetric
 from ._utils import _pointwise_array
@@ -41,6 +42,7 @@ class KahlerPotentialGeometry(StrictModule):
     convention: ComplexCoordinateConvention
     potential_function: Callable[[Array], Array]
 
+    @checked
     def __init__(
         self,
         reference_metric: RiemannianMetric,
@@ -48,10 +50,6 @@ class KahlerPotentialGeometry(StrictModule):
         potential: Callable[[Array], Array],
         /,
     ) -> None:
-        if not isinstance(reference_metric, RiemannianMetric):
-            raise TypeError("reference_metric must be a RiemannianMetric.")
-        if not isinstance(convention, ComplexCoordinateConvention):
-            raise TypeError("convention must be a ComplexCoordinateConvention.")
         if not reference_metric.chart.compatible_with(convention.chart):
             raise ValueError("Reference metric and complex convention charts must match.")
         if not callable(potential):

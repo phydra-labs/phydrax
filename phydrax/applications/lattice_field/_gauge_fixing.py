@@ -27,7 +27,7 @@ from ...linalg import (
     OperatorProperties,
 )
 from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
-from ...typing import parse
+from ...typing import checked, parse
 
 
 GaugeFixingCondition: TypeAlias = Literal["landau", "coulomb"]
@@ -78,6 +78,7 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
     gribov_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         link_space: MatrixGaugeLinkSpace,
@@ -93,8 +94,6 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         gribov_tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(link_space, MatrixGaugeLinkSpace):
-            raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("Gauge fixing requires U(N) or SU(N) matrix links.")
         condition = parse(condition, GaugeFixingCondition, "condition")
@@ -300,14 +299,13 @@ class PreparedGaugeFixing(StrictModule, NonTrainableState):
     copy_count: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: GaugeFixingPlan,
         initial_transformations: ArrayLike | None,
         /,
     ) -> None:
-        if not isinstance(plan, GaugeFixingPlan):
-            raise TypeError("plan must be GaugeFixingPlan.")
         identity = plan.link_space.group.identity()
         starts = (
             np.broadcast_to(
@@ -600,9 +598,8 @@ class FaddeevPopovOperator(AbstractLinearOperator):
     fixing: PreparedGaugeFixing
     links: Array
 
+    @checked
     def __init__(self, fixing: PreparedGaugeFixing, links: ArrayLike, /) -> None:
-        if not isinstance(fixing, PreparedGaugeFixing):
-            raise TypeError("fixing must be PreparedGaugeFixing.")
         values = _links(fixing.plan.link_space, links)
         shape = (
             fixing.plan.link_space.num_vertices,

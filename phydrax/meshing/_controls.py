@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import CellMesh
+from ..typing import checked
 from . import _organization
 from ._metric import MeshMetricField
 from ._scope import MeshingEntityKind, MeshingScope
@@ -84,6 +85,7 @@ class ProtectedFeature(StrictModule, NonTrainableState):
     hard: bool = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: MeshingScope,
@@ -93,8 +95,6 @@ class ProtectedFeature(StrictModule, NonTrainableState):
         maximum_deviation: float = 0.0,
         hard: bool = True,
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         if not isinstance(feature_kind, FeatureKind):
             raise TypeError("feature_kind must be FeatureKind.")
         deviation = float(maximum_deviation)
@@ -163,6 +163,7 @@ class HoleSeed(StrictModule, NonTrainableState):
     scope: MeshingScope
     seed_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, point: ArrayLike, scope: MeshingScope, /) -> None:
         coordinates = np.asarray(point, dtype=np.float64)
         if (
@@ -171,8 +172,6 @@ class HoleSeed(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(coordinates))
         ):
             raise ValueError("Hole seed point must be one finite coordinate vector.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         self.point = jnp.asarray(coordinates)
         self.scope = scope
         self.seed_id = canonical_fingerprint(
@@ -192,6 +191,7 @@ class RegionControl(StrictModule, NonTrainableState):
     meshing_enabled: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: MeshingScope,
@@ -202,8 +202,6 @@ class RegionControl(StrictModule, NonTrainableState):
         *,
         meshing_enabled: bool = True,
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         region = str(region_name).strip()
         material = str(material_id).strip()
         if not region or not material:
@@ -236,6 +234,7 @@ class PatchControl(StrictModule, NonTrainableState):
     required: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -248,8 +247,6 @@ class PatchControl(StrictModule, NonTrainableState):
         value = str(name).strip()
         if not value:
             raise ValueError("Patch control name must be non-empty.")
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         if isinstance(adjacent_region_names, str):
             raise TypeError("adjacent_region_names must be an iterable of region names.")
         regions = tuple(sorted(str(region).strip() for region in adjacent_region_names))
@@ -437,6 +434,7 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
     core_maximum_size: float | None = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wall_scope: MeshingScope,
@@ -460,8 +458,6 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
         )
         if not all(isinstance(scope, MeshingScope) for scope in scopes):
             raise TypeError("Boundary-layer scopes must be MeshingScope values or None.")
-        if not isinstance(schedule, LayerSchedule):
-            raise TypeError("schedule must be LayerSchedule.")
         if not isinstance(route, BoundaryLayerRoute):
             raise TypeError("route must be BoundaryLayerRoute.")
         if not isinstance(collision, BoundaryLayerCollisionPolicy):
@@ -629,6 +625,7 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
     maximum_metric_edge_length: float | None = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -639,12 +636,6 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
         mode: BackgroundMetricMode = BackgroundMetricMode.ANISOTROPIC,
         maximum_metric_edge_length: float | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
-        if not isinstance(metric, MeshMetricField):
-            raise TypeError("metric must be MeshMetricField.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not isinstance(mode, BackgroundMetricMode):
             raise TypeError("mode must be BackgroundMetricMode.")
         kinds = {block.cell_kind for block in mesh.blocks}

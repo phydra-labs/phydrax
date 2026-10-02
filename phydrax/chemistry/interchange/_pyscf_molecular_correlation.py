@@ -18,6 +18,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from ..electronic_structure.correlation import (
     AbstractMolecularCoupledClusterGradientProvider,
     CoupledClusterPlan,
@@ -58,6 +59,7 @@ class PySCFMolecularCoupledClusterGradientProvider(
     provider_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         molecule_builder: PySCFMoleculeBuilder,
@@ -72,8 +74,6 @@ class PySCFMolecularCoupledClusterGradientProvider(
     ) -> None:
         if not callable(molecule_builder):
             raise TypeError("molecule_builder must be callable.")
-        if not isinstance(coupled_cluster, CoupledClusterPlan):
-            raise TypeError("coupled_cluster must be CoupledClusterPlan.")
         if not coupled_cluster.solve_lambda:
             raise ValueError("Analytic coupled-cluster gradients require a lambda solve.")
         definition = str(builder_definition_id).strip()

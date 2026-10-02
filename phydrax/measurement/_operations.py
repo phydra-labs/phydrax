@@ -13,6 +13,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -87,9 +88,8 @@ class OperationalInterval(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def contains(self, coordinate: OperationalCoordinate, /) -> bool:
-        if not isinstance(coordinate, OperationalCoordinate):
-            raise TypeError("coordinate must be OperationalCoordinate.")
         if coordinate.namespace != self.start.namespace or tuple(
             name for name, _ in coordinate.axes
         ) != tuple(name for name, _ in self.start.axes):
@@ -108,6 +108,7 @@ class ConditionPayloadReference(StrictModule, NonTrainableState):
     interval: OperationalInterval
     payload_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -120,8 +121,6 @@ class ConditionPayloadReference(StrictModule, NonTrainableState):
         unit_ids: Sequence[str] = (),
         dependency_ids: Sequence[str] = (),
     ) -> None:
-        if not isinstance(interval, OperationalInterval):
-            raise TypeError("interval must be OperationalInterval.")
         values = tuple(
             _identifier(value, name)
             for value, name in (
@@ -168,6 +167,7 @@ class ResolvedConditionSnapshot(StrictModule, NonTrainableState):
     overlapping_names: tuple[str, ...] = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinate: OperationalCoordinate,
@@ -178,8 +178,6 @@ class ResolvedConditionSnapshot(StrictModule, NonTrainableState):
         resolver_id: str,
         required_names: Sequence[str] = (),
     ) -> None:
-        if not isinstance(coordinate, OperationalCoordinate):
-            raise TypeError("coordinate must be OperationalCoordinate.")
         payloads_ = tuple(payloads)
         if any(not isinstance(value, ConditionPayloadReference) for value in payloads_):
             raise TypeError("payloads must contain ConditionPayloadReference values.")
@@ -297,6 +295,7 @@ class DataQualityAnnotation(StrictModule, NonTrainableState):
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
     annotation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         interval: OperationalInterval,
@@ -307,8 +306,6 @@ class DataQualityAnnotation(StrictModule, NonTrainableState):
         authority: str,
         evidence_ids: Sequence[str],
     ) -> None:
-        if not isinstance(interval, OperationalInterval):
-            raise TypeError("interval must be OperationalInterval.")
         defects = tuple(sorted(_identifier(value, "Defect ID") for value in defect_ids))
         evidence = tuple(
             sorted(_identifier(value, "Evidence ID") for value in evidence_ids)

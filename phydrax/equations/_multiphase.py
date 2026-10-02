@@ -24,6 +24,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._hyperbolic_systems import AbstractAdmissibleSystem
 from ._materials import TwoMaterialEOSClosure, TwoMaterialPrimitiveState
 
@@ -75,9 +76,8 @@ class TwoMaterialVOFDiagnostics(StrictModule, NonTrainableState):
     layout: TwoMaterialVOFStateLayout
     diagnostics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, eos: TwoMaterialEOSClosure, dimension: int = 1, /) -> None:
-        if not isinstance(eos, TwoMaterialEOSClosure):
-            raise TypeError("eos must be a TwoMaterialEOSClosure.")
         self.eos = eos
         self.layout = TwoMaterialVOFStateLayout(dimension)
         self.diagnostics_id = canonical_fingerprint(
@@ -152,9 +152,8 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem, NonTrainableState):
     layout: TwoMaterialVOFStateLayout
     diagnostics: TwoMaterialVOFDiagnostics
 
+    @checked
     def __init__(self, dimension: int = 1, /, *, eos: TwoMaterialEOSClosure) -> None:
-        if not isinstance(eos, TwoMaterialEOSClosure):
-            raise TypeError("eos must be a TwoMaterialEOSClosure.")
         self.layout = TwoMaterialVOFStateLayout(dimension)
         self.dimension = self.layout.dimension
         self.component_names = self.layout.component_names

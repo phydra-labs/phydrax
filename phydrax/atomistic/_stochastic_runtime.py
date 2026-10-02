@@ -19,6 +19,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._dynamics import (
     AtomisticDynamicsState,
     PreparedAtomisticDynamics,
@@ -182,16 +183,13 @@ class PreparedGeneralizedLangevinRuntime(StrictModule, NonTrainableState):
     dynamics: PreparedAtomisticDynamics
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: GeneralizedLangevinRuntimePlan,
         dynamics: PreparedAtomisticDynamics,
         /,
     ) -> None:
-        if not isinstance(plan, GeneralizedLangevinRuntimePlan):
-            raise TypeError("plan must be GeneralizedLangevinRuntimePlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(dynamics.integrator, VelocityVerletPlan):
             raise TypeError("Generalized Langevin composition requires Velocity Verlet.")
         if dynamics.constraints is not None:
@@ -271,14 +269,13 @@ class PreparedGeneralizedLangevinRuntime(StrictModule, NonTrainableState):
             successful,
         )
 
+    @checked
     def step(
         self,
         state: GeneralizedLangevinRuntimeState,
         thermodynamic: PreparedThermodynamicStateTable,
         /,
     ) -> GeneralizedLangevinStepResult:
-        if not isinstance(state, GeneralizedLangevinRuntimeState):
-            raise TypeError("state must be GeneralizedLangevinRuntimeState.")
         if state.prepared_id != self.prepared_id:
             raise ValueError("GLE state belongs to another prepared runtime.")
         first, first_successful = self._thermostat(state, 0)

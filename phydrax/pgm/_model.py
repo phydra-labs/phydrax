@@ -21,6 +21,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState, ParameterOwner
 from ..graph import HypergraphBipartiteGraph, incidence_to_bipartite_graph
+from ..typing import checked
 from ._kernel import AbstractDiscreteFactorKernel, FactorKernelCapabilities
 
 
@@ -182,9 +183,8 @@ class VariableSelection(StrictModule, NonTrainableState):
         self.indices = _host_integer_array("selection indices", indices).reshape((-1,))
 
     @classmethod
+    @checked
     def all(cls, group: DiscreteVariableGroup, /) -> VariableSelection:
-        if not isinstance(group, DiscreteVariableGroup):
-            raise TypeError("group must be a DiscreteVariableGroup.")
         return cls(group, jnp.arange(group.size, dtype=jnp.int32))
 
     @property
@@ -384,6 +384,7 @@ class KernelFactorGroup(StrictModule, ParameterOwner):
     parameters: Any
     factor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         selections: Sequence[VariableSelection],
@@ -392,8 +393,6 @@ class KernelFactorGroup(StrictModule, ParameterOwner):
         /,
     ) -> None:
         scope = _selection_tuple(selections)
-        if not isinstance(kernel, AbstractDiscreteFactorKernel):
-            raise TypeError("kernel must implement AbstractDiscreteFactorKernel.")
         leaves = tuple(
             jnp.asarray(leaf) for leaf in jax.tree_util.tree_leaves(parameters)
         )

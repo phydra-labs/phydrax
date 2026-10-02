@@ -17,7 +17,7 @@ from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import parse
+from ...typing import checked, parse
 from .._keys import EvalKey, split_eval_key
 from ..layers import (
     AbstractRecurrentCell,
@@ -163,6 +163,7 @@ class RecurrentSequenceModel(StrictModule, ParameterOwner):
     readout: Callable | None
     return_mode: RecurrentReturnMode = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell: AbstractRecurrentCell,
@@ -171,8 +172,6 @@ class RecurrentSequenceModel(StrictModule, ParameterOwner):
         readout: Callable | None = None,
         return_mode: RecurrentReturnMode = "sequence",
     ) -> None:
-        if not isinstance(cell, AbstractRecurrentCell):
-            raise TypeError("cell must implement AbstractRecurrentCell.")
         if readout is not None and not callable(readout):
             raise TypeError("readout must be callable or None.")
         return_mode = parse(return_mode, RecurrentReturnMode, "return_mode")

@@ -27,7 +27,7 @@ from ..nn.operator.data import (
 )
 from ..nn.operator.protocols import OperatorModel
 from ..nn.operator.training import OperatorLinearization
-from ..typing import parse
+from ..typing import checked, parse
 from ._covariance import AbstractCovariance
 from ._linearized import LinearizedPropagationResult, propagate_linearized_map
 from ._predictive import (
@@ -429,6 +429,7 @@ class OperatorPredictiveField(StrictModule):
     field_name: str = eqx.field(static=True)
     query_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         predictive: PredictiveField,
@@ -442,12 +443,6 @@ class OperatorPredictiveField(StrictModule):
         query_name: str,
         valid_policy: ValidPolicy = "record",
     ) -> None:
-        if not isinstance(predictive, PredictiveField):
-            raise TypeError("predictive must be a PredictiveField.")
-        if not isinstance(query, FunctionSamples):
-            raise TypeError("query must be FunctionSamples.")
-        if not isinstance(output_spec, OperatorOutputSpec):
-            raise TypeError("output_spec must be an OperatorOutputSpec.")
         if jnp.iscomplexobj(predictive.samples.data):
             raise TypeError(
                 "Operator UQ currently requires real physical outputs; expose complex "
@@ -513,6 +508,7 @@ class OperatorPredictiveField(StrictModule):
         self.query_name = selected_query
 
     @classmethod
+    @checked
     def from_predictive(
         cls,
         predictive: PredictiveField,
@@ -525,8 +521,6 @@ class OperatorPredictiveField(StrictModule):
         input_sample_axes: Sequence[str] = (),
         valid_policy: ValidPolicy = "record",
     ) -> OperatorPredictiveField:
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("batch must be an OperatorBatch.")
         selected_query = str(query_name)
         query = batch.query(selected_query)
         if not input_sample_axes:

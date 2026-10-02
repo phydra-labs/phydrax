@@ -59,6 +59,7 @@ from ..special import ive, jv, wofz
 from ..typing import (
     as_host_array,
     Bool,
+    checked,
     Complex128,
     ConvertibleToArray,
     Dim,
@@ -492,6 +493,7 @@ class KineticPlasmaDielectric(StrictModule, NonTrainableState):
     shkarofsky_nodes: int = eqx.field(static=True)
     dielectric_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scale: ElectromagneticScaleContract,
@@ -510,8 +512,6 @@ class KineticPlasmaDielectric(StrictModule, NonTrainableState):
         larmor_tolerance: float = 0.1,
         shkarofsky_nodes: int = 32,
     ) -> None:
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
         scope = Scope()
         density = as_host_array(
             densities, HostFloat64[_SpeciesDim], "densities", scope=scope
@@ -951,6 +951,7 @@ class KineticDispersionProblem(StrictModule, NonTrainableState):
     branch_tolerance: float = eqx.field(static=True)
     problem_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dielectric: KineticPlasmaDielectric,
@@ -962,8 +963,6 @@ class KineticDispersionProblem(StrictModule, NonTrainableState):
         maximum_condition: float = 1.0e12,
         branch_tolerance: float = 0.25,
     ) -> None:
-        if not isinstance(dielectric, KineticPlasmaDielectric):
-            raise TypeError("dielectric must be a KineticPlasmaDielectric.")
         model_ = parse(model, KineticDispersionModel, "model")
         condition = float(maximum_condition)
         branch = float(branch_tolerance)
@@ -1481,6 +1480,7 @@ class RelativisticWeakGrowthPlan(StrictModule, NonTrainableState):
     quadrature_tolerance: float = eqx.field(static=True)
     weak_growth_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         background: ColdPlasmaDielectric,
@@ -1495,10 +1495,6 @@ class RelativisticWeakGrowthPlan(StrictModule, NonTrainableState):
         quadrature_tolerance: float = 1.0e-6,
         weak_growth_tolerance: float = 0.1,
     ) -> None:
-        if not isinstance(background, ColdPlasmaDielectric):
-            raise TypeError("background must be a ColdPlasmaDielectric.")
-        if not isinstance(distribution, AbstractGyrotropicDistribution):
-            raise TypeError("distribution must be an AbstractGyrotropicDistribution.")
         charge = float(charge_number)
         if not isfinite(charge) or charge == 0.0:
             raise ValueError("charge_number must be finite and nonzero.")

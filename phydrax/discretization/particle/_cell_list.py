@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...sparse import EdgeRelation, KeyGroupPlan
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -49,6 +50,7 @@ class CellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         search_radius: float,
@@ -70,8 +72,6 @@ class CellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
             raise ValueError(
                 "Cell, pair, and candidate capacities must be positive integers."
             )
-        if not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox.")
         key = DiscretizationKey(
             name,
             DiscretizationRole.AUXILIARY,
@@ -133,16 +133,13 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
     artifact_kind: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: CellListParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, CellListParticleNeighborhoodPlan):
-            raise TypeError("plan must be a CellListParticleNeighborhoodPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if plan.box.ambient_dimension != particles.ambient_dimension:
             raise ValueError("ParticleBox dimension does not match particle support.")
         lengths = np.asarray(plan.box.lengths, dtype=np.float64)

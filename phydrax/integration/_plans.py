@@ -26,6 +26,7 @@ from .._sampling import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._bayesian_quadrature import BayesianQuadraturePlan
 from ._rules import (
     AdaptiveCubatureRule,
@@ -523,6 +524,7 @@ class StratifiedMonteCarloPlan(StrictModule):
     num_samples: int = eqx.field(static=True)
     design: StratifiedDesign
 
+    @checked
     def __init__(
         self,
         num_samples: int,
@@ -532,8 +534,6 @@ class StratifiedMonteCarloPlan(StrictModule):
         count = int(num_samples)
         if count < 2:
             raise ValueError("Stratified num_samples must be at least two.")
-        if not isinstance(design, StratifiedDesign):
-            raise TypeError("design must be a StratifiedDesign.")
         self.num_samples = count
         self.design = design
 

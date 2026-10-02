@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..series import SampledSeries, SeriesSupport
+from ..typing import checked
 from ..units import conversion_factor, derived_unit, SECOND, UnitDefinition
 
 
@@ -40,6 +41,7 @@ class EnergySeries(StrictModule):
     reference_id: str | None = eqx.field(static=True)
     sign_convention: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         samples: SampledSeries,
@@ -56,10 +58,6 @@ class EnergySeries(StrictModule):
         reference_id: str | None = None,
         sign_convention: str | None = None,
     ) -> None:
-        if not isinstance(samples, SampledSeries):
-            raise TypeError("samples must be a native SampledSeries")
-        if not isinstance(unit, UnitDefinition):
-            raise TypeError("unit must be a native UnitDefinition")
         conversion_factor(time_unit, SECOND)
         if not isinstance(quantity, str) or not quantity.strip():
             raise ValueError("quantity must be a nonempty semantic identifier")

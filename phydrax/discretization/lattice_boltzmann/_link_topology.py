@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 BoundarySide: TypeAlias = Literal["lower", "upper"]
@@ -322,6 +322,7 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
             values, jnp.zeros(values.shape, dtype=jnp.bool_)
         )
 
+    @checked
     def commit(
         self,
         state: LatticeBoltzmannBoundaryStageState,
@@ -330,8 +331,6 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
         owners: Sequence[LatticeBoltzmannLinkOwner],
         /,
     ) -> LatticeBoltzmannBoundaryStageState:
-        if not isinstance(state, LatticeBoltzmannBoundaryStageState):
-            raise TypeError("state must be a LatticeBoltzmannBoundaryStageState.")
         if not isinstance(stage, LatticeBoltzmannBoundaryStage):
             raise TypeError("stage must be a LatticeBoltzmannBoundaryStage.")
         owner_tuple = tuple(owners)
@@ -356,9 +355,8 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
         written = state.written | selected
         return LatticeBoltzmannBoundaryStageState(populations, written)
 
+    @checked
     def finish(self, state: LatticeBoltzmannBoundaryStageState, /) -> Array:
-        if not isinstance(state, LatticeBoltzmannBoundaryStageState):
-            raise TypeError("state must be a LatticeBoltzmannBoundaryStageState.")
         return eqx.error_if(
             state.populations,
             jnp.any(~state.written),

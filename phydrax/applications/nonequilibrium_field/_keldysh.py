@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class NonequilibriumStatus(enum.IntEnum):
@@ -84,9 +85,8 @@ class ClosedTimePathGrid(StrictModule, NonTrainableState):
     causal_mask: Array
     grid_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ClosedTimePathPlan, /) -> None:
-        if not isinstance(plan, ClosedTimePathPlan):
-            raise TypeError("plan must be ClosedTimePathPlan.")
         times = np.asarray(plan.time_nodes)
         differences = np.diff(times)
         physical_weights = np.empty_like(times)
@@ -156,6 +156,7 @@ class FreeKeldyshPlan(StrictModule, NonTrainableState):
     maximum_modes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: ClosedTimePathGrid,
@@ -164,8 +165,6 @@ class FreeKeldyshPlan(StrictModule, NonTrainableState):
         *,
         maximum_modes: int = 4096,
     ) -> None:
-        if not isinstance(grid, ClosedTimePathGrid):
-            raise TypeError("grid must be ClosedTimePathGrid.")
         frequency = np.asarray(frequencies, dtype=np.float64)
         mode_capacity = int(maximum_modes)
         required = grid.plan.time_nodes.size**2 * frequency.size
@@ -228,6 +227,7 @@ class FreeKeldyshPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def identity_evidence(
         self,
         functions: KeldyshTwoPointFunctions,
@@ -235,8 +235,6 @@ class FreeKeldyshPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
     ) -> KeldyshIdentityEvidence:
-        if not isinstance(functions, KeldyshTwoPointFunctions):
-            raise TypeError("functions must be KeldyshTwoPointFunctions.")
         if functions.source_id != self.plan_id:
             raise ValueError("Two-point functions belong to another free plan.")
         tolerance_ = float(tolerance)

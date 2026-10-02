@@ -16,6 +16,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._classical import HarmonicBondPotential, LennardJonesPotential
 from ._dynamics import PreparedAtomisticDynamics
 from ._thermal import BAOABLangevinPlan
@@ -38,6 +39,7 @@ class SoftMatterAtomisticProtocol(StrictModule, NonTrainableState):
     maximum_particles: int = eqx.field(static=True)
     protocol_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: PreparedAtomisticDynamics,
@@ -47,8 +49,6 @@ class SoftMatterAtomisticProtocol(StrictModule, NonTrainableState):
         production_steps: int,
         maximum_particles: int,
     ) -> None:
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(kind, SoftMatterProtocolKind):
             raise TypeError("kind must be SoftMatterProtocolKind.")
         steps = int(production_steps)

@@ -24,6 +24,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import checked
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -83,6 +84,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
     linear: LinearSolvePolicy = fixed_field()
     precision: NonlinearPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         update: AbstractNonlinearUpdate,
@@ -94,8 +96,6 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(update, AbstractNonlinearUpdate):
-            raise TypeError("update must be AbstractNonlinearUpdate.")
         history_ = int(history)
         regularization_ = float(regularization)
         safeguard_ = float(safeguard_factor)
@@ -133,6 +133,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             fixed_point=True,
         )
 
+    @checked
     def solve(
         self,
         problem: NonlinearSystemProblem,
@@ -142,10 +143,6 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> NonlinearResult:
-        if not isinstance(problem, NonlinearSystemProblem):
-            raise TypeError("problem must be a NonlinearSystemProblem.")
-        if not isinstance(termination, NonlinearTermination):
-            raise TypeError("termination must be a NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial NGMRES state")
         source = PyTreeSpace(initial)

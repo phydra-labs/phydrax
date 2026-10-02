@@ -26,7 +26,7 @@ from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCert
 from ....geometry import MeshRegion
 from ....integration import IntegrationPrecisionPolicy
 from ....linalg import AbstractLinearOperator, DenseLinearOperator
-from ....typing import PRNGKey
+from ....typing import checked, PRNGKey
 from ._core import LayerDiscretizationReport
 from ._galerkin_quadrature3d import (
     _duffy_rule,
@@ -194,6 +194,7 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
     _discretization: LayerDiscretizationReport
     representation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         panelization: SurfacePanelization3D,
@@ -204,8 +205,6 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(panelization, SurfacePanelization3D):
-            raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
             raise ValueError("Elasticity layer kind must be 'single' or 'double'.")
         values = (

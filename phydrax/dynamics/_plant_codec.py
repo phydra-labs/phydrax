@@ -19,7 +19,7 @@ from .._array_tree import ArrayPyTreeSchema
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._layout import StateLayout
 
 
@@ -535,6 +535,7 @@ class PlantStateVectorCodec(StrictModule):
     immutable_mode_fingerprint: str = eqx.field(static=True)
     codec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ArrayPyTreeSchema,
@@ -547,10 +548,6 @@ class PlantStateVectorCodec(StrictModule):
         numeric_revision: NumericRevision,
         executable_signature: ExecutableSignature,
     ) -> None:
-        if not isinstance(schema, ArrayPyTreeSchema):
-            raise TypeError("schema must be an ArrayPyTreeSchema.")
-        if not isinstance(layout, StateLayout):
-            raise TypeError("layout must be a StateLayout.")
         _identity_objects(semantic_provenance, numeric_revision, executable_signature)
         if schema.case_ndim != 0:
             raise ValueError("Plant state codecs require an unbatched state schema.")
@@ -829,11 +826,10 @@ class PlantStateVectorCodec(StrictModule):
             return self.layout.cotangent_space, self.tangent_dtype
         raise ValueError("Unknown encoded plant vector role.")
 
+    @checked
     def _decode_vector(
         self, encoded: EncodedPlantVector, role: PlantVectorRole, /
     ) -> PyTree[Array]:
-        if not isinstance(encoded, EncodedPlantVector):
-            raise TypeError(f"Encoded {role} must be an EncodedPlantVector.")
         self._check_binding(encoded, f"Encoded {role}")
         if encoded.role != role:
             raise ValueError(
@@ -1156,9 +1152,8 @@ class PlantStateVectorCodec(StrictModule):
             self.codec_id,
         )
 
+    @checked
     def _encoded_point(self, encoded: EncodedPlantState, owner: str, /) -> Array:
-        if not isinstance(encoded, EncodedPlantState):
-            raise TypeError(f"{owner} must be an EncodedPlantState.")
         self._check_binding(encoded, owner)
         point = self._point(encoded.vector, owner)
         return self._check_mode(encoded.mode, "point", point, owner)
@@ -1175,6 +1170,7 @@ class ControlVectorCodec(StrictModule):
     size: int = eqx.field(static=True)
     codec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ArrayPyTreeSchema,
@@ -1184,8 +1180,6 @@ class ControlVectorCodec(StrictModule):
         numeric_revision: NumericRevision,
         executable_signature: ExecutableSignature,
     ) -> None:
-        if not isinstance(schema, ArrayPyTreeSchema):
-            raise TypeError("schema must be an ArrayPyTreeSchema.")
         _identity_objects(semantic_provenance, numeric_revision, executable_signature)
         indices = tuple(range(len(schema.leaves)))
         command_dtype = _common_inexact_dtype(schema, indices, "Control codec")
@@ -1246,9 +1240,8 @@ class ControlVectorCodec(StrictModule):
         )
         return EncodedControl(vector, **self._binding())
 
+    @checked
     def decode_command(self, encoded: EncodedControl, /) -> PyTree[Array]:
-        if not isinstance(encoded, EncodedControl):
-            raise TypeError("encoded must be an EncodedControl.")
         expected = self._binding()
         if any(getattr(encoded, name, None) != value for name, value in expected.items()):
             raise ValueError("Encoded control provenance does not match this codec.")

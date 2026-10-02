@@ -39,6 +39,7 @@ from ...operators.integral.vortex import (
     VortexFMMPlan,
 )
 from ...sparse import EdgeRelation, linear_apply, route_reduce
+from ...typing import checked
 from ._air import FoamAirModel
 from ._dynamics import FoamDynamicsState, PreparedFoamDynamics
 from ._rupture import apply_foam_rupture, FoamRuptureEvidence, FoamRupturePlan
@@ -241,6 +242,7 @@ class VortexSheetAirState(StrictModule):
     circulation: Array
     removed_circulation: Array
 
+    @checked
     def __init__(
         self,
         dynamics: FoamDynamicsState,
@@ -249,8 +251,6 @@ class VortexSheetAirState(StrictModule):
         *,
         removed_circulation: ArrayLike = 0.0,
     ) -> None:
-        if not isinstance(dynamics, FoamDynamicsState):
-            raise TypeError("dynamics must be FoamDynamicsState.")
         values = jnp.asarray(circulation, dtype=dynamics.surface.positions.dtype)
         expected = (
             dynamics.surface.vertex_capacity,
@@ -480,6 +480,7 @@ class PreparedVortexSheetAir(StrictModule):
     topology_epoch: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: VortexSheetAirPlan,
@@ -487,12 +488,6 @@ class PreparedVortexSheetAir(StrictModule):
         state: FoamDynamicsState,
         /,
     ) -> None:
-        if not isinstance(plan, VortexSheetAirPlan):
-            raise TypeError("plan must be VortexSheetAirPlan.")
-        if not isinstance(dynamics, PreparedFoamDynamics):
-            raise TypeError("dynamics must be PreparedFoamDynamics.")
-        if not isinstance(state, FoamDynamicsState):
-            raise TypeError("state must be FoamDynamicsState.")
         topology = dynamics.surface.topology
         state.surface.require_topology(topology)
         if dynamics.air.route != "incompressible" or state.gas is not None:
@@ -917,10 +912,9 @@ class PreparedVortexSheetAir(StrictModule):
             )
         )
 
+    @checked
     def fixed_topology_step(self, state: VortexSheetAirState, /) -> VortexSheetAirResult:
         """One symplectic-Euler circulation/FMM/E6 constrained step."""
-        if not isinstance(state, VortexSheetAirState):
-            raise TypeError("state must be VortexSheetAirState.")
         state.surface.require_topology(self.topology)
         if state.surface.epoch != self.topology_epoch:
             raise ValueError(
@@ -1264,6 +1258,7 @@ class PreparedVortexSheetAir(StrictModule):
             evidence,
         )
 
+    @checked
     def apply_rupture(
         self,
         state: VortexSheetAirState,
@@ -1277,8 +1272,6 @@ class PreparedVortexSheetAir(StrictModule):
         event_policy: SurfaceEventPolicy | None = None,
     ) -> tuple[VortexSheetAirState, MultiRegionSurfaceTopology, FoamRuptureEvidence]:
         """Apply E5 BURST with conservative circulation content and a removed ledger."""
-        if not isinstance(rupture, FoamRupturePlan):
-            raise TypeError("rupture must be FoamRupturePlan.")
         if rupture.circulation_field_name != _CIRCULATION_FIELD:
             raise ValueError(
                 "rupture must use the canonical circulation field name 'circulation'."

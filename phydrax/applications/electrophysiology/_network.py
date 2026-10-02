@@ -25,6 +25,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import localize_numerical_event
+from ...typing import checked
 from ._cable import (
     CableState,
     CableStepInputs,
@@ -197,6 +198,7 @@ class NeuralIonCoupling(StrictModule, NonTrainableState):
     current: _IonCurrentMap = eqx.field(static=True)
     coupling_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_id: str,
@@ -208,8 +210,6 @@ class NeuralIonCoupling(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
-        if not isinstance(runtime, PreparedIonDynamics):
-            raise TypeError("runtime must be prepared ion dynamics.")
         if not callable(current):
             raise TypeError("current must be callable.")
         if not isinstance(coupling_id, str) or not coupling_id:
@@ -230,6 +230,7 @@ class NeuralChannelCoupling(StrictModule):
     reversal_mV: Array
     coupling_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_id: str,
@@ -241,8 +242,6 @@ class NeuralChannelCoupling(StrictModule):
     ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
-        if not isinstance(runtime, PreparedMarkovChannel):
-            raise TypeError("runtime must be a prepared Markov channel.")
         count = runtime.transition_probability.shape[0]
         if (
             isinstance(open_state, bool)

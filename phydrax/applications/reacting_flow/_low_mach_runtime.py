@@ -34,6 +34,7 @@ from ...solver._mac_variable_density import (
     MACVariableDensityProjectionPlan,
     MACVariableDensityProjectionResult,
 )
+from ...typing import checked
 from ._low_mach import LowMachReactingFormulation
 from ._transport_runtime import (
     TransportPropertyReuseCandidate,
@@ -134,6 +135,7 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
     maximum_temperature_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         formulation: LowMachReactingFormulation,
@@ -149,23 +151,13 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
         eos_tolerance: float = 1.0e-7,
         maximum_temperature_iterations: int = 64,
     ) -> None:
-        if not isinstance(formulation, LowMachReactingFormulation):
-            raise TypeError("formulation must be LowMachReactingFormulation.")
         if formulation.mechanism is None:
             raise ValueError("Spatial low-Mach reacting flow requires a mechanism.")
-        if not isinstance(mixture_transport, MixtureAveragedTransportPlan):
-            raise TypeError("mixture_transport must be MixtureAveragedTransportPlan.")
         if (
             mixture_transport.thermodynamics.model_id
             != formulation.thermodynamics.model_id
         ):
             raise ValueError("Low-Mach formulation and transport thermodynamics differ.")
-        if not isinstance(scalar_transport, PreparedMACScalarTransport):
-            raise TypeError("scalar_transport must be PreparedMACScalarTransport.")
-        if not isinstance(projection, MACVariableDensityProjectionPlan):
-            raise TypeError("projection must be MACVariableDensityProjectionPlan.")
-        if not isinstance(sdc, LowMachReactingSDCPlan):
-            raise TypeError("sdc must be LowMachReactingSDCPlan.")
         if (
             scalar_transport.layout.operators.prepared_id
             != projection.operators.prepared_id

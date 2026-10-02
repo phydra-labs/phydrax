@@ -45,6 +45,7 @@ from ...linalg import (
     MaterializationPolicy,
     materialize,
 )
+from ...typing import checked
 from ._cone import ContactConeSolverPlan, project_signorini_coulomb_product
 from ._rod_capsule import (
     PreparedRodCapsuleGeometry,
@@ -448,6 +449,7 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
     pair_policy_unrestricted: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RodContactSearchPlan,
@@ -455,8 +457,6 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
         planes: Sequence[PlaneContactGeometry],
         /,
     ) -> None:
-        if not isinstance(plan, RodContactSearchPlan):
-            raise TypeError("plan must be RodContactSearchPlan.")
         if isinstance(geometry, PreparedRodCapsuleGeometry):
             capsule_geometry: PreparedRodCapsuleGeometry | None = geometry
             surface_plan = geometry.surface_plan
@@ -1625,6 +1625,7 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
             tangent_dimension=self.tangent_dimension,
         )
 
+    @checked
     def commit(
         self,
         witnesses: RodContactWitnessBatch,
@@ -1633,8 +1634,6 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
         *,
         step_size: ArrayLike,
     ) -> RodContactManifoldState:
-        if not isinstance(response, CompositeContactResult):
-            raise TypeError("response must be CompositeContactResult.")
         if response.response_id != witnesses.batch_id:
             raise ValueError("Response and witness batches do not match.")
         return self.record_response(
@@ -2302,6 +2301,7 @@ class CompositeContactParticipantBlock(StrictModule, NonTrainableState):
     free_velocity: PyTree[Array]
     block_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         velocity_operator: AbstractLinearOperator,
@@ -2311,10 +2311,6 @@ class CompositeContactParticipantBlock(StrictModule, NonTrainableState):
         *,
         block_id: str | None = None,
     ) -> None:
-        if not isinstance(velocity_operator, AbstractLinearOperator):
-            raise TypeError("velocity_operator must be AbstractLinearOperator.")
-        if not isinstance(inverse_mass_operator, AbstractLinearOperator):
-            raise TypeError("inverse_mass_operator must be AbstractLinearOperator.")
         if velocity_operator.batch_shape or inverse_mass_operator.batch_shape:
             raise ValueError("Composite contact operators cannot be operator-batched.")
         tangent = velocity_operator.source
@@ -2617,6 +2613,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
     solver: ContactConeSolverPlan
     response_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         blocks: Sequence[CompositeContactParticipantBlock],
@@ -2636,8 +2633,6 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
             raise TypeError(
                 "blocks must contain CompositeContactParticipantBlock values."
             )
-        if not isinstance(witnesses, RodContactWitnessBatch):
-            raise TypeError("witnesses must be RodContactWitnessBatch.")
         contact_space = values[0].velocity_operator.target
         expected = ArraySpace(
             (witnesses.capacity, 3),

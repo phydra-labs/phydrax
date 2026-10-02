@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._fuglevand_winter_patla_1993 import PreparedFuglevandWinterPatla1993
 
 
@@ -83,6 +84,7 @@ class FuglevandWinterPatla1993QualificationPlan(StrictModule, NonTrainableState)
             }
         )
 
+    @checked
     def evaluate(
         self,
         prepared: PreparedFuglevandWinterPatla1993,
@@ -94,8 +96,6 @@ class FuglevandWinterPatla1993QualificationPlan(StrictModule, NonTrainableState)
     ) -> FuglevandWinterPatla1993QualificationEvidence:
         """Evaluate a realized trial and an independently replayed copy."""
 
-        if not isinstance(prepared, PreparedFuglevandWinterPatla1993):
-            raise TypeError("prepared must be PreparedFuglevandWinterPatla1993.")
         scores = jnp.asarray(normal_scores)
         mask = jnp.asarray(event_mask, dtype=jnp.bool_)
         force = jnp.asarray(force_samples_arbitrary)

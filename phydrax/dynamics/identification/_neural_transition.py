@@ -36,6 +36,7 @@ from ..._model import (
 from ..._model._component import bind_positional_component
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._layout import InputLayout, StateLayout
 from .._model_system import DiscreteModelTransition
 from .._system import DiscreteStepContext, DiscreteSystem, DiscreteTransitionResult
@@ -71,6 +72,7 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
     derivative_valid: Array
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate_state: Array,
@@ -87,10 +89,6 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
         derivative_valid: Any,
         transition_id: str,
     ) -> None:
-        if not isinstance(header, AdmissibilityHeader):
-            raise TypeError("header must be an AdmissibilityHeader.")
-        if not isinstance(derivative_contract, DerivativeContract):
-            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.candidate_state = jnp.asarray(candidate_state)
         self.accepted_state = jnp.asarray(accepted_state)
         self.training_usable = jnp.asarray(training_usable, dtype=jnp.bool_)
@@ -257,6 +255,7 @@ class DirectDiscreteModelRolloutTransition(
 
     port_mapping: PortMapping | None
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -268,8 +267,6 @@ class DirectDiscreteModelRolloutTransition(
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
         if port_mapping is not None and not isinstance(port_mapping, PortMapping):

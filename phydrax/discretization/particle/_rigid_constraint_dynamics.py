@@ -45,6 +45,7 @@ from ...nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ...typing import checked
 from ._rigid_body import (
     _rigid_body_close_kick,
     _rigid_body_half_kick,
@@ -216,6 +217,7 @@ class RigidConstraintDynamicsPlan(StrictModule, NonTrainableState):
     solver: RigidConstraintSolverPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         joints: RigidJointGraphPlan,
@@ -224,8 +226,6 @@ class RigidConstraintDynamicsPlan(StrictModule, NonTrainableState):
         solver: RigidConstraintSolverPlan | None = None,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(joints, RigidJointGraphPlan):
-            raise TypeError("joints must be a RigidJointGraphPlan.")
         solver_ = RigidConstraintSolverPlan() if solver is None else solver
         if not isinstance(solver_, RigidConstraintSolverPlan):
             raise TypeError("solver must be a RigidConstraintSolverPlan or None.")
@@ -732,6 +732,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 ),
             ),
         )
+        numerical_rank = svd_linalg.require_exact_svd_rank(rank_result)
         singular_values = rank_result.singular_values
         smallest = jnp.min(singular_values)
         condition = jnp.max(singular_values) / jnp.maximum(
@@ -739,7 +740,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         )
         rank_valid = (
             rank_result.successful
-            & (rank_result.numerical_rank == graph.constraint_count)
+            & (numerical_rank == graph.constraint_count)
             & jnp.isfinite(condition)
         )
         return (
@@ -748,7 +749,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             _residuals_to_multipliers(dual),
             graph.current_velocity_residuals(projected),
             rank_valid,
-            rank_result.numerical_rank,
+            numerical_rank,
             condition,
         )
 
@@ -800,6 +801,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def step(
         self,
         state: RigidConstraintState,
@@ -808,8 +810,6 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> RigidConstraintStepResult:
-        if not isinstance(state, RigidConstraintState):
-            raise TypeError("state must be a RigidConstraintState.")
         time_ = jnp.asarray(time, dtype=state.kinematics.position.dtype)
         step_ = jnp.asarray(step_size, dtype=state.kinematics.position.dtype)
         valid_step = jnp.isfinite(time_) & jnp.isfinite(step_) & (step_ > 0.0)

@@ -25,6 +25,7 @@ import phydrax.linalg as la
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ..units import LENGTH, MILLIMETER, UnitDefinition
 
 
@@ -379,10 +380,9 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def commit(self, candidate: RegistrationCandidate, /) -> RegistrationCheckpoint:
         """Commit only a successful host-evaluated candidate."""
-        if not isinstance(candidate, RegistrationCandidate):
-            raise TypeError("candidate must be a RegistrationCandidate.")
         if candidate.prepared_id != self.prepared_id:
             raise ValueError("Registration candidate belongs to another prepared plan.")
         if not bool(np.asarray(candidate.evidence.successful)):

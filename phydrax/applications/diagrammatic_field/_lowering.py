@@ -22,6 +22,7 @@ from ...integration import (
     reduce,
     WeightedSampleTarget,
 )
+from ...typing import checked
 from ._core import DiagramGraph, MomentumRoute, RegulatorContract
 
 
@@ -93,9 +94,8 @@ class DiagramLoweringPlan(StrictModule, NonTrainableState):
             {"kind": "diagram-lowering-plan", "limits": limits}
         )
 
+    @checked
     def prepare(self, diagram: DiagramGraph, /) -> "PreparedDiagramEvaluation":
-        if not isinstance(diagram, DiagramGraph):
-            raise TypeError("diagram must be a DiagramGraph.")
         factor_count = (
             len(diagram.vertices) + len(diagram.lines) + len(diagram.external_legs)
         )

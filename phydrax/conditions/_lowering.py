@@ -13,7 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..domain import DomainFunction
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._base import AbstractCondition, AbstractMomentCondition, AbstractResidualCondition
 from ._ir import (
     AbstractConditionOperator,
@@ -84,9 +84,8 @@ class BoundCondition(StrictModule):
     values: frozendict[str, Any]
     bound_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, condition: Condition, values: Mapping[str, Any], /) -> None:
-        if not isinstance(condition, Condition):
-            raise TypeError("BoundCondition.condition must be a Condition.")
         source, local = _bind_sources(condition.fields, values)
         self.condition = condition
         self.source = source

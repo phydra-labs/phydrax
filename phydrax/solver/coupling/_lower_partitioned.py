@@ -20,6 +20,7 @@ import jax.numpy as jnp
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ...units import UnitDefinition
 from .._partitioned_coupling_graph import (
     _admit_route_participants,
@@ -67,6 +68,7 @@ class PartitionedCouplingDeclaration(StrictModule, NonTrainableState):
     resources: CouplingResourcePolicy
     declaration_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         participants: tuple[AbstractCouplingSubsystem, ...],
@@ -79,8 +81,6 @@ class PartitionedCouplingDeclaration(StrictModule, NonTrainableState):
         time_unit: UnitDefinition | None = None,
     ) -> None:
         graph = CouplingGraph(tuple(participants), tuple(exchanges), time_unit=time_unit)
-        if not isinstance(policy, AbstractCouplingPolicy):
-            raise TypeError("policy must be an AbstractCouplingPolicy.")
         differentiation_ = (
             CouplingDifferentiationPolicy()
             if differentiation is None

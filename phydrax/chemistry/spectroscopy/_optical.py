@@ -19,6 +19,7 @@ from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...typing import checked
 from ...units import (
     ANGLE,
     CONDUCTANCE,
@@ -135,6 +136,7 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         kubo: FiniteFrequencyKuboResponse,
@@ -142,8 +144,6 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
         conductivity_unit: UnitDefinition,
         /,
     ) -> OpticalDielectricResult:
-        if not isinstance(kubo, FiniteFrequencyKuboResponse):
-            raise TypeError("Optical response requires a FiniteFrequencyKuboResponse.")
         if not bool(kubo.successful):
             raise ValueError(
                 "An unsuccessful periodic Kubo response cannot enter optics."

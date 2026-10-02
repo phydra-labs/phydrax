@@ -31,6 +31,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import checked
 from ._boundaries import PorousBoundaryConditions
 from ._materials import _finite, PorousMaterial
 from ._retention import VanGenuchtenMualem
@@ -90,6 +91,7 @@ class RichardsPlan(StrictModule):
     pressure_scale_Pa: float = eqx.field(static=True)
     mass_rate_scale_kg_s: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
@@ -111,8 +113,6 @@ class RichardsPlan(StrictModule):
             retention, VanGenuchtenMualem
         ):
             raise TypeError("Richards requires PorousMaterial and VanGenuchtenMualem.")
-        if not isinstance(boundaries, PorousBoundaryConditions):
-            raise TypeError("Richards requires unit-qualified PorousBoundaryConditions.")
         if boundaries.geometry_id != discretization.geometry_id:
             raise ValueError("Richards boundary geometry must match the discretization.")
         diffusion = HybridMimeticDiffusion(discretization, stabilization=stabilization)

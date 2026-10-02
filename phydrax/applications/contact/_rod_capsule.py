@@ -35,6 +35,7 @@ from ...discretization.contact._surface import (
     ContactPairPolicy,
 )
 from ...linalg import AbstractVectorSpace, ArraySpace
+from ...typing import checked
 from ..solid_mechanics._rod_dynamics import (
     _quaternion_rotation_matrix,
     PreparedRod,
@@ -229,9 +230,8 @@ class RodCapsuleGeometryPlan(StrictModule, NonTrainableState):
     def segment_count(self) -> int:
         return self.segment_radii.size
 
+    @checked
     def prepare(self, rod: PreparedRod, /) -> PreparedRodCapsuleGeometry:
-        if not isinstance(rod, PreparedRod):
-            raise TypeError("rod must be a PreparedRod.")
         if rod.plan.dimension != 3:
             raise ValueError("Rod capsule geometry requires a spatial PreparedRod.")
         if rod.plan.segment_count != self.segment_count:
@@ -370,6 +370,7 @@ class PreparedRodCapsuleGeometry(StrictModule, NonTrainableState):
     surface_edge_order: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: RodCapsuleGeometryPlan,
@@ -381,12 +382,8 @@ class PreparedRodCapsuleGeometry(StrictModule, NonTrainableState):
         prepared_id: str,
         /,
     ) -> None:
-        if not isinstance(plan, RodCapsuleGeometryPlan):
-            raise TypeError("plan must be a RodCapsuleGeometryPlan.")
         if not isinstance(rod, PreparedRod) or rod.plan.dimension != 3:
             raise TypeError("rod must be a spatial PreparedRod.")
-        if not isinstance(surface_plan, CollisionSurfacePlan):
-            raise TypeError("surface_plan must be a CollisionSurfacePlan.")
         if segment_radii.shape != (rod.plan.segment_count,):
             raise ValueError("Prepared capsule radii changed shape.")
         identifier = str(prepared_id)
@@ -706,16 +703,13 @@ class ReducedRodCapsuleContactParticipant(AbstractContactParticipant):
     _capabilities: ContactCapability = eqx.field(static=True)
     _participant_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduced: PreparedReducedRod,
         geometry: PreparedRodCapsuleGeometry,
         /,
     ) -> None:
-        if not isinstance(reduced, PreparedReducedRod):
-            raise TypeError("reduced must be a PreparedReducedRod.")
-        if not isinstance(geometry, PreparedRodCapsuleGeometry):
-            raise TypeError("geometry must be a PreparedRodCapsuleGeometry.")
         if reduced.rod.prepared_id != geometry.rod.prepared_id:
             raise ValueError(
                 "Reduced rod and capsule geometry must own the same PreparedRod."

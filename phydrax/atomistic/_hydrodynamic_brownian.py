@@ -22,7 +22,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
 from ..linalg import AbstractLinearOperator
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._dynamics import PreparedAtomisticDynamics
 from ._hydrodynamic_mobility import (
     AbstractHydrodynamicMobilityPlan,
@@ -141,6 +141,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
     fib: Any
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: HydrodynamicBrownianPlan,
@@ -148,12 +149,6 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         mobility: AbstractHydrodynamicMobilityPlan,
         /,
     ) -> None:
-        if not isinstance(plan, HydrodynamicBrownianPlan):
-            raise TypeError("plan must be HydrodynamicBrownianPlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if not isinstance(mobility, AbstractHydrodynamicMobilityPlan):
-            raise TypeError("mobility must be AbstractHydrodynamicMobilityPlan.")
         if dynamics.constraints is not None:
             raise ValueError("Hydrodynamic Brownian dynamics does not admit constraints.")
         active = np.asarray(dynamics.system.active_mask, dtype=np.bool_)
@@ -263,6 +258,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def step(
         self,
         state: HydrodynamicBrownianState,
@@ -270,8 +266,6 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         *,
         background_velocity: ArrayLike | None = None,
     ) -> HydrodynamicBrownianStepResult:
-        if not isinstance(state, HydrodynamicBrownianState):
-            raise TypeError("state must be HydrodynamicBrownianState.")
         if (
             state.prepared_id != self.prepared_id
             or state.mobility_route_id != self.mobility.route_id

@@ -30,7 +30,7 @@ from ..domain._derivative import (
 )
 from ..domain._evaluation import BatchEvaluator
 from ..linalg._constraint_operators import PreparedConstraintOperator
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 FiberExactnessScope: TypeAlias = Literal["continuum", "realization"]
@@ -418,6 +418,7 @@ class AnalyticFiberProjectionUnit(StrictModule):
     unit_id: str = eqx.field(static=True)
     numeric_version: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action: Callable,
@@ -436,8 +437,6 @@ class AnalyticFiberProjectionUnit(StrictModule):
     ) -> None:
         if not callable(action) or not callable(target) or not callable(lift):
             raise TypeError("Analytic fiber action, target, and lift must be callable.")
-        if not isinstance(residual_domain, Domain):
-            raise TypeError("residual_domain must be a Domain.")
         names, ids, version = (
             _names(field_names),
             tuple(str(value) for value in condition_ids),

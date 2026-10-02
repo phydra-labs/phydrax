@@ -16,7 +16,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..geometry.complex import ProjectiveHypersurface, ProjectiveLineSamples
 from ..geometry.complex._hypersurface_patch import HypersurfacePatchGeometry
-from ..typing import parse
+from ..typing import checked, parse
 from ._precision import IntegrationPrecisionPolicy
 
 
@@ -81,6 +81,7 @@ class ProjectiveIntegralResult(StrictModule):
     valid: Array
     precision_evidence: PrecisionEvidenceEnvelope
 
+    @checked
     def __init__(
         self,
         normalized_value: ArrayLike,
@@ -94,8 +95,6 @@ class ProjectiveIntegralResult(StrictModule):
         self.physical_value = jnp.asarray(physical_value)
         self.effective_sample_size = jnp.asarray(effective_sample_size)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
 
 

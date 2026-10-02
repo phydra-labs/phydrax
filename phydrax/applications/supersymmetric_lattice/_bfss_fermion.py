@@ -20,7 +20,7 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._actions import BFSSConfiguration, BFSSPlan, prepare_bfss, PreparedBFSSAction
 
 
@@ -48,6 +48,7 @@ class BFSSFermionPlan(StrictModule):
     spinor_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bosonic_plan: BFSSPlan,
@@ -67,8 +68,6 @@ class BFSSFermionPlan(StrictModule):
         maximum_fermion_dimension: int = 4096,
         antisymmetry_tolerance: float = 1e-9,
     ) -> None:
-        if not isinstance(bosonic_plan, BFSSPlan):
-            raise TypeError("bosonic_plan must be BFSSPlan.")
         gamma = np.asarray(gamma_matrices, dtype=np.complex128)
         charge = np.asarray(charge_conjugation, dtype=np.complex128)
         if gamma.ndim != 3 or gamma.shape[0] != bosonic_plan.matrix_count:
@@ -185,16 +184,13 @@ class BFSSFermionOperator(StrictModule):
     configuration: BFSSConfiguration
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: BFSSFermionPlan,
         configuration: BFSSConfiguration,
         /,
     ) -> None:
-        if not isinstance(plan, BFSSFermionPlan):
-            raise TypeError("plan must be BFSSFermionPlan.")
-        if not isinstance(configuration, BFSSConfiguration):
-            raise TypeError("configuration must be BFSSConfiguration.")
         expected = (
             plan.bosonic_plan.time_slices,
             plan.bosonic_plan.matrix_count,

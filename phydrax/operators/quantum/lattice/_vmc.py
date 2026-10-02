@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from ....typing import checked
 from .._discrete import AbstractDiscreteQuantumOperator, ConnectedConfigurations
 from ._operator import apply_compiled_to_coordinate, QuantumSectorOperator
 
@@ -25,9 +26,8 @@ class QuantumLatticeVMCOperator(AbstractDiscreteQuantumOperator):
     operator_id: str = eqx.field(static=True)
     max_connections: int = eqx.field(static=True)
 
+    @checked
     def __init__(self, sector_operator: QuantumSectorOperator, /) -> None:
-        if not isinstance(sector_operator, QuantumSectorOperator):
-            raise TypeError("sector_operator must be QuantumSectorOperator.")
         if not sector_operator.properties.certifies("self_adjoint"):
             raise ValueError(
                 "The VMC lowerer requires a self-adjoint fixed-sector operator."

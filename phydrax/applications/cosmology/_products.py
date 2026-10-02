@@ -19,7 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import derived_unit, UnitDefinition
 from ._closure import CosmologyRealizationSignature
 from ._scales import CosmologyScaleContract
@@ -47,6 +47,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
     differentiation: DerivativeContract
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -77,8 +78,6 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         if any(not value for value in values) or any(not value for value in parents):
             raise ValueError("Cosmology product provenance fields must be non-empty.")
         source_kind = parse(source_kind, CosmologyProductSource, "source_kind")
-        if not isinstance(differentiation, DerivativeContract):
-            raise TypeError("differentiation must be DerivativeContract.")
         (
             self.producer,
             self.producer_version,
@@ -398,6 +397,7 @@ class MatterPowerTable(StrictModule):
     provenance: CosmologyProductProvenance
     realization: CosmologyRealizationSignature
 
+    @checked
     def __init__(
         self,
         scale_factors: ArrayLike,
@@ -410,8 +410,6 @@ class MatterPowerTable(StrictModule):
         /,
     ) -> None:
         _validate_common(scale, provenance, realization)
-        if not isinstance(descriptor, MatterPowerDescriptor):
-            raise TypeError("descriptor must be MatterPowerDescriptor.")
         scales = _validated_nodes(scale_factors, "MatterPowerTable scale factor")
         wavenumber = _validated_nodes(wavenumbers, "MatterPowerTable wavenumber")
         wavenumber = eqx.error_if(
@@ -524,6 +522,7 @@ class LinearTransferTable(StrictModule):
     provenance: CosmologyProductProvenance
     realization: CosmologyRealizationSignature
 
+    @checked
     def __init__(
         self,
         scale_factors: ArrayLike,
@@ -536,8 +535,6 @@ class LinearTransferTable(StrictModule):
         /,
     ) -> None:
         _validate_common(scale, provenance, realization)
-        if not isinstance(descriptor, LinearTransferDescriptor):
-            raise TypeError("descriptor must be LinearTransferDescriptor.")
         scales = _validated_nodes(scale_factors, "LinearTransferTable scale factor")
         wavenumber = _validated_nodes(wavenumbers, "LinearTransferTable wavenumber")
         values = jnp.asarray(transfer_values, dtype=scales.dtype)

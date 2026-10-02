@@ -25,6 +25,7 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ..typing import checked
 from ._hydrodynamic_mobility import (
     _active_slots,
     AbstractHydrodynamicMobilityPlan,
@@ -51,6 +52,7 @@ class ConfinedFIBMobilityPlan(AbstractHydrodynamicMobilityPlan):
     symmetry_tolerance: float = eqx.field(static=True)
     mobility_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedMACMarkerTransfer,
@@ -60,10 +62,6 @@ class ConfinedFIBMobilityPlan(AbstractHydrodynamicMobilityPlan):
         maximum_particles: int,
         symmetry_tolerance: float = 1.0e-9,
     ) -> None:
-        if not isinstance(transfer, PreparedMACMarkerTransfer):
-            raise TypeError("transfer must be PreparedMACMarkerTransfer.")
-        if not isinstance(inverse_stokes, AbstractLinearOperator):
-            raise TypeError("inverse_stokes must be an AbstractLinearOperator.")
         if not inverse_stokes.source.compatible(
             transfer.operators.velocity_space
         ) or not (inverse_stokes.target.compatible(transfer.operators.velocity_space)):

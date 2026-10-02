@@ -19,6 +19,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import CellMesh, PolygonalConnectivity
 from ...graph import GraphIR
 from ...sparse import EdgeRelation
+from ...typing import checked
 
 
 def _host_integer_vector(name: str, value: Any, /) -> np.ndarray:
@@ -191,6 +192,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
     member_ids: tuple[Any, ...] = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         graph: GraphIR,
@@ -205,8 +207,6 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         affine_prolongation: ArrayLike | None = None,
         affine_prescribed_map: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(graph, GraphIR):
-            raise TypeError("graph must be a GraphIR.")
         graph.validate()
         resolved_dimension = int(dimension)
         if resolved_dimension <= 0:
@@ -582,6 +582,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_cell_mesh(
         cls,
         mesh: CellMesh,
@@ -592,8 +593,6 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         node_ids: Sequence[Any] | None = None,
         member_ids: Sequence[Any] | None = None,
     ) -> ForceDensityStructure:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError("Force-density cell meshes must have polygonal connectivity.")
         return cls.from_edges(

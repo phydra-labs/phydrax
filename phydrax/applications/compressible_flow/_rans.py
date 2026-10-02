@@ -29,6 +29,7 @@ from ...equations._spalart_allmaras import (
     SpalartAllmarasArguments,
     SpalartAllmarasCompressibleSystem,
 )
+from ...typing import checked
 
 
 class PreparedWallDistanceField(StrictModule, NonTrainableState):
@@ -109,6 +110,7 @@ class SpalartAllmarasFreestreamPlan(StrictModule, NonTrainableState):
             {"kind": "sa-negative-freestream", "ratio": ratio}
         )
 
+    @checked
     def primitive(
         self,
         system: SpalartAllmarasCompressibleSystem,
@@ -116,8 +118,6 @@ class SpalartAllmarasFreestreamPlan(StrictModule, NonTrainableState):
         transport_args: Any = None,
         /,
     ) -> Array:
-        if not isinstance(system, SpalartAllmarasCompressibleSystem):
-            raise TypeError("SA-neg freestream requires its complete system.")
         base = jnp.asarray(base_primitive)
         gas = system.base.primitive_to_conserved(base)
         density = system.base.density(gas)

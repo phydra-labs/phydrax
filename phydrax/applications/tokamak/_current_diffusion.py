@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import solve_tridiagonal_lines
+from ...typing import checked
 from ._core_transport import (
     PreparedTokamakCoreTransport,
     TokamakCoreState,
@@ -99,6 +100,7 @@ class PreparedCurrentDiffusion(StrictModule, NonTrainableState):
     def cell_count(self) -> int:
         return self.geometry.cell_volume_m3.shape[0]
 
+    @checked
     def step(
         self,
         state: CurrentDiffusionState,
@@ -108,8 +110,6 @@ class PreparedCurrentDiffusion(StrictModule, NonTrainableState):
         edge_outward_rate_wb_per_rad_s: ArrayLike = 0.0,
         /,
     ) -> CurrentDiffusionStepResult:
-        if not isinstance(state, CurrentDiffusionState):
-            raise TypeError("state must be CurrentDiffusionState.")
         flux = state.poloidal_flux_wb_per_rad
         conductance = jnp.asarray(face_conductance_m3_s, dtype=flux.dtype)
         source = jnp.asarray(source_wb_per_rad_m3_s, dtype=flux.dtype)
@@ -240,6 +240,7 @@ class PreparedTokamakTransportCurrentCoupling(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def step(
         self,
         state: CoupledTokamakTransportState,
@@ -253,8 +254,6 @@ class PreparedTokamakTransportCurrentCoupling(StrictModule, NonTrainableState):
         edge_flux: TokamakEdgeFlux | None = None,
         edge_current_rate_wb_per_rad_s: ArrayLike = 0.0,
     ) -> CoupledTokamakTransportStepResult:
-        if not isinstance(state, CoupledTokamakTransportState):
-            raise TypeError("state must be CoupledTokamakTransportState.")
         core_result = self.core.step(
             state.core,
             dt_s,

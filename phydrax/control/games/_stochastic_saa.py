@@ -36,6 +36,7 @@ from ...nonlinear import (
     refresh_nonlinear,
     solve_prepared_nonlinear,
 )
+from ...typing import checked
 from ..stochastic._evaluation import PreparedControlledNoise
 from ._layout import PlayerControlPartition
 
@@ -110,6 +111,7 @@ class StochasticPolicyGameProblem(StrictModule):
     feasible_set_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         path_cost_function: StochasticPolicyPathCosts,
@@ -124,8 +126,6 @@ class StochasticPolicyGameProblem(StrictModule):
     ) -> None:
         if not callable(path_cost_function):
             raise TypeError("path_cost_function must be callable.")
-        if not isinstance(partition, PlayerControlPartition):
-            raise TypeError("partition must be a PlayerControlPartition.")
         cases = _shape(case_shape, "case_shape", allow_empty=True)
         self.path_cost_function = path_cost_function
         self.partition = partition

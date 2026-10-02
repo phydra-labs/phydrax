@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
+from .typing import checked
 
 
 _ARRAY_TYPES = (jax.Array, jax_core.Tracer, np.ndarray, np.generic)
@@ -103,6 +104,7 @@ class ArrayPyTreeSchema(StrictModule):
     content_id: str = eqx.field(static=True)
     schema_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         treedef: jax.tree_util.PyTreeDef,
@@ -112,8 +114,6 @@ class ArrayPyTreeSchema(StrictModule):
         *,
         schema_id: str | None = None,
     ) -> None:
-        if not isinstance(treedef, jax.tree_util.PyTreeDef):
-            raise TypeError("treedef must be a JAX PyTreeDef.")
         leaves_ = tuple(leaves)
         if any(not isinstance(leaf, ArrayLeafSchema) for leaf in leaves_):
             raise TypeError("leaves must contain only ArrayLeafSchema values.")

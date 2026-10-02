@@ -23,7 +23,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import DenseLinearOperator
-from ...linalg.svd import svd, SVDProblem, SVDSolvePolicy
+from ...linalg.svd import require_exact_svd_rank, svd, SVDProblem, SVDSolvePolicy
 from ...optim import (
     least_squares,
     LeastSquaresResult,
@@ -468,7 +468,7 @@ def calibrate_radiation_lesions(
     )
     if not bool(rank_evidence.successful):
         raise RuntimeError("Native likelihood identifiability decomposition failed.")
-    rank = int(rank_evidence.numerical_rank)
+    rank = int(require_exact_svd_rank(rank_evidence))
     gates = []
     if rank < 2:
         gates.append(

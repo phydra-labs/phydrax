@@ -48,7 +48,7 @@ from ...metrix import (
     ProductStateGeometryBlock,
     QuaternionPoseStateGeometry,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._rod_dynamics import PreparedRod, RodState
 from ._rod_loads import RodLoadLedger
 from ._rod_reduced_dynamics import (
@@ -129,6 +129,7 @@ class FloatingReducedRodPlan(StrictModule, NonTrainableState):
     label: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reduction: ReducedRodPlan,
@@ -138,8 +139,6 @@ class FloatingReducedRodPlan(StrictModule, NonTrainableState):
         pose_tolerance: float = 1.0e-9,
         label: str | None = None,
     ) -> None:
-        if not isinstance(reduction, ReducedRodPlan):
-            raise TypeError("reduction must be a ReducedRodPlan.")
         if reduction.dimension != 3:
             raise ValueError("Floating reduced rods require a spatial 3-D reduction.")
         convention = parse(convention, FloatingRodTwistConvention, "convention")
@@ -408,6 +407,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rod: PreparedRod,
@@ -419,10 +419,6 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         bend_twist_material: ReducedRodMaterial | None = None,
         gravity: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(rod, PreparedRod):
-            raise TypeError("rod must be a PreparedRod.")
-        if not isinstance(plan, FloatingReducedRodPlan):
-            raise TypeError("plan must be a FloatingReducedRodPlan.")
         if rod.plan.dimension != 3:
             raise ValueError("Floating reduced rods require a spatial 3-D rod.")
         reduction = prepare_reduced_rod(rod, plan.reduction)
@@ -651,9 +647,8 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
             tangent[self.coefficient_tangent_slice],
         )
 
+    @checked
     def _validated_configuration(self, state: FloatingReducedRodState, /) -> Array:
-        if not isinstance(state, FloatingReducedRodState):
-            raise TypeError("state must be a FloatingReducedRodState.")
         if state.coordinate_count != self.coordinate_count:
             raise ValueError("Floating state coordinate count does not match the plan.")
         configuration = state.configuration
@@ -829,11 +824,10 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
             self.dynamics_id,
         )
 
+    @checked
     def _inverse_mass_from_mass(
         self, mass: FloatingReducedRodMassResult, effort: ArrayLike, /
     ) -> FloatingReducedRodInverseMassResult:
-        if not isinstance(mass, FloatingReducedRodMassResult):
-            raise TypeError("mass must be a FloatingReducedRodMassResult.")
         if mass.dynamics_id != self.dynamics_id:
             raise ValueError("Floating rod mass result belongs to different dynamics.")
         rhs = self.effort_space.validate(jnp.asarray(effort))
@@ -1364,6 +1358,7 @@ class FloatingReducedRodPlant(AbstractDiscretePlant):
     require_finite_parameters: bool = eqx.field(static=True)
     supports_contact: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedFloatingReducedRod,
@@ -1371,8 +1366,6 @@ class FloatingReducedRodPlant(AbstractDiscretePlant):
         *,
         initial_state: FloatingReducedRodState | None = None,
     ) -> None:
-        if not isinstance(prepared, PreparedFloatingReducedRod):
-            raise TypeError("prepared must be a PreparedFloatingReducedRod.")
         state = prepared.initialize_state() if initial_state is None else initial_state
         prepared.validate_state(state)
         payload = FloatingReducedRodPlantState(

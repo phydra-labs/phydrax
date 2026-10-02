@@ -17,6 +17,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._gene_expression import PreparedTelegraphGeneExpression
 from ._network import PreparedStoichiometricNetwork
 from ._whole_cell import PreparedWholeCellAssembly
@@ -119,6 +120,7 @@ class BiologicalFact(StrictModule, NonTrainableState):
     reference: BiologicalReference
     fact_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         namespace: str,
@@ -128,8 +130,6 @@ class BiologicalFact(StrictModule, NonTrainableState):
         reference: BiologicalReference,
         /,
     ) -> None:
-        if not isinstance(reference, BiologicalReference):
-            raise TypeError("reference must be BiologicalReference.")
         namespace_value = _key_segment(namespace, "Fact namespace")
         name_value = _key_segment(name, "Fact name")
         normalized = _value(value, "Fact value")

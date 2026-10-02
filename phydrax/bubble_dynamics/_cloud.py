@@ -38,7 +38,7 @@ from .._trainable import fixed_field, NonTrainableState, parameter_field
 from .._validation import positive_finite_float, positive_integer
 from ..discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
 from ..solver import CartesianExpansionSpace, CartesianFMMResourceEvidence, UniformFMMPlan
-from ..typing import parse
+from ..typing import checked, parse
 from ._cloud_coupling import (
     AbstractCloudCoupling,
     CloudField,
@@ -594,6 +594,7 @@ class BubbleCloudPlan(StrictModule):
     bubble_ids: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         groups: Sequence[BubbleSpeciesGroup],
@@ -620,8 +621,6 @@ class BubbleCloudPlan(StrictModule):
             isinstance(group, BubbleSpeciesGroup) for group in members
         ):
             raise TypeError("groups must be a non-empty sequence of BubbleSpeciesGroup.")
-        if not isinstance(drive, AbstractBubblePressureDrive):
-            raise TypeError("drive must be an AbstractBubblePressureDrive.")
         times = _validated_save_times(save_times)
         field = BubbleCloudPressureField() if pressure_field is None else pressure_field
         if not isinstance(field, BubbleCloudPressureField):

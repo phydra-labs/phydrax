@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._cell_complex import PolyhedralConnectivity
 from .._cochain import CochainDiscretization
 from .._cochain_hodge import DiagonalHodge
@@ -37,9 +38,8 @@ class CutCellCochainPlan(StrictModule, NonTrainableState):
     dual_measures: tuple[Array, ...]
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, complex_: MultivaluedCutCellComplex, /) -> None:
-        if not isinstance(complex_, MultivaluedCutCellComplex):
-            raise TypeError("Cut-cell cochains require MultivaluedCutCellComplex.")
         topology = complex_.mesh.topology
         coordinates, primal, dual = _cut_metric_data(complex_)
         hodges = tuple(

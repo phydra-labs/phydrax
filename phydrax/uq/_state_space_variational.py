@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ..linalg._causal_linear import associative_affine_solve
 from ..stochastic import StateSpaceProblem
+from ..typing import checked
 from ._posterior import ParameterSpace, PosteriorProblem
 from ._state_space_path_density import state_space_path_log_density
 from ._variational import (
@@ -102,6 +103,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         self.scale_floor = floor
 
     @classmethod
+    @checked
     def from_problem(
         cls,
         problem: StateSpaceProblem,
@@ -110,8 +112,6 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         initial_scale: float = 0.5,
         scale_floor: float = 1e-6,
     ) -> "GaussianMarkovVariationalFamily":
-        if not isinstance(problem, StateSpaceProblem):
-            raise TypeError("problem must be a StateSpaceProblem.")
         scale = float(initial_scale)
         floor = float(scale_floor)
         if not isfinite(scale) or scale <= floor:

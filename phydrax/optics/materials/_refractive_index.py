@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import ArtifactManifest
-from ...typing import parse
+from ...typing import checked, parse
 
 
 ExtrapolationPolicy: TypeAlias = Literal["reject", "clamp", "continue"]
@@ -72,9 +72,8 @@ class RefractiveIndexProvenance(StrictModule, NonTrainableState):
     record_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, manifest: ArtifactManifest, /, *, record_id: str) -> None:
-        if not isinstance(manifest, ArtifactManifest):
-            raise TypeError("manifest must be an ArtifactManifest.")
         identifier = str(record_id).strip()
         if not identifier:
             raise ValueError("record_id must be non-empty.")

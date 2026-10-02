@@ -27,7 +27,7 @@ from ..discretization.spectral._transfer import (
     PreparedSpectralModalTransfer,
 )
 from ..equations._les_closures import ResolvedLESFilter
-from ..typing import parse
+from ..typing import checked, parse
 from ._analysis import (
     ClosureAnalysisDAG,
     ClosureAnalysisNode,
@@ -117,6 +117,7 @@ class PeriodicLESAnalysisContext(StrictModule, NonTrainableState):
     reference_manifest_id: str = eqx.field(static=True)
     context_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: TensorSpectralDiscretization,
@@ -133,10 +134,6 @@ class PeriodicLESAnalysisContext(StrictModule, NonTrainableState):
             raise TypeError(
                 "source and resolved must be TensorSpectralDiscretization values."
             )
-        if not isinstance(resolved_filter, ResolvedLESFilter):
-            raise TypeError("resolved_filter must be a ResolvedLESFilter.")
-        if not isinstance(modal_transfer, PreparedSpectralModalTransfer):
-            raise TypeError("modal_transfer must be a PreparedSpectralModalTransfer.")
         manifest = str(reference_manifest_id).strip()
         if not manifest:
             raise ValueError("reference_manifest_id must be non-empty.")
@@ -275,14 +272,13 @@ class PeriodicLESAnalysisContext(StrictModule, NonTrainableState):
                     external.append(input_id)
         return ClosureAnalysisDAG(tuple(external), nodes)
 
+    @checked
     def bind_target(
         self, target: ClosureTarget, dag: ClosureAnalysisDAG, /
     ) -> LESAnalysisReference:
         """Bind one context-owned target and containing DAG to reference provenance."""
 
         _validate_context_target(target, self)
-        if not isinstance(dag, ClosureAnalysisDAG):
-            raise TypeError("dag must be a ClosureAnalysisDAG.")
         required_external = {
             self.reference_manifest_id,
             self.source.prepared_id,

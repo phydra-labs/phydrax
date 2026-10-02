@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ..core import FinanceEvidenceBinding, PhysicalLaw
 from ._constraints import PortfolioConstraints
 from ._objectives import (
@@ -54,6 +55,7 @@ class ForecastLaw(StrictModule):
     as_of_time_ns: int = eqx.field(static=True)
     available_time_ns: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         asset_ids: tuple[str, ...],
@@ -125,10 +127,6 @@ class ForecastLaw(StrictModule):
             tolerance = 128.0 * np.finfo(probabilities_host.dtype).eps
             if abs(float(np.sum(probabilities_host)) - 1.0) > tolerance:
                 raise ValueError("Scenario probabilities must sum to one.")
-        if not isinstance(evidence, FinanceEvidenceBinding):
-            raise TypeError("evidence must be a FinanceEvidenceBinding.")
-        if not isinstance(law, PhysicalLaw):
-            raise TypeError("Portfolio forecasts require a PhysicalLaw.")
         as_of = int(as_of_time_ns)
         available = int(available_time_ns)
         if available < as_of:
@@ -193,6 +191,7 @@ class PortfolioProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     decision_time_ns: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         forecast: ForecastLaw,
@@ -205,8 +204,6 @@ class PortfolioProblem(StrictModule):
         scaling: PortfolioScaling | None = None,
         current_weights: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(forecast, ForecastLaw):
-            raise TypeError("forecast must be a ForecastLaw.")
         objective_types = (
             BlackLittermanObjective,
             DrawdownRiskObjective,
@@ -220,8 +217,6 @@ class PortfolioProblem(StrictModule):
         )
         if not isinstance(objective, objective_types):
             raise TypeError("objective is not a supported portfolio objective.")
-        if not isinstance(constraints, PortfolioConstraints):
-            raise TypeError("constraints must be PortfolioConstraints.")
         count = forecast.asset_count
         scale = (
             PortfolioScaling(jnp.ones((count,), dtype=forecast.expected_returns.dtype))

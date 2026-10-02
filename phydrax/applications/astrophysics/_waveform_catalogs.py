@@ -15,6 +15,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._photometry import ObservationDataProvenance
 
 
@@ -29,6 +30,7 @@ class QnmModeTable(StrictModule, NonTrainableState):
     frequency_convention: str = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         frequency: ArrayLike,
@@ -40,8 +42,6 @@ class QnmModeTable(StrictModule, NonTrainableState):
         time_unit: str = "geometric-time",
         frequency_convention: str = "cycles-per-time",
     ) -> None:
-        if not isinstance(provenance, ObservationDataProvenance):
-            raise TypeError("provenance must be ObservationDataProvenance.")
         unit = str(time_unit).strip()
         convention = str(frequency_convention).strip().lower()
         if not unit:
@@ -115,9 +115,8 @@ class RingdownPlan(StrictModule, NonTrainableState):
     modes: QnmModeTable
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, modes: QnmModeTable, /) -> None:
-        if not isinstance(modes, QnmModeTable):
-            raise TypeError("modes must be a QnmModeTable.")
         self.modes = modes
         self.plan_id = canonical_fingerprint(
             {

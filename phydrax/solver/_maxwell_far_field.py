@@ -48,7 +48,7 @@ from ..discretization.fem._simplicial_whitney_chains import (
 )
 from ..exterior import form_to_vector, FormType, FormValueSpec
 from ..sparse import EdgeRelation, SparseLinearMap
-from ..typing import Complex128, Dim, Float64, Int32
+from ..typing import checked, Complex128, Dim, Float64, Int32
 from ._maxwell import (
     MaxwellCochainLayout,
     PreparedCompatibleMaxwell,
@@ -538,6 +538,7 @@ class MaxwellHuygensBoxPlan(AbstractMaxwellObserverPlan):
     exterior: HomogeneousMaxwellExterior
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bridge: StructuredCochainBridge,
@@ -547,8 +548,6 @@ class MaxwellHuygensBoxPlan(AbstractMaxwellObserverPlan):
         exterior: HomogeneousMaxwellExterior,
         /,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
         if bridge.dimension != 3:
             raise ValueError("Huygens boxes require a three-dimensional bridge.")
         lower = tuple(int(value) for value in lower_nodes)
@@ -874,6 +873,7 @@ class MaxwellHuygensSurfacePlan(StrictModule):
     exterior: HomogeneousMaxwellExterior
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex: FiniteElementDeRhamComplex,
@@ -882,8 +882,6 @@ class MaxwellHuygensSurfacePlan(StrictModule):
         exterior: HomogeneousMaxwellExterior,
         /,
     ) -> None:
-        if not isinstance(complex, FiniteElementDeRhamComplex):
-            raise TypeError("complex must be a FiniteElementDeRhamComplex.")
         if (
             complex.dimension != 3
             or complex.family != "trimmed"
@@ -915,11 +913,10 @@ class MaxwellHuygensSurfacePlan(StrictModule):
         self.exterior = exterior_
         self.plan_id = identifier
 
+    @checked
     def prepare(
         self, runtime: PreparedUnstructuredMaxwell, /
     ) -> PreparedMaxwellHuygensSurface:
-        if not isinstance(runtime, PreparedUnstructuredMaxwell):
-            raise TypeError("runtime must be a PreparedUnstructuredMaxwell.")
         if runtime.plan.cochain.realization_id != self.complex.realization_id:
             raise ValueError(
                 "Huygens surface complex does not match the runtime complex."
@@ -1113,9 +1110,8 @@ class MaxwellFarFieldPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(self, phasors: HuygensSurfacePhasors, /) -> MaxwellFarFieldResult:
-        if not isinstance(phasors, HuygensSurfacePhasors):
-            raise TypeError("phasors must be HuygensSurfacePhasors.")
         if phasors.exterior.exterior_id != self.exterior.exterior_id:
             raise ValueError("Huygens phasors declare a different exterior medium.")
         impedance = self.exterior.impedance

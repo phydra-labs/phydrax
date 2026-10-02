@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..stochastic._state_space import StateSpaceProblem
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._bayesian_optimization import GaussianProcessBayesianOptimization
 from ._bellman import BellmanFilterResult
 from ._ensemble_filter import EnsembleFilterResult
@@ -553,6 +553,7 @@ class StateSpaceEstimation(StrictModule):
     likelihood: MultiExperimentStateSpaceLikelihood
     posterior: PosteriorProblem
 
+    @checked
     def __init__(
         self,
         parameter_space: ParameterSpace,
@@ -561,8 +562,6 @@ class StateSpaceEstimation(StrictModule):
         *,
         label: str = "multi_experiment_state_space",
     ) -> None:
-        if not isinstance(parameter_space, ParameterSpace):
-            raise TypeError("parameter_space must be a ParameterSpace.")
         likelihood = MultiExperimentStateSpaceLikelihood(experiments, label=label)
         self.likelihood = likelihood
         self.posterior = PosteriorProblem(parameter_space, likelihood)

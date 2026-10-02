@@ -18,6 +18,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import checked
 from ...units import derived_unit, JOULE, KELVIN, METER, SECOND, UnitDefinition
 from ..thermofluids import (
     temperature_boundary_component,
@@ -221,6 +222,7 @@ class ThermalBoundaryExchange(StrictModule):
     conductor: ThermalConductance
     reservoir_temperature: Array
 
+    @checked
     def __init__(
         self,
         conductor: ThermalConductance,
@@ -229,8 +231,6 @@ class ThermalBoundaryExchange(StrictModule):
         *,
         temperature_unit: UnitDefinition = KELVIN,
     ) -> None:
-        if not isinstance(conductor, ThermalConductance):
-            raise TypeError("conductor must be a ThermalConductance.")
         self.conductor = conductor
         self.reservoir_temperature = _positive_scalar(
             reservoir_temperature, temperature_unit, KELVIN, "reservoir temperature"

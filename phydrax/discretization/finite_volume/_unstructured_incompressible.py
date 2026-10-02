@@ -13,6 +13,7 @@ from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -34,16 +35,13 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
     report: UnstructuredCollocatedOperatorReport
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
         gradient: PreparedCellPolynomialReconstruction,
         /,
     ) -> None:
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Collocated operators require unstructured FV geometry.")
-        if not isinstance(gradient, PreparedCellPolynomialReconstruction):
-            raise TypeError("gradient must be PreparedCellPolynomialReconstruction.")
         if gradient.basis.degree != 1:
             raise ValueError("Collocated operators require a degree-one gradient.")
         if gradient.discretization.prepared_id != discretization.prepared_id:

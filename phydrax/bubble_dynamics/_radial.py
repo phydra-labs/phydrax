@@ -27,7 +27,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import parameter_field
 from ..equations import AbstractBarotropicMaterial
-from ..typing import parse
+from ..typing import checked, parse
 from ._contracts import (
     AbstractBubbleGasLaw,
     AbstractBubbleInterfaceLaw,
@@ -148,6 +148,7 @@ class RadialBubbleModel(StrictModule):
     liquid_material: AbstractBarotropicMaterial | None
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         equation: RadialBubbleEquation,
@@ -162,14 +163,6 @@ class RadialBubbleModel(StrictModule):
         liquid_material: AbstractBarotropicMaterial | None = None,
     ) -> None:
         selected = parse(equation, RadialBubbleEquation, "equation")
-        if not isinstance(gas, AbstractBubbleGasLaw):
-            raise TypeError("gas must be an AbstractBubbleGasLaw.")
-        if not isinstance(liquid, AbstractBubbleLiquidLaw):
-            raise TypeError("liquid must be an AbstractBubbleLiquidLaw.")
-        if not isinstance(interface, AbstractBubbleInterfaceLaw):
-            raise TypeError("interface must be an AbstractBubbleInterfaceLaw.")
-        if not isinstance(environment, BubbleEnvironment):
-            raise TypeError("environment must be a BubbleEnvironment.")
         density, sound_speed = _liquid_properties(
             selected, liquid_density, liquid_sound_speed, liquid_material
         )

@@ -16,6 +16,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._canonical import BlockAMRResourcePlan, CanonicalPatchHierarchy
 from ._patches import PatchShapeSignature
 
@@ -279,9 +280,8 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
     resources: BlockAMRResourcePlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, resources: BlockAMRResourcePlan, /) -> None:
-        if not isinstance(resources, BlockAMRResourcePlan):
-            raise TypeError("Patch executable cache requires BlockAMRResourcePlan.")
         self.resources = resources
         self.plan_id = canonical_fingerprint(
             {
@@ -290,6 +290,7 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def required_signatures(
         self,
         hierarchy: CanonicalPatchHierarchy,
@@ -300,8 +301,6 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
         dtype: str | np.dtype,
         backend: str | None = None,
     ) -> tuple[PatchExecutableSignature, ...]:
-        if not isinstance(hierarchy, CanonicalPatchHierarchy):
-            raise TypeError("Executable signatures require CanonicalPatchHierarchy.")
         backend_ = jax.default_backend() if backend is None else str(backend)
         values = {
             bucket.plan.signature.signature_id: PatchExecutableSignature(
@@ -317,6 +316,7 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
         }
         return tuple(sorted(values.values(), key=lambda value: value.signature_id))
 
+    @checked
     def install(
         self,
         state: PatchExecutableCacheState,
@@ -325,8 +325,6 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
         sample_factory: SampleFactory,
         /,
     ) -> PatchExecutableInstallResult:
-        if not isinstance(state, PatchExecutableCacheState):
-            raise TypeError("Executable installation requires cache state.")
         if not callable(kernel_factory) or not callable(sample_factory):
             raise TypeError("Executable installation requires kernel/sample factories.")
         requested = tuple(sorted(signatures, key=lambda value: value.signature_id))

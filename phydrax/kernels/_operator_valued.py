@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ..exterior._form_type import FormType
 from ..linalg import compound_matrix
+from ..typing import checked
 from ._base import (
     _as_input,
     _as_inputs,
@@ -207,16 +208,13 @@ class IntrinsicCoregionalizationKernel(AbstractOperatorValuedKernel):
     spatial_kernel: AbstractPositiveDefiniteKernel
     coregionalization: Coregionalization
 
+    @checked
     def __init__(
         self,
         spatial_kernel: AbstractPositiveDefiniteKernel,
         coregionalization: Coregionalization,
         /,
     ) -> None:
-        if not isinstance(spatial_kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("spatial_kernel must be a positive-definite kernel.")
-        if not isinstance(coregionalization, Coregionalization):
-            raise TypeError("coregionalization must be a Coregionalization.")
         self.spatial_kernel = spatial_kernel
         self.coregionalization = coregionalization
 
@@ -464,6 +462,7 @@ class ProjectedTangentKernel(AbstractOperatorValuedKernel):
     projector_id: str = eqx.field(static=True)
     projector_derivative_order: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scalar_kernel: AbstractPositiveDefiniteKernel,
@@ -474,8 +473,6 @@ class ProjectedTangentKernel(AbstractOperatorValuedKernel):
         projector_id: str,
         projector_derivative_order: int | None = None,
     ) -> None:
-        if not isinstance(scalar_kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("scalar_kernel must be positive definite.")
         if not callable(tangent_projector):
             raise TypeError("tangent_projector must be callable.")
         if int(output_dimension) <= 0:
@@ -585,6 +582,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
     projector_id: str = eqx.field(static=True)
     projector_derivative_order: int | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scalar_kernel: AbstractPositiveDefiniteKernel,
@@ -595,12 +593,8 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
         projector_id: str,
         projector_derivative_order: int | None = None,
     ) -> None:
-        if not isinstance(scalar_kernel, AbstractPositiveDefiniteKernel):
-            raise TypeError("scalar_kernel must be positive definite.")
         if not callable(tangent_projector):
             raise TypeError("tangent_projector must be callable.")
-        if not isinstance(form_type, FormType):
-            raise TypeError("form_type must be a FormType.")
         if form_type.fiber_shape:
             raise ValueError("Projected form kernels require a scalar coefficient fiber.")
         if not isinstance(projector_id, str) or not projector_id:

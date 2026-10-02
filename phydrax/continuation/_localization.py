@@ -33,6 +33,7 @@ from ..nonlinear import (
     NonlinearTermination,
     PreparedNonlinearSolve,
 )
+from ..typing import checked
 from ._core import (
     _execution_residual,
     _run_nonlinear_corrector,
@@ -289,6 +290,7 @@ class EventLocalizationResult(StrictModule):
     diagnostics: EventLocalizationDiagnostics
     provenance: EventLocalizationProvenance
 
+    @checked
     def __init__(
         self,
         point: BranchPoint | None,
@@ -299,10 +301,6 @@ class EventLocalizationResult(StrictModule):
     ) -> None:
         if point is not None and not isinstance(point, BranchPoint):
             raise TypeError("point must be a BranchPoint or None.")
-        if not isinstance(diagnostics, EventLocalizationDiagnostics):
-            raise TypeError("diagnostics must be EventLocalizationDiagnostics.")
-        if not isinstance(provenance, EventLocalizationProvenance):
-            raise TypeError("provenance must be EventLocalizationProvenance.")
         self.point = point
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics

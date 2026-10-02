@@ -21,6 +21,7 @@ from ...discretization.fem._mortar import (
     FiniteElementMortarPlan,
 )
 from ...discretization.fem._reference_operator import PreparedFiniteElementReference
+from ...typing import checked
 from ._ir import (
     LocalActionIR,
     operator_program_from_local_ir,
@@ -407,6 +408,7 @@ class CompiledWorkset(StrictModule, NonTrainableState):
     valid: Array
     workset_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         signature: WorksetSignature,
@@ -432,8 +434,6 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         neighbor_trace_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(signature, WorksetSignature):
-            raise TypeError("signature must be WorksetSignature.")
         actions, entities, owners, neighbors = _workset_index_routes(
             action_indices, entity_indices, owner_cells, neighbor_cells
         )

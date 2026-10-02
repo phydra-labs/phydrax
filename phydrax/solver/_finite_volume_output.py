@@ -28,6 +28,7 @@ from ..discretization.finite_volume import (
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumeGeometryState,
 )
+from ..typing import checked
 from ._block_amr_runtime import BlockAMRRuntimeState, PreparedBlockAMRRuntime
 from ._finite_volume_runtime import FiniteVolumeRuntimeState
 
@@ -462,6 +463,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             version_group.create_dataset("points", data=points)
         return version_group["points"].name
 
+    @checked
     def _write_block_snapshot(
         self,
         runtime: PreparedBlockAMRRuntime,
@@ -469,8 +471,6 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         /,
     ) -> int:
         self._validate_discretization(runtime)
-        if not isinstance(state, BlockAMRRuntimeState):
-            raise TypeError("Block output state must be BlockAMRRuntimeState.")
         topology = state.hierarchy_state.topology
         if (
             topology.epoch.epoch_id != runtime.dynamics.topology.epoch.epoch_id
@@ -686,6 +686,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         self._write_xdmf(discretization)
         return index
 
+    @checked
     def write_vtk_snapshot(
         self,
         path: str | Path,
@@ -699,11 +700,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
     ) -> Path:
         """Write one meshio-readable VTK sidecar; never use it for restart."""
 
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("VTK snapshots require unstructured finite-volume geometry.")
         self._validate_discretization(discretization)
-        if not isinstance(runtime_state, FiniteVolumeRuntimeState):
-            raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
         content_state = runtime_state.content_state
         self.precision.validate_state(content_state.conservative_content)
         if content_state.conservative_content.shape != discretization.state_shape:

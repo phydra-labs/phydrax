@@ -50,6 +50,7 @@ from ..discretization.spectral import (
     SpectralPrecisionPolicy,
 )
 from ..sparse import KeyGroupPlan
+from ..typing import checked
 from ._contracts import (
     HeatActionEvidence,
     SparseCandidateEvidence,
@@ -109,6 +110,7 @@ class SparseLabelGrid(StrictModule):
     route_id: str = eqx.field(static=True)
     site_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         address_plan: MortonAddressPlan,
@@ -120,8 +122,6 @@ class SparseLabelGrid(StrictModule):
         stencil_radius: int,
         dtype: DTypeLike = jnp.float64,
     ) -> None:
-        if not isinstance(address_plan, MortonAddressPlan):
-            raise TypeError("address_plan must be a MortonAddressPlan.")
         if not all(address_plan.periodic_axes):
             raise ValueError("The sparse threshold route needs a fully periodic box.")
         radius = positive_integer(stencil_radius, "stencil_radius")

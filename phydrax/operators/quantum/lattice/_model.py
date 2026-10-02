@@ -13,12 +13,12 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jax import Array
+from jax import Array, dtypes
 from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
-from ....typing import parse
+from ....typing import checked, parse
 from .._fermionic_fock import FermionModeOrder
 
 
@@ -169,6 +169,7 @@ class LocalOperatorPlan(StrictModule):
     support_mask: Array
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         space: LocalSpacePlan,
@@ -179,8 +180,6 @@ class LocalOperatorPlan(StrictModule):
         *,
         fermion_parity: int | None = None,
     ) -> None:
-        if not isinstance(space, LocalSpacePlan):
-            raise TypeError("space must be LocalSpacePlan.")
         name = str(label)
         value = np.asarray(matrix)
         delta = tuple(charge_delta)
@@ -283,7 +282,15 @@ class QuantumLatticeTerm(StrictModule):
             ):
                 changes[charge_label] = changes.get(charge_label, 0) + delta
         self.factors = values
-        self.coefficient = scalar.astype(jnp.result_type(scalar.dtype, 1j))
+        if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
+            coefficient_dtype = scalar.dtype
+        elif jnp.issubdtype(scalar.dtype, jnp.floating):
+            coefficient_dtype = jnp.dtype(
+                jnp.complex64 if scalar.dtype.itemsize <= 4 else jnp.complex128
+            )
+        else:
+            coefficient_dtype = dtypes.canonicalize_dtype(jnp.complex128)
+        self.coefficient = scalar.astype(coefficient_dtype)
         self.add_adjoint = bool(add_adjoint)
         self.label = name
         self.charge_delta = tuple(sorted(changes.items()))

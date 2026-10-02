@@ -21,7 +21,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh, TemporalMesh
 from ..discretization.finite_volume import FiniteVolumePrecisionPolicy
-from ..typing import parse
+from ..typing import checked, parse
 from ._finite_volume_runtime import (
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
@@ -118,6 +118,7 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
     replay: FiniteVolumeReplayPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedFiniteVolumeRuntime,
@@ -130,8 +131,6 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
     ) -> None:
         attempts = int(attempt_count)
         stride = int(checkpoint_stride)
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         if attempts <= 0 or stride <= 0:
             raise ValueError("Attempt count and checkpoint stride must be positive.")
         retention = parse(retention, FiniteVolumeRetentionPolicy, "retention")
@@ -154,14 +153,13 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
             }
         )
 
+    @checked
     def rollout(
         self,
         initial_state: FiniteVolumeRuntimeState,
         args: Any = None,
         /,
     ) -> FiniteVolumeRolloutResult:
-        if not isinstance(initial_state, FiniteVolumeRuntimeState):
-            raise TypeError("initial_state must be FiniteVolumeRuntimeState.")
         retain_states = self.retention != "final"
 
         def step(
@@ -235,6 +233,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
     replay: FiniteVolumeReplayPolicy
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime: PreparedFiniteVolumeRuntime,
@@ -245,10 +244,6 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         checkpoint_stride: int = 1,
         replay: FiniteVolumeReplayPolicy | None = None,
     ) -> None:
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
-        if not isinstance(temporal_mesh, TemporalMesh):
-            raise TypeError("temporal_mesh must be TemporalMesh.")
         if temporal_mesh.role != "internal" or not bool(
             np.all(np.asarray(temporal_mesh.active_intervals))
         ):
@@ -279,6 +274,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_realized_mesh(
         cls,
         runtime: PreparedFiniteVolumeRuntime,
@@ -286,8 +282,6 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         /,
         **kwargs: Any,
     ) -> "ScheduledFiniteVolumeRolloutPlan":
-        if not isinstance(realized, RealizedTemporalMesh):
-            raise TypeError("realized must be RealizedTemporalMesh.")
         count = int(np.asarray(realized.count))
         if count <= 0:
             raise ValueError("A scheduled replay requires at least one accepted step.")
@@ -305,14 +299,13 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         )
         return cls(runtime, mesh, **kwargs)
 
+    @checked
     def rollout(
         self,
         initial_state: FiniteVolumeRuntimeState,
         args: Any = None,
         /,
     ) -> FiniteVolumeRolloutResult:
-        if not isinstance(initial_state, FiniteVolumeRuntimeState):
-            raise TypeError("initial_state must be FiniteVolumeRuntimeState.")
         initial_time = jnp.asarray(initial_state.time)
         tolerance = (
             32.0

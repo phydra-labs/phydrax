@@ -17,7 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import ParticleDiscretization
-from ...typing import parse
+from ...typing import checked, parse
 from ._background import FLRWBackground
 from ._particles import CosmologicalParticleState
 from ._products import LagrangianGrowthHistory, MatterPowerTable
@@ -131,6 +131,7 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
     dealiasing: LagrangianDealiasing = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -145,10 +146,6 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
         shape_ = tuple(shape)
         box = tuple(float(value) for value in box_size)
         order_ = int(order)
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
-        if not isinstance(scale, CosmologyScaleContract):
-            raise TypeError("scale must be a CosmologyScaleContract.")
         if (
             len(shape_) not in (1, 2, 3)
             or len(shape_) != len(box)
@@ -181,6 +178,7 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
             }
         )
 
+    @checked
     def realize(
         self,
         background: FLRWBackground,
@@ -190,12 +188,6 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
         initial_scale_factor: ArrayLike,
         /,
     ) -> LagrangianInitialConditionResult:
-        if not isinstance(background, FLRWBackground):
-            raise TypeError("background must be FLRWBackground.")
-        if not isinstance(growth, LagrangianGrowthHistory):
-            raise TypeError("growth must be LagrangianGrowthHistory.")
-        if not isinstance(power, MatterPowerTable):
-            raise TypeError("power must be MatterPowerTable.")
         scale_ids = (
             self.scale.scale_id,
             background.scale.scale_id,

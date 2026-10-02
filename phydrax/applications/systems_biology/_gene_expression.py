@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._network import (
     CompartmentSpec,
     MassActionPropensity,
@@ -265,9 +266,8 @@ class PreparedCountMeasurement(StrictModule, NonTrainableState):
     capture_indices: Array
     measurement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: CountMeasurementPlan, /) -> None:
-        if not isinstance(plan, CountMeasurementPlan):
-            raise TypeError("plan must be CountMeasurementPlan.")
         self.plan = plan
         self.capture_indices = jnp.arange(
             plan.observation_capacity + 1, dtype=jnp.float64
@@ -375,9 +375,8 @@ class PreparedTelegraphGeneExpression(StrictModule, NonTrainableState):
     exact_path_differentiable: bool = eqx.field(static=True)
     analytic_moments_differentiable: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: TelegraphGeneExpressionPlan, /) -> None:
-        if not isinstance(plan, TelegraphGeneExpressionPlan):
-            raise TypeError("plan must be TelegraphGeneExpressionPlan.")
         compartment = CompartmentSpec("nucleus-cytosol", 1.0, unit="cell")
         species = (
             SpeciesSpec("promoter_off", compartment.name),
@@ -515,11 +514,10 @@ class PreparedTelegraphGeneExpression(StrictModule, NonTrainableState):
     ) -> Array:
         return self.fit_evaluation(log_rates, target).objective
 
+    @checked
     def fit_evaluation(
         self, log_rates: ArrayLike, target: TelegraphFitTarget, /
     ) -> TelegraphFitEvaluation:
-        if not isinstance(target, TelegraphFitTarget):
-            raise TypeError("target must be TelegraphFitTarget.")
         log_values = jnp.asarray(log_rates, dtype=self.rates.dtype)
         if log_values.shape != (5,):
             raise ValueError("log_rates must have shape (5,).")

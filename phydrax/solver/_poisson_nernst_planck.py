@@ -27,6 +27,7 @@ from ..equations._electrochemistry import (
     ElectrolyteTransportParameters,
     FARADAY_CONSTANT,
 )
+from ..typing import checked
 from ._cochain_electrostatic import (
     CochainElectrostaticPlan,
     CochainElectrostaticResult,
@@ -62,6 +63,7 @@ class PoissonNernstPlanckPlan(StrictModule, NonTrainableState):
     energy_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         electrostatic: CochainElectrostaticPlan,
@@ -72,12 +74,6 @@ class PoissonNernstPlanckPlan(StrictModule, NonTrainableState):
         fixed_charge: ArrayLike = 0.0,
         energy_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(electrostatic, CochainElectrostaticPlan):
-            raise TypeError("electrostatic must be CochainElectrostaticPlan.")
-        if not isinstance(closure, AbstractElectrochemicalClosure):
-            raise TypeError("closure must implement AbstractElectrochemicalClosure.")
-        if not isinstance(parameters, ElectrolyteTransportParameters):
-            raise TypeError("parameters must be ElectrolyteTransportParameters.")
         if closure.schema.schema_id != parameters.schema.schema_id:
             raise ValueError("Electrochemical closure and parameters schemas differ.")
         node_count = electrostatic.bridge.cochain.cell_counts[0]

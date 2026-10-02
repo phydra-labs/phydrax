@@ -15,6 +15,7 @@ from jax import Array
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._force_calibration import (
     PhysicalRelativeForceCalibrationCandidate,
     PhysicalRelativeForceCalibrationStatus,
@@ -56,6 +57,7 @@ class PhysicalRelativeForceCalibrationQualificationPlan(StrictModule, NonTrainab
             }
         )
 
+    @checked
     def evaluate(
         self,
         identifiable_candidate: PhysicalRelativeForceCalibrationCandidate,
@@ -65,18 +67,6 @@ class PhysicalRelativeForceCalibrationQualificationPlan(StrictModule, NonTrainab
     ) -> PhysicalRelativeForceCalibrationQualificationEvidence:
         """Require scale recovery and fail-closed nuisance confounding detection."""
 
-        if not isinstance(
-            identifiable_candidate, PhysicalRelativeForceCalibrationCandidate
-        ):
-            raise TypeError(
-                "identifiable_candidate must be PhysicalRelativeForceCalibrationCandidate."
-            )
-        if not isinstance(
-            confounded_candidate, PhysicalRelativeForceCalibrationCandidate
-        ):
-            raise TypeError(
-                "confounded_candidate must be PhysicalRelativeForceCalibrationCandidate."
-            )
         expected = jnp.asarray(
             expected_scale_newton_per_relative_force,
             dtype=identifiable_candidate.proposed.scale_newton_per_relative_force.dtype,

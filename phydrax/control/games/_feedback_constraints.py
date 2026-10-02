@@ -43,6 +43,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...typing import checked
 from ._constraints import (
     GameConstraintScope,
     GameConstraintSite,
@@ -125,6 +126,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
     variational_multiplier_indices: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         suggestion: LocalAffineGameSuggestion,
@@ -138,10 +140,6 @@ class ConstrainedFeedbackGameProblem(StrictModule):
         variational: bool = False,
         problem_id: str = "constrained-feedback-quasi-nash",
     ) -> None:
-        if not isinstance(suggestion, LocalAffineGameSuggestion):
-            raise TypeError("suggestion must be a LocalAffineGameSuggestion.")
-        if not isinstance(constraints, OpenLoopGameConstraints):
-            raise TypeError("constraints must be OpenLoopGameConstraints.")
         if not isinstance(variational, bool):
             raise TypeError("variational must be a bool.")
         if not isinstance(problem_id, str) or not problem_id:

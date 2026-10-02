@@ -22,6 +22,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 
 
 def _positive_modes(mode_sizes: Sequence[int], /) -> tuple[int, ...]:
@@ -290,9 +291,8 @@ class TensorTrain(StrictModule):
         cores = (-self.cores[0],) + self.cores[1:]
         return TensorTrain(cores)
 
+    @checked
     def __add__(self, other: TensorTrain) -> TensorTrain:
-        if not isinstance(other, TensorTrain):
-            raise TypeError("TensorTrain addition requires another TensorTrain.")
         if self.mode_sizes != other.mode_sizes:
             raise ValueError("TensorTrain addition requires identical mode sizes.")
         if self.order == 1:
@@ -687,9 +687,8 @@ class TensorTrainOperator(StrictModule):
     def __neg__(self) -> TensorTrainOperator:
         return TensorTrainOperator((-self.cores[0],) + self.cores[1:])
 
+    @checked
     def __add__(self, other: TensorTrainOperator) -> TensorTrainOperator:
-        if not isinstance(other, TensorTrainOperator):
-            raise TypeError("TT operator addition requires another TT operator.")
         if (
             self.output_mode_sizes != other.output_mode_sizes
             or self.input_mode_sizes != other.input_mode_sizes

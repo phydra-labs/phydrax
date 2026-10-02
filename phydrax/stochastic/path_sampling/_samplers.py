@@ -17,7 +17,7 @@ from jax.typing import DTypeLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._core import (
     _fixed_step_time_grid_valid,
     FunctionalDynamicsKernel,
@@ -71,6 +71,7 @@ class TPSPlan(StrictModule, NonTrainableState):
     lineage_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ensemble: AbstractPathEnsemble,
@@ -85,12 +86,6 @@ class TPSPlan(StrictModule, NonTrainableState):
         lineage_capacity: int = 1024,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(ensemble, AbstractPathEnsemble):
-            raise TypeError("ensemble must implement AbstractPathEnsemble.")
-        if not isinstance(kernel, FunctionalDynamicsKernel):
-            raise TypeError("kernel must be FunctionalDynamicsKernel.")
-        if not isinstance(action, AbstractPathAction):
-            raise TypeError("action must implement AbstractPathAction.")
         if not isinstance(action.action_id, str) or not action.action_id:
             raise ValueError("action_id must be non-empty.")
         if (
@@ -417,6 +412,7 @@ class TISPlan(StrictModule, NonTrainableState):
     lineage_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         network: InterfaceNetworkPlan,
@@ -430,8 +426,6 @@ class TISPlan(StrictModule, NonTrainableState):
         lineage_capacity: int = 1024,
         plan_id: str | None = None,
     ) -> None:
-        if not isinstance(network, InterfaceNetworkPlan):
-            raise TypeError("network must be InterfaceNetworkPlan.")
         if not isinstance(kernel, FunctionalDynamicsKernel) or not isinstance(
             action, AbstractPathAction
         ):
@@ -588,9 +582,8 @@ class RETISPlan(StrictModule, NonTrainableState):
     tis: TISPlan
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, tis: TISPlan, /, *, plan_id: str | None = None) -> None:
-        if not isinstance(tis, TISPlan):
-            raise TypeError("tis must be TISPlan.")
         identity = plan_id or canonical_fingerprint(
             {"kind": "replica-exchange-tis-plan", "tis": tis.plan_id, "minus": True}
         )

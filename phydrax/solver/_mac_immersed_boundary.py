@@ -49,6 +49,7 @@ from ..linalg import (
     svd as svd_linalg,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._mac_immersed_preconditioner import (
     MACImmersedPressureBlockPreconditionerPlan,
 )
@@ -148,6 +149,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         operators: PreparedMACOperators,
@@ -166,10 +168,6 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         condition_limit: float = 1.0e10,
         require_rank_certification: bool = True,
     ) -> None:
-        if not isinstance(operators, PreparedMACOperators):
-            raise TypeError("operators must be PreparedMACOperators.")
-        if not isinstance(transfer, PreparedMACMarkerTransfer):
-            raise TypeError("transfer must be PreparedMACMarkerTransfer.")
         if transfer.operators.prepared_id != operators.prepared_id:
             raise ValueError("Transfer and projection must share MAC operators.")
         boundaries_ = (
@@ -446,7 +444,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
                 marker_smallest,
                 jnp.finfo(marker_singular_values.dtype).tiny,
             )
-            marker_rank = marker_rank_result.numerical_rank
+            marker_rank = svd_linalg.require_exact_svd_rank(marker_rank_result)
             marker_rank_valid = (
                 marker_rank_result.successful
                 & jnp.isfinite(marker_condition)

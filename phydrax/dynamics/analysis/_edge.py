@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
-from ...typing import parse
+from ...typing import checked, parse
 from .._evolution import AbstractEvolution
 from .._trajectory import TrajectoryData
 
@@ -142,6 +142,7 @@ class EdgeTrackingProblem(StrictModule):
     target_coordinate: Array
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evolution: AbstractEvolution,
@@ -152,8 +153,6 @@ class EdgeTrackingProblem(StrictModule):
         *,
         problem_id: str | None = None,
     ) -> None:
-        if not isinstance(evolution, AbstractEvolution):
-            raise TypeError("evolution must be an AbstractEvolution.")
         if not callable(classifier):
             raise TypeError("classifier must be callable.")
         raw_source = jnp.asarray(source_coordinate)

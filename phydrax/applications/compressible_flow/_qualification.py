@@ -23,7 +23,7 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
-from ...typing import parse
+from ...typing import checked, parse
 
 
 CompressibleWaveKind: TypeAlias = Literal[
@@ -98,11 +98,10 @@ class CompressibleReferenceWavePlan(StrictModule, NonTrainableState):
     def dimension(self) -> int:
         return len(self.wave_vector)
 
+    @checked
     def _mode(
         self, system: HomogeneousMixtureEulerSystem, /
     ) -> tuple[Array, Array, Array, Array, Array]:
-        if not isinstance(system, HomogeneousMixtureEulerSystem):
-            raise TypeError("Reference waves require HomogeneousMixtureEulerSystem.")
         if system.dimension != self.dimension or self.base_primitive.shape != (
             system.component_count,
         ):

@@ -19,7 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._tensor_support import PreparedTensorGrid
 from ..linalg import AbstractLinearOperator, ArraySpace
-from ..typing import parse
+from ..typing import checked, parse
 
 
 ManufacturedNorm: TypeAlias = Literal["l2", "linf"]
@@ -342,6 +342,7 @@ class ManufacturedConvergencePlan(StrictModule):
         mass = jnp.sum(selected_weights)
         return jnp.sqrt(jnp.sum(selected_weights * jnp.abs(selected) ** 2) / mass)
 
+    @checked
     def run(
         self,
         case: ManufacturedPDECase,
@@ -350,8 +351,6 @@ class ManufacturedConvergencePlan(StrictModule):
         time: ArrayLike = 0.0,
         args: Any = None,
     ) -> ManufacturedConvergenceResult:
-        if not isinstance(case, ManufacturedPDECase):
-            raise TypeError("case must be a ManufacturedPDECase.")
         spacings = []
         total_errors = []
         interior_errors = []

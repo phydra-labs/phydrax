@@ -22,6 +22,7 @@ from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
 from .._model._component import AbstractComponentSlot
 from .._trainable import fixed_field, NonTrainableState
+from ..typing import checked
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._dense_inverse import dense_inverse
 from ._local_blocks import (
@@ -164,6 +165,7 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
     inner: AbstractPreconditioner
     compute_dtype: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         inner: AbstractPreconditioner,
@@ -171,10 +173,6 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
         compute_dtype: Any,
         /,
     ) -> None:
-        if not isinstance(inner, AbstractPreconditioner):
-            raise TypeError("inner must be an AbstractPreconditioner.")
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         self.inner = inner
         self.space = space
         self.compute_dtype = jnp.dtype(compute_dtype).name
@@ -209,9 +207,8 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
 
 
 class IdentityPreconditioner(AbstractPreconditioner, NonTrainableState):
+    @checked
     def __init__(self, space: AbstractVectorSpace, /) -> None:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         self.space = space
         self.properties = _fixed_linear_properties(
             self_adjoint=True,
@@ -326,6 +323,7 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
     inverse_blocks: tuple[Array, ...]
     offsets: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         blocks: Sequence[ArrayLike],
@@ -335,8 +333,6 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
         positive_definite: bool = False,
         preconditioner_id: str | None = None,
     ) -> None:
-        if not isinstance(space, AbstractVectorSpace):
-            raise TypeError("space must be an AbstractVectorSpace.")
         matrices = tuple(jnp.asarray(block) for block in blocks)
         if not matrices:
             raise ValueError("blocks must contain at least one matrix.")
@@ -747,6 +743,7 @@ class OperatorPreconditioner(AbstractPreconditioner, NonTrainableState):
 
     operator: AbstractLinearOperator
 
+    @checked
     def __init__(
         self,
         operator: AbstractLinearOperator,
@@ -755,8 +752,6 @@ class OperatorPreconditioner(AbstractPreconditioner, NonTrainableState):
         positive_definite: bool = False,
         preconditioner_id: str | None = None,
     ) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if not operator.source.compatible(operator.target) or operator.batch_shape:
             raise ValueError(
                 "A preconditioning operator must be an unbatched endomorphism."

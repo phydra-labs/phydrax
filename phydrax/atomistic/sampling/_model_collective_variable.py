@@ -12,6 +12,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ...discretization import PeriodicCell
+from ...typing import checked
 from ._collective_variable import (
     AbstractCollectiveVariableProgram,
     CollectiveVariableMetric,
@@ -29,6 +30,7 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
     model_id: str = eqx.field(static=True)
     program_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: AbstractCollectiveVariableProgram,
@@ -39,10 +41,6 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
         names: tuple[str, ...],
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
     ) -> None:
-        if not isinstance(source, AbstractCollectiveVariableProgram):
-            raise TypeError("source must implement AbstractCollectiveVariableProgram.")
-        if not isinstance(model, AbstractArrayModel):
-            raise TypeError("model must implement AbstractArrayModel.")
         if model.in_size != source.output_size or not isinstance(model.out_size, int):
             raise ValueError("Model sizes do not match the source CV program.")
         identifier = str(model_id).strip()

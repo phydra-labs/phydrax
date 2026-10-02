@@ -19,6 +19,7 @@ from ..._interpolation import apply_gather_stencil, rectilinear_stencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout, TrajectoryData
+from ...typing import checked
 from ...units import (
     conversion_factor,
     COULOMB,
@@ -44,6 +45,7 @@ class DetectorTrajectoryRoute(StrictModule, NonTrainableState):
     time_scale_to_second: float = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_layout: StateLayout,
@@ -53,8 +55,6 @@ class DetectorTrajectoryRoute(StrictModule, NonTrainableState):
         position_unit: UnitDefinition = METER,
         time_unit: UnitDefinition = SECOND,
     ) -> None:
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("state_layout must be StateLayout.")
         indices = tuple(position_components)
         if (
             not indices
@@ -129,6 +129,7 @@ class PrescribedShockleyRamoPlan(StrictModule, NonTrainableState):
     closure_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         weighting_plan: DetectorWeightingFieldPlan,
@@ -138,20 +139,12 @@ class PrescribedShockleyRamoPlan(StrictModule, NonTrainableState):
         *,
         closure_tolerance: float = 1.0e-12,
     ) -> None:
-        if not isinstance(weighting_plan, DetectorWeightingFieldPlan):
-            raise TypeError("weighting_plan must be DetectorWeightingFieldPlan.")
-        if not isinstance(weighting, DetectorWeightingFieldResult):
-            raise TypeError(
-                "weighting must be DetectorWeightingFieldResult; bias results cannot substitute."
-            )
         if weighting.plan_id != weighting_plan.plan_id:
             raise ValueError("Weighting result belongs to another weighting plan.")
         if not bool(weighting.evidence.certified):
             raise ValueError(
                 "Shockley--Ramo response requires a certified complete-electrode weighting basis."
             )
-        if not isinstance(route, DetectorTrajectoryRoute):
-            raise TypeError("route must be DetectorTrajectoryRoute.")
         if len(route.position_components) != weighting_plan.detector.bridge.dimension:
             raise ValueError(
                 "Trajectory position dimension must match the detector cochain dimension."
@@ -174,6 +167,7 @@ class PrescribedShockleyRamoPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         trajectory: TrajectoryData,
@@ -182,8 +176,6 @@ class PrescribedShockleyRamoPlan(StrictModule, NonTrainableState):
         *,
         charge_unit: UnitDefinition = COULOMB,
     ) -> ShockleyRamoResponseResult:
-        if not isinstance(trajectory, TrajectoryData):
-            raise TypeError("trajectory must be TrajectoryData.")
         if trajectory.state_layout.layout_id != self.route.state_layout.layout_id:
             raise ValueError("Trajectory state layout does not match its detector route.")
         if trajectory.coordinate_kind != "continuous":

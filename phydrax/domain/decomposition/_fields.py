@@ -14,7 +14,7 @@ import jax.random as jr
 from jax import Array
 
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._function import DomainFunction
 from ._cover import SubdomainCover
 
@@ -65,6 +65,7 @@ class LocalFieldFamily(StrictModule):
     fields: tuple[DomainFunction, ...]
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_id: str,
@@ -72,8 +73,6 @@ class LocalFieldFamily(StrictModule):
         fields: Mapping[str, DomainFunction],
         /,
     ) -> None:
-        if not isinstance(cover, SubdomainCover):
-            raise TypeError("cover must be a SubdomainCover.")
         values = dict(fields)
         if set(values) != set(cover.patch_ids):
             raise ValueError(
@@ -323,9 +322,8 @@ class BrokenField(StrictModule):
 
     family: LocalFieldFamily
 
+    @checked
     def __init__(self, family: LocalFieldFamily, /) -> None:
-        if not isinstance(family, LocalFieldFamily):
-            raise TypeError("family must be a LocalFieldFamily.")
         self.family = family
 
     def local(self, patch_id: str, /) -> DomainFunction:

@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -393,6 +394,7 @@ class MatrixElementAdaptationDecision:
     accepted: bool
     decision_id: str
 
+    @checked
     def __init__(
         self,
         base_revision_id: str,
@@ -404,8 +406,6 @@ class MatrixElementAdaptationDecision:
         accepted: bool,
         /,
     ) -> None:
-        if not isinstance(active_revision, MatrixElementRevision):
-            raise TypeError("active_revision must be MatrixElementRevision.")
         base = _digest(base_revision_id, "base_revision_id")
         candidate = _digest(candidate_draft_revision_id, "candidate_draft_revision_id")
         proposal = _digest(proposal_record_id, "proposal_record_id")

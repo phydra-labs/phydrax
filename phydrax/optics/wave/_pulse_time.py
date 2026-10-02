@@ -15,7 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PreparedTensorGrid
-from ...typing import parse
+from ...typing import checked, parse
 
 
 PulseTimeTopology: TypeAlias = Literal["finite-window", "periodic-cell"]
@@ -34,6 +34,7 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
     topology: PulseTimeTopology = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         temporal_grid: PreparedTensorGrid,
@@ -41,8 +42,6 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
         *,
         topology: PulseTimeTopology,
     ) -> None:
-        if not isinstance(temporal_grid, PreparedTensorGrid):
-            raise TypeError("temporal_grid must be a PreparedTensorGrid.")
         if len(temporal_grid.shape) != 1:
             raise ValueError("PulseTimeSpace requires an exactly one-dimensional grid.")
         topology = parse(topology, PulseTimeTopology, "topology")

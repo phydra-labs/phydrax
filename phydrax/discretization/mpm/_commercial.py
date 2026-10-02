@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...qualification import ReleaseGateEvidence, SupportTuple
+from ...typing import checked
 
 
 class MPMClaimOutcome(IntEnum):
@@ -261,6 +262,7 @@ class MPMSupportDecision(StrictModule, NonTrainableState):
     required_profile: str = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         claim: MPMClaimTuple,
@@ -270,8 +272,6 @@ class MPMSupportDecision(StrictModule, NonTrainableState):
         reason: str,
         required_profile: str,
     ) -> None:
-        if not isinstance(claim, MPMClaimTuple):
-            raise TypeError("claim must be MPMClaimTuple.")
         outcome_ = MPMClaimOutcome(outcome)
         reason_ = str(reason)
         profile = str(required_profile)

@@ -15,6 +15,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 
 
 JsonValue: TypeAlias = (
@@ -555,10 +556,9 @@ class CompatibilityRegistry(StrictModule, NonTrainableState):
             allow_lossy=allow_lossy,
         )
 
+    @checked
     def rollback(self, report: MigrationReport, /) -> dict[str, object]:
         """Select a report's parent artifact without constructing a reverse edge."""
-        if not isinstance(report, MigrationReport):
-            raise TypeError("report must be a MigrationReport.")
         if report.output_format_id != self.current_writer_id:
             raise ValueError("Migration report was not resolved to this current writer.")
         path = self.migration_path(report.input_format_id)

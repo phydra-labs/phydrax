@@ -19,6 +19,7 @@ from ..._array_archive import (
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._program import KineticProgramManifest
 
 
@@ -36,6 +37,7 @@ class KineticCheckpointPlan(StrictModule, NonTrainableState):
     replay_policy_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         runtime_id: str,
@@ -50,8 +52,6 @@ class KineticCheckpointPlan(StrictModule, NonTrainableState):
         runtime = str(runtime_id)
         if not runtime:
             raise ValueError("runtime_id must be nonempty.")
-        if not isinstance(program_manifest, KineticProgramManifest):
-            raise TypeError("program_manifest must be KineticProgramManifest.")
         optional = tuple(
             None if value is None else str(value)
             for value in (

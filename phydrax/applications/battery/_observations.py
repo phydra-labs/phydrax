@@ -27,6 +27,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
 from ...artifacts import ArtifactManifest
+from ...typing import checked
 
 
 CANONICAL_BATTERY_CHANNELS = ("current_a", "voltage_v", "temperature_k")
@@ -234,6 +235,7 @@ class BatteryTimeSeriesRecord(StrictModule, NonTrainableState):
     preprocessing_id: str = eqx.field(static=True)
     content_fingerprint: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -275,8 +277,6 @@ class BatteryTimeSeriesRecord(StrictModule, NonTrainableState):
                 (preprocessing_id, "preprocessing_id"),
             )
         )
-        if not isinstance(source_units, BatterySourceUnits):
-            raise TypeError("source_units must be BatterySourceUnits.")
         manifest = _local_manifest(artifact_manifest)
 
         time = _host_vector(time_s, "time_s")

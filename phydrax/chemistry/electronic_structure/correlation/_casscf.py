@@ -19,6 +19,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....ein import contract
+from ....typing import checked
 from ._ci import CASCIPlan, CASCIResult
 from ._orbital import MolecularOrbitalIntegralStore
 
@@ -33,6 +34,7 @@ class CASSCFResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         casci: CASCIResult,
@@ -44,8 +46,6 @@ class CASSCFResult(StrictModule, NonTrainableState):
         plan_id: str,
         /,
     ) -> None:
-        if not isinstance(casci, CASCIResult):
-            raise TypeError("casci must be CASCIResult.")
         rotation = jnp.asarray(orbital_rotation)
         energies = jnp.asarray(macro_energies, dtype=rotation.real.dtype)
         gradients = jnp.asarray(orbital_gradient_norms, dtype=rotation.real.dtype)
@@ -83,6 +83,7 @@ class CASSCFPlan(StrictModule, NonTrainableState):
     descent_step: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         casci: CASCIPlan,
@@ -94,8 +95,6 @@ class CASSCFPlan(StrictModule, NonTrainableState):
         finite_difference_step: float = 1.0e-4,
         descent_step: float = 0.1,
     ) -> None:
-        if not isinstance(casci, CASCIPlan):
-            raise TypeError("casci must be CASCIPlan.")
         weights = (
             np.full((casci.root_count,), 1.0 / casci.root_count)
             if state_weights is None
@@ -174,9 +173,8 @@ class CASSCFPlan(StrictModule, NonTrainableState):
             two_body=rotated_two,
         )
 
+    @checked
     def evaluate(self, integrals: MolecularOrbitalIntegralStore, /) -> CASSCFResult:
-        if not isinstance(integrals, MolecularOrbitalIntegralStore):
-            raise TypeError("integrals must be MolecularOrbitalIntegralStore.")
         orbital_count = integrals.partition.orbital_count
         active_set = set(self.casci.active_orbitals)
         pairs = tuple(

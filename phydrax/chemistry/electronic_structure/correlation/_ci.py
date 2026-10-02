@@ -21,6 +21,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import DenseLinearOperator, OperatorProperties
 from ....linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from ....typing import checked
 from ._orbital import MolecularOrbitalIntegralStore
 
 
@@ -259,9 +260,8 @@ class CASCIPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(self, integrals: MolecularOrbitalIntegralStore, /) -> CASCIResult:
-        if not isinstance(integrals, MolecularOrbitalIntegralStore):
-            raise TypeError("integrals must be MolecularOrbitalIntegralStore.")
         if max(self.active_orbitals) >= integrals.partition.orbital_count:
             raise ValueError("CAS active orbital exceeds the integral store.")
         active = np.asarray(self.active_orbitals, dtype=np.int32)

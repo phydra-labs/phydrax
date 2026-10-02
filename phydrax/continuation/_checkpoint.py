@@ -13,6 +13,7 @@ from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._state_machine import (
     AbstractContinuationAdapter,
     ContinuationAcceptedState,
@@ -110,6 +111,7 @@ class ContinuationCheckpoint(StrictModule):
     accepted_index: int = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         candidate: ContinuationCandidate,
@@ -127,8 +129,6 @@ class ContinuationCheckpoint(StrictModule):
         accepted_index: int,
         replay_evidence: ContinuationReplayEvidence | None = None,
     ) -> None:
-        if not isinstance(candidate, ContinuationCandidate):
-            raise TypeError("candidate must be a ContinuationCandidate.")
         identifiers = tuple(
             str(value)
             for value in (

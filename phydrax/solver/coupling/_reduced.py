@@ -48,6 +48,7 @@ from ...linalg import (
     DualSpace,
 )
 from ...rom import AbstractResidualProvider, FullResidualGalerkin
+from ...typing import checked
 from ._components import (
     AbstractReconstructionComponent,
     AbstractTraceComponent,
@@ -78,12 +79,8 @@ class ComponentResidualProvider(AbstractResidualProvider):
     support_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, component: AbstractTraceComponent, /, *, field: str) -> None:
-        if not isinstance(component, AbstractTraceComponent):
-            raise TypeError(
-                "A reduced coupled region reduces a component that publishes side "
-                "traces (an AbstractTraceComponent)."
-            )
         field_ = canonical_identifier(field, "field")
         record = component.field(field_)
         if len(component.state_blocks) != 1 or len(component.row_blocks) != 1:
@@ -208,10 +205,9 @@ class ReducedComponent(
     row_blocks: tuple[ComponentBlock, ...]
     fields: tuple[ComponentField, ...]
 
+    @checked
     def __init__(self, name: str, galerkin: FullResidualGalerkin, /) -> None:
         name_ = canonical_identifier(name, "name")
-        if not isinstance(galerkin, FullResidualGalerkin):
-            raise TypeError("galerkin must be a FullResidualGalerkin.")
         provider = galerkin.provider
         if not isinstance(provider, ComponentResidualProvider):
             raise TypeError(

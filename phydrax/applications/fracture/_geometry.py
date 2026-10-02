@@ -15,6 +15,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
 from ...geometry.simplicial import AffineSimplexMap
+from ...typing import checked
 
 
 def _cross_2d(first: np.ndarray, second: np.ndarray) -> float:
@@ -441,6 +442,7 @@ class SharpCrackTopology(StrictModule, NonTrainableState):
     topology_version: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CrackFrontGeometry,
@@ -456,8 +458,6 @@ class SharpCrackTopology(StrictModule, NonTrainableState):
         classification_margin: ArrayLike,
         topology_version: int = 0,
     ) -> None:
-        if not isinstance(geometry, CrackFrontGeometry):
-            raise TypeError("geometry must be CrackFrontGeometry.")
         cut = np.asarray(cut_cell_ids, dtype=np.int64)
         split = np.asarray(split_cell_ids, dtype=np.int64)
         tip = np.asarray(tip_cell_ids, dtype=np.int64)

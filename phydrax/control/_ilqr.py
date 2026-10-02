@@ -24,6 +24,7 @@ from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
+from ..typing import checked
 from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
@@ -92,6 +93,7 @@ class ILQRPolicy(AbstractControlParameterization, NonTrainableState):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         time_grid: TimeGrid,
@@ -104,13 +106,9 @@ class ILQRPolicy(AbstractControlParameterization, NonTrainableState):
         control_shape: tuple[int, ...],
         policy_id: str,
     ) -> None:
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("ILQRPolicy time_grid must be a TimeGrid.")
         states = jnp.asarray(nominal_states)
         controls = jnp.asarray(nominal_controls)
         gains = jnp.asarray(feedback)
-        if not isinstance(state_layout, StateLayout):
-            raise TypeError("ILQRPolicy state_layout must be a StateLayout.")
         if not state_layout.geometry.supports_exact_inverse:
             raise ValueError("ILQRPolicy requires exact inverse-retraction geometry.")
         state_shape_ = state_layout.shape

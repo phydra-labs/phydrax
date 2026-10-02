@@ -5,6 +5,16 @@ JAX arrays, Equinox PyTrees, `phydrax.axes.AxisArray` dimensions, and the existi
 solver contracts. The core result type is `PredictiveField`: every stochastic source
 has an explicit named sample dimension and a source label.
 
+[Joint correlated ratios of means](api/uq/correlated_ratios.md) analyze aligned
+numerator/denominator histories with synchronous complete blocks, full
+cross-covariance, influence-channel correlation checks, and Fieller/complex
+origin denominator gates. They do not average instantaneous ratios or infer
+independence from a stream axis. Observed constant stochastic records remain
+unresolved. [Projector Monte Carlo](guides_projector_monte_carlo.md) composes
+this owner with physical raw histories; temporal uncertainty, weight
+concentration ESS, and population/history/timestep/sign systematics remain
+separate evidence.
+
 ## Uncertainty sources
 
 Phydrax distinguishes five sources:

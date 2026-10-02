@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._probability import _leading_shape, AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._process import (
     AbstractMarginalTransitionLaw,
     DiagonalGaussianProcessDistribution,
@@ -55,6 +55,7 @@ class DiffusionTerminalReference(StrictModule):
     reference_id: str = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         law: AbstractProbabilityLaw,
@@ -65,8 +66,6 @@ class DiffusionTerminalReference(StrictModule):
         reference_id: str,
         process_id: str,
     ) -> None:
-        if not isinstance(law, AbstractProbabilityLaw):
-            raise TypeError("law must implement AbstractProbabilityLaw.")
         if tuple(law.batch_shape):
             raise ValueError("A diffusion terminal reference must be unbatched.")
         if law.density_measure_kind != "lebesgue":

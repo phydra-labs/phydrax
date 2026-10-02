@@ -29,6 +29,7 @@ from ..lifecycle import (
     ResultManifest,
     RunRecord,
 )
+from ..typing import checked
 from ._calculation import ElectronicCalculationPlan
 from ._result import (
     ElectronicCalculationStatus,
@@ -65,6 +66,7 @@ class ChemistryRunEnvelope(StrictModule, NonTrainableState):
     model: ModelManifest | None = eqx.field(static=True)
     envelope_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         analysis: AnalysisPlan,
@@ -75,14 +77,6 @@ class ChemistryRunEnvelope(StrictModule, NonTrainableState):
         *,
         model: ModelManifest | None = None,
     ) -> None:
-        if not isinstance(analysis, AnalysisPlan):
-            raise TypeError("analysis must be AnalysisPlan.")
-        if not isinstance(execution, ExecutionPlan):
-            raise TypeError("execution must be ExecutionPlan.")
-        if not isinstance(run, RunRecord):
-            raise TypeError("run must be RunRecord.")
-        if not isinstance(result, ResultManifest):
-            raise TypeError("result must be ResultManifest.")
         if model is not None and not isinstance(model, ModelManifest):
             raise TypeError("model must be ModelManifest or None.")
         if run.analysis_plan_id != analysis.analysis_plan_id:

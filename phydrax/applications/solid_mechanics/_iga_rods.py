@@ -8,6 +8,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._local_variational import AbstractPreparedLocalDiscretization
 from ...discretization.iga._certificate import LocalGeometryCertificate
+from ...typing import checked
 from ._iga_solids import _identifier, _local_certificate, _prepared
 from ._rod_dynamics import RodPlan
 
@@ -26,6 +27,7 @@ class IGARodPlan(StrictModule, NonTrainableState):
     )
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: AbstractPreparedLocalDiscretization,
@@ -37,8 +39,6 @@ class IGARodPlan(StrictModule, NonTrainableState):
         rotation_field: str | None = None,
     ) -> None:
         prepared_ = _prepared(prepared)
-        if not isinstance(rod, RodPlan):
-            raise TypeError("rod must be a RodPlan.")
         certificate = _local_certificate(reference_certificate)
         self.prepared = prepared_
         self.rod = rod

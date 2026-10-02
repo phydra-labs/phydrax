@@ -7,6 +7,8 @@ import itertools
 from typing import Any
 
 import equinox as eqx
+import jax
+import jax.numpy as jnp
 import pytest
 
 from phydrax import (
@@ -19,6 +21,7 @@ from phydrax import (
     CapabilityRequirement,
     ComponentAuthority,
     DERIVATIVE_UNSUPPORTED,
+    DerivativeAdmission,
     DerivativeContract,
     DerivativeRegularity,
     DerivativeRoute,
@@ -640,3 +643,99 @@ def test_owner_derivative_capability_refuses_contradictory_declarations(
         OwnerDerivativeCapability(
             "plate", admitted=admitted, refused=refused, route=route
         )
+
+
+@pytest.mark.parametrize(
+    ("valid", "status", "error", "message"),
+    [
+        (jnp.array([True]), None, ValueError, "supplied together"),
+        (None, jnp.array([0]), ValueError, "supplied together"),
+        (jnp.array([1]), jnp.array([0]), TypeError, "boolean dtype"),
+        (jnp.array([True]), jnp.array([0.0]), TypeError, "integer dtype"),
+        (
+            jnp.ones((2, 1), dtype=bool),
+            jnp.zeros((1,), dtype=int),
+            ValueError,
+            "case shapes",
+        ),
+        (jnp.array(True), jnp.array(0), ValueError, "align"),
+        (jnp.array([True, False]), jnp.array([0, 1]), ValueError, "align"),
+    ],
+)
+def test_runtime_admission_evidence_validation(
+    valid: jax.Array | None,
+    status: jax.Array | None,
+    error: type[Exception],
+    message: str,
+) -> None:
+    request = DifferentiationRequest((Surface.INPUT,))
+    with pytest.raises(error, match=message):
+        DerivativeAdmission(
+            request,
+            (Level.CONDITIONAL,),
+            route=Route.DIRECT,
+            runtime_valid=valid,
+            runtime_status=status,
+        )
+
+
+def test_runtime_evidence_does_not_rewrite_static_declaration() -> None:
+    contract = DerivativeContract(
+        (SurfaceDerivative(Surface.INPUT, Level.CONDITIONAL),),
+        route=Route.DIRECT,
+        regularity=Regularity.smooth(),
+        conditions=("isolated-cluster",),
+    )
+    request = DifferentiationRequest((Surface.INPUT,))
+    admission = contract.require(request)
+    assert admission.runtime_valid is None
+    assert admission.runtime_status is None
+    assert admission.require_runtime() is admission
+    refused = admission.with_runtime_evidence(jnp.array([False]), jnp.array([7]))
+    assert isinstance(refused, DerivativeAdmission)
+    assert refused.supported
+    assert refused.status == admission.status
+    assert refused.levels == admission.levels
+    assert refused.conditions == admission.conditions
+    assert refused.runtime_valid is not None
+    assert refused.runtime_status is not None
+    assert jnp.array_equal(refused.runtime_valid, jnp.array([False]))
+    assert jnp.array_equal(refused.runtime_status, jnp.array([7]))
+    with pytest.raises(eqx.EquinoxRuntimeError, match="derivative-unsupported"):
+        refused.require_runtime()
+
+    unsupported = contract.admit(DifferentiationRequest((Surface.MODEL_PARAMETER,)))
+    resolved = unsupported.with_runtime_evidence(jnp.array([True]), jnp.array([0]))
+    assert not resolved.supported
+    assert resolved.reasons == unsupported.reasons
+
+
+def test_runtime_admission_gate_toggles_in_one_compiled_callable() -> None:
+    contract = DerivativeContract.smooth((Surface.INPUT,))
+    admission = contract.admit(DifferentiationRequest((Surface.INPUT,)))
+
+    @jax.jit
+    def evidence(gate: jax.Array) -> tuple[jax.Array, jax.Array]:
+        resolved = admission.with_runtime_evidence(
+            gate[None], jnp.where(gate, 0, 11)[None]
+        )
+        assert resolved.runtime_valid is not None
+        assert resolved.runtime_status is not None
+        return resolved.runtime_valid, resolved.runtime_status
+
+    assert jnp.array_equal(evidence(jnp.array(True))[0], jnp.array([True]))
+    failed_valid, failed_status = evidence(jnp.array(False))
+    assert jnp.array_equal(failed_valid, jnp.array([False]))
+    assert jnp.array_equal(failed_status, jnp.array([11]))
+
+    @jax.jit
+    def checked(gate: jax.Array) -> jax.Array:
+        resolved = admission.with_runtime_evidence(
+            gate[None], jnp.where(gate, 0, 11)[None]
+        ).require_runtime()
+        assert resolved.runtime_valid is not None
+        return resolved.runtime_valid
+
+    assert jnp.array_equal(checked(jnp.array(True)), jnp.array([True]))
+    with pytest.raises(Exception, match="derivative-unsupported"):
+        checked(jnp.array(False)).block_until_ready()

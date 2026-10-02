@@ -28,6 +28,7 @@ from ..discretization.particle._radial_species import (
     prepare_radial_species_transport,
     RadialSpeciesTransportPlan,
 )
+from ..typing import checked
 from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
 from ._chemical_thermodynamics import AbstractSpeciesThermodynamicsPlan
 
@@ -81,6 +82,7 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
     inversion_iterations: int = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         species_thermodynamics: AbstractSpeciesThermodynamicsPlan,
@@ -91,10 +93,6 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
         inversion_iterations: int = 48,
         material_id: str | None = None,
     ) -> None:
-        if not isinstance(species_thermodynamics, AbstractSpeciesThermodynamicsPlan):
-            raise TypeError(
-                "species_thermodynamics must implement AbstractSpeciesThermodynamicsPlan."
-            )
         t_min = (
             species_thermodynamics.minimum_temperature
             if minimum_temperature is None
@@ -254,6 +252,7 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
     tortuosity_exponent: float = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         schema: ChemicalSpeciesSchema,
@@ -264,8 +263,6 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
         tortuosity_exponent: float = 1.0,
         material_id: str | None = None,
     ) -> None:
-        if not isinstance(schema, ChemicalSpeciesSchema):
-            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         conductivity = np.asarray(thermal_conductivity, dtype=np.float64)
         diffusivity = np.asarray(species_diffusivity, dtype=np.float64)
         exponent = float(tortuosity_exponent)
@@ -303,16 +300,13 @@ class ParticleThermochemicalMaterialBundle(StrictModule, NonTrainableState):
     transport: ParticleTransportMaterialPlan
     bundle_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         thermodynamics: ParticleThermodynamicMaterialPlan,
         transport: ParticleTransportMaterialPlan,
         /,
     ) -> None:
-        if not isinstance(thermodynamics, ParticleThermodynamicMaterialPlan):
-            raise TypeError("thermodynamics must be a ParticleThermodynamicMaterialPlan.")
-        if not isinstance(transport, ParticleTransportMaterialPlan):
-            raise TypeError("transport must be a ParticleTransportMaterialPlan.")
         if thermodynamics.schema.schema_id != transport.schema.schema_id:
             raise ValueError("Thermodynamic and transport species schemas must match.")
         self.thermodynamics = thermodynamics

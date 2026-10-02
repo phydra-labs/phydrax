@@ -17,7 +17,7 @@ from jax import Array
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._axis import AxisDiscretization, AxisPrimaryEntity
 
 
@@ -40,9 +40,8 @@ class StructuredAxis(StrictModule, NonTrainableState):
     upper_endpoint_included: bool = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, axis: AxisDiscretization, /) -> None:
-        if not isinstance(axis, AxisDiscretization):
-            raise TypeError("axis must be an AxisDiscretization.")
         nodes = np.asarray(axis.nodes, dtype=np.float64)
         if (
             nodes.size < 1

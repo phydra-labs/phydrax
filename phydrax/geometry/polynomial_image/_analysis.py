@@ -25,6 +25,7 @@ from ...linalg.svd import (
     SVDSolvePolicy,
     SVDSolveResult,
 )
+from ...typing import checked
 from ._contracts import (
     EvidenceDisposition,
     JacobianRankEvidence,
@@ -129,6 +130,7 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
     map_support_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         polynomial_map: SparsePolynomialMap,
@@ -144,10 +146,6 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
         upper_bounds: ArrayLike | float = 1.0,
         policy: PolynomialImageAnalysisPolicy | None = None,
     ) -> None:
-        if not isinstance(polynomial_map, SparsePolynomialMap):
-            raise TypeError("polynomial_map must be a SparsePolynomialMap.")
-        if not isinstance(target_support, TargetMonomialSupport):
-            raise TypeError("target_support must be a TargetMonomialSupport.")
         if target_support.target_dimension != polynomial_map.target_dimension:
             raise ValueError("Target monomials and polynomial map dimensions differ.")
         if target_support.variable_labels != polynomial_map.target_labels:
@@ -276,6 +274,7 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
     numeric_version: Array
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: PolynomialImageAnalysisPlan,
@@ -287,12 +286,6 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
         *,
         numeric_version: ArrayLike = 0,
     ) -> None:
-        if not isinstance(plan, PolynomialImageAnalysisPlan):
-            raise TypeError("plan must be a PolynomialImageAnalysisPlan.")
-        if not isinstance(polynomial_map, SparsePolynomialMap):
-            raise TypeError("polynomial_map must be a SparsePolynomialMap.")
-        if not isinstance(result, PolynomialImageAnalysisResult):
-            raise TypeError("result must be a PolynomialImageAnalysisResult.")
         source = jnp.asarray(source_points)
         heldout = jnp.asarray(heldout_source_points)
         if source.shape != (

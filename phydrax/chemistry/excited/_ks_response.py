@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...operators.quantum.gaussian import dipole_integrals
+from ...typing import checked
 from ...units import BOHR, derived_unit, ELEMENTARY_CHARGE, HARTREE
 from ..electronic_structure._mean_field import RestrictedMeanFieldState
 from ..electronic_structure._molecular_ks import MolecularKohnShamPlan
@@ -36,6 +37,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
     functional_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kohn_sham: MolecularKohnShamPlan,
@@ -45,8 +47,6 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
         *,
         dipole_ao: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(kohn_sham, MolecularKohnShamPlan):
-            raise TypeError("kohn_sham must be MolecularKohnShamPlan.")
         if not isinstance(state, RestrictedMeanFieldState) or not bool(
             state.evidence.converged
         ):

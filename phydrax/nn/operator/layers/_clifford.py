@@ -32,6 +32,8 @@ from phydrax.nn.operator.representations import (
     CliffordGradeRepresentation,
 )
 
+from ....typing import checked
+
 
 class CliffordEquivarianceCertificate(AbstractConstructionCertificate):
     """By-construction equivariance claim for one Clifford neural primitive."""
@@ -190,6 +192,7 @@ class CliffordGeometricProductLayer(StrictModule):
     route_weights: Array = parameter_field()
     certificate: CliffordEquivarianceCertificate
 
+    @checked
     def __init__(
         self,
         representation: CliffordGradeRepresentation,
@@ -197,8 +200,6 @@ class CliffordGeometricProductLayer(StrictModule):
         *,
         key: Array = DOC_KEY0,
     ) -> None:
-        if not isinstance(representation, CliffordGradeRepresentation):
-            raise TypeError("representation must be CliffordGradeRepresentation.")
         channels = representation.uniform_multiplicity
         if channels is None or channels <= 0:
             raise ValueError(

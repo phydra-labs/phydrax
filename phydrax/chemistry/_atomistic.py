@@ -20,6 +20,7 @@ from ..atomistic import (
     PreparedAtomisticSystem,
 )
 from ..discretization import AbstractPreparedParticleNeighborhood
+from ..typing import checked
 from ._surface import (
     AbstractPreparedPotentialEnergySurface,
     PotentialEnergySurfaceCapabilities,
@@ -37,6 +38,7 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     units: AtomisticUnitSystem
     capabilities: PotentialEnergySurfaceCapabilities
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
@@ -44,12 +46,6 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         neighborhood: AbstractPreparedParticleNeighborhood,
         /,
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
-        if not isinstance(potential, PreparedAtomisticPotentialProgram):
-            raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
-        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
-            raise TypeError("neighborhood must be a prepared particle neighborhood.")
         if potential.system.prepared_id != system.prepared_id:
             raise ValueError("Atomistic potential belongs to another prepared system.")
         if neighborhood.particle_discretization_id != system.particles.prepared_id:
@@ -129,16 +125,13 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
     units: AtomisticUnitSystem
     capabilities: PotentialEnergySurfaceCapabilities
 
+    @checked
     def __init__(
         self,
         system: PreparedAtomisticSystem,
         provider: AbstractExternalAtomisticProvider,
         /,
     ) -> None:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
-        if not isinstance(provider, AbstractExternalAtomisticProvider):
-            raise TypeError("provider must implement AbstractExternalAtomisticProvider.")
         capabilities = PotentialEnergySurfaceCapabilities(
             forces=True,
             conservative=provider.conservative,
@@ -199,9 +192,8 @@ class SurfaceExternalAtomisticProvider(AbstractExternalAtomisticProvider):
     conservative: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
 
+    @checked
     def __init__(self, surface: AbstractPreparedPotentialEnergySurface, /) -> None:
-        if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
-            raise TypeError("surface must be a prepared potential-energy surface.")
         self.surface = surface
         self.provider_id = canonical_fingerprint(
             {
@@ -212,6 +204,7 @@ class SurfaceExternalAtomisticProvider(AbstractExternalAtomisticProvider):
         self.conservative = surface.capabilities.conservative
         self.differentiable = surface.capabilities.differentiable
 
+    @checked
     def evaluate(
         self,
         system: PreparedAtomisticSystem,
@@ -219,8 +212,6 @@ class SurfaceExternalAtomisticProvider(AbstractExternalAtomisticProvider):
         cell_vectors: ArrayLike | None,
         /,
     ) -> ExternalAtomisticEvaluation:
-        if not isinstance(system, PreparedAtomisticSystem):
-            raise TypeError("system must be PreparedAtomisticSystem.")
         if system.plan.system_id != self.surface.system_id:
             raise ValueError("Atomistic dynamics system differs from chemistry surface.")
         result = self.surface.evaluate(positions, cell_vectors)

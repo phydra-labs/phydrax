@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class PeriodicWaveBoundaryDescriptor(StrictModule, NonTrainableState):
@@ -230,6 +231,7 @@ class IsolatedWaveBoundaryDescriptor(StrictModule, NonTrainableState):
     absorbing: AbsorbingWaveBoundaryPolicy | None
     descriptor_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         gauge: IsolatedPotentialGauge,
@@ -237,8 +239,6 @@ class IsolatedWaveBoundaryDescriptor(StrictModule, NonTrainableState):
         *,
         absorbing: AbsorbingWaveBoundaryPolicy | None = None,
     ) -> None:
-        if not isinstance(gauge, IsolatedPotentialGauge):
-            raise TypeError("Isolated wave boundaries require IsolatedPotentialGauge.")
         if absorbing is not None and not isinstance(
             absorbing, AbsorbingWaveBoundaryPolicy
         ):

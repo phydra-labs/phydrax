@@ -35,7 +35,7 @@ from ..operators.quantum import (
     transmon_mode_problem,
     TransmonParameters,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._local_hamiltonian import (
     FixedGridLocalHamiltonian,
     LocalHamiltonian,
@@ -94,6 +94,7 @@ class CircuitModePlacement(StrictModule):
     parameter_index: int = eqx.field(static=True)
     placement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         wire_id: str,
@@ -118,8 +119,6 @@ class CircuitModePlacement(StrictModule):
         parameter_index_ = int(parameter_index)
         if parameter_index_ < 0:
             raise ValueError("parameter_index must be non-negative.")
-        if not isinstance(reduction_policy, ModeReductionPolicy):
-            raise TypeError("reduction_policy must be a ModeReductionPolicy.")
         if reduction_policy.retained_dimension > basis.dimension:
             raise ValueError("Mode retention exceeds the selected raw basis dimension.")
         identifier = (
@@ -255,6 +254,7 @@ class CircuitQEDDeviceSpec(StrictModule):
     edge_active: tuple[bool, ...] = eqx.field(static=True)
     spec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: GraphIR,
@@ -267,8 +267,6 @@ class CircuitQEDDeviceSpec(StrictModule):
         hbar: ArrayLike = 1.0,
         spec_id: str | None = None,
     ) -> None:
-        if not isinstance(topology, GraphIR):
-            raise TypeError("topology must be a GraphIR.")
         topology.validate()
         if topology.num_graphs != 1:
             raise ValueError("CircuitQEDDeviceSpec requires one unbatched graph.")

@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import checked
 from ._method import (
     AbstractBoundableLinearCombinatorialMethod,
     AbstractLinearCombinatorialMethod,
@@ -152,9 +153,8 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
     def integral_feature_mask(self, /) -> Array:
         return jnp.ones((self.candidate_count,), dtype=jnp.bool_)
 
+    @checked
     def canonicalize(self, decision: SetPackingDecision, /) -> SetPackingDecision:
-        if not isinstance(decision, SetPackingDecision):
-            raise TypeError("set-packing decisions must be SetPackingDecision values.")
         selected = jnp.asarray(decision.selected, dtype=jnp.bool_)
         if selected.shape[-1:] != (self.candidate_count,):
             raise ValueError(
@@ -165,9 +165,8 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
     def encode(self, decision: SetPackingDecision, /) -> Array:
         return self.canonicalize(decision).selected.astype("float64")
 
+    @checked
     def audit(self, decision: SetPackingDecision, /) -> CombinatorialFeasibility:
-        if not isinstance(decision, SetPackingDecision):
-            raise TypeError("set-packing decisions must be SetPackingDecision values.")
         selected = jnp.asarray(decision.selected, dtype=jnp.bool_)
         if selected.shape[-1:] != (self.candidate_count,):
             raise ValueError(

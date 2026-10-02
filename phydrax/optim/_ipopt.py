@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_real_inexact_tree
+from ..typing import checked
 from ._external_backends import _certify_minimization, _module
 from ._iterative import (
     MinimizationProblem,
@@ -509,6 +510,7 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
             )
         return options
 
+    @checked
     def solve_structured(
         self,
         prepared: PreparedStructuredNonlinearProgram,
@@ -519,10 +521,6 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
         warm_start: StructuredNonlinearWarmStart | None = None,
     ) -> StructuredNonlinearResult:
         """Solve an exact sparse bound-form NLP through low-level cyipopt callbacks."""
-        if not isinstance(prepared, PreparedStructuredNonlinearProgram):
-            raise TypeError("prepared must be a PreparedStructuredNonlinearProgram.")
-        if not isinstance(termination, OptimizationTermination):
-            raise TypeError("termination must be an OptimizationTermination.")
         program = prepared.program
         coordinates = prepared.validate_coordinates(initial_coordinates)
         if warm_start is not None:

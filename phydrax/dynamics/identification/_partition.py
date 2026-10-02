@@ -13,6 +13,7 @@ from jax import Array
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...data_utils import CasePartitionManifest, PartitionName
+from ...typing import checked
 from .._trajectory import TrajectoryData
 
 
@@ -25,6 +26,7 @@ class TrajectoryDataPartition(StrictModule, NonTrainableState):
     partition: CasePartitionManifest
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         train: TrajectoryData,
@@ -33,8 +35,6 @@ class TrajectoryDataPartition(StrictModule, NonTrainableState):
         partition: CasePartitionManifest,
         /,
     ) -> None:
-        if not isinstance(partition, CasePartitionManifest):
-            raise TypeError("partition must be a CasePartitionManifest.")
         expected = tuple(
             len(partition.subset_ids(name)) for name in ("train", "validation", "test")
         )

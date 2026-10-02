@@ -16,6 +16,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...operators.quantum.gaussian import dipole_integrals, electron_repulsion_tensor
+from ...typing import checked
 from ...units import BOHR, derived_unit, ELEMENTARY_CHARGE, HARTREE
 from ..electronic_structure._mean_field import (
     mean_field_owner_id,
@@ -36,6 +37,7 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
     virtual_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         hartree_fock: MolecularHartreeFockPlan,
@@ -45,8 +47,6 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
         *,
         spin_sector: str = "singlet",
     ) -> None:
-        if not isinstance(hartree_fock, MolecularHartreeFockPlan):
-            raise TypeError("hartree_fock must be MolecularHartreeFockPlan.")
         if not isinstance(state, RestrictedMeanFieldState) or not bool(
             state.evidence.converged
         ):

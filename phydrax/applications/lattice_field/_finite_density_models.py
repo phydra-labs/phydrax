@@ -14,6 +14,7 @@ from ... import special
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._finite_density import (
     ChemicalChargeConvention,
     FiniteDensityDomain,
@@ -33,6 +34,7 @@ class HRGSpectrum(StrictModule, NonTrainableState):
     interaction_prescription: str = eqx.field(static=True)
     spectrum_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         masses: ArrayLike,
@@ -72,8 +74,6 @@ class HRGSpectrum(StrictModule, NonTrainableState):
             raise ValueError(
                 "Active HRG spectrum entries must be finite with positive mass/degeneracy."
             )
-        if not isinstance(convention, ChemicalChargeConvention):
-            raise TypeError("convention must be ChemicalChargeConvention.")
         source = str(source_release).strip()
         checksum_ = str(checksum).strip()
         interaction = str(interaction_prescription).strip()

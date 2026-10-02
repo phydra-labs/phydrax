@@ -19,6 +19,7 @@ from ..._differentiation import (
     weakest_level,
 )
 from ..._model import AbstractArrayModel, ModelBinding, ValuePort
+from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
@@ -255,6 +256,7 @@ class FittedTransformedTargetRegressor(AbstractFittedModel):
     def output_ports(self) -> tuple[ValuePort, ...]:
         return self.target_output_ports()
 
+    @checked
     def __init__(
         self,
         regressor: AbstractArrayModel,
@@ -269,10 +271,6 @@ class FittedTransformedTargetRegressor(AbstractFittedModel):
         target_shape: tuple[int, ...],
         derivative_contract: DerivativeContract,
     ) -> None:
-        if not isinstance(regressor, AbstractArrayModel):
-            raise TypeError("regressor must be an AbstractArrayModel.")
-        if not isinstance(transformer, AbstractArrayModel):
-            raise TypeError("transformer must be an AbstractArrayModel.")
         if not isinstance(transformer, ReversibleTransformModel):
             raise TypeError(
                 "The fitted target transformer must implement inverse_transform."
@@ -359,31 +357,28 @@ class TransformedTargetRegressor(AbstractRecipe):
     regressor: AbstractRecipe
     transformer: AbstractRecipe
 
+    @checked
     def __init__(
         self,
         regressor: AbstractRecipe,
         transformer: AbstractRecipe,
         /,
     ) -> None:
-        if not isinstance(regressor, AbstractRecipe):
-            raise TypeError("regressor must be an AbstractRecipe.")
-        if not isinstance(transformer, AbstractRecipe):
-            raise TypeError("transformer must be an AbstractRecipe.")
         self.regressor = regressor
         self.transformer = transformer
 
+    @checked
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        if not isinstance(batch, MLBatch):
-            raise TypeError(
-                "TransformedTargetRegressor.fit_batch requires an already-selected MLBatch."
-            )
         if batch.target_schema.kind not in ("continuous", "count"):
             raise ValueError(
                 "TransformedTargetRegressor supports only continuous or count targets."
             )
         target_batch, target_shape = _targets_as_feature_batch(batch)
         transform_fit_key, transform_key, regressor_key = _split_key(key, 3)
-        transform_result = self.transformer.fit_batch(target_batch, key=transform_fit_key)
+        transform_result = self.transformer.fit_batch(
+            target_batch,
+            key=transform_fit_key if self.transformer.accepts_fit_key else None,
+        )
         if not isinstance(transform_result, FitResult):
             raise TypeError("Target transformer did not return a FitResult.")
         transform_model = transform_result.as_trainable()
@@ -397,7 +392,10 @@ class TransformedTargetRegressor(AbstractRecipe):
             transformed,
             scalar_target=(target_shape == ()),
         )
-        regressor_result = self.regressor.fit_batch(regression_batch, key=regressor_key)
+        regressor_result = self.regressor.fit_batch(
+            regression_batch,
+            key=regressor_key if self.regressor.accepts_fit_key else None,
+        )
         if not isinstance(regressor_result, FitResult):
             raise TypeError("Regressor did not return a FitResult.")
         regressor_model = regressor_result.as_trainable()

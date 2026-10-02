@@ -51,7 +51,7 @@ from ...solver._runtime_lifecycle import (
     ExactTimeSchedule,
     RuntimeCheckpointEncodingPlan,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._forcing import ConstantPowerFourierForcingPlan
 from ._production import (
     _output_schedule,
@@ -250,6 +250,7 @@ class CompiledDistributedPeriodicLESDynamics(StrictModule, NonTrainableState):
     compilation_id: str = eqx.field(static=True)
     qualification_inherited: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: IncompressibleFlowProblem,
@@ -258,10 +259,6 @@ class CompiledDistributedPeriodicLESDynamics(StrictModule, NonTrainableState):
         *,
         constant_power_forcing: ConstantPowerFourierForcingPlan | None = None,
     ) -> None:
-        if not isinstance(problem, IncompressibleFlowProblem):
-            raise TypeError("problem must be an IncompressibleFlowProblem.")
-        if not isinstance(source_plan, DistributedPeriodicLESPlan):
-            raise TypeError("source_plan must be a DistributedPeriodicLESPlan.")
         backend = source_plan.prepare()
         drift = _DistributedPeriodicFullFlowDrift(
             problem, backend, constant_power_forcing
@@ -410,6 +407,7 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
     safety_factor: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: DistributedPeriodicLESMethodPlan,
@@ -417,12 +415,6 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
         coordinates: HermitianSpectralCoordinates,
         /,
     ) -> None:
-        if not isinstance(plan, DistributedPeriodicLESMethodPlan):
-            raise TypeError("plan must be a DistributedPeriodicLESMethodPlan.")
-        if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
-            raise TypeError("dynamics has the wrong compiled type.")
-        if not isinstance(coordinates, HermitianSpectralCoordinates):
-            raise TypeError("coordinates must be HermitianSpectralCoordinates.")
         if coordinates.state_shape != dynamics.state_shape:
             raise ValueError("Hermitian coordinates and distributed dynamics disagree.")
         if (
@@ -678,16 +670,13 @@ class DistributedPeriodicLESStatisticsPlan(StrictModule, NonTrainableState):
     coordinates: HermitianSpectralCoordinates
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledDistributedPeriodicLESDynamics,
         coordinates: HermitianSpectralCoordinates,
         /,
     ) -> None:
-        if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
-            raise TypeError("dynamics has the wrong compiled type.")
-        if not isinstance(coordinates, HermitianSpectralCoordinates):
-            raise TypeError("coordinates must be HermitianSpectralCoordinates.")
         if coordinates.state_shape != dynamics.state_shape:
             raise ValueError("Statistics coordinates and dynamics disagree.")
         if (
@@ -898,6 +887,7 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
     initial_condition_id: str = eqx.field(static=True)
     identity_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dynamics: CompiledDistributedPeriodicLESDynamics,
@@ -906,8 +896,6 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
         *,
         case_id: str,
     ) -> None:
-        if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
-            raise TypeError("dynamics has the wrong compiled distributed type.")
         label = str(case_id)
         if not label:
             raise ValueError("case_id must be nonempty.")
@@ -1013,6 +1001,7 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
     qualification_inherited: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: IncompressibleFlowProblem,
@@ -1039,16 +1028,10 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
     ) -> None:
-        if not isinstance(source_plan, DistributedPeriodicLESPlan):
-            raise TypeError("source_plan must be a DistributedPeriodicLESPlan.")
         if source_plan.checkpoint_count < 1:
             raise ValueError(
                 "Distributed production requires checkpoint_count>=1 in the resource plan."
             )
-        if not isinstance(method, DistributedPeriodicLESMethodPlan):
-            raise TypeError("method must be a DistributedPeriodicLESMethodPlan.")
-        if not isinstance(case, DistributedPeriodicLESProductionCase):
-            raise TypeError("case must be a DistributedPeriodicLESProductionCase.")
         dynamics = compile_distributed_periodic_les(
             problem,
             source_plan,
@@ -1207,6 +1190,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
 
     _prepared_kind = "prepared-distributed-periodic-les-production"
 
+    @checked
     def __init__(
         self,
         plan: DistributedPeriodicLESProductionPlan,
@@ -1217,8 +1201,6 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
     ) -> None:
-        if not isinstance(plan, DistributedPeriodicLESProductionPlan):
-            raise TypeError("plan must be DistributedPeriodicLESProductionPlan.")
         self._bind_runtime(
             plan,
             checkpoint,
@@ -1227,9 +1209,8 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             publisher=publisher,
         )
 
+    @checked
     def _place_run_state(self, state: ProductionRunState, /) -> ProductionRunState:
-        if not isinstance(state, ProductionRunState):
-            raise TypeError("state must be a ProductionRunState.")
         accepted = self.plan.dynamics.validate_state(state.accepted_state)
         return ProductionRunState(
             state.step_index,

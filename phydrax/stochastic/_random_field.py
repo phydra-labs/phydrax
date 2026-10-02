@@ -16,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -407,6 +407,7 @@ class StaticGaussianRandomField(StrictModule):
     source: str = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         synthesis: SpatialBasisSynthesis,
@@ -415,8 +416,6 @@ class StaticGaussianRandomField(StrictModule):
         role: RandomFieldRole = "input",
         source: str = "latent",
     ) -> None:
-        if not isinstance(synthesis, SpatialBasisSynthesis):
-            raise TypeError("synthesis must be a SpatialBasisSynthesis.")
         resolved_role = parse(role, RandomFieldRole, "role")
         if not isinstance(source, str) or not source:
             raise ValueError("source must be a non-empty string.")
@@ -451,13 +450,12 @@ class StaticGaussianRandomField(StrictModule):
             label=label,
         )
 
+    @checked
     def sample(
         self,
         realization: GaussianCoefficientRealization,
         /,
     ) -> RandomFieldSample:
-        if not isinstance(realization, GaussianCoefficientRealization):
-            raise TypeError("realization must be a GaussianCoefficientRealization.")
         selected = realization.select(self.mode_ids)
         values = self.synthesis.synthesize(selected.coefficients)
         return RandomFieldSample(
@@ -491,6 +489,7 @@ class TransformedRandomField(StrictModule):
     transform_id: str = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: StaticGaussianRandomField,
@@ -499,8 +498,6 @@ class TransformedRandomField(StrictModule):
         *,
         transform_id: str,
     ) -> None:
-        if not isinstance(base, StaticGaussianRandomField):
-            raise TypeError("base must be a StaticGaussianRandomField.")
         if not callable(transform_function):
             raise TypeError("transform_function must be callable.")
         if not isinstance(transform_id, str) or not transform_id:

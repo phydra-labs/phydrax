@@ -18,7 +18,7 @@ import phydrax.ein as ein
 
 from .._interpolation import apply_gather_stencil, linear_stencil_from_indices
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._bsde import BSDEPathBatch, BSDEProblem
 
 
@@ -147,6 +147,7 @@ class EmpiricalMeanField(StrictModule):
         self.source_path_id = source_path_id
 
     @classmethod
+    @checked
     def from_paths(
         cls,
         paths: BSDEPathBatch,
@@ -155,8 +156,6 @@ class EmpiricalMeanField(StrictModule):
         weights: ArrayLike | None = None,
         mean_field_id: str | None = None,
     ) -> EmpiricalMeanField:
-        if not isinstance(paths, BSDEPathBatch):
-            raise TypeError("paths must be a BSDEPathBatch.")
         return cls(
             paths.times,
             paths.states,
@@ -355,6 +354,7 @@ class MeanFieldBSDEProblem(StrictModule):
     problem_id: str = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         forward_sampler: Callable[[Array], BSDEPathBatch],
@@ -382,8 +382,6 @@ class MeanFieldBSDEProblem(StrictModule):
         ):
             if not callable(value):
                 raise TypeError(f"{owner} must be callable.")
-        if not isinstance(mean_field, EmpiricalMeanField):
-            raise TypeError("mean_field must be an EmpiricalMeanField.")
         state_event = _shape(state_shape, owner="state_shape")
         noise_event = _shape(noise_shape, owner="noise_shape")
         output_event = _shape(output_shape, owner="output_shape")

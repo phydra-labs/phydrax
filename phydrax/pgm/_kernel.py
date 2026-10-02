@@ -16,6 +16,7 @@ from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from .._strict import StrictModule
+from ..typing import checked
 
 
 class FactorKernelCapabilities(StrictModule):
@@ -257,6 +258,7 @@ class FactorExecutionEvidence(StrictModule):
     kernel_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         capabilities: FactorKernelCapabilities,
@@ -269,8 +271,6 @@ class FactorExecutionEvidence(StrictModule):
         workspace_elements: int,
         kernel_id: str,
     ) -> None:
-        if not isinstance(capabilities, FactorKernelCapabilities):
-            raise TypeError("capabilities must be FactorKernelCapabilities.")
         counts = tuple(
             (
                 represented_configurations,

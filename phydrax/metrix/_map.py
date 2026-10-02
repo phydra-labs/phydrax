@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._utils import _pointwise_array, _pointwise_jacfwd
 
@@ -115,10 +116,9 @@ class DifferentiableMap(StrictModule):
             )
         return ein.contract("...ai,...a->...i", self.jacobian(points), values)
 
+    @checked
     def compose(self, after: DifferentiableMap, /) -> DifferentiableMap:
         """Return ``after ∘ self`` after checking the intermediate chart."""
-        if not isinstance(after, DifferentiableMap):
-            raise TypeError("after must be a DifferentiableMap.")
         if not self.target.compatible_with(after.source):
             raise ValueError(
                 "Cannot compose maps with mismatched intermediate charts: "

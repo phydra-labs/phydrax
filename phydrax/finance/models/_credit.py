@@ -25,7 +25,7 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...stochastic import JUMP_INVALID_INTENSITY, JUMP_SUCCESS, PoissonClockRealization
-from ...typing import parse
+from ...typing import checked, parse
 from ..contracts._credit import (
     CreditDefaultSwapContract,
     DefaultableBondContract,
@@ -125,6 +125,7 @@ class ReducedFormCreditModel(StrictModule):
     model_id: str = eqx.field(static=True)
     default_process_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         survival_curve: PreparedCurve,
@@ -138,8 +139,6 @@ class ReducedFormCreditModel(StrictModule):
         default_process_id: str,
     ) -> None:
         _require_survival_curve(survival_curve)
-        if not isinstance(recovery, RecoveryTerms):
-            raise TypeError("recovery must be RecoveryTerms.")
         self.survival_curve = survival_curve
         self.recovery = recovery
         self.reference_entity_id = _identifier(reference_entity_id, "reference_entity_id")
@@ -158,6 +157,7 @@ class IntensityCreditModel(StrictModule):
     factor_layout_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         base: ReducedFormCreditModel,
@@ -168,8 +168,6 @@ class IntensityCreditModel(StrictModule):
         factor_layout_id: str,
         model_id: str,
     ) -> None:
-        if not isinstance(base, ReducedFormCreditModel):
-            raise TypeError("base must be a ReducedFormCreditModel.")
         loadings = jnp.asarray(factor_loadings, dtype=jnp.float64)
         host = np.asarray(jax.device_get(loadings))
         if loadings.ndim != 1 or loadings.shape[0] == 0 or not np.all(np.isfinite(host)):

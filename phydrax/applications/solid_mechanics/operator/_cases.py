@@ -30,6 +30,7 @@ from ....nn.operator.data import (
 )
 from ....nn.operator.sampling import OperatorCase as CanonicalOperatorCase
 from ....nn.operator.training._risk import MechanicsCaseReduction
+from ....typing import checked
 from ._parameters import (
     MechanicsParameterDistribution,
     MechanicsParameterRealization,
@@ -357,6 +358,7 @@ class OperatorTrialFieldAdapter(StrictModule, NonTrainableState):
         self.query_support_ids = supports
         self.adapter_fingerprint = fingerprint
 
+    @checked
     def conditioned_values(
         self,
         prediction: OperatorPrediction,
@@ -365,10 +367,6 @@ class OperatorTrialFieldAdapter(StrictModule, NonTrainableState):
         *,
         geometry: MechanicsGeometryMap | None = None,
     ) -> frozendict[str, Array]:
-        if not isinstance(prediction, OperatorPrediction):
-            raise TypeError("prediction must be an OperatorPrediction.")
-        if not isinstance(realization, MechanicsParameterRealization):
-            raise TypeError("realization must be a MechanicsParameterRealization.")
         if set(prediction.fields) != set(self.field_names):
             raise ValueError(
                 "Operator prediction fields must exactly match the trial field adapter."
@@ -515,6 +513,7 @@ class MechanicsOperatorCase:
 class MechanicsCaseBuilder:
     """Build every declared physical case or fail without support renormalization."""
 
+    @checked
     def __init__(
         self,
         distribution: MechanicsParameterDistribution,
@@ -531,12 +530,8 @@ class MechanicsCaseBuilder:
         validity: Callable | None = None,
         split_fingerprint: str | None = None,
     ) -> None:
-        if not isinstance(distribution, MechanicsParameterDistribution):
-            raise TypeError("distribution must be a MechanicsParameterDistribution.")
         if not callable(geometry_factory) or not callable(case_factory):
             raise TypeError("Mechanics geometry and case factories must be callable.")
-        if not isinstance(reduction, MechanicsCaseReduction):
-            raise TypeError("reduction must be a MechanicsCaseReduction.")
         if validity is not None and not callable(validity):
             raise TypeError("validity must be callable or None.")
         identities = tuple(

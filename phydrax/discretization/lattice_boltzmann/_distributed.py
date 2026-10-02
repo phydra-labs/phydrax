@@ -16,6 +16,7 @@ from jax.sharding import NamedSharding, PartitionSpec
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..finite_difference._distributed import (
     DistributedHaloSchedule,
     HaloExchangeDescriptor,
@@ -87,16 +88,13 @@ class LatticeBoltzmannHaloSchedule(StrictModule, NonTrainableState):
     routes: tuple[LatticeBoltzmannHaloRoute, ...]
     schedule_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         velocity_set: LatticeBoltzmannVelocitySet,
         schedule: DistributedHaloSchedule,
         /,
     ) -> None:
-        if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
-            raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
-        if not isinstance(schedule, DistributedHaloSchedule):
-            raise TypeError("schedule must be a DistributedHaloSchedule.")
         if len(schedule.global_shape) != velocity_set.dimension:
             raise ValueError("Halo schedule rank must match the LBM velocity dimension.")
         descriptors = {descriptor.offset: descriptor for descriptor in schedule.exchanges}
@@ -305,6 +303,7 @@ class ShardedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
     backend: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reference: ReferenceLatticeBoltzmannExecutionPlan,
@@ -313,10 +312,6 @@ class ShardedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         *,
         backend: str = "jax",
     ) -> None:
-        if not isinstance(reference, ReferenceLatticeBoltzmannExecutionPlan):
-            raise TypeError("reference must be a reference LBM execution plan.")
-        if not isinstance(halo, LatticeBoltzmannHaloSchedule):
-            raise TypeError("halo must be LatticeBoltzmannHaloSchedule.")
         if reference.velocity_set.lattice_id != halo.velocity_set.lattice_id:
             raise ValueError("Reference execution and halo velocity sets do not match.")
         if backend != "jax":

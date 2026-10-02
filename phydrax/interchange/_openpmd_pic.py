@@ -42,6 +42,7 @@ from .._external_resource import (
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import ElectromagneticScaleContract
 from .._publication import publish_bytes
+from ..typing import checked
 from ._openpmd_base import (
     BoundedHDF5Buffer,
     component_shape,
@@ -1337,6 +1338,7 @@ class OpenPMDPICStreamWriter:
         "_total_bytes",
     )
 
+    @checked
     def __init__(
         self,
         directory: str | Path,
@@ -1350,10 +1352,6 @@ class OpenPMDPICStreamWriter:
         series: str = "pic",
         provider: OpenPMDADIOS2Provider | None = None,
     ) -> None:
-        if not isinstance(layout, OpenPMDPICLayout):
-            raise TypeError("layout must be an OpenPMDPICLayout.")
-        if not isinstance(limits, ResourceLimits):
-            raise TypeError("limits must be ResourceLimits.")
         if provider is not None and not isinstance(provider, OpenPMDADIOS2Provider):
             raise TypeError("provider must be an OpenPMDADIOS2Provider or None.")
         bounds = (maximum_iterations, maximum_total_bytes, interval)

@@ -30,7 +30,7 @@ from ...operators.quantum import (
     uniform_sphere_electron_walkers,
 )
 from ...solver import VariationalMonteCarloProblem
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from ._sphere import HaldaneSpherePlan
 from ._trial_states import LaughlinSphereAmplitude
 
@@ -45,6 +45,7 @@ class LandauLevelMixingVMCPlan(StrictModule, NonTrainableState):
     determinant_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sphere: HaldaneSpherePlan,
@@ -57,8 +58,6 @@ class LandauLevelMixingVMCPlan(StrictModule, NonTrainableState):
         layer_count: int = 2,
         determinant_count: int = 4,
     ) -> None:
-        if not isinstance(sphere, HaldaneSpherePlan):
-            raise TypeError("sphere must be HaldaneSpherePlan.")
         if sphere.statistics != "fermion":
             raise ValueError("Landau-level-mixing VMC currently supports fermions only.")
         mixing = float(landau_level_mixing)

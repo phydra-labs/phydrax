@@ -36,6 +36,7 @@ from ..optim._stochastic import (
     ChanceConstraintCertificate,
     SampleBatch,
 )
+from ..typing import checked
 
 
 FeasibilityScope: TypeAlias = Literal["local", "global"]
@@ -356,6 +357,7 @@ class ConeProjection(AbstractFeasibilityMap):
     topology: FeasibleSetTopology = eqx.field(static=True, default="closed")
     kind: FeasibilityKind = eqx.field(static=True, default="projection")
 
+    @checked
     def __init__(
         self,
         cone: AbstractConvexCone,
@@ -365,8 +367,6 @@ class ConeProjection(AbstractFeasibilityMap):
         derivative_policy: ProjectionDerivativePolicy | None = None,
     ) -> None:
         tolerance_ = float(tolerance)
-        if not isinstance(cone, AbstractConvexCone):
-            raise TypeError("cone must be an AbstractConvexCone.")
         if not isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
         self.cone = cone
@@ -550,6 +550,7 @@ class FeasibleParameterization(AbstractFeasibilityMap):
     topology: FeasibleSetTopology = eqx.field(static=True)
     kind: FeasibilityKind = eqx.field(static=True, default="parameterization")
 
+    @checked
     def __init__(
         self,
         transform: AbstractParameterTransform,
@@ -559,8 +560,6 @@ class FeasibleParameterization(AbstractFeasibilityMap):
         tolerance: float = 1e-7,
     ) -> None:
         tolerance_ = float(tolerance)
-        if not isinstance(transform, AbstractParameterTransform):
-            raise TypeError("transform must be an AbstractParameterTransform.")
         expected = {
             "positive": PositiveTransform,
             "interval": IntervalTransform,
@@ -729,13 +728,12 @@ class AbstractCoefficientPropertyProvider(StrictModule):
     operator: AbstractLinearOperator
     provider_id: eqx.AbstractVar[str]
 
+    @checked
     def __init__(self, representation: Any, operator: AbstractLinearOperator, /) -> None:
         from ._linear_representation import AbstractLinearRepresentation
 
         if not isinstance(representation, AbstractLinearRepresentation):
             raise TypeError("representation must implement AbstractLinearRepresentation.")
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
         if not operator.source.compatible(representation.coefficient_space):
             raise ValueError("Property operator source must match coefficient space.")
         self.representation = representation
@@ -851,13 +849,10 @@ class ChanceFeasibility(StrictModule):
     constraint: ChanceConstraint
     policy: ChanceCertificatePolicy
 
+    @checked
     def __init__(
         self, constraint: ChanceConstraint, policy: ChanceCertificatePolicy, /
     ) -> None:
-        if not isinstance(constraint, ChanceConstraint):
-            raise TypeError("constraint must be a ChanceConstraint.")
-        if not isinstance(policy, ChanceCertificatePolicy):
-            raise TypeError("policy must be a ChanceCertificatePolicy.")
         self.constraint = constraint
         self.policy = policy
 

@@ -24,6 +24,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_support import PreparedTensorGrid
 from .._topology_epoch import TopologyEpoch
 from ._patches import LogicalPatchBox, PatchBucketPlan
@@ -101,6 +102,7 @@ class VariablePatchHierarchyPlan(StrictModule, NonTrainableState):
     periodic_axes: tuple[bool, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -110,8 +112,6 @@ class VariablePatchHierarchyPlan(StrictModule, NonTrainableState):
     ) -> None:
         levels_ = tuple(levels)
         boxes = tuple(base_boxes)
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("grid must be PreparedTensorGrid.")
         if (
             not levels_
             or not all(isinstance(level, VariablePatchLevelPlan) for level in levels_)
@@ -199,14 +199,13 @@ class VariablePatchLevelMetadata(StrictModule, NonTrainableState):
     boxes: tuple[tuple[LogicalPatchBox | None, ...], ...] = eqx.field(static=True)
     metadata_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: VariablePatchLevelPlan,
         boxes_by_bucket: Sequence[Sequence[LogicalPatchBox]],
         /,
     ) -> None:
-        if not isinstance(plan, VariablePatchLevelPlan):
-            raise TypeError("Variable patch metadata requires VariablePatchLevelPlan.")
         groups = tuple(tuple(group) for group in boxes_by_bucket)
         if len(groups) != len(plan.buckets):
             raise ValueError("Variable patch metadata requires one group per bucket.")
@@ -592,6 +591,7 @@ class VariablePatchCompileResult(StrictModule, NonTrainableState):
     evidence: VariablePatchCompileEvidence
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: VariablePatchHierarchyTopology,
@@ -599,8 +599,6 @@ class VariablePatchCompileResult(StrictModule, NonTrainableState):
         evidence: VariablePatchCompileEvidence,
         /,
     ) -> None:
-        if not isinstance(topology, VariablePatchHierarchyTopology):
-            raise TypeError("Variable patch compile result requires topology.")
         self.topology = topology
         self.status = status
         self.evidence = evidence
@@ -799,6 +797,7 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
     clustering: PatchClusteringPolicy
     compiler_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: VariablePatchHierarchyPlan,
@@ -808,10 +807,6 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
         proper_nesting: int = 0,
         clustering: PatchClusteringPolicy | None = None,
     ) -> None:
-        if not isinstance(plan, VariablePatchHierarchyPlan):
-            raise TypeError(
-                "Variable patch compiler requires VariablePatchHierarchyPlan."
-            )
         if int(tag_buffer) < 0 or int(proper_nesting) < 0:
             raise ValueError("Variable patch buffering and nesting must be non-negative.")
         clustering_ = PatchClusteringPolicy() if clustering is None else clustering

@@ -16,6 +16,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import AbstractFiniteRealAlgebraSpec
 
 
@@ -99,6 +100,7 @@ class AlgebraSymmetryResourceEvidence(StrictModule, NonTrainableState):
     budget_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -109,8 +111,6 @@ class AlgebraSymmetryResourceEvidence(StrictModule, NonTrainableState):
         materialized_bytes: int,
         budget: AlgebraSymmetryBudget,
     ) -> None:
-        if not isinstance(budget, AlgebraSymmetryBudget):
-            raise TypeError("budget must be an AlgebraSymmetryBudget.")
         values = tuple(
             index(value)
             for value in (
@@ -161,6 +161,7 @@ class AlgebraDerivationConstraint(StrictModule, NonTrainableState):
     resources: AlgebraSymmetryResourceEvidence
     constraint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         algebra: AbstractFiniteRealAlgebraSpec,
@@ -168,8 +169,6 @@ class AlgebraDerivationConstraint(StrictModule, NonTrainableState):
         *,
         budget: AlgebraSymmetryBudget | None = None,
     ) -> None:
-        if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
-            raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         budget_ = AlgebraSymmetryBudget() if budget is None else budget
         if not isinstance(budget_, AlgebraSymmetryBudget):
             raise TypeError("budget must be AlgebraSymmetryBudget or None.")

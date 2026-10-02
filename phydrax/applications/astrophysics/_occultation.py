@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration import GaussLegendreRule
+from ...typing import checked
 from ._observation_status import AstrophysicsObservationStatus
 
 
@@ -89,6 +90,7 @@ class CircularOccultationPlan(StrictModule, NonTrainableState):
     quadrature_order: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         disk: PolynomialLimbDarkenedDisk,
@@ -96,8 +98,6 @@ class CircularOccultationPlan(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 192,
     ) -> None:
-        if not isinstance(disk, PolynomialLimbDarkenedDisk):
-            raise TypeError("disk must be a PolynomialLimbDarkenedDisk.")
         order = int(quadrature_order)
         if order < 16:
             raise ValueError("quadrature_order must be at least 16.")

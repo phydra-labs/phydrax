@@ -47,7 +47,7 @@ from .._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
 from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._types import AtomisticBatch, AtomisticStatus
@@ -72,6 +72,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
     validation_force_mask: Array | None
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         training_batch: AtomisticBatch,
@@ -95,8 +96,6 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
             raise TypeError(
                 "graph_execution must be a dense AtomisticGraphExecutionPlan."
             )
-        if not isinstance(training_batch, AtomisticBatch):
-            raise TypeError("training_batch must be an AtomisticBatch.")
         if training_energy is None and training_forces is None:
             raise ValueError("Training requires energy labels, force labels, or both.")
         train_energy, train_energy_mask = _energy_supervision(

@@ -15,7 +15,7 @@ import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax.linalg import inverse as matrix_inverse
 
-from ....typing import parse
+from ....typing import checked, parse
 
 
 TensorVariance: TypeAlias = Literal["contravariant", "covariant"]
@@ -139,14 +139,13 @@ class TensorFieldBlock(StrictModule):
     tensor_type: TensorType
     multiplicity: int
 
+    @checked
     def __init__(
         self, name: str, tensor_type: TensorType, /, *, multiplicity: int = 1
     ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Tensor block names must be non-empty.")
-        if not isinstance(tensor_type, TensorType):
-            raise TypeError("tensor_type must be a TensorType.")
         resolved_multiplicity = int(multiplicity)
         if resolved_multiplicity <= 0:
             raise ValueError("Tensor multiplicity must be positive.")

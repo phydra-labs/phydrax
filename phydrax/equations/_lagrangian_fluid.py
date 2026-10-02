@@ -24,6 +24,7 @@ from ..discretization.particle import (
     ParticlePrecisionPolicy,
     PreparedBarotropicSPHDynamics,
 )
+from ..typing import checked
 from ._barotropic import AbstractBarotropicMaterial
 
 
@@ -43,6 +44,7 @@ class BarotropicFluidProblemIR(StrictModule, NonTrainableState):
     external_potential_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -56,8 +58,6 @@ class BarotropicFluidProblemIR(StrictModule, NonTrainableState):
         name_ = str(name)
         if not name_:
             raise ValueError("Barotropic fluid problem name must be non-empty.")
-        if not isinstance(material, AbstractBarotropicMaterial):
-            raise TypeError("material must be an AbstractBarotropicMaterial.")
         if external_potential is not None and not callable(external_potential):
             raise TypeError("external_potential must be callable or None.")
         if external_potential is None and external_potential_id is not None:
@@ -103,6 +103,7 @@ class CompiledBarotropicSPHProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         problem: BarotropicFluidProblemIR,
@@ -110,12 +111,6 @@ class CompiledBarotropicSPHProblem(StrictModule, NonTrainableState):
         discretization_bundle: DiscretizationBundle,
         /,
     ) -> None:
-        if not isinstance(problem, BarotropicFluidProblemIR):
-            raise TypeError("problem must be a BarotropicFluidProblemIR.")
-        if not isinstance(dynamics, PreparedBarotropicSPHDynamics):
-            raise TypeError("dynamics must be PreparedBarotropicSPHDynamics.")
-        if not isinstance(discretization_bundle, DiscretizationBundle):
-            raise TypeError("discretization_bundle must be a DiscretizationBundle.")
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = discretization_bundle

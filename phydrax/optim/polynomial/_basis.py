@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import checked
 
 
 def dense_monomial_count(variable_count: int, max_degree: int, /) -> int:
@@ -184,14 +185,13 @@ class DenseLocalizingBasis(StrictModule):
     term_count: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         moments: DenseMomentBasis,
         polynomial_exponents: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(moments, DenseMomentBasis):
-            raise TypeError("moments must be a DenseMomentBasis.")
         exponents = np.asarray(polynomial_exponents)
         expected_tail = (moments.variable_count,)
         if exponents.ndim != 2 or exponents.shape[1:] != expected_tail:

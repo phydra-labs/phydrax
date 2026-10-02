@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._discretization import LatticeBoltzmannDiscretization
 
 
@@ -71,6 +72,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
     stencil_offsets: Array
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: LatticeBoltzmannDiscretization,
@@ -80,8 +82,6 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         kernel_radius: float = 2.0,
         convergence_tolerance: float = 1.0e-6,
     ) -> None:
-        if not isinstance(discretization, LatticeBoltzmannDiscretization):
-            raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         iterations = int(iteration_count)
         radius = float(kernel_radius)
         tolerance = float(convergence_tolerance)

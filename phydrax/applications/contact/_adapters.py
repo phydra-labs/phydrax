@@ -25,6 +25,7 @@ from ...discretization.contact import (
 )
 from ...nn.parameters import ParameterSubspace
 from ...solver import prepare_virtual_work_equilibrium, PreparedFieldEquilibrium
+from ...typing import checked
 from ._closure import ContactClosurePlan
 from ._coupling import (
     CrossDiscretizationContactResult,
@@ -66,6 +67,7 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
     activation_distance: float | None = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scene: ContactParticipantScene,
@@ -82,18 +84,10 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
         step_size: float = 1.0,
         activation_distance: float | None = None,
     ) -> None:
-        if not isinstance(scene, ContactParticipantScene):
-            raise TypeError("scene must be ContactParticipantScene.")
         if not isinstance(
             search, (DenseContactSearchPlan, SweepAndPruneContactSearchPlan)
         ):
             raise TypeError("search must be a canonical contact search plan.")
-        if not isinstance(closure_plan, ContactClosurePlan):
-            raise TypeError("closure_plan must be ContactClosurePlan.")
-        if not isinstance(route_state, ContactRouteState):
-            raise TypeError("route_state must be ContactRouteState.")
-        if not isinstance(candidate_epoch, ContactCandidateEpoch):
-            raise TypeError("candidate_epoch must be ContactCandidateEpoch.")
         if candidate_epoch.search_id != search.plan_id:
             raise ValueError("candidate_epoch belongs to another search plan.")
         if route_state.closure_id != closure_plan.closure_id:

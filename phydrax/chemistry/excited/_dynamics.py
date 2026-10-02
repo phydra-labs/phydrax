@@ -23,6 +23,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...solver import solve_unitary_propagator, UnitaryPropagatorProblem
+from ...typing import checked
 
 
 class DecoherenceKind(StrEnum):
@@ -203,6 +204,7 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
     rescaling_direction: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         provider: AbstractNonadiabaticSurfaceProvider,
@@ -217,10 +219,6 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
         frustrated_hop: FrustratedHopPolicy = FrustratedHopPolicy.REJECT,
         rescaling_direction: str = "derivative-coupling",
     ) -> None:
-        if not isinstance(provider, AbstractNonadiabaticSurfaceProvider):
-            raise TypeError(
-                "provider must implement AbstractNonadiabaticSurfaceProvider."
-            )
         mass = jnp.asarray(masses, dtype=jnp.float64).reshape((-1,))
         dt = float(time_step)
         substeps = int(electronic_substeps)

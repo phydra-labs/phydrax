@@ -21,6 +21,7 @@ from ..discretization.finite_volume import (
     FiniteVolumePrecisionPolicy,
     PreparedFiniteVolumeDynamics,
 )
+from ..typing import checked
 from ._constrained_mhd import (
     ConstrainedMHDAcceptedIntegralLedger,
     ConstrainedMHDRunStatus,
@@ -214,9 +215,8 @@ class AbstractPreparedBalanceLawTransport(StrictModule):
 class PreparedFiniteVolumeBalanceLawTransport(AbstractPreparedBalanceLawTransport):
     runtime: PreparedFiniteVolumeRuntime
 
+    @checked
     def __init__(self, runtime: PreparedFiniteVolumeRuntime, /) -> None:
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime):
-            raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         names = tuple(runtime.dynamics.system.component_names)
         self.runtime = runtime
         self.dynamics = runtime.dynamics
@@ -371,9 +371,8 @@ class PreparedFiniteVolumeBalanceLawTransport(AbstractPreparedBalanceLawTranspor
 class PreparedConstrainedMHDBalanceLawTransport(AbstractPreparedBalanceLawTransport):
     integrator: ConstrainedMHDSSPRK3Plan
 
+    @checked
     def __init__(self, integrator: ConstrainedMHDSSPRK3Plan, /) -> None:
-        if not isinstance(integrator, ConstrainedMHDSSPRK3Plan):
-            raise TypeError("integrator must be ConstrainedMHDSSPRK3Plan.")
         dynamics = integrator.spatial.dynamics
         names = tuple(dynamics.system.component_names)
         mutable = tuple(name for name in names if not name.startswith("magnetic_"))

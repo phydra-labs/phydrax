@@ -21,7 +21,7 @@ from ..._exponential_family import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from .._kinetic_entropy import KineticEntropyRootPlan, solve_kinetic_entropy_root
 from ._compressible_contracts import (
     CompressibleKineticConservationEvidence,
@@ -55,6 +55,7 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
     collision_kind: PositiveKineticCollisionKind = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         rule: CompressibleVelocityRule,
@@ -66,8 +67,6 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
         equilibrium_solve: FiniteSupportNaturalSolvePlan | None = None,
         entropy_root: KineticEntropyRootPlan | None = None,
     ) -> None:
-        if not isinstance(rule, CompressibleVelocityRule):
-            raise TypeError("rule must be a CompressibleVelocityRule.")
         gamma_value = float(gamma)
         gas_value = float(gas_constant)
         if not np.isfinite(gamma_value) or gamma_value <= 1.0 or gamma_value > 5.0 / 3.0:

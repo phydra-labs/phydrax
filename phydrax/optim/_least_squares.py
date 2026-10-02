@@ -56,6 +56,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._iteration import attach_terminal_optimization_iteration
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
@@ -347,6 +348,7 @@ class GaussNewton(AbstractLeastSquaresMethod):
             metrics=IterativeStepMetrics(objective=metric_nan),
         )
 
+    @checked
     def step(
         self,
         residual_function: Callable[[PyTree[Any]], PyTree[Any]],
@@ -356,8 +358,6 @@ class GaussNewton(AbstractLeastSquaresMethod):
         *,
         termination: OptimizationTermination | None,
     ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         model = _prepare_residual_model(residual_function, parameters)
         linear_problem = _linear_least_squares_problem(model)
         if state.linear_refresh_state is None:
@@ -545,9 +545,8 @@ class GaussNewton(AbstractLeastSquaresMethod):
             objective,
         )
 
+    @checked
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         return state.metrics
 
     def solve(
@@ -691,6 +690,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
             metrics=IterativeStepMetrics(objective=metric_nan),
         )
 
+    @checked
     def step(
         self,
         residual_function: Callable[[PyTree[Any]], PyTree[Any]],
@@ -700,8 +700,6 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
         *,
         termination: OptimizationTermination | None,
     ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         model = _prepare_residual_model(residual_function, parameters)
         if state.linear_refresh_state is None:
             _, refresh_state = prepare_refresh_state(
@@ -1060,9 +1058,8 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
             objective,
         )
 
+    @checked
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         return state.metrics
 
     def solve(
@@ -1091,11 +1088,10 @@ class BoundedResidualFunction(StrictModule):
     function: Any
     bounds: Bounds
 
+    @checked
     def __init__(self, function: Any, bounds: Bounds, /) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
-        if not isinstance(bounds, Bounds):
-            raise TypeError("bounds must be Bounds.")
         self.function = function
         self.bounds = bounds
 
@@ -1231,6 +1227,7 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
             raise TypeError("Bounded methods require BoundedResidualFunction context.")
         return self.init(parameters)
 
+    @checked
     def step(
         self,
         residual_function: Callable[[PyTree[Any]], PyTree[Any]],
@@ -1242,8 +1239,6 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
     ) -> tuple[PyTree[Array], LeastSquaresState, Array]:
         if not isinstance(residual_function, BoundedResidualFunction):
             raise TypeError("residual_function must be BoundedResidualFunction.")
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be LeastSquaresState.")
         if not isinstance(termination, OptimizationTermination):
             raise TypeError("termination must be OptimizationTermination.")
         one_step = OptimizationTermination(
@@ -1300,9 +1295,8 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
         )
         return result.parameters, next_state, result.objective
 
+    @checked
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be LeastSquaresState.")
         return state.metrics
 
     def solve(

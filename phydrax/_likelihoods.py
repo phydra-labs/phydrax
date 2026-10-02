@@ -32,7 +32,7 @@ from ._exponential_family import (
     NaturalCoordinates,
 )
 from ._strict import StrictModule
-from .typing import PRNGKey
+from .typing import checked, PRNGKey
 
 
 def _align_observation_arrays(
@@ -125,9 +125,8 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
 
     family: AbstractExponentialFamily
 
+    @checked
     def __init__(self, family: AbstractExponentialFamily) -> None:
-        if not isinstance(family, AbstractExponentialFamily):
-            raise TypeError("family must implement AbstractExponentialFamily.")
         signature = family.signature
         if signature.dimension != 1 or signature.event_shape:
             raise ValueError(
@@ -166,14 +165,13 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
     family: CategoricalFamily
     prediction_coordinates: Literal["natural", "full_logits"] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         family: CategoricalFamily,
         *,
         prediction_coordinates: Literal["natural", "full_logits"],
     ) -> None:
-        if not isinstance(family, CategoricalFamily):
-            raise TypeError("family must be a CategoricalFamily.")
         if prediction_coordinates not in ("natural", "full_logits"):
             raise ValueError("prediction_coordinates must be 'natural' or 'full_logits'.")
         self.family = family

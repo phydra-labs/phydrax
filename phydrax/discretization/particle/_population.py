@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._core import ParticleDiscretization
 
 
@@ -269,6 +270,7 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
     incarnation_maximum: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         particles: ParticleDiscretization,
@@ -278,8 +280,6 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         allocation_capacity: int | None = None,
         incarnation_maximum: int = 2**31 - 1,
     ) -> None:
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be ParticleDiscretization.")
         reuse = ParticleSlotReusePolicy(reuse_policy)
         capacity = (
             particles.capacity
@@ -328,16 +328,13 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         )
         return _initial_population_state(active, mass)
 
+    @checked
     def allocate(
         self,
         state: ParticlePopulationState,
         request: ParticleAllocationRequest,
         /,
     ) -> ParticleAllocationResult:
-        if not isinstance(state, ParticlePopulationState):
-            raise TypeError("state must be ParticlePopulationState.")
-        if not isinstance(request, ParticleAllocationRequest):
-            raise TypeError("request must be ParticleAllocationRequest.")
         width = request.valid.shape[0]
         if (
             width > self.allocation_capacity

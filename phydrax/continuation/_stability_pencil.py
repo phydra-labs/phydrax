@@ -33,6 +33,7 @@ from ..linalg.eigen import (
     GeneralEigenSolvePolicy,
     SpectralStabilityStatus,
 )
+from ..typing import checked
 from ._core import (
     AbstractStabilityAnalyzer,
     ContinuationCurveProblem,
@@ -180,6 +181,7 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
     zero_tolerance: float = eqx.field(static=True)
     pair_tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         pencil: ContinuationStabilityPencil,
@@ -189,8 +191,6 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
         zero_tolerance: float = 1.0e-8,
         pair_tolerance: float = 1.0e-7,
     ) -> None:
-        if not isinstance(pencil, ContinuationStabilityPencil):
-            raise TypeError("pencil must be a ContinuationStabilityPencil.")
         policy_ = GeneralEigenSolvePolicy() if policy is None else policy
         if not isinstance(policy_, GeneralEigenSolvePolicy):
             raise TypeError("policy must be a GeneralEigenSolvePolicy or None.")
@@ -378,6 +378,7 @@ class HopfContinuationAdapter(StrictModule, NonTrainableState):
     spectral_isolation_tolerance: float = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         physical_residual: Callable[[Array, Any, Any], Array],
@@ -396,8 +397,6 @@ class HopfContinuationAdapter(StrictModule, NonTrainableState):
             raise TypeError(
                 "Hopf physical residual and parameter plane must be callable."
             )
-        if not isinstance(pencil, ContinuationStabilityPencil):
-            raise TypeError("pencil must be a ContinuationStabilityPencil.")
         lower, upper = float(coordinate_lower), float(coordinate_upper)
         omega, isolation = float(omega_min), float(spectral_isolation_tolerance)
         if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:

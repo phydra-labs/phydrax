@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 
 
 FermionicTwoParticleChannel: TypeAlias = Literal[
@@ -154,6 +154,7 @@ class MatsubaraTwoParticleGreenFunction(StrictModule):
     representation_id: str = eqx.field(static=True)
     convention: FermionicTwoParticleChannelConvention
 
+    @checked
     def __init__(
         self,
         convention: FermionicTwoParticleChannelConvention,
@@ -170,8 +171,6 @@ class MatsubaraTwoParticleGreenFunction(StrictModule):
         maximum_elements: int = 16_777_216,
         representation_id: str | None = None,
     ) -> None:
-        if not isinstance(convention, FermionicTwoParticleChannelConvention):
-            raise TypeError("convention must be FermionicTwoParticleChannelConvention.")
         beta_ = float(beta)
         capacity = int(maximum_elements)
         if not np.isfinite(beta_) or beta_ <= 0.0 or capacity <= 0:

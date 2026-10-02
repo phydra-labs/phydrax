@@ -29,7 +29,7 @@ from ..metrix import (
     SpecialUnitaryGroup,
     UnitaryGroup,
 )
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -86,6 +86,7 @@ class SplitGroupTarget(StrictModule):
     reference_measure: str = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         log_target: Callable[[Array], Array],
@@ -102,8 +103,6 @@ class SplitGroupTarget(StrictModule):
             raise TypeError("log_target and every force term must be callable.")
         if not force_terms or len(force_terms) > 64:
             raise ValueError("force_terms must contain between one and 64 terms.")
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("geometry must implement AbstractStateGeometry.")
         point_shape = tuple(configuration_shape)
         local_shape = tuple(local_coordinate_shape)
         if (

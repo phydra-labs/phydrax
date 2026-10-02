@@ -22,7 +22,7 @@ from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
-from ...typing import parse
+from ...typing import checked, parse
 from ..stochastic._hjb import (
     _finite_real_array,
     _nonnegative_tolerance,
@@ -73,6 +73,7 @@ class DiscreteCoupledHJBProblem(StrictModule, NonTrainableState):
     corner_tolerance: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         spatial_grid: BoundedUniformGrid1D,
@@ -89,10 +90,6 @@ class DiscreteCoupledHJBProblem(StrictModule, NonTrainableState):
         corner_tolerance: float = 0.0,
         problem_id: str,
     ) -> None:
-        if not isinstance(spatial_grid, BoundedUniformGrid1D):
-            raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
-        if not isinstance(time_grid, TimeGrid):
-            raise TypeError("time_grid must be a TimeGrid.")
         for name, callback in (
             ("drift", drift),
             ("diffusion", diffusion),

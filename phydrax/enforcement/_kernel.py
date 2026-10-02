@@ -43,7 +43,7 @@ from ..linalg._runtime import (
     solve as solve_linear_system,
 )
 from ..linalg._spaces import ArraySpace
-from ..typing import parse, PRNGKey
+from ..typing import checked, parse, PRNGKey
 from ._affine import (
     AbstractLinearCorrectionProvider,
     AffineBlockAssembly,
@@ -276,6 +276,7 @@ class IntegralKernelRepresenter(StrictModule):
     field_name: str = eqx.field(static=True)
     functional_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         field_name: str,
@@ -286,8 +287,6 @@ class IntegralKernelRepresenter(StrictModule):
         *,
         functional_id: str = "integral",
     ) -> None:
-        if not isinstance(reduction, PreparedLinearReduction):
-            raise TypeError("reduction must be a PreparedLinearReduction.")
         if len(reduction.coefficient_fields) != 1 or reduction.schema.retained_axes:
             raise ValueError(
                 "Kernel integral representers require one scalar, fully reduced coefficient field."
@@ -542,6 +541,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
     provider_id: str = eqx.field(static=True)
     representation: KernelCorrectionRepresentation = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         metric: ProductFieldKernelMetric,
@@ -550,8 +550,6 @@ class _BaseKernelCorrectionPlan(StrictModule):
         *,
         representation: KernelCorrectionRepresentation,
     ) -> None:
-        if not isinstance(metric, ProductFieldKernelMetric):
-            raise TypeError("metric must be a ProductFieldKernelMetric.")
         resolved = _resolve_functional(
             metric,
             functional,

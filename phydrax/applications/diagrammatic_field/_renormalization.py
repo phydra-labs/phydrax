@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator
+from ...typing import checked
 
 
 class CountertermContract(Protocol):
@@ -178,6 +179,7 @@ class BPHZSubtractionPlan(StrictModule, NonTrainableState):
     maximum_matrix_elements: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scheme: MomentumSubtractionScheme,
@@ -187,8 +189,6 @@ class BPHZSubtractionPlan(StrictModule, NonTrainableState):
         maximum_terms: int = 4_096,
         maximum_matrix_elements: int = 1_000_000,
     ) -> None:
-        if not isinstance(scheme, MomentumSubtractionScheme):
-            raise TypeError("scheme must be a MomentumSubtractionScheme.")
         shape = tuple(polynomial_shape)
         maximum = int(maximum_terms)
         maximum_matrix = int(maximum_matrix_elements)

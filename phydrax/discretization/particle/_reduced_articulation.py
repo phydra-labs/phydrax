@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator
 from ...metrix._state_geometry import AbstractStateGeometry
+from ...typing import checked
 from ._rigid_body import (
     _quaternion_conjugate,
     _quaternion_increment,
@@ -383,6 +384,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
     _body_id_order: tuple[int, ...] = eqx.field(static=True)
     _body_index_order: tuple[int, ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ReducedArticulationPlan,
@@ -390,12 +392,6 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         reference: RigidBodyKinematics,
         /,
     ) -> None:
-        if not isinstance(plan, ReducedArticulationPlan):
-            raise TypeError("plan must be a ReducedArticulationPlan.")
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
-        if not isinstance(reference, RigidBodyKinematics):
-            raise TypeError("reference must be RigidBodyKinematics.")
         bodies = graph.bodies
         if not isinstance(bodies, PreparedRigidBodySet):
             raise TypeError("graph.bodies must be a PreparedRigidBodySet.")
@@ -1097,6 +1093,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             operator_id=(f"{self.prepared_id}:frame-jacobian:{int(body_id)}"),
         )
 
+    @checked
     def body_load_pullback(
         self,
         configuration: ArrayLike,
@@ -1104,8 +1101,6 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         generalized_velocity: ArrayLike,
         /,
     ) -> tuple[Array, ArticulationDualityEvidence]:
-        if not isinstance(load, RigidBodyLoad):
-            raise TypeError("load must be a RigidBodyLoad.")
         configuration_array = self._configuration(configuration, "Configuration")
         velocity_array = self._velocity(generalized_velocity, "Generalized velocity")
         force = jnp.asarray(load.force, dtype=configuration_array.dtype)

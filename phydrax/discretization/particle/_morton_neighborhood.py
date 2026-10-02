@@ -11,6 +11,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...typing import checked
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -47,6 +48,7 @@ class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         search_radius: float,
@@ -70,8 +72,6 @@ class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
             raise ValueError("maximum_pairs must be positive.")
         if candidates is not None and candidates <= 0:
             raise ValueError("maximum_candidates must be positive when supplied.")
-        if not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox.")
         if box.ambient_dimension not in (1, 2, 3):
             raise ValueError("Morton neighborhoods support dimensions 1, 2, and 3.")
         if distance_backend not in ("jax", "pallas"):
@@ -133,16 +133,13 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
     artifact_kind: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MortonTreeParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
     ) -> None:
-        if not isinstance(plan, MortonTreeParticleNeighborhoodPlan):
-            raise TypeError("plan must be a MortonTreeParticleNeighborhoodPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
         if plan.box.ambient_dimension != particles.ambient_dimension:
             raise ValueError("ParticleBox dimension does not match particle support.")
         address = MortonAddressPlan(

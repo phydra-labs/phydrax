@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._unstructured_remap import UnstructuredConservativeRemapPlan
 
 
@@ -37,6 +38,7 @@ class FiniteVolumeStageEpochTransition(StrictModule, NonTrainableState):
     event_id: str = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_dynamics_id: str,
@@ -53,8 +55,6 @@ class FiniteVolumeStageEpochTransition(StrictModule, NonTrainableState):
         stage = int(stage_index)
         if not source or not successor or not event:
             raise ValueError("Stage transition identities must be non-empty.")
-        if not isinstance(remap, UnstructuredConservativeRemapPlan):
-            raise TypeError("Stage epoch transition requires a conservative remap.")
         if stage not in (1, 2):
             raise ValueError("SSPRK(3,3) internal transition stage must be 1 or 2.")
         if not remap.require_complete or not bool(remap.report.coverage_complete):

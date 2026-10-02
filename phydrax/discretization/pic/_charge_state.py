@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..particle import ParticlePopulationPlan, ParticlePopulationState
 from ._types import PICParticleState
 
@@ -197,16 +198,13 @@ class PICSpeciesPlan(StrictModule, NonTrainableState):
     species_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         population: ParticlePopulationPlan,
         charge_model: PICChargeModelPlan,
         /,
     ) -> None:
-        if not isinstance(population, ParticlePopulationPlan):
-            raise TypeError("population must be ParticlePopulationPlan.")
-        if not isinstance(charge_model, PICChargeModelPlan):
-            raise TypeError("charge_model must be PICChargeModelPlan.")
         self.population = population
         self.charge_model = charge_model
         self.species_id = charge_model.species_id

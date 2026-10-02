@@ -26,6 +26,7 @@ from ...discretization.particle import (
     RigidBodyKinematics,
     RigidBodyLoad,
 )
+from ...typing import checked
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -54,6 +55,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
     load_function: Callable
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         bodies: PreparedRigidBodySet,
@@ -64,14 +66,10 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
         *,
         load_id: str,
     ) -> None:
-        if not isinstance(bodies, PreparedRigidBodySet):
-            raise TypeError("bodies must be a PreparedRigidBodySet.")
         if bodies.ambient_dimension != 3:
             raise ValueError(
                 "Spacecraft dynamics requires three-dimensional rigid bodies."
             )
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         if not callable(load_function):
             raise TypeError("load_function must be callable.")
         identifier = str(load_id).strip()
@@ -99,14 +97,13 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def rollout(
         self,
         initial: RigidBodyKinematics,
         args: Any = None,
         /,
     ) -> SpacecraftDynamicsResult:
-        if not isinstance(initial, RigidBodyKinematics):
-            raise TypeError("initial must be RigidBodyKinematics.")
         if (
             initial.position.shape
             != (self.bodies.capacity, self.bodies.ambient_dimension)
@@ -301,11 +298,10 @@ class VariableMassSpacecraftState(StrictModule):
     kinematics: RigidBodyKinematics
     propellant_mass: Array
 
+    @checked
     def __init__(
         self, kinematics: RigidBodyKinematics, propellant_mass: ArrayLike, /
     ) -> None:
-        if not isinstance(kinematics, RigidBodyKinematics):
-            raise TypeError("kinematics must be RigidBodyKinematics.")
         mass = jnp.asarray(propellant_mass)
         if mass.shape != (kinematics.position.shape[0],):
             raise ValueError("propellant_mass must have body-capacity shape.")

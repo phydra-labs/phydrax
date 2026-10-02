@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import Currency, FinancialTimestamp
 from ._lineage import DataLineage
 from ._quotes import QuoteTiePolicy
@@ -49,6 +50,7 @@ class CorporateAction(StrictModule, NonTrainableState):
     currency: Currency | None = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action_id: str,
@@ -71,10 +73,6 @@ class CorporateAction(StrictModule, NonTrainableState):
             raise ValueError("A split ratio must be positive.")
         if kind is CorporateActionKind.CASH_DIVIDEND and float(host) < 0.0:
             raise ValueError("A cash dividend must be nonnegative.")
-        if not isinstance(timestamp, FinancialTimestamp):
-            raise TypeError("timestamp must be a FinancialTimestamp.")
-        if not isinstance(lineage, DataLineage):
-            raise TypeError("lineage must be DataLineage.")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be Currency or None.")
         if kind is CorporateActionKind.CASH_DIVIDEND and currency is None:
@@ -134,6 +132,7 @@ class CorporateActionSeries(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def available_at(
         self,
         decision_time: FinancialTimestamp,
@@ -141,8 +140,6 @@ class CorporateActionSeries(StrictModule, NonTrainableState):
         *,
         tie_policy: QuoteTiePolicy = QuoteTiePolicy.REJECT,
     ) -> tuple[CorporateAction, ...]:
-        if not isinstance(decision_time, FinancialTimestamp):
-            raise TypeError("decision_time must be a FinancialTimestamp.")
         if not isinstance(tie_policy, QuoteTiePolicy):
             raise TypeError("tie_policy must be a QuoteTiePolicy.")
         decision_ns = int(decision_time.available_ns)

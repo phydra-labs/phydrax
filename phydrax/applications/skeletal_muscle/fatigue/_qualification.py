@@ -17,6 +17,7 @@ from ...._dtype_names import inexact_result_type
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._liu_brown_yue_2002 import PreparedLiuBrownYue2002
 
 
@@ -64,6 +65,7 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def evaluate(
         self,
         prepared: PreparedLiuBrownYue2002,
@@ -73,8 +75,6 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
     ) -> LiuBrownYue2002QualificationEvidence:
         """Qualify one sustained-effort trace and one zero-effort recovery trace."""
 
-        if not isinstance(prepared, PreparedLiuBrownYue2002):
-            raise TypeError("prepared must be PreparedLiuBrownYue2002.")
         sustained = jnp.asarray(sustained_compartments)
         recovery = jnp.asarray(recovery_compartments)
         if sustained.ndim != 2 or sustained.shape[1] != 3 or sustained.shape[0] < 2:

@@ -15,6 +15,7 @@ from .._strict import StrictModule
 from ..exterior import _algebra
 from ..exterior._basis import exterior_indices
 from ..exterior._form_type import FiberProduct, FormTwist, FormType
+from ..typing import checked
 from ._chart import CoordinateChart
 from ._map import DifferentiableMap
 from ._metric import AbstractSemiRiemannianMetric
@@ -36,6 +37,7 @@ class DifferentialForm(StrictModule):
     chart: CoordinateChart
     form_type: FormType = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coefficients: Callable[[Array], Array],
@@ -48,8 +50,6 @@ class DifferentialForm(StrictModule):
     ) -> None:
         if not callable(coefficients):
             raise TypeError("Differential-form coefficients must be callable.")
-        if not isinstance(chart, CoordinateChart):
-            raise TypeError("Differential-form chart must be a CoordinateChart.")
         form_type = FormType(
             chart.dimension, degree, twist=twist, fiber_shape=fiber_shape
         )

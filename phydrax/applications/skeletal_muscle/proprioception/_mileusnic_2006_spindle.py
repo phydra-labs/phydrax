@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 
 
 MILEUSNIC_SPINDLE_2006_DOI = "10.1152/jn.00868.2005"
@@ -322,16 +323,13 @@ class PreparedMileusnicSpindle2006(StrictModule):
     parameters: MileusnicSpindle2006Parameters
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: MileusnicSpindle2006Plan,
         parameters: MileusnicSpindle2006Parameters,
         /,
     ) -> None:
-        if not isinstance(plan, MileusnicSpindle2006Plan):
-            raise TypeError("plan must be MileusnicSpindle2006Plan.")
-        if not isinstance(parameters, MileusnicSpindle2006Parameters):
-            raise TypeError("parameters must be MileusnicSpindle2006Parameters.")
         _validate_parameters_host(parameters)
         self.plan = plan
         self.parameters = parameters

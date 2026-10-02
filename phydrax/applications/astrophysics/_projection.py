@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..astrodynamics import AstrodynamicsContext
 from ._observation_status import AstrophysicsObservationStatus
 
@@ -36,6 +37,7 @@ class ObserverProjectionPlan(StrictModule, NonTrainableState):
     context: AstrodynamicsContext
     projection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         sky_x: ArrayLike,
@@ -46,8 +48,6 @@ class ObserverProjectionPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(context, AstrodynamicsContext):
-            raise TypeError("context must be an AstrodynamicsContext.")
         first = np.asarray(sky_x, dtype=np.float64)
         second = np.asarray(sky_y, dtype=np.float64)
         sight = np.asarray(toward_observer, dtype=np.float64)

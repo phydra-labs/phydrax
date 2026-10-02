@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import checked
 from ._data import OneSidedPowerSpectralDensity
 
 
@@ -32,6 +33,7 @@ class WaveformMatchPlan(StrictModule, NonTrainableState):
     normalization_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         psd: OneSidedPowerSpectralDensity,
@@ -39,8 +41,6 @@ class WaveformMatchPlan(StrictModule, NonTrainableState):
         *,
         normalization_tolerance: float = 1.0e-10,
     ) -> None:
-        if not isinstance(psd, OneSidedPowerSpectralDensity):
-            raise TypeError("psd must be OneSidedPowerSpectralDensity.")
         tolerance = float(normalization_tolerance)
         if not math.isfinite(tolerance) or tolerance < 0.0 or tolerance > 1.0e-6:
             raise ValueError(

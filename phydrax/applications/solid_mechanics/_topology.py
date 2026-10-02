@@ -29,6 +29,7 @@ from ...optim import (
     StateDesignProblem,
     StateDesignResult,
 )
+from ...typing import checked
 from ._topology_design import (
     Aggregation,
     DensityTransform,
@@ -57,6 +58,7 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
     state_realization: Callable | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         state_residual: Callable,
@@ -81,10 +83,6 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
         case_ids = tuple(case.case_id for case in cases)
         if len(set(case_ids)) != len(case_ids):
             raise ValueError("Load-case identifiers must be unique.")
-        if not isinstance(density_transform, DensityTransform):
-            raise TypeError("density_transform must be a DensityTransform.")
-        if not isinstance(material_interpolation, MaterialInterpolation):
-            raise TypeError("material_interpolation must be MaterialInterpolation.")
         if not isinstance(
             state_solver, (FiniteElementStateSolver, NeuralVariationalStateSolver)
         ):

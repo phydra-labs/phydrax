@@ -34,6 +34,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._tensor_support import PreparedTensorGrid
 from .._topology_epoch import TopologyEpoch
 from ..spatial import morton_encode_integer
@@ -119,6 +120,7 @@ class ForestPlan(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         grid: PreparedTensorGrid,
@@ -130,8 +132,6 @@ class ForestPlan(StrictModule, NonTrainableState):
         maximum_leaf_capacity: int,
         maps: PatchCoordinateMapSet | None = None,
     ) -> None:
-        if not isinstance(grid, PreparedTensorGrid):
-            raise TypeError("Forest roots require a PreparedTensorGrid.")
         if maps is not None and not isinstance(maps, PatchCoordinateMapSet):
             raise TypeError("Forest maps must be a PatchCoordinateMapSet or None.")
         if maps is not None and maps.patch_ids:
@@ -790,6 +790,7 @@ class ForestHierarchyTopology(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: ForestPlan,
@@ -799,8 +800,6 @@ class ForestHierarchyTopology(StrictModule, NonTrainableState):
         *,
         epoch: TopologyEpoch | None = None,
     ) -> None:
-        if not isinstance(plan, ForestPlan):
-            raise TypeError("Forest topology requires a ForestPlan.")
         levels_, coordinates_, keys = _canonical_leaves(plan, levels, coordinates)
         workset, path_ids, face_count, boundary_count = _leaf_workset(
             plan, levels_, coordinates_, keys
@@ -1031,6 +1030,7 @@ class ForestAdaptResult(StrictModule, NonTrainableState):
     evidence: ForestAdaptEvidence
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: ForestHierarchyTopology,
@@ -1038,8 +1038,6 @@ class ForestAdaptResult(StrictModule, NonTrainableState):
         evidence: ForestAdaptEvidence,
         /,
     ) -> None:
-        if not isinstance(topology, ForestHierarchyTopology):
-            raise TypeError("Forest adaptation results require a forest topology.")
         if not isinstance(status, ForestAdaptStatus) or not isinstance(
             evidence, ForestAdaptEvidence
         ):
@@ -1063,9 +1061,8 @@ class ForestTopologyCompiler(StrictModule, NonTrainableState):
     plan: ForestPlan
     compiler_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: ForestPlan, /) -> None:
-        if not isinstance(plan, ForestPlan):
-            raise TypeError("Forest topology compiler requires a ForestPlan.")
         self.plan = plan
         self.compiler_id = canonical_fingerprint(
             {"kind": "forest-topology-compiler", "plan": plan.plan_id}
@@ -1241,9 +1238,8 @@ class ForestBlockLowering(StrictModule, NonTrainableState):
     forest_topology_id: str = eqx.field(static=True)
     lowering_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, forest: ForestHierarchyTopology, /) -> None:
-        if not isinstance(forest, ForestHierarchyTopology):
-            raise TypeError("Block lowering requires a ForestHierarchyTopology.")
         plan = forest.plan
         dimension = plan.dimension
         levels = forest.leaf_levels()

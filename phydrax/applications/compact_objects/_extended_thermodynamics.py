@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 _ENSEMBLES = ("microcanonical", "canonical-charge", "grand-canonical")
@@ -48,9 +49,8 @@ class EinsteinWaldEntropyPlan(StrictModule, NonTrainableState):
     scale: RelativityScaleContract
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, scale: RelativityScaleContract, /) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError("Wald-equivalent entropy requires explicit hbar and k_B.")
         self.scale = scale
@@ -134,6 +134,7 @@ class KerrNewmanThermodynamicsPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometric_mass: ArrayLike,
@@ -149,8 +150,6 @@ class KerrNewmanThermodynamicsPlan(StrictModule, NonTrainableState):
         mass = float(np.asarray(geometric_mass))
         spin = float(np.asarray(specific_angular_momentum))
         charge = float(np.asarray(geometric_charge))
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError(
                 "Thermal observables require explicitly declared hbar and k_B."
@@ -318,6 +317,7 @@ class KerrNewmanAdSThermodynamicsPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         horizon_radius: ArrayLike,
@@ -335,8 +335,6 @@ class KerrNewmanAdSThermodynamicsPlan(StrictModule, NonTrainableState):
         spin = float(np.asarray(specific_angular_momentum))
         charge = float(np.asarray(charge_parameter))
         ads = float(np.asarray(ads_radius))
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError(
                 "Thermal observables require explicitly declared hbar and k_B."
@@ -538,6 +536,7 @@ class ReissnerNordstromCavityPlan(StrictModule, NonTrainableState):
     residual_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         horizon_radius: ArrayLike,
@@ -553,8 +552,6 @@ class ReissnerNordstromCavityPlan(StrictModule, NonTrainableState):
         radius = float(np.asarray(horizon_radius))
         charge = float(np.asarray(geometric_charge))
         wall = float(np.asarray(cavity_radius))
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError(
                 "Thermal observables require explicitly declared hbar and k_B."

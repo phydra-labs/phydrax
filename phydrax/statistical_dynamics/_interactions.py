@@ -18,7 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral._space import TensorSpectralDiscretization
-from ..typing import parse
+from ..typing import checked, parse
 
 
 InteractionKind: TypeAlias = Literal["nl", "ql", "gql"]
@@ -113,6 +113,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         self.partition_id = identifier
 
     @classmethod
+    @checked
     def from_wavenumber_cutoff(
         cls,
         discretization: TensorSpectralDiscretization,
@@ -122,8 +123,6 @@ class InteractionPartition(StrictModule, NonTrainableState):
         axes: Sequence[int] | None = None,
         admissibility_mask: ArrayLike | None = None,
     ) -> "InteractionPartition":
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if any(axis.family != "fourier" for axis in discretization.axes):
             raise ValueError("Spectral interaction partitions require Fourier axes.")
         cutoff_ = int(cutoff)

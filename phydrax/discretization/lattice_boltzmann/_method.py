@@ -10,6 +10,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._collision import (
     BGKCollisionPlan,
     CentralMomentCollisionPlan,
@@ -151,6 +152,7 @@ class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
     forcing: GuoForcingPlan | None
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         collision: PreparedLatticeBoltzmannCollision,
@@ -158,8 +160,6 @@ class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
         method_id: str,
         /,
     ) -> None:
-        if not isinstance(collision, PreparedLatticeBoltzmannCollision):
-            raise TypeError("collision must be PreparedLatticeBoltzmannCollision.")
         if forcing is not None and not isinstance(forcing, GuoForcingPlan):
             raise TypeError("forcing must be GuoForcingPlan or None.")
         identifier = str(method_id)

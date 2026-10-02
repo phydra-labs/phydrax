@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..splatting import (
     ParticleGridSplatState,
     PreparedParticleGridSplat,
@@ -157,11 +158,10 @@ class MPMCapacityCertificate(StrictModule, NonTrainableState):
     numerical_defect_p99: float = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, execution: MPMExecutionPlan, /, **metrics: Unpack[_MPMCapacityMetrics]
     ) -> None:
-        if not isinstance(execution, MPMExecutionPlan):
-            raise TypeError("execution must be MPMExecutionPlan.")
         required = (
             "source_commit",
             "toolchain",

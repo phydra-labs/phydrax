@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._conservation_boundary import PrescribedNormalFluxBoundary
 from ._boundary import FiniteVolumeBoundarySet
 from ._high_resolution import (
@@ -50,6 +51,7 @@ class FiniteVolumeHaloPlan(StrictModule, NonTrainableState):
     depth: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
@@ -62,8 +64,6 @@ class FiniteVolumeHaloPlan(StrictModule, NonTrainableState):
             (FiniteVolumeDiscretization, MappedFiniteVolumeDiscretization),
         ):
             raise TypeError("Halo planning requires finite-volume geometry.")
-        if not isinstance(boundaries, FiniteVolumeBoundarySet):
-            raise TypeError("boundaries must be a FiniteVolumeBoundarySet.")
         if boundaries.axis_names != discretization.grid.axis_names:
             raise ValueError("Halo boundary axes must match finite-volume geometry.")
         depth = reconstruction_ghost_width(reconstruction)
@@ -116,9 +116,8 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
     needs_vertex_halos: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: FiniteVolumeHaloPlan, /) -> None:
-        if not isinstance(plan, FiniteVolumeHaloPlan):
-            raise TypeError("plan must be a FiniteVolumeHaloPlan.")
         dimension = len(plan.discretization.cell_shape)
         depths = (plan.depth,) * dimension
         self.plan = plan

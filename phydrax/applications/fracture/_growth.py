@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
+from ...typing import checked
 from ._geometry import build_sharp_crack_topology, CrackFrontGeometry, SharpCrackTopology
 from ._observables import StressIntensityFactors
 from ._quadrature import build_sharp_crack_quadrature, SharpCrackQuadrature
@@ -128,6 +129,7 @@ class SharpFractureState(StrictModule, NonTrainableState):
     state_version: int = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CrackFrontGeometry,
@@ -138,12 +140,6 @@ class SharpFractureState(StrictModule, NonTrainableState):
         accepted_step: int = 0,
         state_version: int = 0,
     ) -> None:
-        if not isinstance(geometry, CrackFrontGeometry):
-            raise TypeError("geometry must be CrackFrontGeometry.")
-        if not isinstance(topology, SharpCrackTopology):
-            raise TypeError("topology must be SharpCrackTopology.")
-        if not isinstance(quadrature, SharpCrackQuadrature):
-            raise TypeError("quadrature must be SharpCrackQuadrature.")
         step = int(accepted_step)
         version = int(state_version)
         if (
@@ -183,6 +179,7 @@ class CrackGrowthTransaction(StrictModule, NonTrainableState):
     base_state_version: int = eqx.field(static=True)
     transaction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         proposal: CrackGrowthProposal,
@@ -193,10 +190,6 @@ class CrackGrowthTransaction(StrictModule, NonTrainableState):
         base_state_id: str,
         base_state_version: int,
     ) -> None:
-        if not isinstance(proposal, CrackGrowthProposal):
-            raise TypeError("proposal must be CrackGrowthProposal.")
-        if not isinstance(candidate, SharpFractureState):
-            raise TypeError("candidate must be SharpFractureState.")
         identifier = str(base_state_id)
         version = int(base_state_version)
         accepted_ = bool(accepted)
@@ -227,9 +220,8 @@ class CrackGrowthTransaction(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def _validate_current(self, current: SharpFractureState) -> None:
-        if not isinstance(current, SharpFractureState):
-            raise TypeError("current must be SharpFractureState.")
         if (
             current.state_id != self.base_state_id
             or current.state_version != self.base_state_version

@@ -32,6 +32,7 @@ from ....linalg import (
     LinearSystem,
     solve,
 )
+from ....typing import checked
 from ._roles import CardiacBoundaryRoles
 
 
@@ -174,6 +175,7 @@ class HarmonicCoordinateFields(StrictModule):
     evidence: HarmonicCoordinateEvidence
     fields_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         names: Sequence[str],
@@ -208,8 +210,6 @@ class HarmonicCoordinateFields(StrictModule):
             )
         if masks.shape != nodal.shape:
             raise ValueError("dirichlet_masks must match nodal_values.")
-        if not isinstance(evidence, HarmonicCoordinateEvidence):
-            raise TypeError("evidence must be HarmonicCoordinateEvidence.")
         identifier = _nonempty(fields_id, "fields_id")
         self.names = names_
         self.nodal_values = nodal
@@ -278,6 +278,7 @@ class HarmonicCoordinatePlan(StrictModule, NonTrainableState):
     coordinate_names: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -285,10 +286,6 @@ class HarmonicCoordinatePlan(StrictModule, NonTrainableState):
         specs: HarmonicCoordinateSpec | Sequence[HarmonicCoordinateSpec],
         /,
     ) -> None:
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be a CellMesh.")
-        if not isinstance(roles, CardiacBoundaryRoles):
-            raise TypeError("roles must be CardiacBoundaryRoles.")
         if roles.mesh.mesh_id != mesh.mesh_id:
             raise ValueError("Boundary roles and harmonic plan must use the same mesh.")
         normalized = (
@@ -344,11 +341,10 @@ class PreparedHarmonicCoordinates(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: HarmonicCoordinatePlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, HarmonicCoordinatePlan):
-            raise TypeError("plan must be a HarmonicCoordinatePlan.")
         version = _nonempty(numeric_version, "numeric_version")
         field = FiniteElementFieldSpec(
             "cardiac-harmonic-coordinate", lagrange_element("tetrahedron", 1)

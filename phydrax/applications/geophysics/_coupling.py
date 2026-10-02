@@ -34,6 +34,7 @@ from ...solver._partitioned_coupling_types import (
     CouplingSubsystemResult,
     CouplingWindow,
 )
+from ...typing import checked
 from ...units import derived_unit, JOULE, KELVIN, KILOGRAM, METER, SECOND
 from ..ocean._boussinesq import PreparedCartesianBoussinesqOcean
 from ..ocean._hydrostatic import PreparedHydrostaticOcean
@@ -296,6 +297,7 @@ class HydrostaticOceanCouplingSubsystem(AbstractCouplingSubsystem):
     subsystem_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ocean: PreparedHydrostaticOcean,
@@ -305,10 +307,6 @@ class HydrostaticOceanCouplingSubsystem(AbstractCouplingSubsystem):
         freshwater_density: float = 1000.0,
         name: str = "hydrostatic-ocean",
     ) -> None:
-        if not isinstance(ocean, PreparedHydrostaticOcean):
-            raise TypeError(
-                "Hydrostatic coupling requires a native PreparedHydrostaticOcean, not a mosaic."
-            )
         if np.any(np.asarray(ocean.plan.freshwater.rate) != 0):
             raise ValueError(
                 "Coupling must be the authoritative freshwater source; prepare zero background rate."
@@ -430,6 +428,7 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
     subsystem_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         ocean: PreparedCartesianBoussinesqOcean,
@@ -438,10 +437,6 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
         stress: bool = False,
         name: str = "boussinesq-ocean",
     ) -> None:
-        if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
-            raise TypeError(
-                "Boussinesq coupling requires a native prepared rigid-lid ocean."
-            )
         if ocean.plan.temperature_surface_flux.function is not None:
             raise ValueError(
                 "Coupling cannot replace a separately owned dynamic heat boundary."

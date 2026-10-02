@@ -15,6 +15,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
 from ...geometry.simplicial import AffineSimplexMap
+from ...typing import checked
 from ._geometry import (
     _cross_2d,
     _point_in_triangle,
@@ -300,6 +301,7 @@ class SharpCrackQuadrature(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     quadrature_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plus: CrackVolumeQuadrature,
@@ -322,8 +324,6 @@ class SharpCrackQuadrature(StrictModule, NonTrainableState):
             raise TypeError(
                 "Sharp quadrature requires crack-face and crack-tip realizations."
             )
-        if not isinstance(evidence, CrackQuadratureEvidence):
-            raise TypeError("evidence must be CrackQuadratureEvidence.")
         topology_identifier = str(topology_id)
         geometry_identifier = str(geometry_id)
         if not topology_identifier or not geometry_identifier:

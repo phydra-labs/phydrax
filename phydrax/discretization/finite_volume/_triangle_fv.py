@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, DiagonalPairing
+from ...typing import checked
 from .._cell_complex import CellComplexTopology, PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from .._core import (
@@ -290,11 +291,10 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     preparation: PreparationReport
     quality: TriangleFiniteVolumeQualityReport
 
+    @checked
     def __init__(
         self, plan: TriangleFiniteVolumePlan, /, *, numeric_version: str = "0"
     ) -> None:
-        if not isinstance(plan, TriangleFiniteVolumePlan):
-            raise TypeError("plan must be TriangleFiniteVolumePlan.")
         mesh = plan.mesh
         points = np.asarray(mesh.coordinates)
         cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)

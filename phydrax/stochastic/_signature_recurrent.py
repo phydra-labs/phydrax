@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from .._strict import StrictModule
 from ..nn._keys import EvalKey
 from ..nn.layers._recurrent import AbstractRecurrentOutputCell
+from ..typing import checked
 from ._signature import (
     _chen_multiply_increment,
     _inexact_array,
@@ -131,9 +132,8 @@ class SignatureRecurrentCell(AbstractRecurrentOutputCell):
         )
         return next_state, self.output_from_state(next_state)
 
+    @checked
     def output_from_state(self, state: SignatureRecurrentState, /) -> Array:
-        if not isinstance(state, SignatureRecurrentState):
-            raise TypeError("state must be a SignatureRecurrentState.")
         return flatten_signature(
             state.signature,
             include_scalar=self.include_scalar,

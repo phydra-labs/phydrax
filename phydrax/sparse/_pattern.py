@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import parse
+from ..typing import checked, parse
 from ._relation import EdgeRelation
 
 
@@ -31,6 +31,7 @@ class SparsePattern(StrictModule, NonTrainableState):
     origin: SparsePatternOrigin = eqx.field(static=True)
     pattern_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation,
@@ -39,8 +40,6 @@ class SparsePattern(StrictModule, NonTrainableState):
         symmetric: bool = False,
         origin: SparsePatternOrigin = "declared",
     ) -> None:
-        if not isinstance(relation, EdgeRelation):
-            raise TypeError("relation must be an EdgeRelation.")
         origin = parse(origin, SparsePatternOrigin, "origin")
 
         source = np.asarray(relation.source_indices, dtype=np.int64)

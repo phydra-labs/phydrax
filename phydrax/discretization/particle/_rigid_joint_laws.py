@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._rigid_body import (
     _quaternion_conjugate,
     _quaternion_multiply,
@@ -1021,13 +1022,10 @@ class PreparedCompliantRigidJointLaw(StrictModule, NonTrainableState):
     coordinate: _PreparedRigidJointCoordinate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: CompliantRigidJointLawPlan, graph: PreparedRigidJointGraph, /
     ) -> None:
-        if not isinstance(plan, CompliantRigidJointLawPlan):
-            raise TypeError("plan must be a CompliantRigidJointLawPlan.")
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
         compatibility = _require_compatible(plan, graph)
         self.plan = plan
         self.graph = graph
@@ -1090,13 +1088,10 @@ class PreparedDissipativeRigidJointLaw(StrictModule, NonTrainableState):
     coordinate: _PreparedRigidJointCoordinate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: DissipativeRigidJointLawPlan, graph: PreparedRigidJointGraph, /
     ) -> None:
-        if not isinstance(plan, DissipativeRigidJointLawPlan):
-            raise TypeError("plan must be a DissipativeRigidJointLawPlan.")
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
         compatibility = _require_compatible(plan, graph)
         self.plan = plan
         self.graph = graph
@@ -1161,13 +1156,10 @@ class PreparedRigidJointEffortMotor(StrictModule, NonTrainableState):
     coordinate: _PreparedRigidJointCoordinate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: RigidJointEffortMotorPlan, graph: PreparedRigidJointGraph, /
     ) -> None:
-        if not isinstance(plan, RigidJointEffortMotorPlan):
-            raise TypeError("plan must be a RigidJointEffortMotorPlan.")
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
         compatibility = _require_compatible(plan, graph)
         self.plan = plan
         self.graph = graph
@@ -1229,13 +1221,10 @@ class PreparedRigidJointPDServo(StrictModule, NonTrainableState):
     coordinate: _PreparedRigidJointCoordinate
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, plan: RigidJointPDServoPlan, graph: PreparedRigidJointGraph, /
     ) -> None:
-        if not isinstance(plan, RigidJointPDServoPlan):
-            raise TypeError("plan must be a RigidJointPDServoPlan.")
-        if not isinstance(graph, PreparedRigidJointGraph):
-            raise TypeError("graph must be a PreparedRigidJointGraph.")
         compatibility = _require_compatible(plan, graph)
         self.plan = plan
         self.graph = graph

@@ -34,6 +34,7 @@ from ...linalg import (
     RankPolicy,
 )
 from ...sparse import EdgeRelation, SparseLinearMap
+from ...typing import checked
 
 
 _BIQUINTIC_DEGREE = 5
@@ -493,14 +494,13 @@ class BiquinticGluingConstraints(StrictModule, NonTrainableState):
     rows_per_seam: int = eqx.field(static=True)
     constraint_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         topology: PreparedHalfEdgePatchTopology,
         continuity: GluingContinuity = GluingContinuity.G1,
         /,
     ) -> None:
-        if not isinstance(topology, PreparedHalfEdgePatchTopology):
-            raise TypeError("topology must be a PreparedHalfEdgePatchTopology.")
         if not isinstance(continuity, GluingContinuity):
             raise TypeError("continuity must be a GluingContinuity.")
         source, target, values, row_count = _assemble_constraint_routes(
@@ -586,6 +586,7 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
     relative_rank_tolerance: float = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         constraints: BiquinticGluingConstraints,
@@ -593,8 +594,6 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
         *,
         relative_rank_tolerance: float = 1.0e-7,
     ) -> None:
-        if not isinstance(constraints, BiquinticGluingConstraints):
-            raise TypeError("constraints must be BiquinticGluingConstraints.")
         tolerance = float(relative_rank_tolerance)
         if not math.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("relative_rank_tolerance must be finite and non-negative.")

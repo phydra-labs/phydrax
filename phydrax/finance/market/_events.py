@@ -15,6 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ..core import FinancialTimestamp
 from ._quotes import QuoteObservation, QuoteTiePolicy
 from ._risk_factors import RiskFactorLayout
@@ -35,6 +36,7 @@ class PointInTimePanel(StrictModule, NonTrainableState):
     observation_ids: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     panel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layout: RiskFactorLayout,
@@ -48,8 +50,6 @@ class PointInTimePanel(StrictModule, NonTrainableState):
         *,
         observation_ids: Sequence[Sequence[str]],
     ) -> None:
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
         event_host = np.asarray(event_time_ns, dtype=np.int64)
         decision_host = np.asarray(decision_time_ns, dtype=np.int64)
         value_host = np.asarray(values)
@@ -97,6 +97,7 @@ class PointInTimePanel(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def from_snapshot(
         cls,
         snapshot: MarketDataSnapshot,
@@ -109,10 +110,6 @@ class PointInTimePanel(StrictModule, NonTrainableState):
     ) -> PointInTimePanel:
         """Build exact ``event_time`` cells using only data available at each decision."""
 
-        if not isinstance(snapshot, MarketDataSnapshot):
-            raise TypeError("snapshot must be a MarketDataSnapshot.")
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
         events = tuple(event_times)
         decisions = tuple(decision_times)
         if not events or len(events) != len(decisions):
@@ -220,6 +217,7 @@ class MarketEventStream(StrictModule, NonTrainableState):
     archive_time: FinancialTimestamp = eqx.field(static=True)
     stream_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         observations: Sequence[QuoteObservation],
@@ -227,8 +225,6 @@ class MarketEventStream(StrictModule, NonTrainableState):
         *,
         archive_time: FinancialTimestamp,
     ) -> None:
-        if not isinstance(archive_time, FinancialTimestamp):
-            raise TypeError("archive_time must be a FinancialTimestamp.")
         values = tuple(observations)
         if not values or not all(isinstance(value, QuoteObservation) for value in values):
             raise TypeError("observations must contain at least one QuoteObservation.")
@@ -291,6 +287,7 @@ class PreparedMarketEventStream(StrictModule, NonTrainableState):
     max_age_ns: int | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stream: MarketEventStream,
@@ -301,10 +298,6 @@ class PreparedMarketEventStream(StrictModule, NonTrainableState):
         tie_policy: QuoteTiePolicy,
         max_age_ns: int | None,
     ) -> None:
-        if not isinstance(stream, MarketEventStream):
-            raise TypeError("stream must be a MarketEventStream.")
-        if not isinstance(layout, RiskFactorLayout):
-            raise TypeError("layout must be a RiskFactorLayout.")
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("capacity must be a positive integer.")
         if not isinstance(tie_policy, QuoteTiePolicy):

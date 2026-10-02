@@ -19,6 +19,7 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from .._conservation_boundary import (
     AbstractConservationBoundary,
     ConstantStateBoundary,
@@ -103,6 +104,7 @@ class TriangleFiniteVolumeMethodPlan(StrictModule):
     closure: AbstractFaceClosurePlan | None
     method_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         reconstruction: (
@@ -127,8 +129,6 @@ class TriangleFiniteVolumeMethodPlan(StrictModule):
             raise TypeError(
                 "Triangle FV reconstruction must be piecewise constant, MUSCL, or k-exact."
             )
-        if not isinstance(interface_solver, AbstractArbitraryNormalNumericalFluxPlan):
-            raise TypeError("Triangle FV requires an arbitrary-normal numerical flux.")
         if viscous is not None and not isinstance(viscous, TriangleViscousFluxPlan):
             raise TypeError("viscous must be TriangleViscousFluxPlan or None.")
         if closure is not None and not isinstance(closure, AbstractFaceClosurePlan):
@@ -168,6 +168,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
     source_id: str | None = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: Any,
@@ -180,12 +181,6 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ) -> None:
-        if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
-            raise TypeError("discretization must be triangular finite-volume geometry.")
-        if not isinstance(method, TriangleFiniteVolumeMethodPlan):
-            raise TypeError("method must be TriangleFiniteVolumeMethodPlan.")
-        if not isinstance(boundaries, TriangleFiniteVolumeBoundarySet):
-            raise TypeError("boundaries must be TriangleFiniteVolumeBoundarySet.")
         if boundaries.patch_names != discretization.boundary_patch_names:
             raise ValueError("Boundary set patch names must match prepared mesh patches.")
         if (

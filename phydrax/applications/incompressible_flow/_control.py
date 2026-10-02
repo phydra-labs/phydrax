@@ -34,14 +34,19 @@ from ...linalg import (
     LinearSystem,
     solve as solve_linear,
 )
-from ...linalg.svd import svd as solve_svd, SVDProblem, SVDSolvePolicy
+from ...linalg.svd import (
+    require_exact_svd_rank,
+    svd as solve_svd,
+    SVDProblem,
+    SVDSolvePolicy,
+)
 from ...solver._fixed_step import AbstractSSPRKFixedStepMethod
 from ...solver._mac_viscous import (
     MACIMEXEulerMethod,
     MACSBDF2Method,
     MACSBDF2State,
 )
-from ...typing import parse
+from ...typing import checked, parse
 from ._statistics import _mac_face_to_cell
 
 
@@ -496,6 +501,7 @@ class MACFlowControlPlan(StrictModule):
     maximum_resource_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         method: AbstractSSPRKFixedStepMethod | MACIMEXEulerMethod | MACSBDF2Method,
@@ -511,8 +517,6 @@ class MACFlowControlPlan(StrictModule):
         maximum_resource_bytes: int = 512 * 1024**2,
     ) -> None:
         dynamics, _ = _method_dynamics(method)
-        if not isinstance(target, MACFlowControlTarget):
-            raise TypeError("target must be a MACFlowControlTarget.")
         dimension = dynamics.problem.spatial_dimension
         if any(axis >= dimension for axis in target.axes):
             raise ValueError("Controlled axes exceed the MAC spatial dimension.")
@@ -572,9 +576,8 @@ class PreparedMACFlowControl(StrictModule):
     control_space_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, plan: MACFlowControlPlan, /) -> None:
-        if not isinstance(plan, MACFlowControlPlan):
-            raise TypeError("plan must be a MACFlowControlPlan.")
         dynamics, method_kind = _method_dynamics(plan.method)
         target = plan.target
         faces = _face_density(dynamics.momentum.operators, target)
@@ -725,9 +728,8 @@ class PreparedMACFlowControl(StrictModule):
             plan_id=self.prepared_id,
         )
 
+    @checked
     def _validate_state(self, state: MACFlowControlState, /) -> None:
-        if not isinstance(state, MACFlowControlState):
-            raise TypeError("state must be a MACFlowControlState.")
         if (
             state.plan_id != self.prepared_id
             or state.method_id != self.plan.method.method_id
@@ -972,6 +974,7 @@ class PreparedMACFlowControl(StrictModule):
                 failure=FailurePolicy("status"),
             ),
         )
+        numerical_rank = require_exact_svd_rank(spectrum)
         linear = solve_linear(
             LinearSystem(operator, problem_id=f"{self.prepared_id}:response-system"),
             right_hand_side,
@@ -986,9 +989,7 @@ class PreparedMACFlowControl(StrictModule):
             dtype=singular_values.dtype,
         )
         full_rank = (
-            spectrum.successful
-            & (spectrum.numerical_rank == count)
-            & (minimum > singular_floor)
+            spectrum.successful & (numerical_rank == count) & (minimum > singular_floor)
         )
         accepted = (
             full_rank
@@ -1003,7 +1004,7 @@ class PreparedMACFlowControl(StrictModule):
             minimum_singular_value=minimum,
             singular_value_floor=singular_floor,
             condition_number=condition,
-            numerical_rank=spectrum.numerical_rank,
+            numerical_rank=numerical_rank,
             solve_status=linear.status,
             full_rank=full_rank,
             accepted=accepted,

@@ -37,6 +37,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._iteration import attach_terminal_optimization_iteration
 from ._iterative._base import AbstractCompositeLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
@@ -133,6 +134,7 @@ class CompositeLeastSquaresResult(StrictModule):
     provenance: OptimizationProvenance
     iteration_evidence: IterationEvidence | None
 
+    @checked
     def __init__(
         self,
         parameters: PyTree[Any],
@@ -147,10 +149,6 @@ class CompositeLeastSquaresResult(StrictModule):
         *,
         iteration_evidence: IterationEvidence | None = None,
     ) -> None:
-        if not isinstance(diagnostics, OptimizationDiagnostics):
-            raise TypeError("diagnostics must be OptimizationDiagnostics.")
-        if not isinstance(provenance, OptimizationProvenance):
-            raise TypeError("provenance must be OptimizationProvenance.")
         if iteration_evidence is not None and not isinstance(
             iteration_evidence, IterationEvidence
         ):
@@ -377,6 +375,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
             metrics=IterativeStepMetrics(objective=metric_nan),
         )
 
+    @checked
     def prepare_state(
         self,
         problem: CompositeLeastSquaresProblem,
@@ -385,10 +384,9 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         *,
         args: Any,
     ) -> LeastSquaresState:
-        if not isinstance(problem, CompositeLeastSquaresProblem):
-            raise TypeError("problem must be a CompositeLeastSquaresProblem.")
         return self.init(parameters)
 
+    @checked
     def step(
         self,
         problem: CompositeLeastSquaresProblem,
@@ -399,10 +397,6 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         termination: OptimizationTermination | None,
         args: Any,
     ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
-        if not isinstance(problem, CompositeLeastSquaresProblem):
-            raise TypeError("problem must be a CompositeLeastSquaresProblem.")
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         if state.linear_refresh_state is None:
             raise ValueError(
                 "GeneralizedGaussNewton state is missing linear refresh state."
@@ -666,9 +660,8 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
             objective,
         )
 
+    @checked
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
-        if not isinstance(state, LeastSquaresState):
-            raise TypeError("state must be a LeastSquaresState.")
         return state.metrics
 
     def solve(

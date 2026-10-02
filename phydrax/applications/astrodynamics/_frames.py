@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 from ._context import AstrodynamicsContext, FrameDefinition
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
@@ -108,6 +109,7 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
             rotation_, rate_, translation_, velocity_, valid, status, self.transform_id
         )
 
+    @checked
     def apply(
         self,
         state: CartesianOrbitState,
@@ -116,10 +118,6 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> tuple[CartesianOrbitState, KinematicTransformEvaluation]:
-        if not isinstance(state, CartesianOrbitState):
-            raise TypeError("state must be a CartesianOrbitState.")
-        if not isinstance(target_context, AstrodynamicsContext):
-            raise TypeError("target_context must be an AstrodynamicsContext.")
         if state.context.frame.frame_id != self.source_frame.frame_id:
             raise ValueError("State frame does not match transform source.")
         if target_context.frame.frame_id != self.target_frame.frame_id:
@@ -137,6 +135,7 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
         velocity = jnp.where(evaluation.valid, velocity, jnp.zeros_like(velocity))
         return CartesianOrbitState(position, velocity, target_context), evaluation
 
+    @checked
     def apply_inverse(
         self,
         state: CartesianOrbitState,
@@ -145,10 +144,6 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> tuple[CartesianOrbitState, KinematicTransformEvaluation]:
-        if not isinstance(state, CartesianOrbitState):
-            raise TypeError("state must be a CartesianOrbitState.")
-        if not isinstance(source_context, AstrodynamicsContext):
-            raise TypeError("source_context must be an AstrodynamicsContext.")
         if state.context.frame.frame_id != self.target_frame.frame_id:
             raise ValueError("State frame does not match transform target.")
         if source_context.frame.frame_id != self.source_frame.frame_id:

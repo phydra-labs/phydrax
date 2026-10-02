@@ -28,7 +28,7 @@ from ...linalg.eigen import (
     GeneralizedEigenproblem,
 )
 from ...operators.periodic import PreparedPeriodicOrbitalPencil
-from ...typing import parse
+from ...typing import checked, parse
 from ...units import UnitDefinition
 from .._result import ElectronicEnergyLedger
 from .._state import PeriodicElectronicSectorPlan
@@ -135,6 +135,7 @@ class SpinPeriodicSCFResult(StrictModule, NonTrainableState):
     mean_field_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         energy: ArrayLike,
@@ -174,12 +175,6 @@ class SpinPeriodicSCFResult(StrictModule, NonTrainableState):
             or populations.shape != (2, orbital.shape[2])
         ):
             raise ValueError("Spin periodic SCF arrays do not align.")
-        if not isinstance(energy_ledger, ElectronicEnergyLedger):
-            raise TypeError("energy_ledger must be ElectronicEnergyLedger.")
-        if not isinstance(evidence, SpinPeriodicSCFEvidence):
-            raise TypeError("evidence must be SpinPeriodicSCFEvidence.")
-        if not isinstance(energy_unit, UnitDefinition):
-            raise TypeError("energy_unit must be UnitDefinition.")
         if energy_ledger.energy_unit != energy_unit:
             raise ValueError("Spin SCF ledger and result energy units differ.")
         reference_kind = parse(reference_kind, SpinReferenceKind, "reference_kind")
@@ -334,6 +329,7 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
     damping: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: ReciprocalMeshPlan,
@@ -349,14 +345,6 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 256,
         damping: float = 0.25,
     ) -> None:
-        if not isinstance(mesh, ReciprocalMeshPlan):
-            raise TypeError("mesh must be ReciprocalMeshPlan.")
-        if not isinstance(sector, PeriodicElectronicSectorPlan):
-            raise TypeError("sector must be PeriodicElectronicSectorPlan.")
-        if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
-            raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
-        if not isinstance(mean_field, PeriodicHubbardMeanFieldPlan):
-            raise TypeError("mean_field must be PeriodicHubbardMeanFieldPlan.")
         mesh.require_cell(pencil.plan.basis.cell)
         if mean_field.basis_id != pencil.plan.basis.basis_id:
             raise ValueError("Spin SCF mean field belongs to a different orbital basis.")

@@ -44,6 +44,7 @@ from ...sparse import (
     RowRelation,
     SparseLinearMap,
 )
+from ...typing import checked
 from .._cell_mesh import CellMesh
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
@@ -549,6 +550,7 @@ class PreparedL2ProjectionTarget(StrictModule, NonTrainableState):
     structure_id: str = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
@@ -566,14 +568,6 @@ class PreparedL2ProjectionTarget(StrictModule, NonTrainableState):
                 "PreparedL2ProjectionTarget is constructed by "
                 "prepare_l2_projection_target or refresh_l2_projection_target."
             )
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be a FiniteElementDiscretization.")
-        if not isinstance(mass, SparseLinearMap):
-            raise TypeError("mass must be a SparseLinearMap.")
-        if not isinstance(factorization, PreparedSparseFactorization):
-            raise TypeError("factorization must be a PreparedSparseFactorization.")
-        if not isinstance(mass_condition, SpectralEstimate):
-            raise TypeError("mass_condition must be a SpectralEstimate.")
         name = str(field_name)
         dof_map = discretization.dof_maps[discretization._field_index(name)]
         size = dof_map.global_dof_count
@@ -647,6 +641,7 @@ class FiniteElementL2Projection(AbstractLinearOperator):
     mixed_mass: SparseLinearMap
     prepared_target: PreparedL2ProjectionTarget
 
+    @checked
     def __init__(
         self,
         mixed_mass: SparseLinearMap,
@@ -661,10 +656,6 @@ class FiniteElementL2Projection(AbstractLinearOperator):
                 "FiniteElementL2Projection is constructed by "
                 "prepare_l2_projection_transfer."
             )
-        if not isinstance(mixed_mass, SparseLinearMap):
-            raise TypeError("mixed_mass must be a SparseLinearMap.")
-        if not isinstance(prepared_target, PreparedL2ProjectionTarget):
-            raise TypeError("prepared_target must be a PreparedL2ProjectionTarget.")
         if (
             mixed_mass.batch_shape
             or len(mixed_mass.input_shape) != 1

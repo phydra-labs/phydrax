@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import parse
+from ...typing import checked, parse
 from ._cut_transition import MultivaluedCutCellTransition
 from ._mapped_geometry import CanonicalMappedGeometryPlan, CanonicalMappedGeometryState
 
@@ -84,6 +84,7 @@ class BlockAMRDerivativeEvidence(StrictModule, NonTrainableState):
     reason: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: BlockAMRDerivativePolicy,
@@ -94,8 +95,6 @@ class BlockAMRDerivativeEvidence(StrictModule, NonTrainableState):
         *,
         reason: str,
     ) -> None:
-        if not isinstance(policy, BlockAMRDerivativePolicy):
-            raise TypeError("Derivative evidence requires BlockAMRDerivativePolicy.")
         margin = jnp.asarray(topology_margin)
         transverse = jnp.asarray(transversality)
         finite_ = jnp.asarray(finite)
@@ -137,6 +136,7 @@ class FrozenCutCellTransitionDerivativePlan(StrictModule, NonTrainableState):
     topology_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transition: MultivaluedCutCellTransition,
@@ -147,8 +147,6 @@ class FrozenCutCellTransitionDerivativePlan(StrictModule, NonTrainableState):
     ) -> None:
         policy_ = BlockAMRDerivativePolicy("frozen-history") if policy is None else policy
         margin = float(topology_margin)
-        if not isinstance(transition, MultivaluedCutCellTransition):
-            raise TypeError("Frozen derivatives require MultivaluedCutCellTransition.")
         if (
             not isinstance(policy_, BlockAMRDerivativePolicy)
             or policy_.mode != "frozen-history"
@@ -332,6 +330,7 @@ class MappedGeometryDerivativePlan(StrictModule, NonTrainableState):
     topology_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CanonicalMappedGeometryPlan,
@@ -340,8 +339,6 @@ class MappedGeometryDerivativePlan(StrictModule, NonTrainableState):
         topology_margin: float,
     ) -> None:
         margin = float(topology_margin)
-        if not isinstance(geometry, CanonicalMappedGeometryPlan):
-            raise TypeError("Mapped geometry derivatives require mapped geometry plan.")
         if not np.isfinite(margin) or margin < 0.0:
             raise ValueError("Mapped topology margin must be finite and nonnegative.")
         self.geometry = geometry

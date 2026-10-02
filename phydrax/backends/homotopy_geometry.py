@@ -42,6 +42,7 @@ from ..algebraic._positive_dimensional import (
     WitnessSet,
 )
 from ..algebraic._system import SparsePolynomialSystem
+from ..typing import checked
 from .homotopy_continuation import HomotopyContinuationProvider
 
 
@@ -643,6 +644,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         system: SparsePolynomialSystem,
@@ -651,8 +653,6 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         paths: Sequence[HomotopyGeometryPathRequest],
         /,
     ) -> None:
-        if not isinstance(system, SparsePolynomialSystem):
-            raise TypeError("system must be a SparsePolynomialSystem.")
         try:
             operation_ = HomotopyGeometryOperation(operation)
         except ValueError as error:
@@ -723,6 +723,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         return cls(system, HomotopyGeometryOperation.GENERIC_SLICE, payload, paths)
 
     @classmethod
+    @checked
     def witness_transport(
         cls,
         system: SparsePolynomialSystem,
@@ -731,8 +732,6 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         target_slice_offset: ArrayLike,
         /,
     ) -> HomotopyGeometryRequest:
-        if not isinstance(witness_set, WitnessSet):
-            raise TypeError("witness_set must be a WitnessSet.")
         if witness_set.system_id != system.system_id:
             raise ValueError("Witness set belongs to a different polynomial system.")
         degree = _bounded_path_count(witness_set.degree, "witness path count")
@@ -762,6 +761,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         return cls(system, HomotopyGeometryOperation.WITNESS_TRANSPORT, payload, paths)
 
     @classmethod
+    @checked
     def trace_test(
         cls,
         system: SparsePolynomialSystem,
@@ -773,8 +773,6 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         *,
         tolerance: float,
     ) -> HomotopyGeometryRequest:
-        if not isinstance(witness_set, WitnessSet):
-            raise TypeError("witness_set must be a WitnessSet.")
         if witness_set.system_id != system.system_id:
             raise ValueError("Witness set belongs to a different polynomial system.")
         parameters = np.asarray(sample_parameters)
@@ -811,6 +809,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         return cls(system, HomotopyGeometryOperation.TRACE_TEST, payload, paths)
 
     @classmethod
+    @checked
     def monodromy(
         cls,
         system: SparsePolynomialSystem,
@@ -818,8 +817,6 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         loops: Sequence[tuple[str, ArrayLike, ArrayLike]],
         /,
     ) -> HomotopyGeometryRequest:
-        if not isinstance(witness_set, WitnessSet):
-            raise TypeError("witness_set must be a WitnessSet.")
         if witness_set.system_id != system.system_id:
             raise ValueError("Witness set belongs to a different polynomial system.")
         loop_values = _sequence(loops, "loops")
@@ -896,6 +893,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         return cls(system, HomotopyGeometryOperation.REGENERATION_STAGE, payload, paths)
 
     @classmethod
+    @checked
     def image_degree(
         cls,
         source_system: SparsePolynomialSystem,
@@ -911,8 +909,6 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         *,
         path_count: int,
     ) -> HomotopyGeometryRequest:
-        if not isinstance(map_system, SparsePolynomialSystem):
-            raise TypeError("map_system must be a SparsePolynomialSystem.")
         if map_system.support.variable_labels != source_system.support.variable_labels:
             raise ValueError(
                 "Polynomial map source variables do not match the source system."
@@ -1021,16 +1017,13 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         )
         return cls(system, HomotopyGeometryOperation.MEMBERSHIP, payload, paths)
 
+    @checked
     def to_dict(
         self,
         provider: HomotopyContinuationProvider,
         policy: HomotopyGeometryPolicy,
         /,
     ) -> dict[str, Any]:
-        if not isinstance(provider, HomotopyContinuationProvider):
-            raise TypeError("provider must be a HomotopyContinuationProvider.")
-        if not isinstance(policy, HomotopyGeometryPolicy):
-            raise TypeError("policy must be a HomotopyGeometryPolicy.")
         if len(self.paths) > policy.path_capacity:
             raise ValueError("Request path inventory exceeds policy.path_capacity.")
         payload = self.payload
@@ -1127,6 +1120,7 @@ class MembershipEvidence(StrictModule, NonTrainableState):
     evidence_id: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         query_points: ArrayLike,
@@ -1160,8 +1154,6 @@ class MembershipEvidence(StrictModule, NonTrainableState):
             raise ValueError("Membership observations have invalid shapes or values.")
         if points.dtype.kind in "iu":
             points = points.astype("float64")
-        if not isinstance(paths, PathInventory):
-            raise TypeError("paths must be a PathInventory.")
         self.query_points = jnp.asarray(points)
         self.member_witness_set_ids = members
         self.residual_norms = jnp.asarray(residuals)

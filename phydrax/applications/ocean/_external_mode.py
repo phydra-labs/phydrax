@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._hydrostatic_grid import PreparedHydrostaticGrid
-from ...typing import parse
+from ...typing import checked, parse
 
 
 ExternalModeSubcycleKind: TypeAlias = Literal["fixed-count", "adaptive-cfl"]
@@ -118,6 +118,7 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
             policy_id=self.policy_id,
         )
 
+    @checked
     def schedule(
         self,
         geometry: PreparedHydrostaticGrid,
@@ -128,8 +129,6 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
         *,
         barotropic_transport: tuple[ArrayLike, ArrayLike] | None = None,
     ) -> ExternalModeSubcycleSchedule:
-        if not isinstance(geometry, PreparedHydrostaticGrid):
-            raise TypeError("geometry must be a PreparedHydrostaticGrid.")
         eta_ = jnp.asarray(eta, dtype=geometry.cell_area.dtype)
         dt = jnp.asarray(step_size, dtype=eta_.dtype).reshape(())
         gravity_ = jnp.asarray(gravity, dtype=eta_.dtype).reshape(())

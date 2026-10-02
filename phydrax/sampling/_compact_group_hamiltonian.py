@@ -47,7 +47,7 @@ from ..metrix import (
     SpecialUnitaryGroup,
     UnitaryGroup,
 )
-from ..typing import PRNGKey
+from ..typing import checked, PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -85,6 +85,7 @@ class CompactGeometricTarget(StrictModule):
     reference_measure: str = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         evaluate: Callable[[Array], Array],
@@ -98,8 +99,6 @@ class CompactGeometricTarget(StrictModule):
     ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
-        if not isinstance(geometry, AbstractStateGeometry):
-            raise TypeError("geometry must implement AbstractStateGeometry.")
         point_shape = tuple(configuration_shape)
         local_shape = tuple(local_coordinate_shape)
         if not point_shape or any(size <= 0 for size in point_shape):

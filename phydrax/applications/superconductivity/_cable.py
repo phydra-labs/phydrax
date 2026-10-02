@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._superconducting_material import SuperconductingMaterialLawPlan
+from ...typing import checked
 
 
 class SuperconductingCableState(StrictModule):
@@ -73,6 +74,7 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         material: SuperconductingMaterialLawPlan,
@@ -94,8 +96,6 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
         protection_trigger_temperature: float,
         tolerance: float = 1.0e-8,
     ) -> None:
-        if not isinstance(material, SuperconductingMaterialLawPlan):
-            raise TypeError("material must be SuperconductingMaterialLawPlan.")
         lengths = np.asarray(cell_lengths, dtype=np.float64)
         field = np.asarray(magnetic_field, dtype=np.float64)
         angle = np.asarray(field_angle, dtype=np.float64)
