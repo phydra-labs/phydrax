@@ -303,17 +303,13 @@ def _planned_residual(
     /,
 ) -> DomainFunction:
     requests = trace_derivative_requests(condition.residual, functions)
-    grouped: dict[tuple[str, str], list[Any]] = {}
-    for request in requests:
-        for variable in sorted(request.variables):
-            grouped.setdefault((request.field, variable), []).append(request)
-    strategies = {
-        (id(functions[field].func), variable): plan_derivative_execution(
-            tuple(group)
-        ).strategy
-        for (field, variable), group in grouped.items()
+    plans = {
+        (id(functions[request.field].func), request.steps): plan_derivative_execution(
+            (request,)
+        )
+        for request in requests
     }
-    with derivative_execution_context(strategies):
+    with derivative_execution_context(plans):
         residual = condition.residual(functions)
     if not isinstance(residual, DomainFunction):
         raise TypeError("A ResidualPenalty condition must return a DomainFunction.")

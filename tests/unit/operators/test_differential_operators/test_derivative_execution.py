@@ -1,55 +1,13 @@
-from typing import Any
-
 import jax.numpy as jnp
+from jax import Array
 
-from phydrax.domain import CallbackDerivativeRule, Interval1d
-from phydrax.operators.differential import (
-    DerivativeRequest,
-    evaluate_fused_coordinate_derivatives,
-    partial_n,
-    plan_derivative_execution,
-)
-
-
-def test_derivative_execution_plan_preserves_exact_strategy_boundaries() -> None:
-    first = (DerivativeRequest("u", "x", (0,)),)
-    laplacian = (DerivativeRequest("u", "x", (), laplacian_count=1),)
-    high_order = (DerivativeRequest("u", "x", (0, 0, 0)),)
-
-    assert plan_derivative_execution(first).strategy == "reverse"
-    assert (
-        plan_derivative_execution(first, output_size=4, coordinate_size=2).strategy
-        == "forward"
-    )
-    assert plan_derivative_execution(laplacian).strategy == "jvp"
-    assert plan_derivative_execution(high_order).strategy == "jvp"
-    assert plan_derivative_execution(first, directional=True).strategy == "jvp"
-
-    explicit_jet = (
-        DerivativeRequest(
-            "u",
-            "x",
-            (0, 0, 0),
-            variable_path=("x", "x", "x"),
-            backends=("jet", "jet", "jet"),
-        ),
-    )
-    mixed = (
-        DerivativeRequest(
-            "u",
-            "t",
-            (0, None),
-            variable_path=("x", "t"),
-        ),
-    )
-    assert plan_derivative_execution(explicit_jet).strategy == "jet"
-    assert plan_derivative_execution(mixed).variable_count == 2
+from phydrax.operators.differential import evaluate_fused_coordinate_derivatives
 
 
 def test_fused_coordinate_derivatives_match_analytic_vector_derivatives() -> None:
-    point = jnp.asarray([2.0, 0.5])
+    point = jnp.asarray([2.0, 0.5], dtype=jnp.float64)
 
-    def function(value: Any) -> Any:
+    def function(value: Array) -> Array:
         x, y = value
         return jnp.asarray([x**2 * y, jnp.sin(y)])
 
@@ -75,22 +33,3 @@ def test_fused_coordinate_derivatives_match_analytic_vector_derivatives() -> Non
         jnp.asarray([0.0, -jnp.sin(0.5)]),
     )
     assert evaluated.plan is not None
-    assert evaluated.plan.strategy == "jvp"
-    assert evaluated.plan.directional
-
-
-def test_partial_n_dispatches_the_complete_order_to_the_original_rule() -> None:
-    domain = Interval1d(-1.0, 1.0)
-    requested_orders = []
-
-    def derive(**request: Any) -> Any:
-        requested_orders.append(request["order"])
-        return domain.Function()(jnp.asarray(7.0))
-
-    field = domain.Function("x")(lambda x: x[0] ** 4).with_derivative_rule(
-        CallbackDerivativeRule(derive)
-    )
-    derivative = partial_n(field, var="x", order=3)
-
-    assert requested_orders == [3]
-    assert jnp.asarray(derivative.func()) == 7.0

@@ -7,7 +7,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +27,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
+from ..._validation import canonical_identifier, nonnegative_integer, positive_integer
 from ...domain import (
     DerivativeBackend,
     DerivativeBasis,
@@ -97,11 +98,24 @@ def _unary_regularity(op: Callable[[Any], Any], /) -> DerivativeRegularity | Non
 def _callable_regularity(function: Any, /) -> DerivativeRegularity | None:
     # Imported here: discretization depends on the differential operators.
     from ...discretization._views import DiscreteFieldEvaluator
+    from ...domain._evaluation import PointwiseEvaluator
+    from ._taylor_domain import _TaylorPartialEvaluator
 
+    if isinstance(function, PointwiseEvaluator):
+        return _callable_regularity(function.function)
     if isinstance(function, ConcatenatedModelEvaluator):
         return _callable_regularity(function.raw_model)
     if isinstance(function, AbstractArrayModel):
         return function.model_execution_contract().regularity
+    if isinstance(function, _TaylorPartialEvaluator):
+        source_regularity = field_regularity(function.source)
+        return (
+            None
+            if source_regularity is None
+            else source_regularity.differentiate(
+                sum(step.order for step in function.steps)
+            )
+        )
     if isinstance(function, DiscreteFieldEvaluator):
         return function.regularity
     if isinstance(function, _ConstCallable):
@@ -195,40 +209,74 @@ def admit_direct_derivative(field: DomainFunction, var: str, order: int, /) -> N
         )
 
 
+DerivativeStepKind: TypeAlias = Literal["partial", "laplacian"]
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class DerivativeStep:
+    """One ordered operation on a source field's coordinate derivative path."""
+
+    kind: DerivativeStepKind
+    variable: str
+    axis: int | None = None
+    order: int = 1
+    backend: DerivativeBackend = "ad"
+
+    def __post_init__(self) -> None:
+        kind = parse(self.kind, DerivativeStepKind, "kind")
+        canonical_identifier(self.variable, "variable")
+        positive_integer(self.order, "order")
+        parse(self.backend, DerivativeBackend, "backend")
+        if self.axis is not None:
+            nonnegative_integer(self.axis, "axis")
+        match kind:
+            case "partial":
+                pass
+            case "laplacian":
+                if self.axis is not None or self.order != 2:
+                    raise ValueError("A Laplacian step has no axis and has order two.")
+            case _:
+                assert_never(kind)
+
+
+@final
 @dataclass(frozen=True, slots=True)
 class DerivativeRequest:
-    """One derivative of a named residual field requested by an operator.
-
-    `admission` records the regularity admission made while tracing the request
-    (`None` when the field does not depend on a differentiated variable, so the
-    derivative vanishes by independence, or when the request was built directly).
-    """
+    """An ordered coordinate derivative of one named residual field."""
 
     field: str
-    variable: str
-    axes: tuple[int | None, ...]
-    laplacian_count: int = 0
-    variable_path: tuple[str, ...] = ()
-    backends: tuple[DerivativeBackend, ...] = ()
-    laplacian_variables: tuple[str, ...] = ()
-    laplacian_backends: tuple[DerivativeBackend, ...] = ()
+    steps: tuple[DerivativeStep, ...]
     admission: DerivativeAdmission | None = None
+
+    def __post_init__(self) -> None:
+        canonical_identifier(self.field, "field")
+        if not isinstance(self.steps, tuple):
+            raise TypeError("steps must be a tuple of DerivativeStep values.")
+        if not self.steps:
+            raise ValueError("A derivative request requires at least one step.")
+        if any(not isinstance(step, DerivativeStep) for step in self.steps):
+            raise TypeError("steps must contain DerivativeStep values.")
+        if self.admission is not None and not isinstance(
+            self.admission, DerivativeAdmission
+        ):
+            raise TypeError("admission must be a DerivativeAdmission or None.")
 
     @property
     def contracted_laplacian(self) -> bool:
-        return self.laplacian_count > 0
+        return any(step.kind == "laplacian" for step in self.steps)
 
     @property
     def order(self) -> int:
-        return len(self.axes) + 2 * self.laplacian_count
+        return sum(step.order for step in self.steps)
 
     @property
     def variables(self) -> frozenset[str]:
-        return frozenset((self.variable, *self.variable_path, *self.laplacian_variables))
+        return frozenset(step.variable for step in self.steps)
 
     @property
     def explicitly_uses_jet(self) -> bool:
-        return "jet" in (*self.backends, *self.laplacian_backends)
+        return any(step.backend == "jet" for step in self.steps)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -249,7 +297,7 @@ class _RecordedField:
                 admission=admit_field_derivative(
                     self.field,
                     self.regularity,
-                    (*request.variable_path, *request.laplacian_variables),
+                    tuple(step.variable for step in request.steps),
                     request.order,
                     authority=self.authority,
                     policy=self.policy,
@@ -264,42 +312,21 @@ class _RequestRecorderRule(DerivativeRule):
         recorded: _RecordedField,
         /,
         *,
-        prefix: tuple[int | None, ...] = (),
-        prefix_variables: tuple[str, ...] = (),
-        prefix_backends: tuple[DerivativeBackend, ...] = (),
-        prefix_laplacian_variables: tuple[str, ...] = (),
-        prefix_laplacian_backends: tuple[DerivativeBackend, ...] = (),
+        prefix: tuple[DerivativeStep, ...] = (),
     ) -> None:
         self.recorded = recorded
         self.prefix = prefix
-        self.prefix_variables = prefix_variables
-        self.prefix_backends = prefix_backends
-        self.prefix_laplacian_variables = prefix_laplacian_variables
-        self.prefix_laplacian_backends = prefix_laplacian_backends
 
-    def _result(
-        self,
-        *,
-        prefix: tuple[int | None, ...],
-        prefix_variables: tuple[str, ...],
-        prefix_backends: tuple[DerivativeBackend, ...],
-        prefix_laplacian_variables: tuple[str, ...],
-        prefix_laplacian_backends: tuple[DerivativeBackend, ...],
-    ) -> DomainFunction:
+    def _result(self, step: DerivativeStep, /) -> DomainFunction:
         source = self.recorded.source
+        steps = (*self.prefix, step)
+        self.recorded.record(DerivativeRequest(self.recorded.field, steps))
         return DomainFunction(
             domain=source.domain,
             deps=source.deps,
             func=source.func,
             metadata=source.metadata,
-            derivative_rule=_RequestRecorderRule(
-                self.recorded,
-                prefix=prefix,
-                prefix_variables=prefix_variables,
-                prefix_backends=prefix_backends,
-                prefix_laplacian_variables=prefix_laplacian_variables,
-                prefix_laplacian_backends=prefix_laplacian_backends,
-            ),
+            derivative_rule=_RequestRecorderRule(self.recorded, prefix=steps),
         )
 
     def derive(
@@ -314,29 +341,7 @@ class _RequestRecorderRule(DerivativeRule):
         periodic: bool,
     ) -> DomainFunction | None:
         del mode, basis, periodic
-        order_ = int(order)
-        axes = self.prefix + (axis,) * order_
-        variables = self.prefix_variables + (var,) * order_
-        backends = self.prefix_backends + (backend,) * order_
-        self.recorded.record(
-            DerivativeRequest(
-                field=self.recorded.field,
-                variable=var,
-                axes=axes,
-                laplacian_count=len(self.prefix_laplacian_variables),
-                variable_path=variables,
-                backends=backends,
-                laplacian_variables=self.prefix_laplacian_variables,
-                laplacian_backends=self.prefix_laplacian_backends,
-            )
-        )
-        return self._result(
-            prefix=axes,
-            prefix_variables=variables,
-            prefix_backends=backends,
-            prefix_laplacian_variables=self.prefix_laplacian_variables,
-            prefix_laplacian_backends=self.prefix_laplacian_backends,
-        )
+        return self._result(DerivativeStep("partial", var, axis, order, backend))
 
     def derive_laplacian(
         self,
@@ -348,27 +353,7 @@ class _RequestRecorderRule(DerivativeRule):
         periodic: bool,
     ) -> DomainFunction | None:
         del mode, basis, periodic
-        laplacian_variables = self.prefix_laplacian_variables + (var,)
-        laplacian_backends = self.prefix_laplacian_backends + (backend,)
-        self.recorded.record(
-            DerivativeRequest(
-                field=self.recorded.field,
-                variable=var,
-                axes=self.prefix,
-                laplacian_count=len(laplacian_variables),
-                variable_path=self.prefix_variables,
-                backends=self.prefix_backends,
-                laplacian_variables=laplacian_variables,
-                laplacian_backends=laplacian_backends,
-            )
-        )
-        return self._result(
-            prefix=self.prefix,
-            prefix_variables=self.prefix_variables,
-            prefix_backends=self.prefix_backends,
-            prefix_laplacian_variables=laplacian_variables,
-            prefix_laplacian_backends=laplacian_backends,
-        )
+        return self._result(DerivativeStep("laplacian", var, order=2, backend=backend))
 
 
 def trace_derivative_requests(
@@ -544,9 +529,15 @@ def evaluate_fused_coordinate_derivatives(
     else:
         second_values = ()
     requests = tuple(
-        DerivativeRequest("__fused__", "__coordinate__", (axis,)) for axis in first
+        DerivativeRequest(
+            "__fused__", (DerivativeStep("partial", "__coordinate__", axis),)
+        )
+        for axis in first
     ) + tuple(
-        DerivativeRequest("__fused__", "__coordinate__", (axis, axis)) for axis in second
+        DerivativeRequest(
+            "__fused__", (DerivativeStep("partial", "__coordinate__", axis, 2),)
+        )
+        for axis in second
     )
     output_size = sum(jnp.size(leaf) for leaf in jax.tree.leaves(value))
     plan = (
@@ -573,6 +564,8 @@ __all__ = [
     "DerivativeExecutionPlan",
     "DerivativeExecutionStrategy",
     "DerivativeRequest",
+    "DerivativeStep",
+    "DerivativeStepKind",
     "FusedDerivativeEvaluation",
     "evaluate_fused_coordinate_derivatives",
     "plan_derivative_execution",

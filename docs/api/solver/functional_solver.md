@@ -61,6 +61,10 @@ time-window behavior is covered by
       `RandomizedMomentPenalty` objectives require `keep_best=False`. Their
       individual estimates may be negative, so minimum sampled training loss is
       not a valid selection criterion.
+      This conservative rule applies even when a particular derivative provider
+      resolves the current batch to an exact singleton. Sampling-design
+      declarations and finite-population correction survive compilation into
+      term diagnostics; unavailable sampling error is not a false zero.
     - Every optimizer update prepares one immutable objective realization. Sampled
       batches, per-step integration realizations, adaptive weights, evaluation
       keys, and the iteration value are reused by every candidate evaluation and

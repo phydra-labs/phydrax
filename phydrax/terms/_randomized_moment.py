@@ -17,7 +17,16 @@ from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._precision import PrecisionEvidenceEnvelope
-from .._randomized_residual_modes import RandomizedResidualLossMode
+from .._randomized_residual_modes import (
+    RandomizedResidualLossMode,
+    RealizationSamplingDesign,
+)
+from .._sampling._moments import (
+    realization_moments,
+    uncertainty_available,
+    validate_sampling_design,
+)
+from .._sampling._types import IIDDesign
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..conditions._base import AbstractMomentCondition
@@ -29,6 +38,15 @@ from ..integration import (
 )
 from ..integration._api import _requires_random_key
 from ..integration._execution import resolve_integration
+from ..integration._plans import (
+    ImportanceSamplingPlan,
+    MonteCarloPlan,
+    MultilevelMonteCarloPlan,
+    QuasiMonteCarloPlan,
+    SampleMeanEstimator,
+    StratifiedMonteCarloPlan,
+)
+from ..integration._targets import DensityTarget
 from ..typing import checked, parse, PRNGKey
 from ._integrated import checked_estimate_field, validate_condition_source
 from ._randomized_quadratic import event_inner, randomized_squared_mean
@@ -39,24 +57,41 @@ class RandomizedMomentBatch(StrictModule):
 
     left: tuple[IntegrationRealization, ...]
     right: tuple[IntegrationRealization, ...] | None
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
+    population_size: int | None = eqx.field(static=True)
+    right_sampling_design: RealizationSamplingDesign = eqx.field(static=True)
+    right_population_size: int | None = eqx.field(static=True)
 
     def __init__(
         self,
         left: tuple[IntegrationRealization, ...],
         right: tuple[IntegrationRealization, ...] | None = None,
         /,
+        *,
+        sampling_design: RealizationSamplingDesign = "unknown",
+        population_size: int | None = None,
+        right_sampling_design: RealizationSamplingDesign = "unknown",
+        right_population_size: int | None = None,
     ) -> None:
-        if len(left) < 2:
-            raise ValueError("Randomized moments require at least two realizations.")
+        design = validate_sampling_design(sampling_design, population_size, len(left))
         if any(not isinstance(item, IntegrationRealization) for item in left):
             raise TypeError("left must contain only IntegrationRealization values.")
         if right is not None:
-            if len(right) != len(left):
-                raise ValueError("Independent realization groups must have equal sizes.")
+            right_design = validate_sampling_design(
+                right_sampling_design, right_population_size, len(right)
+            )
             if any(not isinstance(item, IntegrationRealization) for item in right):
                 raise TypeError("right must contain only IntegrationRealization values.")
+        else:
+            right_design = parse(
+                right_sampling_design, RealizationSamplingDesign, "right_sampling_design"
+            )
         self.left = tuple(left)
         self.right = None if right is None else tuple(right)
+        self.sampling_design = design
+        self.population_size = population_size
+        self.right_sampling_design = right_design
+        self.right_population_size = right_population_size
 
 
 class RandomizedMomentDiagnostics(StrictModule):
@@ -71,10 +106,42 @@ class RandomizedMomentDiagnostics(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
     num_realizations: int = eqx.field(static=True)
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
+    uncertainty_available: bool = eqx.field(static=True)
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
 
     @property
     def passed(self) -> bool:
         return bool(self.finite)
+
+
+def _integration_sampling_design(
+    source: PerStepIntegration, /
+) -> RealizationSamplingDesign:
+    """Declare iid *replicate means* only for native known-unbiased integration."""
+    if isinstance(source.target, DensityTarget) and source.target.normalized:
+        return "unknown"
+    plan = source.plan
+    if isinstance(plan, ImportanceSamplingPlan):
+        return "iid" if isinstance(plan.estimator, SampleMeanEstimator) else "unknown"
+    if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
+        if isinstance(plan, QuasiMonteCarloPlan) and not plan.design.scrambled:
+            return "unknown"
+        control = plan.control_variate
+        if control is not None and control.coefficients is None:
+            if control.same_sample_asymptotic or not isinstance(plan.design, IIDDesign):
+                return "unknown"
+        return "iid"
+    if isinstance(plan, MultilevelMonteCarloPlan):
+        # Adaptive allocation reuses the observations that decide when to stop.
+        # A finite finest-level mean does not certify an infinite-limit mean.
+        return (
+            "iid"
+            if plan.samples_per_level is not None and plan.estimand == "finest_level"
+            else "unknown"
+        )
+    if isinstance(plan, StratifiedMonteCarloPlan):
+        return "iid"
+    return "unknown"
 
 
 class RandomizedMomentPenalty(AbstractSamplingTerm):
@@ -89,6 +156,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
     precision: IntegrationPrecisionPolicy
     label: str | None = eqx.field(static=True)
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -110,9 +178,11 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             )
         validate_condition_source(condition.on, source)
         count = int(num_realizations)
-        if count < 2:
-            raise ValueError("num_realizations must be at least two.")
         loss_mode = parse(loss_mode, RandomizedResidualLossMode, "loss_mode")
+        if count < 1 or (loss_mode == "u_statistic" and count < 2):
+            raise ValueError(
+                "num_realizations must be positive, and u_statistic requires at least two."
+            )
         coefficient = jnp.asarray(scale, dtype=jnp.float64)
         if coefficient.shape != ():
             raise ValueError("Term scale must be a scalar.")
@@ -130,6 +200,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         self.loss_mode = loss_mode
         self.precision = precision_
         self.label = condition.label if label is None else str(label)
+        self.sampling_design = _integration_sampling_design(source)
 
     def sample(self, *, key: PRNGKey = DOC_KEY0) -> RandomizedMomentBatch:
         group_count = 2 if self.loss_mode == "independent_product" else 1
@@ -146,7 +217,12 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             if group_count == 2
             else None
         )
-        return RandomizedMomentBatch(left, right)
+        return RandomizedMomentBatch(
+            left,
+            right,
+            sampling_design=self.sampling_design,
+            right_sampling_design=self.sampling_design,
+        )
 
     def _mismatch(
         self,
@@ -217,6 +293,31 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         right = self.precision.accumulation(
             jnp.stack(tuple(value for value, _, _ in right_results), axis=0)
         )
+        if (
+            self.loss_mode == "independent_product"
+            and batch.sampling_design != "exact"
+            and batch.right_sampling_design != "exact"
+            and batch.sampling_design != "unknown"
+            and batch.right_sampling_design != "unknown"
+        ):
+            left_keys = tuple(
+                parse(realization.key, PRNGKey, "left realization key")
+                for realization in batch.left
+            )
+            right_keys = tuple(
+                parse(realization.key, PRNGKey, "right realization key")
+                for realization in batch.right
+            )
+            left_words = jr.key_data(jnp.stack(left_keys))
+            right_words = jr.key_data(jnp.stack(right_keys))
+            shared = jnp.any(
+                jnp.all(left_words[:, None, :] == right_words[None, :, :], axis=-1)
+            )
+            right = eqx.error_if(
+                right,
+                shared,
+                "independent_product requires distinct owner-generated integration keys.",
+            )
         right_evidence = tuple(evidence for _, _, evidence in right_results)
         return (
             left,
@@ -248,6 +349,8 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             self.loss_mode,
             right=right,
             precision=self.precision,
+            sampling_design=materialized.sampling_design,
+            right_sampling_design=materialized.right_sampling_design,
         )
         return self.precision.decision(
             self.precision.decision(self.scale) * value
@@ -277,15 +380,13 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             self.loss_mode,
             right=right,
             precision=self.precision,
+            sampling_design=materialized.sampling_design,
+            right_sampling_design=materialized.right_sampling_design,
         )
-        mean = jnp.mean(self.precision.accumulation(left), axis=0)
-        centered = self.precision.accumulation(left - mean)
-        variance = jnp.sum(
-            self.precision.accumulation(jnp.abs(centered) ** 2),
-            axis=0,
-        ) / float(self.num_realizations - 1)
-        standard_error = jnp.sqrt(
-            self.precision.accumulation(variance / float(self.num_realizations))
+        mean, _, standard_error = realization_moments(
+            self.precision.accumulation(left),
+            materialized.sampling_design,
+            materialized.population_size,
         )
         plug_in_norm = self.precision.decision(
             jnp.sqrt(
@@ -305,11 +406,10 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
                 )
             )
         )
-        finite = (
-            jnp.isfinite(objective)
-            & jnp.isfinite(plug_in_norm)
-            & jnp.isfinite(mean_standard_error)
-        )
+        available = uncertainty_available(materialized.sampling_design, left.shape[0])
+        finite = jnp.isfinite(objective) & jnp.isfinite(plug_in_norm)
+        if available:
+            finite = finite & jnp.isfinite(mean_standard_error)
         children = {
             f"integration-{index}": evidence
             for index, evidence in enumerate(integration_evidence)
@@ -326,9 +426,11 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             negative=objective < 0.0,
             finite=finite,
             integration_diagnostics=integration_diagnostics,
-            num_realizations=self.num_realizations,
+            num_realizations=left.shape[0],
             loss_mode=self.loss_mode,
             precision_evidence=precision_evidence,
+            uncertainty_available=available,
+            sampling_design=materialized.sampling_design,
         )
 
 

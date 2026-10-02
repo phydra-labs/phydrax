@@ -201,6 +201,10 @@ def _differential_value_type(
         case "derivative":
             if node.axis is not None and not 0 <= node.axis < coordinate.size:
                 raise ValueError("Derivative coordinate axis is out of range.")
+            if coordinate.size > 1 and node.axis is None:
+                raise ValueError(
+                    "A multivariate partial derivative requires an explicit coordinate axis."
+                )
             return PDEValueType(operand.representation, operand.components, dimension)
         case "gradient":
             if not operand.is_scalar:
@@ -210,8 +214,13 @@ def _differential_value_type(
             )
             return PDEValueType(representation, coordinate.size, dimension)
         case "divergence":
-            if operand.components != coordinate.size:
-                raise ValueError("divergence vector size must match coordinate size.")
+            if (
+                operand.representation not in ("vector", "pseudovector")
+                or operand.components != coordinate.size
+            ):
+                raise ValueError(
+                    "divergence requires an explicitly vector-valued field matching its coordinate size."
+                )
             representation = (
                 "pseudoscalar" if operand.representation == "pseudovector" else "scalar"
             )

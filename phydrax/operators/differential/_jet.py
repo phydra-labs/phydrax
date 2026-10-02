@@ -128,3 +128,32 @@ def jet_d1_d2(
     r"""Convenience helper returning the first and second Jet directional terms."""
     _, (d1, d2) = jet_terms(fun, x, v, order=2)
     return d1, d2
+
+
+def jet_series_normalized(
+    fun: Callable[..., jax.Array],
+    primals: tuple[jax.Array, ...],
+    series: tuple[tuple[jax.Array, ...], ...],
+) -> tuple[jax.Array, tuple[jax.Array, ...]]:
+    """Evaluate arbitrary polynomial input series with ordinary coefficients.
+
+    ``series[i][a-1]`` is the actual coefficient of ``t**a`` in argument
+    ``i``, not its factorial-scaled derivative. Existing derivative-scaled
+    helpers retain their original semantics. Native complex Jet rules are
+    used without probing or splitting the function; unsupported primitives
+    fail explicitly at the native Jet boundary.
+    """
+    if not primals or len(series) != len(primals):
+        raise ValueError("Input series must align with nonempty primals.")
+    order = len(series[0])
+    if order < 1 or any(len(terms) != order for terms in series):
+        raise ValueError("Input series must have the same positive order.")
+    for primal, terms in zip(primals, series, strict=True):
+        if any(
+            term.shape != primal.shape or term.dtype != primal.dtype for term in terms
+        ):
+            raise ValueError(
+                "Each series coefficient must match its primal shape and dtype."
+            )
+    primal_out, series_out = jet(fun, primals, series, factorial_scaled=False)
+    return primal_out, tuple(series_out)

@@ -1,0 +1,2528 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "258f447155fb17003c4f992eb05772a90b3dc477c54a5dd2bcdcecfca5773983",
+    "evidence_schema": {
+      "fields": [
+        "environment",
+        "records"
+      ],
+      "signature": "6e169cb766103d567b2fc170dc2adca52f7ab146642af2c45e42a6b2884d81dc"
+    },
+    "fingerprint": "d1b576e5cb00db0d4d9b74e6ef92d57072451576e9d8487d2cf2d45a0ea8db30",
+    "source_build_fingerprint": "85eafaa7e884f17b374e6dc918bad729d84b1ae17a634a01e1e7992628e40db4"
+  },
+  "interpretation": "Capacity-local measurements; logical coefficient buffers exclude compiler temporary memory. Analytic monomials are independent references.",
+  "records": [
+    {
+      "case": "scalar-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 0.000148792,
+        "compilation_seconds": 0.110183,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 1360,
+          "flops": 4816,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 512,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000328625,
+        "logical_retained_bytes": 272,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 1296,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.1280945,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 4.5042e-05,
+          "mean_seconds": 3.8583333333333334e-05,
+          "median_seconds": 3.7333e-05,
+          "min_seconds": 3.3375e-05,
+          "samples_seconds": [
+            4.5042e-05,
+            3.7333e-05,
+            3.3375e-05
+          ],
+          "std_seconds": 4.8443934834220705e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.000925917,
+      "maximum_absolute_error": 2.842170943040401e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "40a01026826ecedea5b077dfafd75e1646cf38cefee90ec780897fe9b5571ab2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "scalar-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.6542e-05,
+        "compilation_seconds": 0.180213042,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 1360,
+          "flops": 4816,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 512,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000317292,
+        "logical_retained_bytes": 272,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 1296,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.095039292,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000105,
+          "mean_seconds": 5.991666666666667e-05,
+          "median_seconds": 4.6625e-05,
+          "min_seconds": 2.8125e-05,
+          "samples_seconds": [
+            0.000105,
+            4.6625e-05,
+            2.8125e-05
+          ],
+          "std_seconds": 3.276118341710032e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.001105958,
+      "maximum_absolute_error": 2.842170943040401e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "2322aabada17f2bdbea2773aca5316cc0d257ea7df8ece1689b9ae7f5a490310",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "scalar-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.3834e-05,
+        "compilation_seconds": 0.108807917,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 1360,
+          "flops": 4816,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 512,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000816709,
+        "logical_retained_bytes": 272,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 1296,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.098197,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 3.3875e-05,
+          "mean_seconds": 2.4582999999999995e-05,
+          "median_seconds": 2.0458e-05,
+          "min_seconds": 1.9416e-05,
+          "samples_seconds": [
+            3.3875e-05,
+            1.9416e-05,
+            2.0458e-05
+          ],
+          "std_seconds": 6.58419263590204e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.0007365,
+      "maximum_absolute_error": 2.842170943040401e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "e766a1ec3f67e25b0c2c073f3cfe103c47b15274ecb0bdcb7f5391f15284bac2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "vector-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.7166e-05,
+        "compilation_seconds": 0.257761375,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 3200,
+          "flops": 14188,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 656,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000379459,
+        "logical_retained_bytes": 288,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 1440,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.185879542,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.001318125,
+          "mean_seconds": 0.0005504026666666667,
+          "median_seconds": 0.000234625,
+          "min_seconds": 9.8458e-05,
+          "samples_seconds": [
+            0.000234625,
+            9.8458e-05,
+            0.001318125
+          ],
+          "std_seconds": 0.0005457004970960618
+        }
+      },
+      "host_planning_certification_seconds": 0.000787041,
+      "maximum_absolute_error": 5.684341886080802e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "40a01026826ecedea5b077dfafd75e1646cf38cefee90ec780897fe9b5571ab2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "vector-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 0.000108958,
+        "compilation_seconds": 0.222083209,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 3200,
+          "flops": 14188,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 656,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000364708,
+        "logical_retained_bytes": 288,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 1440,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.129787958,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000313041,
+          "mean_seconds": 0.000177319,
+          "median_seconds": 0.000120708,
+          "min_seconds": 9.8208e-05,
+          "samples_seconds": [
+            0.000313041,
+            0.000120708,
+            9.8208e-05
+          ],
+          "std_seconds": 9.640853510970904e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.0008675,
+      "maximum_absolute_error": 5.684341886080802e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "2322aabada17f2bdbea2773aca5316cc0d257ea7df8ece1689b9ae7f5a490310",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "vector-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 0.000122833,
+        "compilation_seconds": 0.262801875,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 3200,
+          "flops": 14188,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 656,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000490541,
+        "logical_retained_bytes": 288,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 1440,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.149174959,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 5.1625e-05,
+          "mean_seconds": 4.495833333333334e-05,
+          "median_seconds": 4.5125e-05,
+          "min_seconds": 3.8125e-05,
+          "samples_seconds": [
+            5.1625e-05,
+            4.5125e-05,
+            3.8125e-05
+          ],
+          "std_seconds": 5.512611802847077e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.000723375,
+      "maximum_absolute_error": 5.684341886080802e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "e766a1ec3f67e25b0c2c073f3cfe103c47b15274ecb0bdcb7f5391f15284bac2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "complex-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.9667e-05,
+        "compilation_seconds": 0.217459875,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 2880,
+          "flops": 6780,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 848,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000357208,
+        "logical_retained_bytes": 288,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 2592,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.123390875,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 6.0458e-05,
+          "mean_seconds": 4.673566666666667e-05,
+          "median_seconds": 4.0833e-05,
+          "min_seconds": 3.8916e-05,
+          "samples_seconds": [
+            6.0458e-05,
+            4.0833e-05,
+            3.8916e-05
+          ],
+          "std_seconds": 9.734664737706974e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.001960084,
+      "maximum_absolute_error": 3.1776437161565096e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "40a01026826ecedea5b077dfafd75e1646cf38cefee90ec780897fe9b5571ab2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "complex-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.5209e-05,
+        "compilation_seconds": 0.167312167,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 2880,
+          "flops": 6780,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 848,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.00029875,
+        "logical_retained_bytes": 288,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 2592,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.105068709,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 2.3333e-05,
+          "mean_seconds": 1.9985999999999998e-05,
+          "median_seconds": 1.875e-05,
+          "min_seconds": 1.7875e-05,
+          "samples_seconds": [
+            2.3333e-05,
+            1.875e-05,
+            1.7875e-05
+          ],
+          "std_seconds": 2.3934929844615512e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.002761334,
+      "maximum_absolute_error": 3.1776437161565096e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "2322aabada17f2bdbea2773aca5316cc0d257ea7df8ece1689b9ae7f5a490310",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "complex-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 0.000105208,
+        "compilation_seconds": 0.268512,
+        "compiler": {
+          "argument_bytes": 256,
+          "bytes_accessed": 2880,
+          "flops": 6780,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 848,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000314792,
+        "logical_retained_bytes": 288,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 2592,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.065602125,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 8.8292e-05,
+          "mean_seconds": 7.197233333333333e-05,
+          "median_seconds": 6.8167e-05,
+          "min_seconds": 5.9458e-05,
+          "samples_seconds": [
+            8.8292e-05,
+            5.9458e-05,
+            6.8167e-05
+          ],
+          "std_seconds": 1.2075051699912327e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.000806459,
+      "maximum_absolute_error": 3.1776437161565096e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "e766a1ec3f67e25b0c2c073f3cfe103c47b15274ecb0bdcb7f5391f15284bac2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "scalar-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.4666e-05,
+        "compilation_seconds": 0.369361459,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 10457,
+          "flops": 20738,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 3528,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.007065208,
+        "logical_retained_bytes": 336,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 2592,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.471177125,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.00011075,
+          "mean_seconds": 9.247233333333333e-05,
+          "median_seconds": 9.075e-05,
+          "min_seconds": 7.5917e-05,
+          "samples_seconds": [
+            7.5917e-05,
+            0.00011075,
+            9.075e-05
+          ],
+          "std_seconds": 1.427256800844037e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.003634042,
+      "maximum_absolute_error": 5.184119800105691e-11,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "1fae9f04d5a2bba6f15f6263c568ddf720cc278a14f542d287a820a5a3171d7b",
+      "probe_count": 2,
+      "schedule_count": 24,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "scalar-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 44,
+      "execution": {
+        "binding_seconds": 0.000107583,
+        "compilation_seconds": 13.770227208,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 10384,
+          "flops": 106384,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 4672,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.001643583,
+        "logical_retained_bytes": 336,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 6480,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 3.212421917,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.001202917,
+          "mean_seconds": 0.000633014,
+          "median_seconds": 0.00044125,
+          "min_seconds": 0.000254875,
+          "samples_seconds": [
+            0.000254875,
+            0.001202917,
+            0.00044125
+          ],
+          "std_seconds": 0.0004101024117729619
+        }
+      },
+      "host_planning_certification_seconds": 0.03420625,
+      "maximum_absolute_error": 0.0,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "936b5a1afdeb5e74b4503523d9a16686ae89f84ca5e95fcbaa862097ced9b24d",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "scalar-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 48,
+      "execution": {
+        "binding_seconds": 9.7708e-05,
+        "compilation_seconds": 14.158577833,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 11472,
+          "flops": 125648,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 5184,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.017255,
+        "logical_retained_bytes": 336,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 7056,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 2.197446375,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000626584,
+          "mean_seconds": 0.0004957083333333334,
+          "median_seconds": 0.000430416,
+          "min_seconds": 0.000430125,
+          "samples_seconds": [
+            0.000430125,
+            0.000430416,
+            0.000626584
+          ],
+          "std_seconds": 9.254314764596147e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.010132,
+      "maximum_absolute_error": 0.0,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "839b08c124284242d31ee41578a5f1e3c8e7dbc2dcc76d27c4abb806a9dc5246",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "vector-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.5917e-05,
+        "compilation_seconds": 1.609969125,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 25433,
+          "flops": 55756,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 4296,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.004299417,
+        "logical_retained_bytes": 352,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 2880,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 2.870088042,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000452458,
+          "mean_seconds": 0.0004012916666666667,
+          "median_seconds": 0.000382792,
+          "min_seconds": 0.000368625,
+          "samples_seconds": [
+            0.000452458,
+            0.000368625,
+            0.000382792
+          ],
+          "std_seconds": 3.6639425235060054e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.002200459,
+      "maximum_absolute_error": 1.0368239600211382e-10,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "1fae9f04d5a2bba6f15f6263c568ddf720cc278a14f542d287a820a5a3171d7b",
+      "probe_count": 2,
+      "schedule_count": 24,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "vector-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 44,
+      "execution": {
+        "binding_seconds": 9.9e-05,
+        "compilation_seconds": 27.1647725,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 79040,
+          "flops": 1652140,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 7120,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.00321175,
+        "logical_retained_bytes": 352,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 7200,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 4.184809292,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.003324291,
+          "mean_seconds": 0.0023014166666666665,
+          "median_seconds": 0.001985209,
+          "min_seconds": 0.00159475,
+          "samples_seconds": [
+            0.001985209,
+            0.00159475,
+            0.003324291
+          ],
+          "std_seconds": 0.0007406386811459118
+        }
+      },
+      "host_planning_certification_seconds": 0.105137583,
+      "maximum_absolute_error": 0.0,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "936b5a1afdeb5e74b4503523d9a16686ae89f84ca5e95fcbaa862097ced9b24d",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "vector-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 48,
+      "execution": {
+        "binding_seconds": 9.575e-05,
+        "compilation_seconds": 17.516482125,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 92672,
+          "flops": 2119500,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 7888,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.004983,
+        "logical_retained_bytes": 352,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 7840,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 1.652065667,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.005914625,
+          "mean_seconds": 0.004536278,
+          "median_seconds": 0.004491,
+          "min_seconds": 0.003203209,
+          "samples_seconds": [
+            0.005914625,
+            0.003203209,
+            0.004491
+          ],
+          "std_seconds": 0.0011073938637561013
+        }
+      },
+      "host_planning_certification_seconds": 0.012740708,
+      "maximum_absolute_error": 0.0,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "839b08c124284242d31ee41578a5f1e3c8e7dbc2dcc76d27c4abb806a9dc5246",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "complex-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.8708e-05,
+        "compilation_seconds": 0.547704708,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 26497,
+          "flops": 37896,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 4616,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.002319084,
+        "logical_retained_bytes": 352,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 5184,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.295613542,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.0012115,
+          "mean_seconds": 0.0007713613333333334,
+          "median_seconds": 0.00084225,
+          "min_seconds": 0.000260334,
+          "samples_seconds": [
+            0.00084225,
+            0.000260334,
+            0.0012115
+          ],
+          "std_seconds": 0.0003915338147894196
+        }
+      },
+      "host_planning_certification_seconds": 0.002225375,
+      "maximum_absolute_error": 5.7960221382694733e-11,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "1fae9f04d5a2bba6f15f6263c568ddf720cc278a14f542d287a820a5a3171d7b",
+      "probe_count": 2,
+      "schedule_count": 24,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "complex-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 44,
+      "execution": {
+        "binding_seconds": 0.000103667,
+        "compilation_seconds": 21.51306125,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 67840,
+          "flops": 1200244,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 7760,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.019745958,
+        "logical_retained_bytes": 352,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 12960,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 1.844514792,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.0224555,
+          "mean_seconds": 0.019733083,
+          "median_seconds": 0.018436083,
+          "min_seconds": 0.018307666,
+          "samples_seconds": [
+            0.0224555,
+            0.018436083,
+            0.018307666
+          ],
+          "std_seconds": 0.0019257532678390206
+        }
+      },
+      "host_planning_certification_seconds": 0.038491916,
+      "maximum_absolute_error": 0.0,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "936b5a1afdeb5e74b4503523d9a16686ae89f84ca5e95fcbaa862097ced9b24d",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "complex-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 8,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 48,
+      "execution": {
+        "binding_seconds": 9.7e-05,
+        "compilation_seconds": 35.372103166,
+        "compiler": {
+          "argument_bytes": 320,
+          "bytes_accessed": 80192,
+          "flops": 1578252,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 8528,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.040572042,
+        "logical_retained_bytes": 352,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 14112,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 2.066913334,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.049909458,
+          "mean_seconds": 0.043684221999999995,
+          "median_seconds": 0.042638542,
+          "min_seconds": 0.038504666,
+          "samples_seconds": [
+            0.042638542,
+            0.049909458,
+            0.038504666
+          ],
+          "std_seconds": 0.004714333119160191
+        }
+      },
+      "host_planning_certification_seconds": 0.010464792,
+      "maximum_absolute_error": 0.0,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "839b08c124284242d31ee41578a5f1e3c8e7dbc2dcc76d27c4abb806a9dc5246",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "model-capacity",
+      "depth": 1,
+      "dimension": 8,
+      "execution": {
+        "binding_seconds": 9.625e-05,
+        "compilation_seconds": 0.266072792,
+        "compiler": {
+          "argument_bytes": 1152,
+          "bytes_accessed": 30072,
+          "flops": 20742,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2896,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.007398458,
+        "logical_retained_bytes": 1232,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 3456,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.171458875,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000297208,
+          "mean_seconds": 0.00021940266666666667,
+          "median_seconds": 0.000233125,
+          "min_seconds": 0.000127875,
+          "samples_seconds": [
+            0.000233125,
+            0.000127875,
+            0.000297208
+          ],
+          "std_seconds": 6.980755950627568e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.000750167,
+      "maximum_absolute_jvp_error": null,
+      "order": 8,
+      "parameter_gradient": {
+        "binding_seconds": 9.3792e-05,
+        "compilation_seconds": 0.409739958,
+        "compiler": {
+          "argument_bytes": 1152,
+          "bytes_accessed": 60712,
+          "flops": 53594,
+          "generated_code_bytes": 0,
+          "output_bytes": 512,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 5120,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.008733292,
+        "logical_retained_bytes": 1728,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": null,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.281078875,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.00020225,
+          "mean_seconds": 0.00018166666666666667,
+          "median_seconds": 0.000185667,
+          "min_seconds": 0.000157083,
+          "samples_seconds": [
+            0.000185667,
+            0.000157083,
+            0.00020225
+          ],
+          "std_seconds": 1.8655052440439713e-05
+        }
+      },
+      "probe_count": 2,
+      "width": 8
+    },
+    {
+      "case": "scalar-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.0208e-05,
+        "compilation_seconds": 0.097806792,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 5200,
+          "flops": 19264,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2048,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000336459,
+        "logical_retained_bytes": 1040,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 4752,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.065376917,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000234667,
+          "mean_seconds": 0.000137292,
+          "median_seconds": 8.9417e-05,
+          "min_seconds": 8.7792e-05,
+          "samples_seconds": [
+            0.000234667,
+            8.9417e-05,
+            8.7792e-05
+          ],
+          "std_seconds": 6.885771864262326e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.001033083,
+      "maximum_absolute_error": 5.684341886080802e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "40a01026826ecedea5b077dfafd75e1646cf38cefee90ec780897fe9b5571ab2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "scalar-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.1417e-05,
+        "compilation_seconds": 0.104688792,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 5200,
+          "flops": 19264,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2048,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000333875,
+        "logical_retained_bytes": 1040,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 4752,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.10319975,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 3.9166e-05,
+          "mean_seconds": 3.4152333333333335e-05,
+          "median_seconds": 3.2875e-05,
+          "min_seconds": 3.0416e-05,
+          "samples_seconds": [
+            3.9166e-05,
+            3.0416e-05,
+            3.2875e-05
+          ],
+          "std_seconds": 3.684590464202077e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.0007685,
+      "maximum_absolute_error": 5.684341886080802e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "2322aabada17f2bdbea2773aca5316cc0d257ea7df8ece1689b9ae7f5a490310",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "scalar-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.8459e-05,
+        "compilation_seconds": 0.117201041,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 5200,
+          "flops": 19264,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2048,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000322833,
+        "logical_retained_bytes": 1040,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 4752,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.076827291,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 3.7083e-05,
+          "mean_seconds": 3.343033333333333e-05,
+          "median_seconds": 3.1875e-05,
+          "min_seconds": 3.1333e-05,
+          "samples_seconds": [
+            3.7083e-05,
+            3.1333e-05,
+            3.1875e-05
+          ],
+          "std_seconds": 2.5922861639015756e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.000738916,
+      "maximum_absolute_error": 5.684341886080802e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "e766a1ec3f67e25b0c2c073f3cfe103c47b15274ecb0bdcb7f5391f15284bac2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "vector-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.9459e-05,
+        "compilation_seconds": 0.164261334,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 12224,
+          "flops": 56692,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2192,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000369667,
+        "logical_retained_bytes": 1056,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 4896,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.124431167,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 4.2167e-05,
+          "mean_seconds": 4.1514e-05,
+          "median_seconds": 4.2125e-05,
+          "min_seconds": 4.025e-05,
+          "samples_seconds": [
+            4.2167e-05,
+            4.2125e-05,
+            4.025e-05
+          ],
+          "std_seconds": 8.93947425747173e-07
+        }
+      },
+      "host_planning_certification_seconds": 0.000751584,
+      "maximum_absolute_error": 1.1368683772161603e-13,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "40a01026826ecedea5b077dfafd75e1646cf38cefee90ec780897fe9b5571ab2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "vector-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.5417e-05,
+        "compilation_seconds": 0.151227834,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 12224,
+          "flops": 56692,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2192,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000818625,
+        "logical_retained_bytes": 1056,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 4896,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.071561875,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000716792,
+          "mean_seconds": 0.0003955973333333333,
+          "median_seconds": 0.00035425,
+          "min_seconds": 0.00011575,
+          "samples_seconds": [
+            0.00035425,
+            0.000716792,
+            0.00011575
+          ],
+          "std_seconds": 0.00024711006039324974
+        }
+      },
+      "host_planning_certification_seconds": 0.000731125,
+      "maximum_absolute_error": 1.1368683772161603e-13,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "2322aabada17f2bdbea2773aca5316cc0d257ea7df8ece1689b9ae7f5a490310",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "vector-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.5583e-05,
+        "compilation_seconds": 0.159546584,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 12224,
+          "flops": 56692,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2192,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.000599875,
+        "logical_retained_bytes": 1056,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 4896,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.089999334,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000658375,
+          "mean_seconds": 0.00028519433333333333,
+          "median_seconds": 0.000116042,
+          "min_seconds": 8.1166e-05,
+          "samples_seconds": [
+            0.000658375,
+            8.1166e-05,
+            0.000116042
+          ],
+          "std_seconds": 0.00026426242175072026
+        }
+      },
+      "host_planning_certification_seconds": 0.000716125,
+      "maximum_absolute_error": 1.1368683772161603e-13,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "e766a1ec3f67e25b0c2c073f3cfe103c47b15274ecb0bdcb7f5391f15284bac2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "complex-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.175e-05,
+        "compilation_seconds": 0.223409875,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 9984,
+          "flops": 27012,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2960,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.001043666,
+        "logical_retained_bytes": 1056,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 9504,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.063612208,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000158167,
+          "mean_seconds": 0.000124528,
+          "median_seconds": 0.00010975,
+          "min_seconds": 0.000105667,
+          "samples_seconds": [
+            0.00010975,
+            0.000158167,
+            0.000105667
+          ],
+          "std_seconds": 2.3844698404467184e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.000698458,
+      "maximum_absolute_error": 6.355287432313019e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "40a01026826ecedea5b077dfafd75e1646cf38cefee90ec780897fe9b5571ab2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "complex-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.1583e-05,
+        "compilation_seconds": 0.2934835,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 9984,
+          "flops": 27012,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2960,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.035651291,
+        "logical_retained_bytes": 1056,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 9504,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.114588584,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000177375,
+          "mean_seconds": 0.00010149966666666667,
+          "median_seconds": 6.6958e-05,
+          "min_seconds": 6.0166e-05,
+          "samples_seconds": [
+            0.000177375,
+            6.0166e-05,
+            6.6958e-05
+          ],
+          "std_seconds": 5.372356697225363e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.000701542,
+      "maximum_absolute_error": 6.355287432313019e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "2322aabada17f2bdbea2773aca5316cc0d257ea7df8ece1689b9ae7f5a490310",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "complex-pure",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.0875e-05,
+        "compilation_seconds": 0.177623459,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 9984,
+          "flops": 27012,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2960,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.00039,
+        "logical_retained_bytes": 1056,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 9504,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.093640209,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 6.2542e-05,
+          "mean_seconds": 4.918066666666666e-05,
+          "median_seconds": 4.3292e-05,
+          "min_seconds": 4.1708e-05,
+          "samples_seconds": [
+            6.2542e-05,
+            4.1708e-05,
+            4.3292e-05
+          ],
+          "std_seconds": 9.469994203917034e-06
+        }
+      },
+      "host_planning_certification_seconds": 0.000799625,
+      "maximum_absolute_error": 6.355287432313019e-14,
+      "multiplicities": [
+        8
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "e766a1ec3f67e25b0c2c073f3cfe103c47b15274ecb0bdcb7f5391f15284bac2",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "scalar-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 9.0583e-05,
+        "compilation_seconds": 0.294423583,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 33689,
+          "flops": 82706,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 11592,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.003167375,
+        "logical_retained_bytes": 1296,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 9504,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.375553,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000252458,
+          "mean_seconds": 0.00021611100000000003,
+          "median_seconds": 0.000215083,
+          "min_seconds": 0.000180792,
+          "samples_seconds": [
+            0.000180792,
+            0.000252458,
+            0.000215083
+          ],
+          "std_seconds": 2.926655061100755e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.002580042,
+      "maximum_absolute_error": 7.855760486563668e-11,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "1fae9f04d5a2bba6f15f6263c568ddf720cc278a14f542d287a820a5a3171d7b",
+      "probe_count": 2,
+      "schedule_count": 24,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "scalar-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 44,
+      "execution": {
+        "binding_seconds": 9.5583e-05,
+        "compilation_seconds": 10.426072208,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 39376,
+          "flops": 425536,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 18688,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.0018805,
+        "logical_retained_bytes": 1296,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 23760,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 2.839558,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000537,
+          "mean_seconds": 0.00047468066666666664,
+          "median_seconds": 0.00045875,
+          "min_seconds": 0.000428292,
+          "samples_seconds": [
+            0.00045875,
+            0.000428292,
+            0.000537
+          ],
+          "std_seconds": 4.578716647950847e-05
+        }
+      },
+      "host_planning_certification_seconds": 0.036293,
+      "maximum_absolute_error": 1.1368683772161603e-13,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "936b5a1afdeb5e74b4503523d9a16686ae89f84ca5e95fcbaa862097ced9b24d",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "scalar-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 48,
+      "execution": {
+        "binding_seconds": 0.000100916,
+        "compilation_seconds": 14.671249458,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 43536,
+          "flops": 502592,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 20736,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.007149125,
+        "logical_retained_bytes": 1296,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 25872,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 2.927502042,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.001510042,
+          "mean_seconds": 0.0010995416666666666,
+          "median_seconds": 0.001059083,
+          "min_seconds": 0.0007295,
+          "samples_seconds": [
+            0.001510042,
+            0.001059083,
+            0.0007295
+          ],
+          "std_seconds": 0.00031993658874047043
+        }
+      },
+      "host_planning_certification_seconds": 0.010423792,
+      "maximum_absolute_error": 1.1368683772161603e-13,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "839b08c124284242d31ee41578a5f1e3c8e7dbc2dcc76d27c4abb806a9dc5246",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "vector-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 0.00010025,
+        "compilation_seconds": 0.628492125,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 87449,
+          "flops": 222292,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 11336,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.004794458,
+        "logical_retained_bytes": 1312,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 9792,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.710683542,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.022589834,
+          "mean_seconds": 0.008122930666666667,
+          "median_seconds": 0.00118275,
+          "min_seconds": 0.000596208,
+          "samples_seconds": [
+            0.022589834,
+            0.000596208,
+            0.00118275
+          ],
+          "std_seconds": 0.010232447635551308
+        }
+      },
+      "host_planning_certification_seconds": 0.00220325,
+      "maximum_absolute_error": 1.5711520973127335e-10,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "1fae9f04d5a2bba6f15f6263c568ddf720cc278a14f542d287a820a5a3171d7b",
+      "probe_count": 2,
+      "schedule_count": 24,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "vector-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 44,
+      "execution": {
+        "binding_seconds": 0.000100875,
+        "compilation_seconds": 40.578520042,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 310208,
+          "flops": 6608284,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 21136,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.002728667,
+        "logical_retained_bytes": 1312,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 24480,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 4.122934459,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.010054959,
+          "mean_seconds": 0.007835264,
+          "median_seconds": 0.008167625,
+          "min_seconds": 0.005283208,
+          "samples_seconds": [
+            0.005283208,
+            0.008167625,
+            0.010054959
+          ],
+          "std_seconds": 0.0019621841193325023
+        }
+      },
+      "host_planning_certification_seconds": 0.085970958,
+      "maximum_absolute_error": 2.2737367544323206e-13,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "936b5a1afdeb5e74b4503523d9a16686ae89f84ca5e95fcbaa862097ced9b24d",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "vector-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 48,
+      "execution": {
+        "binding_seconds": 0.018912625,
+        "compilation_seconds": 50.958706,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 364160,
+          "flops": 8477700,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 23440,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.022474583,
+        "logical_retained_bytes": 1312,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 26656,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 5.940928792,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.035824333,
+          "mean_seconds": 0.024517889,
+          "median_seconds": 0.024158125,
+          "min_seconds": 0.013571209,
+          "samples_seconds": [
+            0.013571209,
+            0.035824333,
+            0.024158125
+          ],
+          "std_seconds": 0.009088360854837576
+        }
+      },
+      "host_planning_certification_seconds": 0.010595416,
+      "maximum_absolute_error": 2.2737367544323206e-13,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "839b08c124284242d31ee41578a5f1e3c8e7dbc2dcc76d27c4abb806a9dc5246",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "complex-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 8,
+      "execution": {
+        "binding_seconds": 0.000119166,
+        "compilation_seconds": 1.27192925,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 91585,
+          "flops": 150912,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 12872,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.001890709,
+        "logical_retained_bytes": 1312,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 19008,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.979277459,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.000948875,
+          "mean_seconds": 0.0006909583333333334,
+          "median_seconds": 0.00066075,
+          "min_seconds": 0.00046325,
+          "samples_seconds": [
+            0.00046325,
+            0.000948875,
+            0.00066075
+          ],
+          "std_seconds": 0.0001994029717403652
+        }
+      },
+      "host_planning_certification_seconds": 0.005705125,
+      "maximum_absolute_error": 1.2036914396800857e-10,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 8,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "1fae9f04d5a2bba6f15f6263c568ddf720cc278a14f542d287a820a5a3171d7b",
+      "probe_count": 2,
+      "schedule_count": 24,
+      "strategy": "linear",
+      "workset": 2
+    },
+    {
+      "case": "complex-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 44,
+      "execution": {
+        "binding_seconds": 0.01545425,
+        "compilation_seconds": 76.875137042,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 265408,
+          "flops": 4800436,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 23696,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.042414584,
+        "logical_retained_bytes": 1312,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 47520,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 3.569854458,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.383460834,
+          "mean_seconds": 0.1765982363333333,
+          "median_seconds": 0.092961833,
+          "min_seconds": 0.053372042,
+          "samples_seconds": [
+            0.053372042,
+            0.092961833,
+            0.383460834
+          ],
+          "std_seconds": 0.14716416824509698
+        }
+      },
+      "host_planning_certification_seconds": 0.048620708,
+      "maximum_absolute_error": 1.2710574864626038e-13,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 44,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "936b5a1afdeb5e74b4503523d9a16686ae89f84ca5e95fcbaa862097ced9b24d",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "single",
+      "workset": 2
+    },
+    {
+      "case": "complex-mixed",
+      "comparisons": {
+        "not_measured_reason": "Derivative order exceeds the explicit bounded reference campaign."
+      },
+      "dimension": 32,
+      "direction_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "dtype": "float64",
+      "executed_order": 48,
+      "execution": {
+        "binding_seconds": 0.00013575,
+        "compilation_seconds": 80.672758208,
+        "compiler": {
+          "argument_bytes": 1280,
+          "bytes_accessed": 314240,
+          "flops": 6312420,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 26000,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.148687292,
+        "logical_retained_bytes": 1312,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 51744,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 8.373514583,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.174694417,
+          "mean_seconds": 0.14488744466666667,
+          "median_seconds": 0.167681125,
+          "min_seconds": 0.092286792,
+          "samples_seconds": [
+            0.174694417,
+            0.092286792,
+            0.167681125
+          ],
+          "std_seconds": 0.03730431665718053
+        }
+      },
+      "host_planning_certification_seconds": 0.133495542,
+      "maximum_absolute_error": 1.2710574864626038e-13,
+      "multiplicities": [
+        4,
+        4
+      ],
+      "parameter_gradient": {
+        "admitted": false,
+        "executed_order": 48,
+        "maximum_executed_order": 4,
+        "reason": "Executed scalar Jet order exceeds the gradient compilation budget."
+      },
+      "plan_id": "839b08c124284242d31ee41578a5f1e3c8e7dbc2dcc76d27c4abb806a9dc5246",
+      "probe_count": 2,
+      "schedule_count": 1,
+      "strategy": "prime",
+      "workset": 2
+    },
+    {
+      "case": "model-capacity",
+      "depth": 1,
+      "dimension": 32,
+      "execution": {
+        "binding_seconds": 0.000174584,
+        "compilation_seconds": 0.417030875,
+        "compiler": {
+          "argument_bytes": 3072,
+          "bytes_accessed": 43264,
+          "flops": 23814,
+          "generated_code_bytes": 0,
+          "output_bytes": 16,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 3584,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.015234834,
+        "logical_retained_bytes": 3344,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": 6912,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.0907655,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.01528175,
+          "mean_seconds": 0.010989972333333334,
+          "median_seconds": 0.009942667,
+          "min_seconds": 0.0077455,
+          "samples_seconds": [
+            0.009942667,
+            0.0077455,
+            0.01528175
+          ],
+          "std_seconds": 0.003164532863003778
+        }
+      },
+      "host_planning_certification_seconds": 0.005643292,
+      "maximum_absolute_jvp_error": null,
+      "order": 8,
+      "parameter_gradient": {
+        "binding_seconds": 0.000103042,
+        "compilation_seconds": 1.162248834,
+        "compiler": {
+          "argument_bytes": 3072,
+          "bytes_accessed": 73904,
+          "flops": 56666,
+          "generated_code_bytes": 0,
+          "output_bytes": 512,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 5120,
+          "unavailable_reason": null
+        },
+        "first_synchronized_execution_seconds": 0.016030708,
+        "logical_retained_bytes": 3840,
+        "logical_retained_scope": "Dynamic input, captured numerical leaves, and result arrays; excludes static host plan metadata.",
+        "logical_working_bytes_estimate": null,
+        "logical_working_scope": "Estimated live numerical curve/model series only; not a certified total bound, and excludes compiler temporaries and output accumulators.",
+        "lowering_seconds": 0.402464625,
+        "warmed": {
+          "count": 3,
+          "max_seconds": 0.010630666,
+          "mean_seconds": 0.008022208000000001,
+          "median_seconds": 0.006971666,
+          "min_seconds": 0.006464292,
+          "samples_seconds": [
+            0.006971666,
+            0.006464292,
+            0.010630666
+          ],
+          "std_seconds": 0.0018560526119145082
+        }
+      },
+      "probe_count": 2,
+      "width": 8
+    }
+  ]
+}
