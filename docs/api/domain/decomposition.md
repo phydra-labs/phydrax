@@ -17,6 +17,10 @@ Public symbols are also re-exported from `phydrax.domain`.
         members:
             - __init__
             - trace
+            - source_side
+            - target_side
+            - self_seam
+            - coordinate_labels
 
 ---
 
@@ -152,3 +156,31 @@ Public symbols are also re-exported from `phydrax.domain`.
 ---
 
 ::: phydrax.domain.decomposition.validate_atlas_cover_adapter
+
+## Periodic identifications
+
+A `PeriodicIdentification` glues the lower (source) face of one Cartesian
+coordinate to its upper (target) face. Its `pairing()` is a
+`"periodic-interface"` `PairedSupport` joining the fundamental domain to itself;
+periodic Cartesian covers attach the same identification to their wrap pairings,
+including the one-patch self-seam of an undivided periodic axis. Only an
+identified periodic seam may join a patch to itself; self-seams are excluded from
+`SubdomainCover.adjacency`, and physical two-sided interface bindings refuse them.
+`physical_boundary` returns the faces that are not identified.
+
+::: phydrax.domain.decomposition.PeriodicIdentification
+    options:
+        members:
+            - __init__
+            - period
+            - face
+            - face_selection
+            - face_map
+            - shift
+            - normal
+            - pairing
+            - axis_domain
+
+---
+
+::: phydrax.domain.decomposition.physical_boundary

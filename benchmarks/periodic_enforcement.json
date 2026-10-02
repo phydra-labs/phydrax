@@ -1,0 +1,1001 @@
+{
+  "cases": [
+    {
+      "axes": 1,
+      "axis_evidence": [
+        {
+          "basis_size": 2,
+          "condition_number": 1.0,
+          "rank": 1,
+          "rows": 1
+        }
+      ],
+      "declarations": 1,
+      "dimension": 2,
+      "endpoint_evaluations": 3,
+      "max_order": 0,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 0.186237084,
+            "lowering_seconds": 0.149190125
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 23540336,
+            "flops": 28677504,
+            "generated_code_bytes": 0,
+            "output_bytes": 17728,
+            "source": "xla",
+            "temporary_bytes": 2662408,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.008907958,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.002028917,
+            "mean_seconds": 0.002028917,
+            "median_seconds": 0.002028917,
+            "min_seconds": 0.002028917,
+            "samples_seconds": [
+              0.002028917
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.058536667,
+            "lowering_seconds": 0.00898175
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 2148104,
+            "flops": 2360320,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.001826625,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.000699208,
+            "mean_seconds": 0.000699208,
+            "median_seconds": 0.000699208,
+            "min_seconds": 0.000699208,
+            "samples_seconds": [
+              0.000699208
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.130546042,
+            "lowering_seconds": 0.068844042
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 6551923,
+            "flops": 7096320,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 803080,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.004434583,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.001735458,
+            "mean_seconds": 0.001735458,
+            "median_seconds": 0.001735458,
+            "min_seconds": 0.001735458,
+            "samples_seconds": [
+              0.001735458
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 5.568187959,
+      "queries": 1024,
+      "retained_array_bytes": 152,
+      "seam_defect": 0.0,
+      "status": "measured"
+    },
+    {
+      "axes": 1,
+      "axis_evidence": [
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        }
+      ],
+      "declarations": 2,
+      "dimension": 2,
+      "endpoint_evaluations": 5,
+      "max_order": 1,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 0.257885083,
+            "lowering_seconds": 0.247980375
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 49610692,
+            "flops": 55952128,
+            "generated_code_bytes": 0,
+            "output_bytes": 17728,
+            "source": "xla",
+            "temporary_bytes": 5324808,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.013622292,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.002578125,
+            "mean_seconds": 0.002578125,
+            "median_seconds": 0.002578125,
+            "min_seconds": 0.002578125,
+            "samples_seconds": [
+              0.002578125
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.082254833,
+            "lowering_seconds": 0.024858167
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 2148104,
+            "flops": 2360320,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.00569125,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.000621666,
+            "mean_seconds": 0.000621666,
+            "median_seconds": 0.000621666,
+            "min_seconds": 0.000621666,
+            "samples_seconds": [
+              0.000621666
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.163260667,
+            "lowering_seconds": 0.098876584
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 10797291,
+            "flops": 11965568,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 1319176,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.005803917,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.001257959,
+            "mean_seconds": 0.001257959,
+            "median_seconds": 0.001257959,
+            "min_seconds": 0.001257959,
+            "samples_seconds": [
+              0.001257959
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 4.436474,
+      "queries": 1024,
+      "retained_array_bytes": 280,
+      "seam_defect": 0.0,
+      "status": "measured"
+    },
+    {
+      "axes": 2,
+      "axis_evidence": [
+        {
+          "basis_size": 2,
+          "condition_number": 1.0,
+          "rank": 1,
+          "rows": 1
+        },
+        {
+          "basis_size": 2,
+          "condition_number": 1.0,
+          "rank": 1,
+          "rows": 1
+        }
+      ],
+      "declarations": 2,
+      "dimension": 2,
+      "endpoint_evaluations": 9,
+      "max_order": 0,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 0.370668542,
+            "lowering_seconds": 0.279057417
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 70878496,
+            "flops": 86076352,
+            "generated_code_bytes": 0,
+            "output_bytes": 17728,
+            "source": "xla",
+            "temporary_bytes": 7275464,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.0199495,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.011513167,
+            "mean_seconds": 0.011513167,
+            "median_seconds": 0.011513167,
+            "min_seconds": 0.011513167,
+            "samples_seconds": [
+              0.011513167
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.0895795,
+            "lowering_seconds": 0.00677075
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 2148104,
+            "flops": 2360320,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.001763667,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.000512334,
+            "mean_seconds": 0.000512334,
+            "median_seconds": 0.000512334,
+            "min_seconds": 0.000512334,
+            "samples_seconds": [
+              0.000512334
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.132250041,
+            "lowering_seconds": 0.21840625
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 19763378,
+            "flops": 21304320,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 2171336,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.007035333,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.001675709,
+            "mean_seconds": 0.001675709,
+            "median_seconds": 0.001675709,
+            "min_seconds": 0.001675709,
+            "samples_seconds": [
+              0.001675709
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 1.218753292,
+      "queries": 1024,
+      "retained_array_bytes": 264,
+      "seam_defect": 2.220446049250313e-16,
+      "status": "measured"
+    },
+    {
+      "axes": 2,
+      "axis_evidence": [
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        },
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        }
+      ],
+      "declarations": 4,
+      "dimension": 2,
+      "endpoint_evaluations": 25,
+      "max_order": 1,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 1.294091833,
+            "lowering_seconds": 1.431052959
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 317583584,
+            "flops": 348035840,
+            "generated_code_bytes": 0,
+            "output_bytes": 17728,
+            "source": "xla",
+            "temporary_bytes": 28460744,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.093504584,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.008055,
+            "mean_seconds": 0.008055,
+            "median_seconds": 0.008055,
+            "min_seconds": 0.008055,
+            "samples_seconds": [
+              0.008055
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.059222333,
+            "lowering_seconds": 0.004826833
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 2148104,
+            "flops": 2360320,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.002212209,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.000723417,
+            "mean_seconds": 0.000723417,
+            "median_seconds": 0.000723417,
+            "min_seconds": 0.000723417,
+            "samples_seconds": [
+              0.000723417
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.286630625,
+            "lowering_seconds": 0.286636667
+          },
+          "compiler": {
+            "argument_bytes": 25864,
+            "bytes_accessed": 55983680,
+            "flops": 61230336,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 5367240,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.012295125,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.002959167,
+            "mean_seconds": 0.002959167,
+            "median_seconds": 0.002959167,
+            "min_seconds": 0.002959167,
+            "samples_seconds": [
+              0.002959167
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 1.37897875,
+      "queries": 1024,
+      "retained_array_bytes": 520,
+      "seam_defect": 2.220446049250313e-16,
+      "status": "measured"
+    },
+    {
+      "axes": 3,
+      "axis_evidence": [
+        {
+          "basis_size": 2,
+          "condition_number": 1.0,
+          "rank": 1,
+          "rows": 1
+        },
+        {
+          "basis_size": 2,
+          "condition_number": 1.0,
+          "rank": 1,
+          "rows": 1
+        },
+        {
+          "basis_size": 2,
+          "condition_number": 1.0,
+          "rank": 1,
+          "rows": 1
+        }
+      ],
+      "declarations": 3,
+      "dimension": 3,
+      "endpoint_evaluations": 27,
+      "max_order": 0,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 1.1316935,
+            "lowering_seconds": 1.354041833
+          },
+          "compiler": {
+            "argument_bytes": 34312,
+            "bytes_accessed": 214114688,
+            "flops": 261867104,
+            "generated_code_bytes": 0,
+            "output_bytes": 17984,
+            "source": "xla",
+            "temporary_bytes": 20269064,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.060543042,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.010356375,
+            "mean_seconds": 0.010356375,
+            "median_seconds": 0.010356375,
+            "min_seconds": 0.010356375,
+            "samples_seconds": [
+              0.010356375
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.054800583,
+            "lowering_seconds": 0.004529042
+          },
+          "compiler": {
+            "argument_bytes": 34312,
+            "bytes_accessed": 2156552,
+            "flops": 2425856,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.007198792,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.001154417,
+            "mean_seconds": 0.001154417,
+            "median_seconds": 0.001154417,
+            "min_seconds": 0.001154417,
+            "samples_seconds": [
+              0.001154417
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.350906708,
+            "lowering_seconds": 0.476571625
+          },
+          "compiler": {
+            "argument_bytes": 34312,
+            "bytes_accessed": 60264816,
+            "flops": 65724432,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 6071304,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.0857425,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.004350792,
+            "mean_seconds": 0.004350792,
+            "median_seconds": 0.004350792,
+            "min_seconds": 0.004350792,
+            "samples_seconds": [
+              0.004350792
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 2.639812041,
+      "queries": 1024,
+      "retained_array_bytes": 416,
+      "seam_defect": 2.220446049250313e-16,
+      "status": "measured"
+    },
+    {
+      "axes": 3,
+      "axis_evidence": [
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        },
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        },
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        }
+      ],
+      "declarations": 6,
+      "dimension": 3,
+      "endpoint_evaluations": 125,
+      "max_order": 1,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 12.707745625,
+            "lowering_seconds": 6.180992084
+          },
+          "compiler": {
+            "argument_bytes": 34312,
+            "bytes_accessed": 2107268864,
+            "flops": 2262774528,
+            "generated_code_bytes": 0,
+            "output_bytes": 17984,
+            "source": "xla",
+            "temporary_bytes": 144216648,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.43992525,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.091451667,
+            "mean_seconds": 0.091451667,
+            "median_seconds": 0.091451667,
+            "min_seconds": 0.091451667,
+            "samples_seconds": [
+              0.091451667
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.1347145,
+            "lowering_seconds": 0.0048035
+          },
+          "compiler": {
+            "argument_bytes": 34312,
+            "bytes_accessed": 2156552,
+            "flops": 2425856,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.003439084,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.001328208,
+            "mean_seconds": 0.001328208,
+            "median_seconds": 0.001328208,
+            "min_seconds": 0.001328208,
+            "samples_seconds": [
+              0.001328208
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 1.49098425,
+            "lowering_seconds": 1.702845625
+          },
+          "compiler": {
+            "argument_bytes": 34312,
+            "bytes_accessed": 301820864,
+            "flops": 318924352,
+            "generated_code_bytes": 0,
+            "output_bytes": 8192,
+            "source": "xla",
+            "temporary_bytes": 32892488,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.067313417,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.010656584,
+            "mean_seconds": 0.010656584,
+            "median_seconds": 0.010656584,
+            "min_seconds": 0.010656584,
+            "samples_seconds": [
+              0.010656584
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 2.977979166,
+      "queries": 1024,
+      "retained_array_bytes": 824,
+      "seam_defect": 2.220446049250313e-16,
+      "status": "measured"
+    },
+    {
+      "axes": 2,
+      "axis_evidence": [
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        },
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        }
+      ],
+      "declarations": 4,
+      "dimension": 2,
+      "endpoint_evaluations": 25,
+      "max_order": 1,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 1.651788708,
+            "lowering_seconds": 1.996462958
+          },
+          "compiler": {
+            "argument_bytes": 13576,
+            "bytes_accessed": 80728368,
+            "flops": 87049432,
+            "generated_code_bytes": 0,
+            "output_bytes": 11584,
+            "source": "xla",
+            "temporary_bytes": 7115528,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.049591167,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.008452375,
+            "mean_seconds": 0.008452375,
+            "median_seconds": 0.008452375,
+            "min_seconds": 0.008452375,
+            "samples_seconds": [
+              0.008452375
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.16620275,
+            "lowering_seconds": 0.021813333
+          },
+          "compiler": {
+            "argument_bytes": 13576,
+            "bytes_accessed": 544520,
+            "flops": 590080,
+            "generated_code_bytes": 0,
+            "output_bytes": 2048,
+            "source": "xla",
+            "temporary_bytes": 131072,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.00361225,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.00560825,
+            "mean_seconds": 0.00560825,
+            "median_seconds": 0.00560825,
+            "min_seconds": 0.00560825,
+            "samples_seconds": [
+              0.00560825
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.585856833,
+            "lowering_seconds": 0.608651084
+          },
+          "compiler": {
+            "argument_bytes": 13576,
+            "bytes_accessed": 14167428,
+            "flops": 15307776,
+            "generated_code_bytes": 0,
+            "output_bytes": 2048,
+            "source": "xla",
+            "temporary_bytes": 1342152,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.022592792,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.068395166,
+            "mean_seconds": 0.068395166,
+            "median_seconds": 0.068395166,
+            "min_seconds": 0.068395166,
+            "samples_seconds": [
+              0.068395166
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 2.243802667,
+      "queries": 256,
+      "retained_array_bytes": 520,
+      "seam_defect": 2.220446049250313e-16,
+      "status": "measured"
+    },
+    {
+      "axes": 2,
+      "axis_evidence": [
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        },
+        {
+          "basis_size": 3,
+          "condition_number": 1.0,
+          "rank": 2,
+          "rows": 2
+        }
+      ],
+      "declarations": 4,
+      "dimension": 2,
+      "endpoint_evaluations": 25,
+      "max_order": 1,
+      "model": {
+        "depth": 2,
+        "width": 32
+      },
+      "phases": {
+        "derivative": {
+          "compilation": {
+            "compilation_seconds": 1.856798125,
+            "lowering_seconds": 1.374588125
+          },
+          "compiler": {
+            "argument_bytes": 75016,
+            "bytes_accessed": 1270290304,
+            "flops": 1390775296,
+            "generated_code_bytes": 0,
+            "output_bytes": 42304,
+            "source": "xla",
+            "temporary_bytes": 114983624,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.155581875,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.045719833,
+            "mean_seconds": 0.045719833,
+            "median_seconds": 0.045719833,
+            "min_seconds": 0.045719833,
+            "samples_seconds": [
+              0.045719833
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "free": {
+          "compilation": {
+            "compilation_seconds": 0.069344041,
+            "lowering_seconds": 0.005471166
+          },
+          "compiler": {
+            "argument_bytes": 75016,
+            "bytes_accessed": 8562440,
+            "flops": 9441280,
+            "generated_code_bytes": 0,
+            "output_bytes": 32768,
+            "source": "xla",
+            "temporary_bytes": 2097152,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.00587025,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.001467042,
+            "mean_seconds": 0.001467042,
+            "median_seconds": 0.001467042,
+            "min_seconds": 0.001467042,
+            "samples_seconds": [
+              0.001467042
+            ],
+            "std_seconds": 0.0
+          }
+        },
+        "projected": {
+          "compilation": {
+            "compilation_seconds": 0.484782,
+            "lowering_seconds": 0.4744175
+          },
+          "compiler": {
+            "argument_bytes": 75016,
+            "bytes_accessed": 226230208,
+            "flops": 244699392,
+            "generated_code_bytes": 0,
+            "output_bytes": 32768,
+            "source": "xla",
+            "temporary_bytes": 22385096,
+            "unavailable_reason": null
+          },
+          "first_execution_seconds": 0.031093917,
+          "warm": {
+            "count": 1,
+            "max_seconds": 0.020947292,
+            "mean_seconds": 0.020947292,
+            "median_seconds": 0.020947292,
+            "min_seconds": 0.020947292,
+            "samples_seconds": [
+              0.020947292
+            ],
+            "std_seconds": 0.0
+          }
+        }
+      },
+      "preparation_seconds": 2.059127375,
+      "queries": 4096,
+      "retained_array_bytes": 520,
+      "seam_defect": 2.220446049250313e-16,
+      "status": "measured"
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "a4b979b856eb5016f0db946e07c258de39f57ab2ad8f87ab72a3e8abe38f0950",
+    "evidence_schema": {
+      "fields": [
+        "axes",
+        "axis_evidence",
+        "declarations",
+        "dimension",
+        "endpoint_evaluations",
+        "max_order",
+        "model",
+        "phases",
+        "preparation_seconds",
+        "queries",
+        "retained_array_bytes",
+        "seam_defect",
+        "status"
+      ],
+      "signature": "6d6a30e06e212386445d45fbaab0454c00aad84cc6e947593c2666a4da9dba0e"
+    },
+    "fingerprint": "c00954446dc8bf00edd18f75f223fa68bc47ee841218581571a91470b6080b7e",
+    "source_build_fingerprint": "3f6818a0b297a8a03f83b583d27410a99314a1219ff1cdb7c93d8cf248cb6dfc"
+  },
+  "kind": "periodic-enforcement-capacity-campaign",
+  "refusals": [
+    {
+      "axes": 3,
+      "maximum_endpoint_evaluations": 9,
+      "message": "Field 'u' needs 27 endpoint evaluations per query, above the resource limit 9.",
+      "status": "refused"
+    }
+  ]
+}

@@ -55,6 +55,33 @@
   native HVP/probe streams remain unchanged.
 - Runnable high-order solver example and capacity-controlled, phase-separated
   contraction/PDE benchmark drivers with compiler and logical-memory evidence.
+- First-class enforced periodic constraints. `phydrax.domain.PeriodicIdentification`
+  glues the lower (source) and upper (target) faces of one Cartesian coordinate;
+  `physical_boundary` returns the unidentified faces as exact
+  `CoordinateFace`/`FixedStart`/`FixedEnd` components, and `CoordinateFace(axis,
+  side)` selects exact Cartesian faces with exact mass, normals, tangential
+  coordinate grids, reduced fixed quadrature (point value on zero-dimensional
+  faces), and transfinite-interpolation Dirichlet walls.
+  `phydrax.conditions.Periodic` states
+  one transported trace relation `T[u](upper) - Gamma S[u](lower) = g` (periodic,
+  antiperiodic, Bloch, affine jump, coordinate jets, or `JetAction` fluxes) as a
+  soft residual or a certified linear condition.
+  `phydrax.enforcement.prepare_periodic_projection` realizes the declarations
+  through an explicit route: `"analytic"` (continuum equality of every declared
+  jet through an exact centered Bernoulli endpoint lift), `"coefficient"`
+  (equality in a supplied finite linear representation via
+  `CoefficientElimination`, with exact `periodic_trace_row` spectral seam rows),
+  or `"construction"` (structural periodicity of a model carrying a
+  `PeriodicInputCertificate`). Evidence reports route, scope, endpoint rank and
+  conditioning, required derivative regularity, bounded endpoint work, and the
+  wall/initial contracts the compiled projection preserves. Finite observations
+  (`InteriorAnchors`) on a periodic field are refused rather than claimed
+  preserved; the seam is never matched by sampled endpoint collocation.
+- `RealizationAdmission` and `AbstractFieldRealization.admission`: every field
+  realization publishes its read, write, established, and preserved sets; the
+  enforcement compiler refuses compositions that may break a periodic seam.
+- `examples/enforced_periodic_constraints.py` and the phase-separated
+  `benchmarks/periodic_enforcement.py` campaign.
 - Prepared meshfree approximation in `phydrax.discretization.meshfree`: bounded
   certified neighborhoods, batched GMLS/PHS-RBF-FD, enforced stencil admission,
   sparse point-cloud elliptic solves, explicit hyperviscosity, and native
@@ -1848,6 +1875,12 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Periodic Cartesian covers attach a `PeriodicIdentification` to their wrap
+  pairings and emit a one-patch self-seam for an undivided periodic axis.
+  `PairedSupport` admits equal patch IDs only for an identified periodic seam,
+  audits the identification shift, and exposes `source_side`, `target_side`, and
+  `self_seam`; self-seams are excluded from `SubdomainCover.adjacency` and atlas
+  edges, and physical two-sided interface bindings refuse them.
 - Smooth forms carry explicit twist and an always-present coefficient axis.
   Metric Hodge stars no longer require an orientation; converting between twisted
   and untwisted forms requires an explicitly declared orientation.
@@ -2565,6 +2598,21 @@
   triangle-intersection implementations, and dense remesh transfer matrices.
 
 ### Fixed
+- Periodic enforcement groups aliases of one coordinate into one constraint
+  system, binds fixed targets and complete fiber/support identity, and preserves
+  committed lifecycle coordinates on rejected attempts. Affine wall preservation
+  checks the complete boundary operator. Construction evidence follows current
+  input packing, regularity, randomness, and fixed lattice data rather than stale
+  model metadata.
+- Periodic endpoint work budgets count every requested source/target jet.
+  Endpoint polynomials and spectral rows reject invalid orders and unrepresentable
+  preparation/evaluation precision. Native right-inverse preparation preserves
+  failed solve status and uses bounded canonical probes instead of an unbudgeted
+  identity allocation; strict complex pseudoinverse and regularized SVD routes
+  preserve their declared precision.
+- Periodic geometric identities include transverse support and custom-ID
+  revisions. Point seams have no fictitious sampling dimension; face grids,
+  point validation, and fixed quadrature preserve their physical support.
 - Tetrahedral H(div) reference-face routing and nonvacuous shared-normal continuity.
 - Physical magnetic-flux gathering in passive and dispersive PIC media.
 - Large-prime cup-product accumulation and topology identity checks, repeated

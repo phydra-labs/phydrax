@@ -58,6 +58,38 @@ The optional normal is oriented from the left patch to the right patch.
 `SubdomainCover.audit(points)` is sampled evidence. It never upgrades a user-defined
 cover to an exact proof. Built-in Cartesian covers expose exact structural evidence.
 
+Patches and pairings are ordered canonically by their declared IDs. Cartesian
+partition endpoints must equal the ambient bounds; coverage capacity accounts
+for wide nonuniform cells whose overlap reaches across several narrower cells.
+One-dimensional interfaces carry an actual fixed coordinate with unit counting
+measure, not an auxiliary interval: their point batches have no free sample axis.
+Periodic map audits check endpoint orientation in ambient coordinates, allowing
+normalized local charts with different coordinate labels; native wrapped cover
+maps retain their pre-wrap endpoint evidence so reversed seams are rejected.
+
+### Periodic seams
+
+A periodic `AxisPartition` attaches a `PeriodicIdentification` to its wrap
+pairing, whose `topology` is `"periodic-interface"`. The identification fixes the
+equation direction independently of cover traversal: the lower face is the
+source (`pairing.source_side == "right"`) and the upper face the target
+(`pairing.target_side == "left"`). An undivided periodic axis yields a real
+one-patch self-seam (`pairing.self_seam`) rather than no pairing. Self-seams are
+not neighbors: `SubdomainCover.adjacency` excludes them, atlas adapters ignore
+them, and physical two-sided interface bindings refuse them. Couple a seam with
+`phydrax.conditions.Periodic`, which binds a same-field seam once:
+
+```python
+cover = phx.domain.cartesian_subdomain_cover(time_domain, "t", 1, periodic=True)
+(seam,) = cover.pairings
+condition = phx.conditions.Periodic("u", seam)
+```
+
+`SubdomainCover.audit` checks that the two ambient images of a periodic seam
+differ by the identification shift along the identified direction only. Walls of
+the fundamental domain are `phydrax.domain.physical_boundary(domain,
+identifications)`, never the raw `Boundary()` of an identified coordinate.
+
 ## Local fields
 
 `LocalFieldFamily` binds one logical field to one local `DomainFunction` per patch.
@@ -237,6 +269,9 @@ fine field against the original unscaled residual objective.
 `MortarInterfacePenalty` projects a fixed paired value jump into a user-supplied
 interface basis and applies the inverse discrete Gram matrix. Singular mortar bases
 are rejected.
+On a zero-dimensional interface, scalar or vector traces have no sampling axis;
+mortar moment reduction uses that physical point value against the authored
+basis and weights without treating a vector value axis as quadrature points.
 
 `NitscheInterfaceFunctional` implements the symmetric scalar consistency and
 stabilization functional for authored physical fluxes. Its penalty scale is explicit;

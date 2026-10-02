@@ -49,8 +49,9 @@ Analytic subdomain covers remain the authority of their paired supports. A
 coordinate maps; its optional normal points out of the left patch into the
 right patch. `SubdomainCover.revision` content-addresses the declared cover,
 patch, and pairing IDs, pairing topology and codimension, normal presence,
-coordinate labels, and every numeric array leaf such as patch bounds. Maps
-authored as opaque Python callables are identified only through the declared
+coordinate labels, native coordinate/support/window parameters including static
+fields, periodic identification revisions, and every numeric array leaf such as
+patch bounds. Maps authored as opaque Python callables are identified only through the declared
 IDs, so replacing such a map requires a new `cover_id`. Solver-level interface
 bindings (`phydrax.solver.coupling.PairedSupportAttachment`) reference a cover
 by this revision and a fresh `PairedSupport.audit`; the domain layer imports no
@@ -442,7 +443,9 @@ component**, which selects a subset of each factor:
 - `Interior()`: the interior of a geometry or scalar interval;
 - `Boundary()`: the boundary of a geometry or scalar interval (endpoints in 1D);
 - `FixedStart()` / `FixedEnd()`: the start/end slice of a scalar interval (often time);
-- `Fixed(value)`: a slice at a specified coordinate.
+- `Fixed(value)`: a slice at a specified coordinate;
+- `CoordinateFace(axis, side)`: one Cartesian face `x[axis] = lower` or
+  `x[axis] = upper` of an `Interval1d` or `HyperRectangle` coordinate.
 
 Components are created with `domain.component(...)`:
 
@@ -456,6 +459,58 @@ term for each codimension-one face. This collection models a measure-disjoint
 decomposition, so all terms share the same compatible labeled domain and exact
 duplicates are rejected. It is not a geometric Boolean union; overlapping
 filtered terms contribute once per term.
+
+### Coordinate faces and periodic identifications
+
+A `CoordinateFace` is an exact stratum: one-dimensional faces carry unit counting
+mass, box faces their exact transverse measure, samples keep the full coordinate
+event with the face component fixed, and `normal(var=...)` is the outward unit
+axis. Hard Dirichlet walls on these faces use exact transfinite interpolation.
+`GridSampling` requests on a face cover only its tangential components, in
+increasing coordinate order; the face component stays a single node on its own
+coordinate axis. Fixed quadrature applies the interval rule (or a `"tensor"`
+`CubatureRule` of the face dimension) to the tangential box, and a
+zero-dimensional face is integrated by its point value.
+
+```python
+box = phx.domain.HyperRectangle([0.0, 0.0], [1.0, 2.0])
+top = box.component({"x": phx.domain.CoordinateFace(1, "upper")})
+grid = top.sample(phx.domain.GridSampling({"x": 16}))  # 16 x-nodes at y = 2
+```
+
+Explicit face points must lie within all transverse bounds and exactly on the
+selected coordinate plane; endpoints and transverse corners are included.
+A one-dimensional face has no tangential coordinates, so its grid request is
+`GridSampling({"x": ()})` and its quadrature carries unit counting mass.
+Native face projections and Cartesian coordinate maps promote integer coordinate
+batches to float64, preserving fractional bounds rather than truncating them.
+
+Periodicity is not a domain flag. The domain remains the closed fundamental box,
+and its `Boundary()` keeps its meaning. A `PeriodicIdentification(domain, label,
+component=...)` glues the lower face of one coordinate (the source) to its upper
+face (the target) by the translation of length `period`; equal bounds on
+different labels or components are distinct identifications.
+
+The default `identification_id` includes the complete fundamental support,
+including transverse bounds and other product factors. A custom ID is a name,
+not a replacement for scientific content: the immutable `revision` binds that
+name, the coordinate, and the complete support for cached preparation and evidence.
+
+`physical_boundary(domain, identifications)` returns the unidentified faces as
+exact components, so it is the selection for walls; a fully periodic domain has
+no physical boundary and yields an empty tuple:
+
+```python
+periodic_x = phx.domain.PeriodicIdentification(box, "x", component=0)
+walls = phx.domain.physical_boundary(box, (periodic_x,))  # the two y faces
+seam = periodic_x.pairing()  # one-patch seam for phx.conditions.Periodic
+axis = periodic_x.axis_domain()  # matching periodic AxisDomain
+```
+
+`face(side)` returns either identified face as a component and `face_map(side)`
+projects points onto it. Field relations across the seam are declared with
+`phydrax.conditions.Periodic`; see
+[Conditions → Periodic seams](guides_conditions.md#periodic-seams).
 
 ### Filtering with `where` and `where_all`
 

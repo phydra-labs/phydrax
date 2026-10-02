@@ -948,6 +948,23 @@ The enforced route is staged as boundary → initial → interior data. See:
 - [API → Solver](api/solver/index.md)
 - [Appendix → Physics-Constrained Interpolation](appendix/physics_constrained_interpolation.md)
 
+### Periodic seams: a field relation, not a domain flag
+
+A `PeriodicIdentification` glues the lower face of one Cartesian coordinate of the
+fundamental box to its upper face; `physical_boundary` returns the remaining walls
+and `pairing()` the seam. One `phydrax.conditions.Periodic` declaration states one
+transported trace relation \(T[u](b)-\Gamma\,S[u](a)=g\): ordinary periodicity,
+antiperiodicity (\(\Gamma=-1\)), Bloch matching (\(\Gamma=e^{ikL}\)), or an affine
+jump (\(g\neq 0\)), for values, coordinate derivatives, or constant-coefficient
+fluxes. The same declaration is a soft residual or is enforced through
+`phydrax.enforcement.prepare_periodic_projection` with an explicit `"analytic"`
+(continuum endpoint-jet lift), `"coefficient"` (finite representation), or
+`"construction"` (periodic-by-construction model) route. The enforcement
+compiler composes it with exact coordinate-face walls and initial data, records
+which earlier contracts it preserves, and refuses compositions that could break a
+seam. See [Conditions → Periodic seams](guides_conditions.md#periodic-seams) and
+`examples/enforced_periodic_constraints.py`.
+
 ### Exact PDE trial spaces
 
 Finite Trefftz fields satisfy the homogeneous Laplace, polyharmonic, or
@@ -1878,6 +1895,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Enforced BC/IC**: declare `EnforcementSpec` values with `phx.enforcement`,
   compile them into an `EnforcementProgram`, and pass that program to the solver.
   See [API reference](api/phydrax.md).
+- **Periodic, antiperiodic, Bloch, or pressure-drop seams**: identify a Cartesian
+  coordinate with `PeriodicIdentification`, declare one `Periodic` relation per
+  matched trace on its `pairing()`, select walls with `physical_boundary`, and
+  compile `prepare_periodic_projection(...)` together with them. See
+  [Conditions → Periodic seams](guides_conditions.md#periodic-seams).
 - **Data assimilation / hybrid physics-data**: pair continuous `Observation`
   conditions with finite sources and `ObservationPenalty`; use likelihood-backed
   binary, multiclass, multilabel, or ordinal classification terms for discrete
