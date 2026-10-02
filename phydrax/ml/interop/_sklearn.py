@@ -1099,6 +1099,8 @@ def _convert_pca(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _Conv
         weighting_provenance="sklearn-unweighted-euclidean",
         centering_provenance="copied-mean_",
         mask_provenance="all-features-supported",
+        frame_correction=None,
+        covariance_correction=None,
     )
     return _Converted(
         model,
@@ -1111,6 +1113,7 @@ def _convert_pca(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _Conv
         names,
         semantic_notes=(
             "transform and inverse_transform preserve copied unwhitened components and mean",
+            "prediction-only current basis; no native fit response or spectral certificate is manufactured",
         ),
     )
 
@@ -1158,6 +1161,8 @@ def _convert_truncated_svd(
         weighting_provenance="sklearn-unweighted-euclidean",
         centering_provenance="origin-anchored",
         mask_provenance="all-features-supported",
+        frame_correction=None,
+        covariance_correction=None,
     )
     return _Converted(
         model,
@@ -1169,6 +1174,7 @@ def _convert_truncated_svd(
         names,
         semantic_notes=(
             "origin-anchored transform and inverse_transform use copied components",
+            "prediction-only current basis; no native fit response or spectral certificate is manufactured",
         ),
     )
 

@@ -1,20 +1,28 @@
-#
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
+"""Pairing-aware exact and key-bound randomized singular subspaces."""
 
-"""Pairing-aware singular value decomposition lifecycle."""
-
-from .._svd import (
+from .._singular_subspaces import (
+    covariance_action,
+    covariance_factor,
+    projector_action,
+    SingularSubspaceResponse,
+)
+from .._svd import plan_svd, prepare_svd, refresh_svd, svd
+from .._svd_contracts import (
     DenseSVD,
     DenseSVDState,
-    plan_svd,
-    prepare_svd,
     PreparedSVDSolve,
-    refresh_svd,
-    svd,
+    RandomizedSVD,
+    RandomizedSVDState,
+    require_exact_svd_rank,
+    SVDApproximationPolicy,
+    SVDCertificateKind,
     SVDCostEstimate,
     SVDDifferentiationMode,
+    SVDLeadingEvidence,
     SVDProblem,
+    SVDRangeEvidence,
+    SVDRankEvidence,
     SVDResourcePolicy,
     SVDSolveDiagnostics,
     SVDSolvePlan,
@@ -31,9 +39,16 @@ __all__ = [
     "DenseSVD",
     "DenseSVDState",
     "PreparedSVDSolve",
+    "RandomizedSVD",
+    "RandomizedSVDState",
+    "SVDApproximationPolicy",
+    "SVDCertificateKind",
     "SVDCostEstimate",
     "SVDDifferentiationMode",
+    "SVDLeadingEvidence",
     "SVDProblem",
+    "SVDRankEvidence",
+    "SVDRangeEvidence",
     "SVDResourcePolicy",
     "SVDSolveDiagnostics",
     "SVDSolvePlan",
@@ -43,8 +58,13 @@ __all__ = [
     "SVDSolveStatus",
     "SVDTarget",
     "SVDTolerancePolicy",
+    "SingularSubspaceResponse",
+    "covariance_action",
+    "covariance_factor",
     "plan_svd",
     "prepare_svd",
+    "projector_action",
     "refresh_svd",
+    "require_exact_svd_rank",
     "svd",
 ]

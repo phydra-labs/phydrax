@@ -23,7 +23,11 @@ from ._pairwise import (
     soft_assignments,
     squared_euclidean_distances,
 )
-from ._spectral import fit_weighted_subspace, SpectralFitResult
+from ._spectral import (
+    fit_weighted_subspace,
+    parse_subspace_differentiation,
+    SpectralFitResult,
+)
 from ._weighted import (
     class_weighted_moments,
     effective_sample_size,
@@ -46,6 +50,7 @@ __all__ = [
     "class_weighted_moments",
     "effective_sample_size",
     "fit_weighted_subspace",
+    "parse_subspace_differentiation",
     "group_soft_threshold",
     "hard_assignments",
     "histogram_gradient_statistics",

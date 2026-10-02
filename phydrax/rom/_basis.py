@@ -131,7 +131,7 @@ def reduced_basis_from_subspace_model(
     source_artifact_ids: Sequence[str],
     evidence_ids: Sequence[str] = (),
 ) -> tuple[ReducedBasisArtifact, Array]:
-    """Bind one array POD model to a physical basis artifact and affine offset."""
+    """Bind the current physical basis and affine offset, not a projector fit-response certificate."""
     if not isinstance(model, SubspaceModel):
         raise TypeError("model must be a SubspaceModel.")
     if model.case_shape:
@@ -143,9 +143,10 @@ def reduced_basis_from_subspace_model(
             "Intrusive reduced bases require every feature to have positive physical measure."
         )
     pairing = DiagonalPairing(jnp.asarray(model.feature_metric))
+    physical_components = model.components
     space = ArraySpace(
         (model.in_size,),
-        dtype=model.components.dtype,
+        dtype=physical_components.dtype,
         pairing=pairing,
         space_id=canonical_fingerprint(
             {
@@ -158,7 +159,7 @@ def reduced_basis_from_subspace_model(
             }
         ),
     )
-    basis = jnp.swapaxes(model.components, -1, -2)
+    basis = jnp.swapaxes(physical_components, -1, -2)
     subspace = LinearSubspace(
         space,
         basis,

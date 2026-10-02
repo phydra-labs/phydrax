@@ -17,6 +17,7 @@ from ._contracts import (
     ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
+    OperationDerivativeContract,
 )
 from ._fit import fit
 from ._overlap import (
@@ -101,6 +102,7 @@ __all__ = [
     "FitDiagnostics",
     "FitResult",
     "MLBatch",
+    "OperationDerivativeContract",
     "OverlapClassReduction",
     "OverlapEmptyPolicy",
     "OverlapKind",

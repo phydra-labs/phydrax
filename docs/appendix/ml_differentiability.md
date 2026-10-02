@@ -186,15 +186,37 @@ An individual basis is not unique:
 - every complex singular vector admits a unit phase;
 - a repeated singular block admits an arbitrary unitary rotation.
 
-Phydrax applies a deterministic sign/phase convention away from ties and reports
-the minimum retained gap. This removes incidental sign or phase flips but cannot
-make a repeated eigenspace basis uniquely differentiable. Basis-gradient claims
-are conditional on the reported gap and canonical pivot remaining nondegenerate.
+Native exact singular-subspace responses use only retained/discarded denominators,
+including ambient null complements; repetitions inside either cluster are legal.
+Basis responses additionally require positive individually isolated retained values
+and measured canonical pivot magnitude/top-two margins. Moving source and target
+metrics contribute to native singular derivatives. Randomized responses instead
+differentiate the fixed-key QR/power/compressed algorithm, and require admitted
+QR rank/conditioning at every stage. Approximation, leading certification, and
+derivative admission are independent evidence.
 
-Selecting a rank from an energy threshold is discrete. A fixed-rank fit can be
-spectrally differentiated under its gap conditions; the selected integer rank
-cannot. Exact rank and retained-energy diagnostics remain available as terminal
-outputs.
+For PCA/POD/TruncatedSVD, operation metadata distinguishes `transform`,
+`inverse_transform`, `project`, and `projector`. The default callable is the
+encoder. Projector mode stops raw representatives and individual values; only
+projection actions carry invariant fit responses (and the affine mean retains
+its admitted path). Basis mode admits encoder/decoder fit derivatives under
+isolation/pivot conditions. None stops at fit construction, never inside
+prediction: independent input/current-model parameter gradients remain smooth.
+Canonical admissions keep declaration eligibility separate from paired dynamic
+runtime-valid/status evidence; missing runtime evidence is unresolved, not true.
+
+The model retains one current weighted basis and fixed zero-primal frame/core
+corrections, not samples, full factors, or a dense projector cache. Physical
+components derive from the current basis. Independent parameter updates preserve
+primal `project(x) == inverse_transform(transform(x))`; direct-fit certificates
+do not claim fit-through-basis-update or higher-order support. Imported models
+are prediction-only with no invented fit provenance. Incremental paired pseudo
+rows use a smooth retained covariance square-root response, including earlier
+offset and mass tangents and repeated positive selected modes.
+
+Selecting rank from an energy threshold remains discrete. Global rank evidence
+records bounds/coverage and exact-rank availability rather than promoting a
+compressed core rank to the original rank.
 
 ## Regularity algebra
 
@@ -726,10 +748,11 @@ its `IN` and `MP` levels are admitted through the fitted executable's
 | `PlattCalibrationRecipe`, `TemperatureCalibrationRecipe`, `VectorCalibrationRecipe`, `MatrixCalibrationRecipe`, `MulticlassCalibrationRecipe`, `CalibratedClassifierRecipe` | unrolled | S | S | C | – | C | C | `predict`, `predict_indices`; fixed vocabulary, positive class support, finite calibration scores |
 | `IsotonicCalibrationRecipe` | stopped | – | AE | – | – | – | – | `predict`, `predict_indices`; pool-adjacent-violator blocks fixed |
 | `SmoothIsotonicCalibrationRecipe` | stopped | S | S | – | – | – | – | `predict`, `predict_indices` |
-| `PCA`, `TruncatedSVD`, `POD` (`differentiate="projector"`, default) | spectral | S | S | C | – | C | – | retained and discarded spectra separated |
+| `PCA`, `TruncatedSVD`, `POD` (`differentiate="projector"`, default encoder) | direct prediction; stopped fit basis | S | S | – | – | – | – | affine mean path only; request project/projector for invariant fit response |
+| `PCA`, `TruncatedSVD`, `POD` (`differentiate="projector"`, project/projector) | spectral | S | S | C | – | C | – | retained/discarded separation; internal repeats allowed; randomized QR admission |
 | `PCA`, `TruncatedSVD`, `POD` (`differentiate="basis"`) | spectral | S | S | C | – | C | – | non-repeated retained spectrum; unique nonzero canonicalization pivots |
-| `PCA`, `TruncatedSVD`, `POD` (`differentiate="none"`) | stopped | S | S | – | – | – | – | none |
-| `IncrementalPCA` | spectral | S | S | C | – | C | – | spectral separation at every merge |
+| `PCA`, `TruncatedSVD`, `POD` (`differentiate="none"`) | direct prediction; stopped fit | S | S | – | – | – | – | fit outputs stopped; independent prediction/parameter paths remain smooth |
+| `IncrementalPCA` (project/projector) | spectral | S | S | C | – | C | – | covariance-factor response and spectral separation at every merge; callable fit-basis path is stopped |
 | `FactorAnalysis`, `ICA` | unrolled | S | S | C | – | C | – | separated retained eigenspaces; ICA key fixed, FastICA converges without component collisions |
 | `CCA`, `PLS` | spectral | S | S | C | C | C | – | separated singular subspaces or cross-covariance spectrum |
 | `NMF` | unrolled | AE | S | AE | – | C | – | multiplicative iterates strictly positive |

@@ -1403,6 +1403,85 @@ the same substrate.
         members:
             - __init__
             - evaluate
+            - decode
+            - values
+
+#### Fixed-query physical POD fitting
+
+`fit_operator_pod(dataset, field_name, n_components, ...)` and `fit_pod_basis`
+fit the same affine physical output basis. Query quadrature and masks weight
+each output channel; snapshot weights are normalized by total mass. Centering
+retains a spatial mean, separate from DeepONet's trainable output-channel bias.
+Channels and tensor-product query axes keep their original ordering. The fitted
+query nodes, quadrature, masks, and canonical geometry identity must match at
+decoder evaluation; equal dimensions alone do not admit a changed geometry.
+POD-DeepONet remains confined to its fixed output span.
+
+The fit accepts the native `phydrax.linalg.svd` options `method`, `tolerance`,
+`resources`, and `failure`, plus an explicit `key` for `RandomizedSVD`. Dense SVD
+is the default and accepts no random key. Randomized fitting requires certified
+leading ordering; a usable approximate factor is not by itself a certified POD
+subspace. Resource refusal never falls back to dense fitting. Inspect `valid`,
+`status`, and `diagnostics.leading_certified`; `diagnostics.native_status`,
+`derivative_status`, `admission_status`, and `rank_evidence` preserve distinct
+native failure, original input admission, and global-rank evidence.
+`range_evidence` and `leading_evidence` retain the full approximation bounds
+and ordering certificate, not only their acceptance flags.
+Status mode is the default; an explicit error failure
+policy raises. Invalid snapshot weights or physical support remain infeasible
+at this wrapper boundary, even when the underlying numerical cause is nonfinite.
+
+`OperatorPODFit.transform` computes metric-weighted coefficients and
+`inverse_transform` decodes them. `project(values)` applies the affine physical
+projection; `projector()` explicitly returns its flattened physical linear
+matrix without the mean. Its row-vector convention is
+`project(x) == (x - spatial_mean) @ projector() + spatial_mean`.
+Zero physical support is zero-extended. The action does not store or allocate a
+full projector, and retained energy uses original-data right-projection energy,
+not compressed randomized singular values as a substitute.
+
+Fit differentiation is operation-specific:
+
+| Fit mode | Coefficients / raw POD decoder | Physical `project` / `projector` |
+| --- | --- | --- |
+| `none` | Fit-derived basis and mean stopped | Fit response stopped |
+| `projector` (default) | Raw basis stopped; only the centered mean retains its own response | Invariant first-order response across a separated retained/discarded boundary; repetitions inside the retained cluster are allowed |
+| `basis` | Canonical isolated retained basis response, with unique nonzero phase pivots | Derived consistently from the same admitted basis |
+
+Request fit admission with
+`fit.derivative_admission(request, operation="project")` or
+`fit.require_derivative(request, operation="project")`; default admission refers
+to `transform`. The supported operation identifiers are `transform`,
+`inverse_transform`, `decoder`, `project`, and `projector`. Projector mode does
+not claim full fit-feature or fit-weight gradients for the raw decoder simply
+because invariant projection is differentiable. Numerical admission exposes
+runtime validity separately from static declaration eligibility. Randomized
+responses differentiate the fixed-key finite QR/power/compressed-SVD algorithm,
+not the exact original leading subspace; QR rank margins remain required.
+
+`PODBasis.weighted_values` is the sole current numerical basis leaf.
+`PODBasis.values`, `OperatorPODFit.components`, and `spatial_mean` are derived
+views, not independently mutable caches. Projection uses compact, fixed-role,
+zero-primal response corrections, and its primal remains equal to
+`inverse_transform(transform(x))` after an independent weighted-basis update.
+Decoder actions contract the weighted basis before scaling physical outputs.
+No prediction method applies a blanket stop: independently supplied current
+basis, branch, coefficient, and input derivatives remain ordinary prediction
+derivatives in every fit mode. Such parameter updates do not renew the original
+fit certificate. Direct fit-through-optimizer updates, changing support/query
+geometry, and higher-order fit derivatives are not promised.
+
+::: phydrax.nn.operator.training.fit_operator_pod
+
+::: phydrax.nn.operator.training.OperatorPODFit
+    options:
+        members:
+            - transform
+            - inverse_transform
+            - project
+            - projector
+            - derivative_admission
+            - require_derivative
 
 #### Query-holomorphic branch–trunk operators
 

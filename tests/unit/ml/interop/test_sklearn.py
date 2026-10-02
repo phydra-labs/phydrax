@@ -13,6 +13,7 @@ import jax
 import numpy as np
 import pytest
 
+from phydrax.ml.decomposition import SubspaceModel
 from phydrax.ml.interop import (
     ConversionError,
     from_sklearn,
@@ -354,6 +355,24 @@ def test_decomposition_transform_and_inverse_match(
                 cast(_InvertibleModel, result.model.model).inverse_transform(scores)
             ),
             estimator.inverse_transform(scores),
+            rtol=1e-11,
+            atol=1e-11,
+        )
+        imported = result.model.model
+        assert isinstance(imported, SubspaceModel)
+        assert not imported.fit_response_provenance
+        np.testing.assert_allclose(
+            np.asarray(imported.project(values)),
+            estimator.inverse_transform(scores),
+            rtol=1e-11,
+            atol=1e-11,
+        )
+        current = imported.prediction_only(
+            weighted_components=imported.weighted_components * 0.8
+        )
+        np.testing.assert_allclose(
+            np.asarray(current.project(values)),
+            np.asarray(current.inverse_transform(current.transform(values))),
             rtol=1e-11,
             atol=1e-11,
         )

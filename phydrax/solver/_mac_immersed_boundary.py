@@ -446,7 +446,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
                 marker_smallest,
                 jnp.finfo(marker_singular_values.dtype).tiny,
             )
-            marker_rank = marker_rank_result.numerical_rank
+            marker_rank = svd_linalg.require_exact_svd_rank(marker_rank_result)
             marker_rank_valid = (
                 marker_rank_result.successful
                 & jnp.isfinite(marker_condition)

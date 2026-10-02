@@ -151,7 +151,9 @@ class FeatureUnion(AbstractRecipe):
         outputs: list[tuple[str, MLBatch]] = []
         branch_schemas: list[FeatureSchema] = []
         for index, (name, recipe) in enumerate(self.transformer_list):
-            result = recipe.fit_batch(batch, key=keys[2 * index])
+            result = recipe.fit_batch(
+                batch, key=keys[2 * index] if recipe.accepts_fit_key else None
+            )
             if not isinstance(result, FitResult):
                 raise TypeError(
                     f"Feature union branch {name!r} did not return FitResult."

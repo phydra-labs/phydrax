@@ -250,7 +250,9 @@ class PreparedPRISM(StrictModule, NonTrainableState):
                 policy=svd_api.SVDSolvePolicy(count=self.mixture.site_count),
             )
             singular_values = spectrum.singular_values
-            full_rank = spectrum.numerical_rank == self.mixture.site_count
+            full_rank = (
+                svd_api.require_exact_svd_rank(spectrum) == self.mixture.site_count
+            )
             condition = jnp.where(
                 full_rank & (singular_values[-1] > 0.0),
                 singular_values[0] / singular_values[-1],

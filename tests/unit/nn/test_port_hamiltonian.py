@@ -213,3 +213,22 @@ def test_port_hamiltonian_scenario_3() -> None:
     assert trainable.subspace is None
     assert jax.tree.leaves(trainable.latent_dynamics)
     assert jnp.all(jnp.isfinite(model(jnp.asarray([0.2, -0.3]))))
+
+
+def test_fixed_onsager_fitted_weighted_snapshots() -> None:
+    snapshots = jnp.array(
+        [[-2.0, 1.0, 0.5], [-1.0, 0.0, 0.5], [1.0, 2.0, 0.5], [3.0, -1.0, 0.5]]
+    )
+    weights = jnp.array([1.0, 2.0, 1.0, 3.0])
+    model = FixedSubspaceOnsagerModel.fit(
+        snapshots,
+        2,
+        MLP(in_size=2, out_size=2, width_size=4, depth=1, key=jr.key(22)),
+        sample_weights=weights,
+    )
+    expected_mean = jnp.sum(snapshots * weights[:, None], axis=0) / jnp.sum(weights)
+    assert jnp.allclose(model.mean, expected_mean, atol=1e-12)
+    assert int(model.report.numerical_rank) == 2
+    assert jnp.allclose(model.decode(model.encode(snapshots)), snapshots, atol=1e-10)
+    trainable, _state, _fixed = phx.partition_parameters(model)
+    assert trainable.subspace is None

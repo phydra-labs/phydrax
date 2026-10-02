@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "419d9d22c7b07ce28d11b68ce07252df08146ed33b6cf16c562db4d8ab0e3be6",
+  "manifest_id": "3416e24d102fc2fd99fcb8f5b187f9d6f505495bdd82b58d4dc3d904779ea778",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23895,9 +23895,16 @@
       "phydrax.linalg.svd.DenseSVD",
       "phydrax.linalg.svd.DenseSVDState",
       "phydrax.linalg.svd.PreparedSVDSolve",
+      "phydrax.linalg.svd.RandomizedSVD",
+      "phydrax.linalg.svd.RandomizedSVDState",
+      "phydrax.linalg.svd.SVDApproximationPolicy",
+      "phydrax.linalg.svd.SVDCertificateKind",
       "phydrax.linalg.svd.SVDCostEstimate",
       "phydrax.linalg.svd.SVDDifferentiationMode",
+      "phydrax.linalg.svd.SVDLeadingEvidence",
       "phydrax.linalg.svd.SVDProblem",
+      "phydrax.linalg.svd.SVDRangeEvidence",
+      "phydrax.linalg.svd.SVDRankEvidence",
       "phydrax.linalg.svd.SVDResourcePolicy",
       "phydrax.linalg.svd.SVDSolveDiagnostics",
       "phydrax.linalg.svd.SVDSolvePlan",
@@ -23907,9 +23914,14 @@
       "phydrax.linalg.svd.SVDSolveStatus",
       "phydrax.linalg.svd.SVDTarget",
       "phydrax.linalg.svd.SVDTolerancePolicy",
+      "phydrax.linalg.svd.SingularSubspaceResponse",
+      "phydrax.linalg.svd.covariance_action",
+      "phydrax.linalg.svd.covariance_factor",
       "phydrax.linalg.svd.plan_svd",
       "phydrax.linalg.svd.prepare_svd",
+      "phydrax.linalg.svd.projector_action",
       "phydrax.linalg.svd.refresh_svd",
+      "phydrax.linalg.svd.require_exact_svd_rank",
       "phydrax.linalg.svd.svd"
     ],
     "phydrax.logging": [
@@ -24833,6 +24845,7 @@
       "phydrax.ml.ML_NONFINITE",
       "phydrax.ml.ML_RANK_DEFICIENT",
       "phydrax.ml.ML_SUCCESS",
+      "phydrax.ml.OperationDerivativeContract",
       "phydrax.ml.OverlapClassReduction",
       "phydrax.ml.OverlapEmptyPolicy",
       "phydrax.ml.OverlapKind",

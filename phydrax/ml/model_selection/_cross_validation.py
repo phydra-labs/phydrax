@@ -481,7 +481,9 @@ def _cross_validate_materialized(
         fit_key, prediction_key = jr.split(fold_key)
         train_batch = batch.take_samples(fold.train_indices)
         validation_batch = batch.take_samples(fold.validation_indices)
-        fit_result = recipe.fit_batch(train_batch, key=fit_key)
+        fit_result = recipe.fit_batch(
+            train_batch, key=fit_key if recipe.accepts_fit_key else None
+        )
         if not isinstance(fit_result, FitResult):
             raise TypeError("Recipe.fit_batch must return a FitResult.")
         predictions = _predict(fit_result, validation_batch, scorer, key=prediction_key)
@@ -492,7 +494,7 @@ def _cross_validate_materialized(
                 fit_result,
                 score,
                 predictions,
-                fit_key=fit_key,
+                fit_key=fit_key if recipe.accepts_fit_key else None,
                 prediction_key=prediction_key,
             )
         )

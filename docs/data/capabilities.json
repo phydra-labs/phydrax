@@ -1,5 +1,5 @@
 {
-  "catalog_id": "27b0dfba9df4a8251a93f9788d7921218028075715bf913729af51c4e2f4f6d7",
+  "catalog_id": "3a8bfbb146c430b39435068b819f3e0a4b592fde5ee34909779a711860cdd174",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -10052,6 +10052,192 @@
               "capability": "lattice-boltzmann.n-color-emulsion",
               "kind": "capability-support-tuple",
               "support_tuple_id": "8337c113261b2cf3a2f98c701ed46c6ba48457a3361efe2facb9007644b0d4e0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "linalg.singular-subspaces",
+      "declaration_id": "b7a6e0d79d07b24299746548a0438c1381085001362152502b887779706c7a7f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.linalg",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "linalg.singular-subspaces.dense-complex-diagonal-projector",
+          "profile_id": "130bb5c52c8aa1e5c0d5b26bcc814c4e2faf51fc98007a122b126913dff82aeb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "leading-selection",
+            "metric-orthogonality",
+            "original-triplet-residual",
+            "rank-evidence",
+            "requested-derivative",
+            "resource-refusal",
+            "stage-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "certificate": "exact-spectrum",
+                "derivative": "mathematical-projector",
+                "method": "dense-svd",
+                "pairing": "diagonal",
+                "precision": "complex128",
+                "representation": "resident-dense",
+                "retained_capacity": 2,
+                "scenario": "dense-complex-diagonal-projector",
+                "source_capacity": 5,
+                "target_capacity": 8,
+                "workspace_kind": "admitted-stage-estimate",
+                "workspace_limit_bytes": 4194304
+              },
+              "capability": "linalg.singular-subspaces",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c2475c9c20fa2ce71e057823f27c847c863e34ff18e58f4af09362f4f702e3ba"
+            }
+          ],
+          "version": "candidate"
+        },
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "linalg.singular-subspaces.randomized-shell-stopped",
+          "profile_id": "c307e9ab01aa84b349fc4c86011521da5fab10db78609836647aacd4963048a4",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "leading-selection",
+            "metric-orthogonality",
+            "original-triplet-residual",
+            "rank-evidence",
+            "requested-derivative",
+            "resource-refusal",
+            "stage-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "audit_capacity": 8,
+                "certificate": "independent-gaussian",
+                "derivative": "stopped",
+                "method": "randomized-svd",
+                "oversampling": 8,
+                "pairing": "euclidean",
+                "power_iterations": 2,
+                "precision": "float64",
+                "representation": "nonmaterializing-action",
+                "retained_capacity": 4,
+                "scenario": "randomized-shell-stopped",
+                "source_capacity": 64,
+                "target_capacity": 128,
+                "workspace_kind": "admitted-stage-estimate",
+                "workspace_limit_bytes": 4194304
+              },
+              "capability": "linalg.singular-subspaces",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a0626c77601917f0dbb182cb42e770f611145e9b067d00854fdbaa1dba8d1a24"
+            }
+          ],
+          "version": "candidate"
+        },
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "linalg.singular-subspaces.dense-repeated-projector",
+          "profile_id": "c957a9aad03b90e4311e9d84b5113ca74156ff149cc50e89095ea6ffffbb24d2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "leading-selection",
+            "metric-orthogonality",
+            "original-triplet-residual",
+            "rank-evidence",
+            "requested-derivative",
+            "resource-refusal",
+            "stage-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "certificate": "exact-spectrum",
+                "derivative": "mathematical-projector",
+                "method": "dense-svd",
+                "pairing": "euclidean",
+                "precision": "float64",
+                "representation": "resident-dense",
+                "retained_capacity": 2,
+                "scenario": "dense-repeated-projector",
+                "source_capacity": 3,
+                "target_capacity": 6,
+                "workspace_kind": "admitted-stage-estimate",
+                "workspace_limit_bytes": 4194304
+              },
+              "capability": "linalg.singular-subspaces",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0730980c542cc8e2dd8132528e6a571b5257e83d3f2b963d5597a5c7aba982ed"
+            }
+          ],
+          "version": "candidate"
+        },
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "linalg.singular-subspaces.randomized-resident-projector",
+          "profile_id": "f76ccf094a91d8d5aca6af009bafe636686ec77f73282a7db798ce6a5f444d25",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "leading-selection",
+            "metric-orthogonality",
+            "original-triplet-residual",
+            "rank-evidence",
+            "requested-derivative",
+            "resource-refusal",
+            "stage-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "certificate": "deterministic-frobenius",
+                "derivative": "fixed-sketch-algorithmic-projector",
+                "method": "randomized-svd",
+                "oversampling": 4,
+                "pairing": "euclidean",
+                "power_iterations": 1,
+                "precision": "float64",
+                "representation": "resident-dense",
+                "retained_capacity": 4,
+                "scenario": "randomized-resident-projector",
+                "source_capacity": 32,
+                "target_capacity": 64,
+                "workspace_kind": "admitted-stage-estimate",
+                "workspace_limit_bytes": 4194304
+              },
+              "capability": "linalg.singular-subspaces",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0471200fb6a507655b5941fbf43c430dae3812cb91274a97e0967a3da7356c08"
             }
           ],
           "version": "candidate"
