@@ -24,6 +24,16 @@
   conormal/distribution metadata and compatibility names are removed.
 - Negative-offset positive transforms are refused when they cannot certify
   input-convex constitutive potentials.
+- Native randomized leading SVD with explicit typed keys, refresh-addressed sketches
+  and independent audits, bounded QR refinement, original-operator residuals,
+  approximation/leading-subspace certificates, and global rank uncertainty.
+- Compact first-order singular projector and retained-covariance responses, including
+  repeated retained clusters, rectangular null complements, moving Hilbert metrics,
+  and fixed-sketch randomized algorithm differentiation. Weighted PCA/POD,
+  incremental covariance merges, and operator POD share the native owner.
+- Operation-specific ML derivative admission with resolved numerical evidence.
+  Stopped fit basis representatives remain independently trainable; projection
+  responses and current-basis encoder/decoder behavior remain distinct.
 - Native exterior calculus in `phydrax.exterior`: explicit form degree, twist, fiber,
   and proxy semantics; shared exterior algebra; de Rham integration, Whitney chains,
   induced boundary traces, numerical form products, and coefficient systems.

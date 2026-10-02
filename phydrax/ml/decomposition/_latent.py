@@ -26,6 +26,7 @@ from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
+from ...linalg._singular_subspaces import canonicalize_rows
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -35,9 +36,9 @@ from .._contracts import (
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    OperationDerivativeContract,
 )
 from .._numerics import effective_sample_size, fit_weighted_subspace
-from .._numerics._spectral import _canonicalize_rows
 from .._schema import AbstractFittedModel
 
 
@@ -115,7 +116,7 @@ def _masked_center(batch: MLBatch, policy: WeightPolicy, /) -> tuple[Array, Arra
 
 
 def _canonicalize_columns(columns: Array, /) -> Array:
-    return jnp.swapaxes(_canonicalize_rows(jnp.swapaxes(columns, -1, -2)), -1, -2)
+    return jnp.swapaxes(canonicalize_rows(jnp.swapaxes(columns, -1, -2)), -1, -2)
 
 
 def _center_value(value: Array, mean: Array, case_shape: tuple[int, ...], /) -> Array:
@@ -469,6 +470,7 @@ class ICA(AbstractRecipe):
             weights,
             rank=self.n_components,
             centered=False,
+            differentiate="basis",
         )
         scale = jnp.maximum(spectral.singular_values, jnp.finfo(centered.dtype).tiny)
         whitening = spectral.components / scale[..., :, None]
@@ -519,7 +521,7 @@ class ICA(AbstractRecipe):
             xs=None,
             length=self.max_iterations,
         )
-        unmixing = _canonicalize_rows(rotation @ whitening)
+        unmixing = canonicalize_rows(rotation @ whitening)
         model = ICAModel(mean, unmixing)
         finite = jnp.all(jnp.isfinite(unmixing), axis=(-2, -1))
         valid = (
@@ -544,13 +546,15 @@ class ICA(AbstractRecipe):
             explained_energy=spectral.explained_energy,
             retained_energy=spectral.retained_energy,
             residual_energy=spectral.residual_energy,
-            numerical_rank=spectral.numerical_rank,
+            numerical_rank=jnp.where(
+                spectral.rank_evidence.available, spectral.rank_evidence.lower_bound, -1
+            ),
             weighted_orthogonality_error=spectral.orthogonality_error,
             minimum_eigengap=spectral.minimum_retained_gap,
-            projector_gradient_supported=valid & ~repeated,
-            basis_gradient_supported=valid & ~repeated,
+            projector_gradient_supported=valid & spectral.basis_gradient_supported,
+            basis_gradient_supported=valid & spectral.basis_gradient_supported,
             repeated_spectrum=repeated,
-            canonicalization_valid=valid & ~repeated,
+            canonicalization_valid=valid & spectral.basis_gradient_supported,
             objective=residual,
             iterations=iterations,
             converged=converged,
@@ -569,6 +573,31 @@ class ICA(AbstractRecipe):
             status=status,
             method="symmetric-fastica",
             derivative_contract=_ICA_CONTRACT,
+            operation_derivatives=(
+                OperationDerivativeContract(
+                    "transform",
+                    _ICA_CONTRACT,
+                    runtime_surfaces=(
+                        DerivativeSurface.FIT_FEATURES,
+                        DerivativeSurface.FIT_WEIGHTS,
+                    ),
+                    runtime_valid=jnp.stack(
+                        (
+                            valid & spectral.basis_gradient_supported,
+                            valid & spectral.basis_gradient_supported,
+                        ),
+                        axis=-1,
+                    ),
+                    runtime_status=jnp.stack(
+                        (
+                            jnp.where(valid, spectral.derivative_status, status),
+                            jnp.where(valid, spectral.derivative_status, status),
+                        ),
+                        axis=-1,
+                    ),
+                ),
+            ),
+            default_operation="transform",
         )
 
 

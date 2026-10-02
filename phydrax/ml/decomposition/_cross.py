@@ -25,6 +25,7 @@ from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
+from ...linalg._singular_subspaces import canonicalize_rows
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -35,7 +36,6 @@ from .._contracts import (
     ML_SUCCESS,
 )
 from .._numerics import effective_sample_size, solve_weighted_least_squares
-from .._numerics._spectral import _canonicalize_rows
 from .._schema import AbstractFittedModel
 
 
@@ -159,7 +159,7 @@ def jax_reciprocal_sqrt(value: Array, /) -> Array:
 
 
 def _canonicalize_columns(columns: Array, /) -> Array:
-    return jnp.swapaxes(_canonicalize_rows(jnp.swapaxes(columns, -1, -2)), -1, -2)
+    return jnp.swapaxes(canonicalize_rows(jnp.swapaxes(columns, -1, -2)), -1, -2)
 
 
 def _center_value(value: Array, mean: Array, case_shape: tuple[int, ...], /) -> Array:

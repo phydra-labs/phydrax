@@ -12,7 +12,14 @@ import pytest
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, ModelBinding
-from phydrax.ml.compose import ColumnTransformer, FeatureUnion
+from phydrax.linalg.svd import RandomizedSVD, SVDTolerancePolicy
+from phydrax.ml.compose import (
+    ColumnTransformer,
+    FeatureUnion,
+    FittedColumnTransformer,
+    FittedFeatureUnion,
+)
+from phydrax.ml.decomposition import PCA, SubspaceModel
 
 
 _SMOOTH_TRANSFORM_CONTRACT = phx.DerivativeContract.smooth(
@@ -308,3 +315,110 @@ def test_parallel_columns_scenario_1() -> None:
                 ("same", _DenseScaleRecipe(1.0), (1,)),
             )
         )
+
+
+@pytest.mark.parametrize("composition", ("union", "columns"))
+def test_keyed_parallel_dense_and_randomized_subspaces_preserve_branch_values(
+    composition: str,
+) -> None:
+    diagonal = jnp.diag(jnp.array([8.0, 0.3, 0.1]))
+    base = jnp.concatenate((diagonal, -diagonal), axis=0)
+    features = jnp.concatenate((base, 2.0 * base, 0.01 * base[:, :1]), axis=-1)
+    mask = jnp.ones_like(features, dtype=jnp.bool_).at[0, 6].set(False)
+    batch = phx.ml.MLBatch(
+        features,
+        jnp.arange(6.0),
+        feature_mask=mask,
+        sample_weight=jnp.arange(1.0, 7.0),
+        measure_weight=jnp.linspace(0.5, 1.0, 6),
+        groups=jnp.array([0, 0, 1, 1, 2, 2]),
+        feature_schema=phx.ml.FeatureSchema(("a", "b", "c", "d", "e", "f", "g")),
+    )
+    dense_recipe = PCA(1)
+    random_recipe = PCA(
+        1,
+        differentiate="none",
+        method=RandomizedSVD(oversampling=0, power_iterations=0),
+        tolerance=SVDTolerancePolicy(residual=1.0, orthogonality=1e-6),
+    )
+    if composition == "union":
+        recipe = FeatureUnion((("dense", dense_recipe), ("random", random_recipe)))
+        dense_batch = random_batch = batch
+    else:
+        recipe = ColumnTransformer(
+            (
+                ("dense", dense_recipe, ("a", "b", "c")),
+                ("random", random_recipe, ("d", "e", "f")),
+            ),
+            remainder="passthrough",
+        )
+        dense_batch = batch.with_features(
+            features[:, :3],
+            feature_schema=phx.ml.FeatureSchema(("a", "b", "c")),
+            feature_mask=mask[:, :3],
+        )
+        random_batch = batch.with_features(
+            features[:, 3:6],
+            feature_schema=phx.ml.FeatureSchema(("d", "e", "f")),
+            feature_mask=mask[:, 3:6],
+        )
+    root = jax.random.key(43)
+    result = recipe.fit_batch(batch, key=root)
+    repeated = recipe.fit_batch(batch, key=root)
+    fitted = result.as_trainable()
+    assert isinstance(fitted, (FittedColumnTransformer, FittedFeatureUnion))
+    assert bool(result.valid)
+    assert int(result.status) == phx.ml.ML_SUCCESS
+    dense = dense_recipe.fit_batch(dense_batch).as_trainable()
+    randomized = random_recipe.fit_batch(
+        random_batch, key=jax.random.split(root, 4)[2]
+    ).as_trainable()
+    assert isinstance(dense, SubspaceModel)
+    assert isinstance(randomized, SubspaceModel)
+    assert isinstance(dense_batch.features, jax.Array)
+    assert isinstance(random_batch.features, jax.Array)
+    expected_parts = (
+        dense.transform(dense_batch.features),
+        randomized.transform(random_batch.features),
+    )
+    expected = jnp.concatenate(
+        expected_parts + ((features[:, 6:],) if composition == "columns" else ()),
+        axis=-1,
+    )
+    transformed = fitted.transform_batch(batch)
+    assert isinstance(transformed.features, jax.Array)
+    assert jnp.allclose(transformed.features, expected, atol=1e-10)
+    assert jnp.allclose(
+        transformed.dense_features(),
+        jnp.where(transformed.feature_mask, expected, 0),
+        atol=1e-10,
+    )
+    actual = fitted(features)
+    replay = repeated.as_trainable()(features)
+    assert isinstance(actual, jax.Array)
+    assert isinstance(replay, jax.Array)
+    assert jnp.allclose(actual, expected, atol=1e-10)
+    assert jnp.allclose(actual, replay, atol=1e-10)
+    assert jnp.array_equal(transformed.require_targets(), batch.require_targets())
+    assert jnp.array_equal(transformed.sample_weight, batch.sample_weight)
+    assert jnp.array_equal(transformed.measure_weight, batch.measure_weight)
+    assert transformed.groups is not None
+    assert batch.groups is not None
+    assert jnp.array_equal(transformed.groups, batch.groups)
+    if composition == "columns":
+        assert isinstance(fitted, FittedColumnTransformer)
+        assert fitted.transformers[0][2] == (0, 1, 2)
+        assert fitted.transformers[1][2] == (3, 4, 5)
+        assert fitted.remainder_indices == (6,)
+        assert transformed.feature_schema.names[-1] == "remainder__g"
+        assert jnp.array_equal(
+            transformed.feature_mask,
+            jnp.concatenate((jnp.ones((6, 2), dtype=jnp.bool_), mask[:, 6:]), axis=-1),
+        )
+    else:
+        row_valid = jnp.all(mask, axis=-1, keepdims=True)
+        assert jnp.array_equal(
+            transformed.feature_mask, jnp.broadcast_to(row_valid, (6, 2))
+        )
+    with pytest.raises(ValueError, match="explicit typed key"):
+        recipe.fit_batch(batch)

@@ -342,7 +342,9 @@ class ColumnTransformer(AbstractRecipe):
         used: set[int] = set()
         for index, (name, recipe, columns) in enumerate(resolved):
             selected = _select_batch(batch, columns)
-            result = recipe.fit_batch(selected, key=keys[2 * index])
+            result = recipe.fit_batch(
+                selected, key=keys[2 * index] if recipe.accepts_fit_key else None
+            )
             if not isinstance(result, FitResult):
                 raise TypeError(f"Column branch {name!r} did not return a FitResult.")
             model = result.as_trainable()

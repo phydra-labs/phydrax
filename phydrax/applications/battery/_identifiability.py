@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, FailurePolicy, RankPolicy
-from ...linalg.svd import svd, SVDProblem, SVDSolvePolicy
+from ...linalg.svd import require_exact_svd_rank, svd, SVDProblem, SVDSolvePolicy
 from ._calibration import BatteryCalibrationPlan, PreparedBatteryCalibration
 
 
@@ -247,7 +247,7 @@ def _evaluate_battery_identifiability_numerics(
         ),
     )
     singular_values = decomposition.singular_values
-    numerical_rank = decomposition.numerical_rank
+    numerical_rank = require_exact_svd_rank(decomposition)
     full_rank = numerical_rank == plan.parameter_count
     condition = jnp.where(
         full_rank,

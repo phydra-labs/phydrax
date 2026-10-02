@@ -494,7 +494,9 @@ def _fit_members(
     recipes: Sequence[AbstractRecipe], batch: MLBatch, key: Array, stream: int
 ) -> tuple[tuple[FitResult, ...], tuple[AbstractArrayModel, ...], Array, Array]:
     results = tuple(
-        recipe.fit_batch(batch, key=_key(key, stream + index))
+        recipe.fit_batch(
+            batch, key=_key(key, stream + index) if recipe.accepts_fit_key else None
+        )
         for index, recipe in enumerate(recipes)
     )
     models = tuple(result.as_trainable() for result in results)
@@ -535,7 +537,8 @@ class BaggingRecipe(AbstractRecipe):
             indices = jr.randint(_key(member_key, 1), (size,), 0, batch.sample_count)
             results.append(
                 self.recipe.fit_batch(
-                    batch.take_samples(indices), key=_key(member_key, 2)
+                    batch.take_samples(indices),
+                    key=_key(member_key, 2) if self.recipe.accepts_fit_key else None,
                 )
             )
         models = tuple(result.as_trainable() for result in results)
@@ -587,7 +590,10 @@ class RandomSubspaceRecipe(AbstractRecipe):
                 feature_schema=FeatureSchema.anonymous(self.feature_count),
                 feature_mask=jnp.take(batch.feature_mask, indices, axis=-1),
             )
-            result = self.recipe.fit_batch(selected_batch, key=_key(member_key, 2))
+            result = self.recipe.fit_batch(
+                selected_batch,
+                key=_key(member_key, 2) if self.recipe.accepts_fit_key else None,
+            )
             results.append(result)
             models.append(
                 FeatureSubsetModel(
@@ -706,7 +712,9 @@ class StackingRecipe(AbstractRecipe):
                 )
                 result = recipe.fit_batch(
                     batch.take_samples(training_indices),
-                    key=_key(root, 1000 + base_index * self.num_folds + fold),
+                    key=_key(root, 1000 + base_index * self.num_folds + fold)
+                    if recipe.accepts_fit_key
+                    else None,
                 )
                 prediction = result.model(
                     jnp.take(dense, validation_indices, axis=sample_axis),
@@ -737,9 +745,14 @@ class StackingRecipe(AbstractRecipe):
             feature_mask=jnp.isfinite(jnp.real(meta_features))
             & jnp.isfinite(jnp.imag(meta_features)),
         )
-        meta_result = self.meta_recipe.fit_batch(meta_batch, key=_key(root, 3000))
+        meta_result = self.meta_recipe.fit_batch(
+            meta_batch,
+            key=_key(root, 3000) if self.meta_recipe.accepts_fit_key else None,
+        )
         final_results = tuple(
-            recipe.fit_batch(batch, key=_key(root, 4000 + index))
+            recipe.fit_batch(
+                batch, key=_key(root, 4000 + index) if recipe.accepts_fit_key else None
+            )
             for index, recipe in enumerate(self.base_recipes)
         )
         fold_valid_array = jnp.stack(tuple(fold_valid))
@@ -804,7 +817,9 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         root = _require_key(key, "MixtureOfExpertsRecipe")
         targets = batch.require_targets()
         expert_results = tuple(
-            recipe.fit_batch(batch, key=_key(root, 5000 + index))
+            recipe.fit_batch(
+                batch, key=_key(root, 5000 + index) if recipe.accepts_fit_key else None
+            )
             for index, recipe in enumerate(self.expert_recipes)
         )
         predictions = tuple(
@@ -853,7 +868,10 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
             feature_schema=batch.feature_schema,
             target_schema=TargetSchema("continuous"),
         )
-        gate_result = self.gate_recipe.fit_batch(gate_batch, key=_key(root, 7000))
+        gate_result = self.gate_recipe.fit_batch(
+            gate_batch,
+            key=_key(root, 7000) if self.gate_recipe.accepts_fit_key else None,
+        )
         valid = jnp.concatenate(
             (
                 jnp.stack(tuple(result.valid for result in expert_results)),

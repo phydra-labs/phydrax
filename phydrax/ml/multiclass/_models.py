@@ -334,7 +334,7 @@ class OneVsRestRecipe(AbstractRecipe):
                 _subbatch(
                     batch, (y == label).astype(jnp.int32), target_mask=batch.target_mask
                 ),
-                key=child_key,
+                key=child_key if self.base_recipe.accepts_fit_key else None,
             )
             for label, child_key in zip(labels, keys, strict=True)
         )
@@ -450,7 +450,7 @@ class OneVsOneRecipe(AbstractRecipe):
                         sample_mask=selected,
                         target_mask=batch.target_mask,
                     ),
-                    key=child_key,
+                    key=child_key if self.base_recipe.accepts_fit_key else None,
                 )
             )
         result_tuple = tuple(results)
@@ -599,7 +599,7 @@ class OutputCodeRecipe(AbstractRecipe):
         results = tuple(
             self.base_recipe.fit_batch(
                 _subbatch(batch, targets[..., bit], target_mask=batch.target_mask),
-                key=child_key,
+                key=child_key if self.base_recipe.accepts_fit_key else None,
             )
             for bit, child_key in enumerate(keys)
         )
@@ -675,7 +675,7 @@ class MultilabelRecipe(AbstractRecipe):
                     if batch.target_mask is None
                     else batch.target_mask[..., index],
                 ),
-                key=child_key,
+                key=child_key if self.base_recipe.accepts_fit_key else None,
             )
             for index, child_key in enumerate(keys)
         )
@@ -870,7 +870,11 @@ def _fit_chain(
             else batch.target_mask[..., index],
             feature_schema=current.feature_schema,
         )
-        results.append(base_recipe.fit_batch(binary, key=child_key))
+        results.append(
+            base_recipe.fit_batch(
+                binary, key=child_key if base_recipe.accepts_fit_key else None
+            )
+        )
     result_tuple = tuple(results)
     schema = (
         batch.target_schema

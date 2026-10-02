@@ -15,6 +15,18 @@ import numpy.typing as npt
 import phydrax as phx
 import phydrax.typing as pt
 from phydrax.equations import ChemicalComponentCatalog
+from phydrax.linalg.svd import (
+    prepare_svd,
+    PreparedSVDSolve,
+    projector_action,
+    RandomizedSVD,
+    SingularSubspaceResponse,
+    svd,
+    SVDProblem,
+    SVDRankEvidence,
+    SVDSolvePolicy,
+    SVDSolveResult,
+)
 from phydrax.precision import precision_dtype_name, ScalarPrecisionDType
 
 
@@ -61,3 +73,18 @@ def constructors() -> None:
         weights=1,  # ty: ignore[unknown-argument]
     )
     phx.typing.validate(catalog)
+
+
+def singular_subspaces(problem: SVDProblem, key: pt.PRNGKey, probe: jax.Array) -> None:
+    policy = SVDSolvePolicy(RandomizedSVD(), count=2, differentiation="projector")
+    prepared = prepare_svd(problem, policy, key=key)
+    assert_type(prepared, PreparedSVDSolve)
+    result = svd(prepared)
+    assert_type(result, SVDSolveResult)
+    assert_type(result.rank_evidence, SVDRankEvidence)
+    assert_type(result.right_response, SingularSubspaceResponse)
+    assert_type(result.derivative_valid, jax.Array)
+    assert_type(
+        projector_action(result.right_coordinates, result.right_response, probe),
+        jax.Array,
+    )

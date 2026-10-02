@@ -478,8 +478,8 @@ from ._property_verification import (
     DensePropertyVerificationPolicy,
     verify_dense_properties,
 )
+from ._randomized import ProbeRefresh
 from ._randomized_preconditioning import (
-    ProbeRefresh,
     RandomizedNystromDiagnostics,
     RandomizedNystromPreconditioner,
     RandomizedNystromPreconditionerBuilder,

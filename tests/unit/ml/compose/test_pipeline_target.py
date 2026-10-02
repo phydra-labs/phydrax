@@ -20,7 +20,15 @@ from phydrax import (
     SurfaceDerivative,
 )
 from phydrax._model import AbstractArrayModel
-from phydrax.ml.compose import Pipeline, TransformedTargetRegressor
+from phydrax.linalg.svd import RandomizedSVD, SVDTolerancePolicy
+from phydrax.ml.compose import (
+    FittedPipeline,
+    FittedTransformedTargetRegressor,
+    Pipeline,
+    TransformedTargetRegressor,
+)
+from phydrax.ml.decomposition import ICA, ICAModel, PCA, SubspaceModel
+from phydrax.ml.linear import OLSRecipe
 from phydrax.ml.preprocessing import StandardScaler
 
 
@@ -379,3 +387,173 @@ def test_pipeline_target_scenario_1() -> None:
         TransformedTargetRegressor(_MeanRegressor(), StandardScaler()).fit_batch(
             batch, key=jax.random.key(0)
         )
+
+
+def _subspace_batch() -> phx.ml.MLBatch:
+    first, second = jnp.meshgrid(
+        jnp.arange(-3.0, 4.0), jnp.array([-1.0, 0.0, 1.0]), indexing="ij"
+    )
+    sources = jnp.stack((first.ravel(), second.ravel()), axis=-1)
+    features = sources @ jnp.array([[3.0, 0.5, -1.0], [0.2, 1.0, 0.5]])
+    targets = 1.0 + features @ jnp.array([0.5, -1.0, 2.0])
+    return phx.ml.MLBatch(
+        features,
+        targets,
+        feature_schema=phx.ml.FeatureSchema(("x", "y", "z")),
+    )
+
+
+def test_keyed_dense_pca_linear_pipeline_preserves_affine_predictions() -> None:
+    batch = _subspace_batch()
+    recipe = Pipeline((("pca", PCA(2)), ("linear", OLSRecipe())))
+    root = jax.random.key(29)
+    keyed = recipe.fit_batch(batch, key=root)
+    repeated = recipe.fit_batch(batch, key=root)
+    key_free = recipe.fit_batch(batch)
+    fitted = keyed.as_trainable()
+    assert isinstance(fitted, FittedPipeline)
+    assert bool(keyed.valid)
+    assert int(keyed.status) == phx.ml.ML_SUCCESS
+    assert jnp.allclose(
+        fitted(batch.dense_features()), batch.require_targets(), atol=1e-6
+    )
+    assert jnp.allclose(
+        fitted(batch.features), repeated.as_trainable()(batch.features), atol=1e-12
+    )
+    assert jnp.allclose(
+        fitted(batch.features), key_free.as_trainable()(batch.features), atol=1e-12
+    )
+    point = jnp.array([0.4, -0.7, 0.2])
+    pca = fitted.steps[0][1]
+    assert isinstance(pca, SubspaceModel)
+    expected_gradient = pca.projector() @ jnp.array([0.5, -1.0, 2.0])
+    assert jnp.allclose(jax.grad(fitted)(point), expected_gradient, atol=1e-6)
+    with pytest.raises(ValueError, match="Dense subspace"):
+        PCA(2).fit_batch(batch, key=root)
+
+
+def test_keyed_dense_pca_ica_pipeline_matches_addressed_numerical_fit() -> None:
+    batch = _subspace_batch()
+    root = jax.random.key(31)
+    pca_recipe = PCA(2)
+    ica_recipe = ICA(2, max_iterations=400, tolerance=1e-5)
+    recipe = Pipeline((("pca", pca_recipe), ("ica", ica_recipe)))
+    result = recipe.fit_batch(batch, key=root)
+    repeated = recipe.fit_batch(batch, key=root)
+    fitted = result.as_trainable()
+    assert isinstance(fitted, FittedPipeline)
+    assert bool(result.valid)
+    direct_pca = pca_recipe.fit_batch(batch).as_trainable()
+    assert isinstance(direct_pca, SubspaceModel)
+    transformed = batch.with_features(
+        direct_pca.transform(batch.dense_features()),
+        feature_schema=fitted.stage_output_schemas[0],
+    )
+    direct_ica = ica_recipe.fit_batch(
+        transformed, key=jax.random.split(root, 3)[2]
+    ).as_trainable()
+    assert isinstance(direct_ica, ICAModel)
+    expected = direct_ica(transformed.dense_features())
+    assert jnp.allclose(fitted(batch.features), expected, atol=1e-10)
+    assert jnp.allclose(
+        fitted(batch.features), repeated.as_trainable()(batch.features), atol=1e-10
+    )
+    recovered = direct_pca.inverse_transform(direct_ica.inverse_transform(expected))
+    assert jnp.allclose(recovered, batch.dense_features(), atol=1e-6)
+    with pytest.raises(ValueError, match="explicit JAX key"):
+        recipe.fit_batch(batch)
+
+
+def test_randomized_pca_pipeline_reuses_root_and_preserves_fit_address() -> None:
+    batch = _subspace_batch()
+    root = jax.random.key(37)
+    pca_recipe = PCA(
+        1,
+        differentiate="none",
+        method=RandomizedSVD(oversampling=0, power_iterations=0),
+        tolerance=SVDTolerancePolicy(residual=1.0, orthogonality=1e-6),
+    )
+    recipe = Pipeline((("pca", pca_recipe), ("linear", OLSRecipe())))
+    first = recipe.fit_batch(batch, key=root)
+    repeated = recipe.fit_batch(batch, key=root)
+    fitted = first.as_trainable()
+    assert isinstance(fitted, FittedPipeline)
+    assert bool(first.valid)
+    direct_pca = pca_recipe.fit_batch(
+        batch, key=jax.random.split(root, 3)[0]
+    ).as_trainable()
+    assert isinstance(direct_pca, SubspaceModel)
+    actual_pca = fitted.steps[0][1]
+    assert isinstance(actual_pca, SubspaceModel)
+    assert jnp.allclose(
+        actual_pca.weighted_components, direct_pca.weighted_components, atol=1e-12
+    )
+    transformed = batch.with_features(
+        direct_pca.transform(batch.dense_features()),
+        feature_schema=fitted.stage_output_schemas[0],
+    )
+    direct_linear = OLSRecipe().fit_batch(transformed).as_trainable()
+    assert jnp.allclose(
+        fitted(batch.features), direct_linear(transformed.features), atol=1e-10
+    )
+    assert jnp.allclose(
+        fitted(batch.features), repeated.as_trainable()(batch.features), atol=1e-10
+    )
+    with pytest.raises(ValueError, match="explicit typed key"):
+        recipe.fit_batch(batch)
+
+
+@pytest.mark.parametrize("randomized", (False, True), ids=("dense", "randomized"))
+def test_keyed_subspace_target_transform_restores_projected_targets(
+    randomized: bool,
+) -> None:
+    source = _subspace_batch()
+    targets = source.dense_features() + jnp.array([2.0, -3.0, 0.5])
+    batch = phx.ml.MLBatch(
+        source.features,
+        targets,
+        feature_schema=source.feature_schema,
+        target_schema=phx.ml.TargetSchema("continuous", names=("u", "v", "w")),
+    )
+    transform_recipe = (
+        PCA(
+            1,
+            differentiate="none",
+            method=RandomizedSVD(oversampling=0, power_iterations=0),
+            tolerance=SVDTolerancePolicy(residual=1.0, orthogonality=1e-6),
+        )
+        if randomized
+        else PCA(2)
+    )
+    regressor = Pipeline((("pca", PCA(2)), ("linear", OLSRecipe())))
+    recipe = TransformedTargetRegressor(regressor, transform_recipe)
+    root = jax.random.key(41)
+    result = recipe.fit_batch(batch, key=root)
+    repeated = recipe.fit_batch(batch, key=root)
+    fitted = result.as_trainable()
+    assert isinstance(fitted, FittedTransformedTargetRegressor)
+    assert bool(result.valid)
+    target_model = fitted.transformer
+    assert isinstance(target_model, SubspaceModel)
+    expected = target_model.project(targets)
+    assert jnp.allclose(fitted(batch.features), expected, atol=1e-6)
+    assert jnp.allclose(
+        fitted(batch.features), repeated.as_trainable()(batch.features), atol=1e-10
+    )
+    assert fitted.target_shape == (3,)
+    assert len(fitted.transform_output_schema.names) == (1 if randomized else 2)
+    if randomized:
+        target_batch = phx.ml.MLBatch(targets)
+        direct = transform_recipe.fit_batch(
+            target_batch, key=jax.random.split(root, 3)[0]
+        ).as_trainable()
+        assert isinstance(direct, SubspaceModel)
+        assert jnp.allclose(
+            target_model.weighted_components, direct.weighted_components, atol=1e-12
+        )
+        with pytest.raises(ValueError, match="explicit typed key"):
+            recipe.fit_batch(batch)
+    else:
+        assert jnp.allclose(fitted(batch.features), targets, atol=1e-6)
+        key_free = recipe.fit_batch(batch).as_trainable()
+        assert jnp.allclose(fitted(batch.features), key_free(batch.features), atol=1e-10)

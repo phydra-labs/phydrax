@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import equinox as eqx
+import jax.numpy as jnp
 from jax.typing import ArrayLike
 
 from .._differentiation import DifferentiationRequest
@@ -31,15 +33,19 @@ def fit(
     target_schema: TargetSchema | None = None,
     key: Any = None,
     derivative_request: DifferentiationRequest | None = None,
+    derivative_operation: str | None = None,
 ) -> FitResult:
     """Fit one immutable recipe to a canonical batch or raw feature arrays.
 
     The fitted executable is bound to the batch feature schema, and to the batch
     target schema when the fit is supervised. A `derivative_request` is required
-    against the fit's derivative contract before the result is returned.
+    against the default callable or `derivative_operation` before returning;
+    resolved gates guard the returned numerical roots, including the model alone.
     """
     if not isinstance(recipe, AbstractRecipe):
         raise TypeError("recipe must be an AbstractRecipe.")
+    if derivative_operation is not None and derivative_request is None:
+        raise ValueError("derivative_operation requires derivative_request.")
     if isinstance(features, MLBatch):
         extras = (
             targets,
@@ -76,7 +82,15 @@ def fit(
         None if batch.targets is None else batch.target_schema,
     )
     if derivative_request is not None:
-        result.require_derivative(derivative_request)
+        admission = result.require_derivative(
+            derivative_request, operation=derivative_operation
+        )
+        if admission.runtime_valid is not None:
+            result = eqx.error_if(
+                result,
+                jnp.any(~admission.runtime_valid),
+                "derivative-unsupported: resolved numerical derivative conditions failed.",
+            )
     return result
 
 

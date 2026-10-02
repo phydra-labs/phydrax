@@ -5,11 +5,13 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
+from jax import Array
 
-from phydrax import DerivativeSurface, GradientLevel
+from phydrax import DerivativeSurface, DifferentiationRequest, GradientLevel
 from phydrax.ml import ML_NONCONVERGED, MLBatch
 from phydrax.ml.decomposition import (
     CCA,
@@ -223,7 +225,7 @@ def test_ica_requires_key_rejects_complex_reports_nonconvergence_and_differentia
         lambda point: jnp.sum(jnp.square(model.transform(point)))
     )(nonlinear[0])
 
-    def fit_loss(features: Any, sample_weight: Any) -> Any:
+    def fit_loss(features: Array, sample_weight: Array) -> Array:
         fitted = (
             ICA(2, max_iterations=3, tolerance=1e3)
             .fit_batch(
@@ -240,6 +242,38 @@ def test_ica_requires_key_rejects_complex_reports_nonconvergence_and_differentia
     assert jnp.all(jnp.isfinite(prediction_gradient))
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
+    direction = (
+        jnp.arange(nonlinear.size, dtype=nonlinear.dtype).reshape(nonlinear.shape) / 29.0
+    )
+    weights = jnp.ones(nonlinear.shape[0])
+    tangent = jax.jvp(
+        lambda values: fit_loss(values, weights), (nonlinear,), (direction,)
+    )[1]
+    h = 1e-5
+    expected = (
+        fit_loss(nonlinear + h * direction, weights)
+        - fit_loss(nonlinear - h * direction, weights)
+    ) / (2 * h)
+    assert jnp.allclose(tangent, expected, rtol=2e-5, atol=2e-7)
+
+
+def test_ica_repeated_whitening_basis_is_not_admitted() -> None:
+    features = jnp.array(
+        [[3.0, 0.0, 0.0], [-3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, -3.0, 0.0]]
+    )
+    result = ICA(2, max_iterations=2, tolerance=1e3).fit_batch(
+        MLBatch(features), key=jax.random.key(11)
+    )
+    assert bool(result.valid)
+    assert not bool(result.diagnostics.basis_gradient_supported)
+    request = DifferentiationRequest((DerivativeSurface.FIT_FEATURES,))
+    admission = result.derivative_admission(request)
+    assert admission.runtime_valid is not None
+    assert admission.runtime_status is not None
+    assert not bool(jnp.all(admission.runtime_valid))
+    assert jnp.all(admission.runtime_status != 0)
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        result.require_derivative(request)
 
 
 def _nonnegative_data() -> Any:

@@ -231,7 +231,7 @@ class SearchResult(StrictModule):
             jnp.max(jnp.asarray(best_fit.status, dtype=jnp.int32)),
         )
         self.key = _require_key(key)
-        self.refit_key = _require_key(refit_key)
+        self.refit_key = None if refit_key is None else _require_key(refit_key)
         self.derivative_contract = _EXACT_SEARCH_CONTRACT
         self.method = str(method)
 
@@ -369,7 +369,9 @@ def _refit_best(
     key: Any,
 ) -> FitResult:
     universe = batch.take_samples(splits.sample_indices)
-    result = best.recipe.fit_batch(universe, key=key)
+    result = best.recipe.fit_batch(
+        universe, key=key if best.recipe.accepts_fit_key else None
+    )
     if not isinstance(result, FitResult):
         raise TypeError("Recipe.fit_batch must return a FitResult during final refit.")
     return result
@@ -430,7 +432,7 @@ class GridSearch(AbstractSearchPlan):
             splits,
             rungs=(),
             key=key,
-            refit_key=refit_key,
+            refit_key=refit_key if best.recipe.accepts_fit_key else None,
             method="grid_search",
         )
 
@@ -501,7 +503,7 @@ class RandomSearch(AbstractSearchPlan):
             splits,
             rungs=(),
             key=key,
-            refit_key=refit_key,
+            refit_key=refit_key if best.recipe.accepts_fit_key else None,
             method="random_search",
         )
 
@@ -610,7 +612,7 @@ class SuccessiveHalvingSearch(AbstractSearchPlan):
             full_splits,
             rungs=tuple(rungs),
             key=key,
-            refit_key=refit_key,
+            refit_key=refit_key if best.recipe.accepts_fit_key else None,
             method="successive_halving",
         )
 
@@ -712,7 +714,7 @@ class DifferentiableSearchResult(StrictModule):
             SELECTION_NO_VALID_CANDIDATE,
         ).astype(jnp.int32)
         self.key = _require_key(key)
-        self.refit_key = _require_key(refit_key)
+        self.refit_key = None if refit_key is None else _require_key(refit_key)
         self.derivative_contract = _EXACT_SEARCH_CONTRACT
         self.objective_derivative_contract = objective_derivative_contract
         self.method = "differentiable_objective_differential_evolution"
@@ -846,7 +848,8 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
             best_recipe, batch, splits, scorer, key=objective_key
         )
         best_fit = best_recipe.fit_batch(
-            batch.take_samples(splits.sample_indices), key=refit_key
+            batch.take_samples(splits.sample_indices),
+            key=refit_key if best_recipe.accepts_fit_key else None,
         )
         if not isinstance(best_fit, FitResult):
             raise TypeError(
@@ -859,7 +862,7 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
             best_cv,
             splits,
             key=key,
-            refit_key=refit_key,
+            refit_key=refit_key if best_recipe.accepts_fit_key else None,
             objective_derivative_contract=objective_contract,
         )
 
