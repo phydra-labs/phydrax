@@ -11,6 +11,7 @@ from typing import Literal, TYPE_CHECKING, TypeAlias
 
 
 if TYPE_CHECKING:
+    from ..operators.differential._requests import DerivativeStep
     from ._function import DomainFunction
 
 
@@ -48,6 +49,19 @@ class DerivativeRule(abc.ABC):
     ) -> DomainFunction | None:
         """Return a contracted Laplacian, or ``None`` to expand into partials."""
         del var, mode, backend, basis, periodic
+        return None
+
+    def derive_path(
+        self,
+        steps: tuple[DerivativeStep, ...],
+        /,
+        *,
+        mode: DerivativeMode,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        """Accept a complete ordered path, or decline this optional capability."""
+        del steps, mode, basis, periodic
         return None
 
 

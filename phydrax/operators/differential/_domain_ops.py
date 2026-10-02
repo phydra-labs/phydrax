@@ -51,11 +51,12 @@ from ._jet import jet_d1_d2, jet_dn, jet_dn_multi
 from ._requests import (
     admit_direct_derivative,
     DerivativeRequest,
+    DerivativeStep,
     evaluate_fused_coordinate_derivatives,
     FusedDerivativeEvaluation,
     plan_derivative_execution,
 )
-from ._runtime import get_derivative_execution_strategy, get_partial_eval_cache
+from ._runtime import get_derivative_execution_plan, get_partial_eval_cache
 
 
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
@@ -418,6 +419,79 @@ def _try_laplacian_rule(
     return out
 
 
+def _try_derivative_path(
+    source: DomainFunction,
+    steps: tuple[DerivativeStep, ...],
+    /,
+    *,
+    mode: Literal["reverse", "forward"] = "forward",
+    basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
+    periodic: bool = False,
+) -> DomainFunction | None:
+    """Resolve an owned path without bypassing an accepted derivative prefix."""
+    rule = get_derivative_rule(source)
+    if rule is not None:
+        complete = rule.derive_path(steps, mode=mode, basis=basis, periodic=periodic)
+        if complete is not None:
+            if not isinstance(complete, DomainFunction):
+                raise TypeError(
+                    "DerivativeRule.derive_path must return a DomainFunction or None."
+                )
+            return complete
+    current = source
+    accepted = False
+    for step in steps:
+        if step.variable not in current.deps:
+            if step.kind == "laplacian":
+                return laplacian(current, var=step.variable, mode=mode, backend="ad")
+            return partial_n(
+                current,
+                var=step.variable,
+                axis=step.axis,
+                order=step.order,
+                mode=mode,
+                backend="ad",
+            )
+        match step.kind:
+            case "partial":
+                derived = _try_derivative_rule(
+                    current,
+                    var=step.variable,
+                    axis=step.axis,
+                    order=step.order,
+                    mode=mode,
+                    backend=step.backend,
+                    basis=basis,
+                    periodic=periodic,
+                )
+            case "laplacian":
+                derived = _try_laplacian_rule(
+                    current,
+                    var=step.variable,
+                    mode=mode,
+                    backend=step.backend,
+                    basis=basis,
+                    periodic=periodic,
+                )
+            case _:
+                raise ValueError("Unsupported derivative path step.")
+        if derived is None:
+            if accepted:
+                raise ValueError(
+                    "A native derivative rule accepted a path prefix but declined the "
+                    "complete contraction; provide DerivativeRule.derive_path."
+                )
+            if _structured_derivative_provider(current) is not None:
+                _emit_structured_derivative_fallback(
+                    current,
+                    "the provider has no complete ordered Taylor contraction",
+                )
+            return None
+        current = derived
+        accepted = True
+    return current if accepted else None
+
+
 def _emit_structured_derivative_fallback(u: DomainFunction, reason: str, /) -> None:
     provider = _structured_derivative_provider(u)
     if provider is not None:
@@ -561,6 +635,10 @@ def grad(
     ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Gradient/Jacobian of `u` with respect to a labeled variable.
+
+    The legacy point/grid and AD/FD/basis dispatch remains together to preserve
+    output-axis and provider precedence. This change only migrates its request
+    identity; decomposing those numerical routes would exceed the Taylor cutover.
 
     For a geometry variable $x\in\mathbb{R}^d$ this constructs $\nabla_x u$.
     Concretely:
@@ -762,7 +840,7 @@ def grad(
         jacobian = jac
         if backend == "ad" and ad_engine == "auto":
             plan = plan_derivative_execution(
-                (DerivativeRequest("__domain__", var, (None,)),),
+                (DerivativeRequest("__domain__", (DerivativeStep("partial", var),)),),
                 output_size=jnp.size(y0),
                 coordinate_size=jnp.size(x0),
             )
@@ -2472,6 +2550,10 @@ def partial_n(
 ) -> DomainFunction:
     r"""Nth partial derivative with respect to a labeled variable.
 
+    The legacy backend dispatcher retains exception, provider, and memoization
+    ordering. Certified generic Jet paths leave through one source-lineage
+    evaluator; unrelated AD/FD/basis numerical branches are intentionally intact.
+
     Computes $\partial^n u / \partial x_i^n$ (for geometry variables with `axis=i`) or
     $\partial^n u / \partial t^n$ (for scalar variables).
 
@@ -2507,11 +2589,14 @@ def partial_n(
         return u
     _ensure_ad_engine_backend(backend, ad_engine)
     admit_direct_derivative(u, var, order_i)
-    planned_strategy = get_derivative_execution_strategy(u.func, var)
+    execution_plan = get_derivative_execution_plan(
+        u.func, (DerivativeStep("partial", var, axis, order_i, backend),)
+    )
     if (
         backend == "ad"
         and ad_engine == "auto"
-        and planned_strategy == "jvp"
+        and execution_plan is not None
+        and execution_plan.strategy == "jvp"
         and get_derivative_rule(u) is None
         and _structured_derivative_provider(u) is None
     ):
@@ -2562,8 +2647,6 @@ def partial_n(
         for _ in range(order_i):
             out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine="auto")
         return out
-    if order_i == 1 and backend == "jet":
-        return partial(u, var=var, axis=axis, mode=mode_eff, ad_engine="auto")
     if backend == "fd" or backend == "basis":
         # Discrete backends require coord-separable inputs; fall back to AD otherwise.
         fallback = partial_n(
@@ -2606,6 +2689,16 @@ def partial_n(
         )
         if structured is not None:
             return structured
+        if _structured_derivative_provider(u) is None:
+            from ._taylor_domain import make_taylor_partial
+
+            return make_taylor_partial(
+                u,
+                (DerivativeStep("partial", var, axis, order_i, backend),),
+                mode=mode_eff,
+                basis=basis,
+                periodic=periodic,
+            )
 
     idx = u.deps.index(var)
 

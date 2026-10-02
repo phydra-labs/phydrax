@@ -67,6 +67,12 @@ benchmarks/*
 !benchmarks/unstructured_maxwell.json
 !benchmarks/omniphysics_production_qualification.py
 !benchmarks/quantum_hall.py
+# Native Taylor contraction campaigns and scoped diagnostic evidence.
+!benchmarks/taylor_contraction_capacities.json
+!benchmarks/taylor_order_capacities.json
+!benchmarks/taylor_pde_capacities.json
+!benchmarks/taylor_gradient_diagnostic.json
+!benchmarks/taylor_host_sync_audit.json
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv

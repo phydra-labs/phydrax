@@ -171,10 +171,11 @@ the route it actually executes together with the primal value and coordinate
 actions. Deterministic automatic selection never chooses a randomized trace
 estimator.
 
-`ResidualPenalty` traces and deduplicates requests by field and every variable
-in the ordered derivative path. It binds only execution overrides consumed by
-the operator runtime. Mixed-variable chains therefore retain each variable
-identity instead of being attributed solely to the outer derivative.
+`ResidualPenalty` traces and deduplicates requests by source field and the complete
+ordered `DerivativeStep` path. Partial and Laplacian operations retain their
+interleaving; execution recommendations bind to that path, not a sorted variable
+set. Native whole-path providers are attempted before generic Taylor execution,
+and their operands remain live numerical leaves through pointwise binding.
 
 !!! note
     For `LatentContractionModel` wrapped via `domain.Model(...)`, `partial`,
@@ -215,6 +216,82 @@ The `basis` keyword (used when `backend="basis"`) selects a 1D method along each
 
 !!! note
     FFT-based bases (`fourier`/`sine`/`cosine`) assume a uniformly-spaced coordinate axis.
+
+### Certified Taylor contractions
+
+`plan_taylor_contractions` prepares selected directional contractions without a
+Jacobian, Hessian, or dense multivariate Taylor tensor. Each
+`TaylorContractionRequest` supplies explicit direction IDs and positive
+multiplicities; IDs are local bindings, not identity inferred from equal shapes
+or numerical values. `evaluate_taylor_contractions` receives the current
+callable, point arguments, and direction values dynamically.
+
+```python
+import jax.numpy as jnp
+from jax import Array
+from phydrax.operators.differential import (
+    TaylorContractionRequest,
+    evaluate_taylor_contractions,
+    plan_taylor_contractions,
+)
+
+def field(point: Array) -> Array:
+    return point[0] ** 2 * point[1] + point[0] ** 5
+
+plan = plan_taylor_contractions(
+    (TaylorContractionRequest(("x", "y"), (2, 1)),)
+)
+point = jnp.asarray([0.3, -0.4], dtype=jnp.float64)
+directions = {
+    "x": (jnp.asarray([1.0, 0.0], dtype=jnp.float64),),
+    "y": (jnp.asarray([0.0, 1.0], dtype=jnp.float64),),
+}
+result = evaluate_taylor_contractions(field, (point,), directions, plan)
+# result.values is request-first; this mixed contraction is 2.
+```
+
+The prepared policies select certified linear inclusion–exclusion, deterministic
+curved jets, or bounded prime-based candidates. Automatic selection compares
+shared schedule work, evaluation count, peak order, storage, and cancellation
+weights. Every accepted curved coefficient has an exact integer-partition
+certificate; prime placement alone does not establish isolation. Exhausted
+candidate/proof/evaluation limits refuse rather than execute an unchecked recipe.
+
+The new kernel uses normalized polynomial curves and
+`jax.experimental.jet(..., factorial_scaled=False)`. For an isolated target,
+the output coefficient is the requested contraction divided by the product of
+direction-multiplicity factorials. Existing derivative-scaled Jet helpers retain
+their convention. Mathematical derivative order and executed scalar-jet order
+are different: regularity admission uses the composed curve, including its
+polynomial degree bound, continuity, conditions, and support. Undeclared or
+almost-everywhere admission remains visible in `result.evidence`.
+
+`TaylorContractionResources` bounds preparation and derivative-owned logical
+buffers; it is not a bound on model activations, reverse-mode tapes, or compiler
+temporary memory. Nominal input/output precision must represent normalization and
+extraction weights in their normal range. Wider precision may be necessary for
+high multiplicities. Finite values and an exact coefficient certificate are not
+a floating-point accuracy guarantee; cancellation and source precision require
+independent qualification. Unsupported Jet primitives propagate their failure;
+there is no silent backend fallback.
+
+Nested `partial_n(..., backend="jet")` calls retain their original source and
+coordinate path. Untouched data/PyTree arguments remain live and are not coerced
+into Taylor coordinates. Explicit/native derivative rules retain precedence,
+including through `Domain.Function`'s pointwise adapter.
+
+The constructions follow [STDE](https://arxiv.org/abs/2412.00088) and
+[STDE++, Sections 5–6](https://jmlr.org/papers/volume27/25-1474/25-1474.pdf).
+The bounded implementation does not claim polynomial-time preparation or a
+dimension-independent model evaluation cost. Source code is not vendored.
+See `examples/taylor_derivative_contractions.py` and the phase-separated
+`tools/differential_operator_benchmarks.py` campaign.
+The campaign clears executable caches between records and separates forward and
+reverse-gradient qualification. `--gradient-order-limit` bounds the executed
+scalar Jet order admitted for contraction-gradient compilation; refused records
+retain the order, limit, and reason instead of invented timings. A successful
+high-order forward result does not qualify that route's reverse-gradient cost.
+
 
 ## Grid sampling and axis-aware evaluation
 

@@ -106,12 +106,14 @@ are explicit and zero control weight does not require a control model or labels.
 pre-averaged stochastic operator estimate. This distinction is required for
 estimator-aware squaring:
 
-- `loss_mode="u_statistic"` estimates a squared mean from distinct probe pairs and
-  is unbiased, but an individual batch may be negative;
-- `loss_mode="independent_product"` multiplies two independently generated residual
-  ensembles;
-- `loss_mode="plug_in"` squares the sample mean and is nonnegative but biased upward
-  by estimator variance.
+- `loss_mode="u_statistic"` uses distinct **IID** realization pairs and may be
+  negative. An explicitly exact mean is folded into its deterministic square;
+  finite-population dependent rows cannot enter the ordinary U-statistic.
+- `loss_mode="independent_product"` multiplies two independently owned,
+  known-unbiased group means. Groups may have different realization counts,
+  including singleton groups. Both factors remain differentiable.
+- `loss_mode="plug_in"` squares the sample mean. It admits unknown designs, but
+  does not establish unbiasedness or a sampling-error certificate.
 
 Signed unbiased terms are incompatible with `keep_best=True`: a more negative
 sampled value is not a better nonnegative mathematical loss. `FunctionalSolver`
@@ -119,6 +121,25 @@ rejects that combination. Train with `keep_best=False`, use fixed probes or an
 independent deterministic realization for selection, and inspect
 `RandomizedResidualDiagnostics` rather than treating the training scalar as a
 certificate of PDE error.
+
+`RealizationSamplingDesign` is a declared statistical contract, not inferred from
+`dependence_ids` or merely distinct keys. Caller-created raw samples default to
+`unknown`; native producers declare their actual law. Residual adapters preserve
+finite-population correction. Exact singleton means have zero sampling error;
+unknown/nonexact singleton uncertainty is unavailable and remains NaN with
+`uncertainty_available=False`. Unavailable uncertainty does not turn an otherwise
+finite plug-in/product objective into a numerical failure.
+
+The aggregated residual standard error describes residual-mean uncertainty,
+not a confidence interval for the squared objective. Without-replacement groups
+may use independent-product, but distinct coordinates within one group do not
+establish independence. Reused random group keys are refused unless exactness
+makes sampling covariance absent.
+
+::: phydrax.terms.RandomizedResidualSamples
+
+::: phydrax.terms.RealizationSamplingDesign
+
 
 ::: phydrax.terms.RandomizedResidualTerm
 
@@ -138,6 +159,13 @@ materializes independent integration realizations and applies the same
 U-statistic, independent-product, or explicit plug-in policy after integration.
 This avoids silently adding parameter-dependent estimator variance to a squared
 moment objective.
+
+Unbiased moment modes additionally require an unbiased integration law.
+Same-sample fitted control variates, self-normalized importance/density
+estimators, deterministic unscrambled QMC, adaptive MLMC allocation, and
+unresolved limit truncation are not promoted to IID unbiased replicate means.
+Fixed controls or a genuinely independent IID calibration pilot can preserve
+that contract. Explicit plug-in remains available with unknown uncertainty.
 
 Both randomized term families accept `IntegrationPrecisionPolicy`. Realization
 values are widened before event and ensemble reductions; U-statistic signs are

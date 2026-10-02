@@ -5,19 +5,17 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal, TypeAlias
+from typing import assert_never
 
 import jax.numpy as jnp
 from jax import Array
 
+from .._randomized_residual_modes import (
+    RandomizedResidualLossMode,
+    RealizationSamplingDesign,
+)
 from ..integration import IntegrationPrecisionPolicy
-
-
-RandomizedQuadraticMode: TypeAlias = Literal[
-    "u_statistic",
-    "independent_product",
-    "plug_in",
-]
+from ..typing import parse
 
 
 def event_inner(
@@ -72,16 +70,23 @@ def cross_inner(
 def randomized_squared_mean(
     left: Array,
     event_shape: tuple[int, ...],
-    mode: RandomizedQuadraticMode,
+    mode: RandomizedResidualLossMode,
     /,
     *,
     right: Array | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
+    sampling_design: RealizationSamplingDesign = "unknown",
+    right_sampling_design: RealizationSamplingDesign = "unknown",
 ) -> Array:
-    """Estimate the squared norm of a mean from independent realizations."""
+    """Estimate a squared mean only under the declared admissible sampling law."""
     precision_ = IntegrationPrecisionPolicy() if precision is None else precision
     if not isinstance(precision_, IntegrationPrecisionPolicy):
         raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
+    mode = parse(mode, RandomizedResidualLossMode, "mode")
+    sampling_design = parse(sampling_design, RealizationSamplingDesign, "sampling_design")
+    right_sampling_design = parse(
+        right_sampling_design, RealizationSamplingDesign, "right_sampling_design"
+    )
     left = precision_.accumulation(left)
     if left.ndim < 1 + len(event_shape):
         raise ValueError(
@@ -90,31 +95,48 @@ def randomized_squared_mean(
     if event_shape and left.shape[-len(event_shape) :] != event_shape:
         raise ValueError("left trailing dimensions do not match event_shape.")
     count = left.shape[0]
-    if count < 2:
-        raise ValueError("At least two realizations are required.")
-    if mode == "plug_in":
-        return precision_.decision(
-            event_inner(
-                jnp.mean(left, axis=0),
-                event_shape,
-                precision=precision_,
+    if count < 1:
+        raise ValueError("At least one realization is required.")
+    match mode:
+        case "plug_in":
+            return precision_.decision(
+                event_inner(jnp.mean(left, axis=0), event_shape, precision=precision_)
             )
-        )
-    if mode == "independent_product":
-        if right is None:
-            raise RuntimeError("Independent-product realizations are unavailable.")
-        if right.shape != left.shape:
-            raise ValueError("Independent realization groups must have equal shapes.")
-        return precision_.decision(
-            cross_inner(
-                jnp.mean(left, axis=0),
-                jnp.mean(precision_.accumulation(right), axis=0),
-                event_shape,
-                precision=precision_,
+        case "independent_product":
+            if right is None:
+                raise RuntimeError("Independent-product realizations are unavailable.")
+            if right.ndim != left.ndim or right.shape[1:] != left.shape[1:]:
+                raise ValueError("Independent groups must share sample and event shapes.")
+            if right.shape[0] < 1:
+                raise ValueError("At least one realization is required in each group.")
+            if sampling_design == "unknown" or right_sampling_design == "unknown":
+                raise ValueError(
+                    "independent_product requires known-unbiased realization groups; "
+                    "declare their sampling_design or use plug_in."
+                )
+            return precision_.decision(
+                cross_inner(
+                    jnp.mean(left, axis=0),
+                    jnp.mean(precision_.accumulation(right), axis=0),
+                    event_shape,
+                    precision=precision_,
+                )
             )
-        )
-    if mode != "u_statistic":
-        raise ValueError(f"Unknown randomized quadratic mode {mode!r}.")
+        case "u_statistic":
+            if sampling_design == "exact":
+                return precision_.decision(
+                    event_inner(jnp.mean(left, axis=0), event_shape, precision=precision_)
+                )
+            if sampling_design != "iid":
+                raise ValueError(
+                    "u_statistic requires iid realizations, not finite_population or "
+                    "unknown samples; use independent_product with two independently "
+                    "keyed known-unbiased groups, or plug_in."
+                )
+            if count < 2:
+                raise ValueError("u_statistic requires at least two iid realizations.")
+        case _:
+            assert_never(mode)
     summed = jnp.sum(left, axis=0)
     total_cross = event_inner(
         summed,
@@ -128,7 +150,6 @@ def randomized_squared_mean(
 
 
 __all__ = [
-    "RandomizedQuadraticMode",
     "cross_inner",
     "event_inner",
     "randomized_squared_mean",

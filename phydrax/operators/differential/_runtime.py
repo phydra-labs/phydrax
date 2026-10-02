@@ -7,37 +7,43 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from ._requests import DerivativeExecutionPlan, DerivativeStep
 
 
 _DERIVATIVE_RUNTIME_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "_DERIVATIVE_RUNTIME_CONTEXT", default=None
 )
 
-_DERIVATIVE_EXECUTION_CONTEXT: ContextVar[Mapping[tuple[int, str], str] | None] = (
-    ContextVar("_DERIVATIVE_EXECUTION_CONTEXT", default=None)
-)
+_DERIVATIVE_EXECUTION_CONTEXT: ContextVar[
+    Mapping[tuple[int, tuple[DerivativeStep, ...]], DerivativeExecutionPlan] | None
+] = ContextVar("_DERIVATIVE_EXECUTION_CONTEXT", default=None)
 
 
 @contextmanager
 def derivative_execution_context(
-    strategies: Mapping[tuple[int, str], str],
+    plans: Mapping[tuple[int, tuple[DerivativeStep, ...]], DerivativeExecutionPlan],
     /,
 ) -> Iterator[None]:
-    """Bind traced derivative strategies while constructing one residual graph."""
-    token = _DERIVATIVE_EXECUTION_CONTEXT.set(dict(strategies))
+    """Bind ordered source-path plans while constructing one residual graph."""
+    token = _DERIVATIVE_EXECUTION_CONTEXT.set(dict(plans))
     try:
         yield
     finally:
         _DERIVATIVE_EXECUTION_CONTEXT.reset(token)
 
 
-def get_derivative_execution_strategy(function: Any, variable: str, /) -> str | None:
-    """Return the traced strategy for one source callable and variable."""
-    strategies = _DERIVATIVE_EXECUTION_CONTEXT.get()
-    if strategies is None:
+def get_derivative_execution_plan(
+    function: Any, steps: tuple[DerivativeStep, ...], /
+) -> DerivativeExecutionPlan | None:
+    """Return the execution plan for one source callable and complete path."""
+    plans = _DERIVATIVE_EXECUTION_CONTEXT.get()
+    if plans is None:
         return None
-    return strategies.get((id(function), str(variable)))
+    return plans.get((id(function), steps))
 
 
 @contextmanager

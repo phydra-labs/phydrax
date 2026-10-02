@@ -215,6 +215,36 @@ coordinate/covariant distinction and array-callable kernels.
 
 ::: phydrax.operators.estimate_kolmogorov_generator
 
+### Prepared Taylor contractions
+
+The plan/evaluate API executes selected exact contractions through certified
+normalized polynomial curves. Requests preserve explicit direction identity,
+result rows preserve caller order, and plan IDs include output layout, execution
+policy, resources, and regularity. The current callable and numerical leaves
+remain dynamic. Preparation and numerical execution are separate; integer
+partition or signed-binomial certificates are retained on `plan.recipes`.
+
+Resource limits and dtype-normal-range admission refuse unsupported requests.
+Compiler temporary memory and model scratch are separate from the declared
+logical-buffer limits. See the [differential guide](../../guides_differential.md)
+for normalization, conditional regularity, and numerical qualification limits.
+
+::: phydrax.operators.differential.TaylorContractionRequest
+
+::: phydrax.operators.differential.TaylorContractionResources
+
+::: phydrax.operators.differential.TaylorContractionPolicy
+
+::: phydrax.operators.differential.TaylorContractionPlan
+
+::: phydrax.operators.differential.TaylorContractionResult
+
+::: phydrax.operators.differential.plan_taylor_contractions
+
+::: phydrax.operators.differential.evaluate_taylor_contractions
+
+::: phydrax.operators.differential.DerivativeStep
+
 ### Raw probes and coordinate sampling
 
 The `estimate_*` functions above return a mean and Monte Carlo standard error.
@@ -239,6 +269,29 @@ importance sampling with replacement scales it by the inverse selection probabil
 Sampling without replacement applies the finite-population correction to the reported
 standard error. Selecting every coordinate without replacement is the exact sum and
 has zero sampling uncertainty.
+
+Raw realizations carry `sampling_design` (`iid`, `finite_population`, `exact`,
+or `unknown`) and optional `population_size`. IDs record provenance, not
+statistical independence. An exact singleton has zero standard error; a
+nonexact singleton or unknown design has unavailable error evidence, represented
+by `uncertainty_available=False` and NaN rather than a false zero.
+
+`dimension_sum_samples(..., evaluation="sequential")` uses scalar `lax.map`
+dispatch for heterogeneous term families; the default remains vectorized.
+`total_dimension` is the explicitly identified contribution population size,
+which need not equal physical coordinate dimension. Native `int32` population
+capacity is enforced before sampling. Proposal probabilities are fixed
+preparation data and cannot be differentiated. Without-replacement selection
+can require population-sized work even when only a small subset is requested.
+
+`stochastic_bilaplacian_samples` uses independently addressed normal probes and
+the Gaussian fourth-moment identity, dividing the fourth directional derivative
+by three. Rademacher probes are refused. Probe prefixes are stable when the
+requested count changes; bounded scalar execution avoids retaining an entire
+probe-by-coordinate matrix. It does not silently replace exact `bilaplacian`.
+
+::: phydrax.operators.stochastic_bilaplacian_samples
+
 
 `coordinate_second_derivative_samples` estimates a Laplacian from sampled diagonal
 Hessian entries. `coordinate_divergence_samples` estimates a divergence from sampled
@@ -277,18 +330,31 @@ importance probabilities when a few coordinates dominate.
 
 ### Randomized PDE IR compilation
 
-`RandomizedDifferentialPlan` lowers recognized scalar PDE-IR `laplacian` and
-`divergence` nodes to Hutchinson or coordinate-sampling realizations and returns a
-`RandomizedResidualTerm`. Static analysis runs first and reports the exact and
-randomized node paths. It rejects nested randomized derivatives, nonlinear
-transformations or products that would bias the estimator, randomized denominators,
-unsupported integrals, and non-scalar equations. There is no silent biased fallback.
-Deterministic coefficient-only contractions remain exact when `prefer_exact=True`.
-`RandomizedDifferentialMethod` selects `"hutchinson"` or `"dimension"`;
-`RandomizedNodeCoupling` selects independent or common random numbers across
-recognized IR nodes. `CompiledRandomizedPDETerm` packages the term, static
-report, and source equation. `compile_pde_randomized_term` is the canonical
-compiler entry point.
+`RandomizedDifferentialPlan` keeps estimator choice separate from execution:
+`backend="ad"` preserves existing defaults; `backend="jet"` selects certified
+whole-chain Taylor execution with an optional `taylor_policy`.
+`method="hutchinson"` handles second-order traces/divergence,
+`method="dimension"` samples explicit coordinate or operator-term populations,
+and `method="gaussian_bilaplacian"` selects the proved Gaussian fourth moment.
+`population="terms"` requires dimension sampling and permits heterogeneous
+signed finite differential sums; its policy size must equal the compact
+scientific term population.
+
+Maximal pure/mixed chains, gradient-of-Laplacian components, and nested
+Laplacians are extracted from existing PDE IR and differentiated at the original
+operand before randomization. Coefficients inside derivatives remain inside;
+outside coefficients retain their parameter gradients. No dense Cartesian term
+table is required. Static reports retain term identities, actual contraction
+plans/certificates, native contribution paths, sampling law, and execution route.
+
+Nonlinear transforms of sampled intermediates, products/dots of two randomized
+factors, randomized denominators, unsupported integrals, incompatible events,
+and unrepresentable ownership/resource cases refuse explicitly. Native complete
+operators can become exact singleton realizations. A native full-family sum is
+never redistributed into fabricated coordinate contributions: mixed sampling
+requires actual owned per-term contributions. `RandomizedNodeCoupling` controls
+independent or common node streams. `compile_pde_randomized_term` remains the
+single randomized compiler entry point.
 
 ::: phydrax.equations.RandomizedDifferentialPlan
 

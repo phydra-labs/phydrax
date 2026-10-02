@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from hashlib import sha256
 from math import prod
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,7 +18,15 @@ from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
+from ..._admissibility import refuse_derivative_dependencies
+from ..._randomized_residual_modes import RealizationSamplingDesign
+from ..._sampling._moments import (
+    realization_moments,
+    uncertainty_available,
+    validate_sampling_design,
+)
 from ..._strict import StrictModule
+from ..._validation import canonical_identifier, positive_integer
 from ...typing import checked, parse, PRNGKey
 from ._stochastic_estimators import (
     _directional_second_derivative,
@@ -27,6 +35,7 @@ from ._stochastic_estimators import (
 
 
 DimensionSamplingMode: TypeAlias = Literal["uniform", "importance"]
+DimensionContributionEvaluation: TypeAlias = Literal["vectorized", "sequential"]
 
 
 def _policy_id(parts: tuple[object, ...], /) -> str:
@@ -56,11 +65,15 @@ class DimensionSamplingPolicy(StrictModule):
         probabilities: ArrayLike | None = None,
         policy_id: str | None = None,
     ) -> None:
-        dimension = int(total_dimension)
-        count = int(subset_size)
-        if dimension < 1 or count < 1:
-            raise ValueError("total_dimension and subset_size must be positive.")
-        replacement = bool(replace)
+        dimension = positive_integer(total_dimension, "total_dimension")
+        count = positive_integer(subset_size, "subset_size")
+        if dimension > jnp.iinfo(jnp.int32).max:
+            raise ValueError(
+                "total_dimension exceeds the native int32 population capacity."
+            )
+        if not isinstance(replace, bool):
+            raise TypeError("replace must be a bool.")
+        replacement = replace
         if not replacement and count > dimension:
             raise ValueError("subset_size cannot exceed dimension without replacement.")
         sampling = parse(sampling, DimensionSamplingMode, "sampling")
@@ -91,14 +104,17 @@ class DimensionSamplingPolicy(StrictModule):
             replacement,
             probability_identity,
         )
+        identifier = (
+            _policy_id(identity)
+            if policy_id is None
+            else canonical_identifier(policy_id, "policy_id")
+        )
         self.probabilities = probs
         self.total_dimension = dimension
         self.subset_size = count
         self.sampling = sampling
         self.replace = replacement
-        self.policy_id = _policy_id(identity) if policy_id is None else str(policy_id)
-        if not self.policy_id:
-            raise ValueError("policy_id must be non-empty.")
+        self.policy_id = identifier
 
 
 class DimensionOperatorEstimate(StrictModule):
@@ -123,6 +139,8 @@ class DimensionOperatorSamples(StrictModule):
     sampling: DimensionSamplingMode = eqx.field(static=True)
     replace: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
+    population_size: int | None = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -131,6 +149,9 @@ class DimensionOperatorSamples(StrictModule):
         values: ArrayLike,
         policy: DimensionSamplingPolicy,
         /,
+        *,
+        sampling_design: RealizationSamplingDesign = "unknown",
+        population_size: int | None = None,
     ) -> None:
         sampled_indices = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         samples = jnp.asarray(values)
@@ -138,23 +159,12 @@ class DimensionOperatorSamples(StrictModule):
             raise ValueError("indices must have shape (subset_size,).")
         if samples.shape[0] != policy.subset_size:
             raise ValueError("values must have subset_size as their first axis.")
-        mean = jnp.mean(samples, axis=0)
-        if policy.subset_size == 1:
-            sample_variance = jnp.full(mean.shape, jnp.nan, dtype=jnp.float64)
-            standard_error = jnp.full(mean.shape, jnp.nan, dtype=jnp.float64)
-        else:
-            centered = samples - mean
-            sample_variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(
-                policy.subset_size - 1
-            )
-            correction = (
-                1.0 - policy.subset_size / float(policy.total_dimension)
-                if policy.sampling == "uniform" and not policy.replace
-                else 1.0
-            )
-            standard_error = jnp.sqrt(
-                correction * sample_variance / float(policy.subset_size)
-            )
+        design = validate_sampling_design(
+            sampling_design, population_size, policy.subset_size
+        )
+        mean, sample_variance, standard_error = realization_moments(
+            samples, design, population_size
+        )
         self.indices = sampled_indices
         self.values = samples
         self.mean = mean
@@ -166,6 +176,12 @@ class DimensionOperatorSamples(StrictModule):
         self.sampling = policy.sampling
         self.replace = policy.replace
         self.policy_id = policy.policy_id
+        self.sampling_design = design
+        self.population_size = population_size
+
+    @property
+    def uncertainty_available(self) -> bool:
+        return uncertainty_available(self.sampling_design, self.subset_size)
 
     def estimate(self) -> DimensionOperatorEstimate:
         return DimensionOperatorEstimate(
@@ -180,9 +196,9 @@ class DimensionOperatorSamples(StrictModule):
 def _sample_indices(
     key: PRNGKey,
     policy: DimensionSamplingPolicy,
+    probabilities: Array | None,
     /,
 ) -> Array:
-    probabilities = None if policy.sampling == "uniform" else policy.probabilities
     return jr.choice(
         key,
         policy.total_dimension,
@@ -197,22 +213,53 @@ def dimension_sum_samples(
     key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
+    *,
+    evaluation: DimensionContributionEvaluation = "vectorized",
 ) -> DimensionOperatorSamples:
     """Sample coordinate contributions and return an unbiased sum estimator."""
     if not callable(contribution):
         raise TypeError("contribution must be callable.")
     if not isinstance(policy, DimensionSamplingPolicy):
         raise TypeError("policy must be a DimensionSamplingPolicy.")
-    indices = _sample_indices(key, policy)
-    values = jax.vmap(contribution)(indices)
+    evaluation = parse(evaluation, DimensionContributionEvaluation, "evaluation")
+    probabilities = refuse_derivative_dependencies(
+        policy.probabilities,
+        policy.probabilities,
+        message="Dimension sampling proposal probabilities are fixed; differentiate contributions instead.",
+    )
+    indices = _sample_indices(key, policy, probabilities)
+    match evaluation:
+        case "vectorized":
+            values = jax.vmap(contribution)(indices)
+        case "sequential":
+            values = jax.lax.map(contribution, indices)
+        case _:
+            assert_never(evaluation)
     if policy.sampling == "uniform":
         scaled = float(policy.total_dimension) * values
     else:
-        if policy.probabilities is None:
+        if probabilities is None:
             raise RuntimeError("Importance probabilities are unavailable.")
-        selected = policy.probabilities[indices]
+        selected = probabilities[indices]
         scaled = values / selected.reshape(selected.shape + (1,) * (values.ndim - 1))
-    return DimensionOperatorSamples(indices, scaled, policy)
+    design: RealizationSamplingDesign
+    population_size = None
+    if policy.sampling == "uniform" and not policy.replace:
+        population_size = policy.total_dimension
+        design = (
+            "exact"
+            if policy.subset_size == policy.total_dimension
+            else "finite_population"
+        )
+    else:
+        design = "iid"
+    return DimensionOperatorSamples(
+        indices,
+        scaled,
+        policy,
+        sampling_design=design,
+        population_size=population_size,
+    )
 
 
 def estimate_dimension_sum(
@@ -293,6 +340,7 @@ def coordinate_second_derivative_samples(
 __all__ = [
     "coordinate_divergence_samples",
     "coordinate_second_derivative_samples",
+    "DimensionContributionEvaluation",
     "DimensionOperatorEstimate",
     "DimensionOperatorSamples",
     "DimensionSamplingMode",

@@ -17,7 +17,15 @@ from jax.typing import ArrayLike
 from phydrax.domain import DomainFunction
 
 from .._precision import PrecisionEvidenceEnvelope
-from .._randomized_residual_modes import RandomizedResidualLossMode
+from .._randomized_residual_modes import (
+    RandomizedResidualLossMode,
+    RealizationSamplingDesign,
+)
+from .._sampling._moments import (
+    realization_moments,
+    uncertainty_available,
+    validate_sampling_design,
+)
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..integration import IntegrationPrecisionPolicy
@@ -53,6 +61,8 @@ class RandomizedResidualSamples(StrictModule):
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     event_shape: tuple[int, ...] = eqx.field(static=True)
     estimator_id: str = eqx.field(static=True)
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
+    population_size: int | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -65,6 +75,8 @@ class RandomizedResidualSamples(StrictModule):
         weights: ArrayLike | None = None,
         dependence_ids: ArrayLike | None = None,
         estimator_id: str = "randomized-residual",
+        sampling_design: RealizationSamplingDesign = "unknown",
+        population_size: int | None = None,
     ) -> None:
         samples = jnp.asarray(values)
         sample_axes = _shape(sample_shape, owner="sample_shape")
@@ -77,8 +89,7 @@ class RandomizedResidualSamples(StrictModule):
         if samples.shape[1:] != sample_axes + event_axes:
             raise ValueError("values trailing dimensions do not match declared shapes.")
         count = samples.shape[0]
-        if count < 2:
-            raise ValueError("At least two residual realizations are required.")
+        design = validate_sampling_design(sampling_design, population_size, count)
         if mask is None:
             valid = jnp.ones(sample_axes, dtype=jnp.bool_)
         else:
@@ -112,6 +123,8 @@ class RandomizedResidualSamples(StrictModule):
         self.sample_shape = sample_axes
         self.event_shape = event_axes
         self.estimator_id = estimator_id
+        self.sampling_design = design
+        self.population_size = population_size
 
     @property
     def num_realizations(self) -> int:
@@ -123,11 +136,13 @@ class RandomizedResidualSamples(StrictModule):
 
     @property
     def standard_error(self) -> Array:
-        centered = self.values - self.mean
-        variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(
-            self.num_realizations - 1
-        )
-        return jnp.sqrt(variance / float(self.num_realizations))
+        return realization_moments(
+            self.values, self.sampling_design, self.population_size
+        )[2]
+
+    @property
+    def uncertainty_available(self) -> bool:
+        return uncertainty_available(self.sampling_design, self.num_realizations)
 
 
 class RandomizedResidualBatch(StrictModule):
@@ -148,8 +163,8 @@ class RandomizedResidualBatch(StrictModule):
         batch_id: str = "randomized-residual",
     ) -> None:
         self.collocation = collocation
-        self.left_key = left_key
-        self.right_key = right_key
+        self.left_key = parse(left_key, PRNGKey, "left_key")
+        self.right_key = parse(right_key, PRNGKey, "right_key")
         self.batch_id = _batch_id(batch_id)
 
 
@@ -163,6 +178,9 @@ class RandomizedResidualDiagnostics(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
     num_realizations: int = eqx.field(static=True)
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
+    uncertainty_available: bool = eqx.field(static=True)
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
+    population_size: int | None = eqx.field(static=True)
 
     @property
     def passed(self) -> bool:
@@ -190,6 +208,8 @@ def _operator_samples(
             event_shape=value.mean.shape,
             dependence_ids=value.dependence_ids,
             estimator_id=f"stochastic-{value.distribution}",
+            sampling_design=value.sampling_design,
+            population_size=value.population_size,
         )
     if isinstance(value, DimensionOperatorSamples):
         return RandomizedResidualSamples(
@@ -197,6 +217,8 @@ def _operator_samples(
             event_shape=value.mean.shape,
             dependence_ids=value.dependence_ids,
             estimator_id=f"dimension-{value.policy_id}",
+            sampling_design=value.sampling_design,
+            population_size=value.population_size,
         )
     raise TypeError("residual_evaluator returned an unsupported sample object.")
 
@@ -216,7 +238,6 @@ def _per_sample_loss(
         if (
             right.sample_shape != left.sample_shape
             or right.event_shape != left.event_shape
-            or right.values.shape != left.values.shape
         ):
             raise ValueError("Left and right residual sample shapes must match.")
         right_values = right.values
@@ -225,6 +246,8 @@ def _per_sample_loss(
         left.event_shape,
         mode,
         right=right_values,
+        sampling_design=left.sampling_design,
+        right_sampling_design="unknown" if right is None else right.sampling_design,
         precision=precision,
     )
 
@@ -346,7 +369,6 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
             if (
                 right.sample_shape != left.sample_shape
                 or right.event_shape != left.event_shape
-                or right.values.shape != left.values.shape
             ):
                 raise ValueError("Left and right residual sample shapes must match.")
             checked_values = eqx.error_if(
@@ -357,6 +379,14 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
                 ),
                 "Independent residual ensembles must share masks and weights.",
             )
+            if left.sampling_design != "exact" and right.sampling_design != "exact":
+                checked_values = eqx.error_if(
+                    checked_values,
+                    jnp.array_equal(
+                        jr.key_data(batch.left_key), jr.key_data(batch.right_key)
+                    ),
+                    "independent_product requires distinct owner-generated probe keys.",
+                )
             right = eqx.tree_at(
                 lambda samples: samples.values,
                 right,
@@ -436,6 +466,8 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
             self.precision,
         )
         finite = jnp.isfinite(objective) & jnp.isfinite(plug_in)
+        if left.uncertainty_available:
+            finite = finite & jnp.isfinite(standard_error)
         return RandomizedResidualDiagnostics(
             objective=objective,
             plug_in_residual_norm=plug_in,
@@ -446,6 +478,9 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
             num_realizations=left.num_realizations,
             loss_mode=self.loss_mode,
             precision_evidence=self.precision.evidence_for(left.values),
+            uncertainty_available=left.uncertainty_available,
+            sampling_design=left.sampling_design,
+            population_size=left.population_size,
         )
 
 

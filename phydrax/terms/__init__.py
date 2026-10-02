@@ -8,7 +8,10 @@ Conditions state scientific requirements. Terms define how those requirements, d
 or signed functionals contribute a real scalar to optimization or evaluation.
 """
 
-from .._randomized_residual_modes import RandomizedResidualLossMode
+from .._randomized_residual_modes import (
+    RandomizedResidualLossMode,
+    RealizationSamplingDesign,
+)
 from .._term import (
     AbstractEvaluatedScalarTerm,
     AbstractSamplingTerm,
@@ -227,6 +230,7 @@ from ._variational_functional import bind_functional
 
 __all__ = [
     "bind_functional",
+    "RealizationSamplingDesign",
     "AbstractEvaluatedScalarTerm",
     "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",

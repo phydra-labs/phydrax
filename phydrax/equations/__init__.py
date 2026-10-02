@@ -748,7 +748,9 @@ from ._randomized_compile import (
     RandomizedCompilationReport,
     RandomizedDifferentialMethod,
     RandomizedDifferentialPlan,
+    RandomizedExecutionBackend,
     RandomizedNodeCoupling,
+    RandomizedPopulation,
 )
 from ._reactive_cfd_dem import (
     ParticleContinuumExchangeEvaluation,
@@ -1580,6 +1582,8 @@ __all__ = [
     "RandomizedCompilationReport",
     "RandomizedDifferentialMethod",
     "RandomizedDifferentialPlan",
+    "RandomizedExecutionBackend",
+    "RandomizedPopulation",
     "RandomizedNodeCoupling",
     "trefftz",
     "TrefftzResourceBudget",
