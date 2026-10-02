@@ -77,6 +77,8 @@ class HyperRectangle(AbstractGeometry):
             )
         if lower_arr.shape[0] <= 0:
             raise ValueError("HyperRectangle dimension must be positive.")
+        if bool(jnp.any(~jnp.isfinite(lower_arr) | ~jnp.isfinite(upper_arr))):
+            raise ValueError("HyperRectangle bounds must be finite.")
         if bool(jnp.any(upper_arr <= lower_arr)):
             raise ValueError("HyperRectangle requires upper > lower in every dimension.")
 
@@ -129,6 +131,9 @@ class HyperRectangle(AbstractGeometry):
     @property
     def bounds(self) -> Float[Literal[2], _SpatialDim]:
         return jnp.stack((self.lower, self.upper), axis=0)
+
+    def coordinate_face_bounds(self) -> tuple[Array, Array]:
+        return self.lower, self.upper
 
     @property
     def volume(self) -> Array:

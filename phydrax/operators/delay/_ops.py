@@ -11,6 +11,7 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction, FunctionBinding, PointwiseEvaluator
 
+from ...domain._function import _drop_model_construction_certificates
 from ...typing import PRNGKey
 
 
@@ -92,7 +93,7 @@ def delay(
             _op,
             binding=FunctionBinding(pass_key=True, pass_iter=True),
         ),
-        metadata=u.metadata,
+        metadata=_drop_model_construction_certificates(u.metadata),
     )
 
 

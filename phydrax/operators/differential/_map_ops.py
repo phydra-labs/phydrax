@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from phydrax.domain import AbstractGeometry, DomainFunction
+from phydrax.domain._function import _drop_model_construction_certificates
 
 from ..._strict import StrictModule
 from ...metrix import DifferentiableMap, RiemannianMapGeometry, RiemannianMetric
@@ -132,7 +133,7 @@ def _map_operator(
             function_coordinate_position,
             operation,
         ),
-        metadata=function.metadata,
+        metadata=_drop_model_construction_certificates(function.metadata),
     )
 
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,6 +14,10 @@ from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import parse
+
+
+CoordinateFaceSide: TypeAlias = Literal["lower", "upper"]
 
 
 class Selection(StrictModule):
@@ -48,6 +53,32 @@ class Boundary(Selection):
             raise ValueError("Boundary.entity_ids must be non-empty.")
         self.tags = tags_
         self.entity_ids = entity_ids_
+
+
+class CoordinateFace(Selection):
+    """Select one Cartesian coordinate face ``x[axis] = lower`` or ``x[axis] = upper``.
+
+    The face is identified by the selected label's coordinate component ``axis``
+    (the component of that label's `ValuePort`) and the endpoint ``side``. It is an
+    exact stratum of an axis-aligned interval or box: one-dimensional faces carry a
+    unit counting measure and higher-dimensional faces their exact transverse
+    Hausdorff measure. Scalar intervals select their endpoints with
+    `FixedStart()`/`FixedEnd()` instead.
+    """
+
+    axis: int = eqx.field(static=True)
+    side: CoordinateFaceSide = eqx.field(static=True)
+
+    def __init__(self, axis: int, side: CoordinateFaceSide, /) -> None:
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise TypeError(
+                "CoordinateFace.axis must be an integer coordinate component."
+            )
+        if axis < 0:
+            raise ValueError("CoordinateFace.axis must be nonnegative.")
+        side_ = parse(side, CoordinateFaceSide, "side")
+        self.axis = axis
+        self.side = side_
 
 
 class Fixed(Selection):
@@ -95,6 +126,8 @@ class SelectionSpec(StrictModule):
 
 __all__ = [
     "Boundary",
+    "CoordinateFace",
+    "CoordinateFaceSide",
     "Fixed",
     "FixedEnd",
     "FixedStart",

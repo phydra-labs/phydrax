@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
@@ -14,7 +14,14 @@ import jax.numpy as jnp
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
-from .._model import AxisModelEvaluator, ModelBinding
+from .._model import (
+    AxisModelEvaluator,
+    ModelBinding,
+    ModelEvaluator,
+    ModelMetadataProvider,
+    PERIODIC_INPUT_CERTIFICATE_KEY,
+    PeriodicInputCertificate,
+)
 from .._strict import StrictModule
 from ..logging import emit
 from ..typing import checked, PRNGKey
@@ -52,6 +59,40 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         self.domain_labels = tuple(domain_labels)
         self.deps = tuple(deps)
         self.binding = binding
+
+    def model_metadata(self) -> Mapping[str, Any]:
+        """Validate the current model's binding and return its current evidence.
+
+        This uses declared static contracts only, so refresh and staged
+        consumers can compare evidence without synchronizing numeric leaves.
+        """
+        if isinstance(self.raw_model, ModelEvaluator):
+            if self.raw_model.input_binding() != self.binding:
+                raise ValueError(
+                    "Current model binding differs from its captured domain binding."
+                )
+        if not isinstance(self.raw_model, ModelMetadataProvider):
+            return {}
+        metadata = self.raw_model.model_metadata()
+        if not isinstance(metadata, Mapping):
+            raise TypeError("Model metadata providers must return a mapping.")
+        if any(not isinstance(name, str) or not name for name in metadata):
+            raise ValueError("Model metadata keys must be nonempty strings.")
+        if PERIODIC_INPUT_CERTIFICATE_KEY in metadata:
+            certificate = metadata[PERIODIC_INPUT_CERTIFICATE_KEY]
+            if not isinstance(certificate, PeriodicInputCertificate):
+                raise TypeError(
+                    f"Model metadata key {PERIODIC_INPUT_CERTIFICATE_KEY!r} "
+                    "must hold a PeriodicInputCertificate."
+                )
+            if (
+                self.binding.input_mode != "flat"
+                or self.binding.batch_mode != "pointwise"
+            ):
+                raise ValueError(
+                    "PeriodicInputCertificate requires flat pointwise model binding."
+                )
+        return metadata
 
     def emit_auto_fallback_warning(self, message: str, /) -> None:
         if self.binding.warn_on_fallback:

@@ -8,17 +8,24 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax.conditions._ir import Condition
+from phydrax.conditions._functional import EventLinearMap
+from phydrax.conditions._ir import ArrayCodomain, Condition
+from phydrax.conditions._periodic import _field_value_issue, Periodic
+from phydrax.conditions.boundary import Absorbing, Dirichlet, Neumann, Robin
+from phydrax.conditions.initial import Initial
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
     Boundary,
+    CoordinateFace,
     Domain,
     DomainComponent,
     DomainFunction,
@@ -41,13 +48,27 @@ from .._interpolation import (
 from .._strict import StrictModule
 from ..domain._derivative import DerivativeRule, DerivativeRuleProvider
 from ..domain._function import differentiate_operands
+from ..domain.decomposition._periodic import _FaceProjection
+from ..operators._composition import pullback
+from ..operators.differential._domain_ops import dt_n
 from ..operators.differential._hooks import blend_with_gate
 from ..typing import PRNGKey
-from ._ansatz import _enforcement_weight, _enforcement_weight_fn, enforce_initial
+from ._ansatz import (
+    _CoordinateFaceGate,
+    _enforcement_weight,
+    _enforcement_weight_fn,
+    enforce_initial,
+)
 from ._lifecycle import (
     EnforcementState,
     PreparedEnforcementStep,
     RealizationLifecycleState,
+)
+from ._periodic import (
+    _certificate_issue,
+    _constant_action,
+    PeriodicPreservationRecord,
+    PreparedPeriodicProjection,
 )
 from ._realization import (
     ConditionEvaluationContext,
@@ -63,12 +84,55 @@ def _unwrap_factor(factor: object, /) -> object:
 def _geometry_boundary_labels(component: DomainComponent, /) -> tuple[str, ...]:
     out: list[str] = []
     for lbl in component.domain.labels:
-        if not isinstance(component.spec.selection_for(lbl), Boundary):
+        if not isinstance(component.spec.selection_for(lbl), (Boundary, CoordinateFace)):
             continue
         factor = _unwrap_factor(component.domain.factor(lbl))
         if isinstance(factor, AbstractGeometry):
             out.append(lbl)
     return tuple(out)
+
+
+def _boundary_faces(
+    specs: Sequence[EnforcementSpec], /
+) -> dict[str, tuple[CoordinateFace, ...]]:
+    """Coordinate-face selections of boundary specifications, per geometry label."""
+    faces: dict[str, list[CoordinateFace]] = {}
+    whole: set[str] = set()
+    for spec in specs:
+        if spec.stage != "boundary":
+            continue
+        for label in _geometry_boundary_labels(spec.component):
+            selection = spec.component.spec.selection_for(label)
+            if isinstance(selection, CoordinateFace):
+                faces.setdefault(label, []).append(selection)
+            else:
+                whole.add(label)
+    mixed = whole.intersection(faces)
+    if mixed:
+        raise ValueError(
+            f"Labels {sorted(mixed)!r} mix whole Boundary() and CoordinateFace(...) "
+            "hard constraints; select every enforced wall as a coordinate face."
+        )
+    return {label: tuple(values) for label, values in faces.items()}
+
+
+def _label_gate(
+    factor: AbstractGeometry,
+    faces: Sequence[CoordinateFace],
+    /,
+    *,
+    method: EnforcementGateMethod,
+    saturation_fraction: float,
+    linear_fraction: float,
+) -> Callable[[Array], Array]:
+    """Gate vanishing on the enforced boundary strata of one geometry label."""
+    if faces:
+        return _CoordinateFaceGate(factor, faces)
+    return factor.make_enforcement_gate(
+        method=method,
+        saturation_fraction=saturation_fraction,
+        linear_fraction=linear_fraction,
+    )
 
 
 def _unfiltered_component(component: DomainComponent, /) -> DomainComponent:
@@ -842,12 +906,45 @@ class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
         return differentiate_operands(num / den).derivative_rule
 
 
+class _NormalizedCoordinate(StrictModule):
+    """``(x[axis] - lower) / width`` of one geometry coordinate."""
+
+    axis: int = eqx.field(static=True)
+    lower: float = eqx.field(static=True)
+    width: float = eqx.field(static=True)
+
+    def __init__(self, axis: int, lower: float, width: float, /) -> None:
+        self.axis = axis
+        self.lower = lower
+        self.width = width
+
+    def __call__(
+        self, point: ArrayLike, /, *, key: PRNGKey | None = None, **kwargs: Any
+    ) -> Array:
+        del key, kwargs
+        return (jnp.asarray(point)[..., self.axis] - self.lower) / self.width
+
+
+def _onto_face(
+    function: DomainFunction, domain: Domain, var: str, axis: int, value: float, /
+) -> DomainFunction:
+    """Evaluate ``function`` at the projection of each point onto one coordinate face."""
+    if var not in function.deps:
+        return function
+    projection = DomainFunction(
+        domain=domain, deps=(var,), func=_FaceProjection(axis, value)
+    )
+    return pullback(function, {var: projection}, domain=domain)
+
+
 class _BoundaryBlendOverlay(StrictModule):
     var: str
     pieces: tuple[EnforcementSpec, ...]
     include_identity_remainder: bool
     weights: tuple[DomainFunction, ...]
     remainder_weight: DomainFunction | None
+    coordinate_faces: bool = eqx.field(static=True)
+    face_bounds: tuple[tuple[float, float], ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -890,10 +987,34 @@ class _BoundaryBlendOverlay(StrictModule):
                     "Boundary blend requires all pieces to share an equivalent geometry."
                 )
             comp = c.component.spec.selection_for(self.var)
-            if not isinstance(comp, Boundary):
+            if not isinstance(comp, (Boundary, CoordinateFace)):
                 raise ValueError(
-                    "Boundary blend pieces require component Boundary() for var."
+                    "Boundary blend pieces require component Boundary() or "
+                    "CoordinateFace(...) for var."
                 )
+
+        face_pieces = tuple(
+            isinstance(c.component.spec.selection_for(self.var), CoordinateFace)
+            for c in self.pieces
+        )
+        self.coordinate_faces = all(face_pieces)
+        if self.coordinate_faces:
+            self._validate_face_pieces()
+            # Face positions are host constants of the compiled geometry; the field
+            # domain seen at apply time may carry traced bounds inside compiled steps.
+            lower, upper = geom.coordinate_face_bounds()
+            self.face_bounds = tuple(
+                (float(low), float(high))
+                for low, high in zip(np.asarray(lower), np.asarray(upper), strict=True)
+            )
+            self.weights = ()
+            self.remainder_weight = None
+            return
+        self.face_bounds = ()
+        if any(face_pieces):
+            raise ValueError(
+                "Boundary blend cannot mix whole Boundary() and CoordinateFace(...) pieces."
+            )
 
         weights: list[DomainFunction] = []
         wheres: list[Callable | None] = []
@@ -940,9 +1061,71 @@ class _BoundaryBlendOverlay(StrictModule):
         self.weights = tuple(weights)
         self.remainder_weight = remainder_weight
 
+    def _validate_face_pieces(self) -> None:
+        seen: set[tuple[int, str]] = set()
+        for c in self.pieces:
+            face = c.component.spec.selection_for(self.var)
+            if not isinstance(face, CoordinateFace):
+                raise RuntimeError("A coordinate-face piece lost its face selection.")
+            if not isinstance(c.condition, Dirichlet) or c.dependencies:
+                raise ValueError(
+                    "Hard enforcement on CoordinateFace(...) supports Dirichlet values "
+                    "without field dependencies; split the box into Interval1d factors "
+                    "for derivative wall conditions."
+                )
+            if c.component.where or c.component.where_all is not None:
+                raise ValueError("CoordinateFace pieces cannot carry extra filters.")
+            key = (face.axis, face.side)
+            if key in seen:
+                raise ValueError(f"Coordinate face {key!r} is enforced twice.")
+            seen.add(key)
+
+    def _apply_faces(self, u: DomainFunction, /) -> DomainFunction:
+        """Exact transfinite interpolation of face values, one coordinate at a time."""
+        if not isinstance(_unwrap_factor(u.domain.factor(self.var)), AbstractGeometry):
+            raise TypeError("Coordinate-face pieces require a geometry label.")
+        by_axis: dict[int, list[tuple[CoordinateFace, Any]]] = {}
+        for c in self.pieces:
+            face = c.component.spec.selection_for(self.var)
+            if not isinstance(face, CoordinateFace) or not isinstance(
+                c.condition, Dirichlet
+            ):
+                raise RuntimeError("A validated coordinate-face piece changed type.")
+            by_axis.setdefault(face.axis, []).append((face, c.condition.target))
+        value = u
+        for axis in sorted(by_axis):
+            low, high = self.face_bounds[axis]
+            width = high - low
+            pair = len(by_axis[axis]) == 2
+            s = DomainFunction(
+                domain=u.domain,
+                deps=(self.var,),
+                func=_NormalizedCoordinate(axis, low, width),
+            )
+            correction: DomainFunction | None = None
+            for face, target in by_axis[axis]:
+                face_value = low if face.side == "lower" else high
+                target_fn = (
+                    target
+                    if isinstance(target, DomainFunction)
+                    else DomainFunction(domain=u.domain, deps=(), func=target)
+                )
+                gap = _onto_face(
+                    target_fn, u.domain, self.var, axis, face_value
+                ) - _onto_face(value, u.domain, self.var, axis, face_value)
+                if pair:
+                    gap = ((1.0 - s) if face.side == "lower" else s) * gap
+                correction = gap if correction is None else correction + gap
+            if correction is None:
+                raise RuntimeError("A coordinate-face axis lost its faces.")
+            value = value + correction
+        return value
+
     def apply(
         self, u: DomainFunction, /, *, get_field: Callable[[str], DomainFunction]
     ) -> DomainFunction:
+        if self.coordinate_faces:
+            return self._apply_faces(u)
         num = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata=u.metadata)
         den = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata={})
         piece_functions: list[DomainFunction] = []
@@ -1801,13 +1984,16 @@ class _FieldEnforcementPipeline(StrictModule):
                 gate_factors_list.append(factor)
             gate_factors = tuple(gate_factors_list)
             gate_powers = tuple(int(boundary_exps[lbl]) for lbl in gate_labels)
+            faces = _boundary_faces(specs)
             gate_functions = tuple(
-                factor.make_enforcement_gate(
+                _label_gate(
+                    factor,
+                    faces.get(label, ()),
                     method=gate_method,
                     saturation_fraction=gate_saturation_fraction,
                     linear_fraction=gate_linear_fraction,
                 )
-                for factor in gate_factors
+                for label, factor in zip(gate_labels, gate_factors, strict=True)
             )
 
             def _gate(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
@@ -1889,6 +2075,405 @@ class _FieldEnforcementPipeline(StrictModule):
         return u
 
 
+_PERIODIC_PROBES = 64
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalPeriodicContract:
+    identity: str
+    component: DomainComponent
+    data: Any
+    coefficients: tuple[Any, ...]
+    condition: Dirichlet | Neumann | Robin | Absorbing | Initial | None
+    initial_order: int = 0
+
+
+def _local_contracts(
+    pipe: _FieldEnforcementPipeline, /
+) -> tuple[_LocalPeriodicContract, ...]:
+    """Earlier local equations, including their complete boundary operators."""
+    contracts: list[_LocalPeriodicContract] = []
+    specs = [piece for overlay in pipe.boundary for piece in overlay.pieces]
+    specs.extend(pipe.initial)
+    for index, spec in enumerate(specs):
+        condition = spec.condition
+        if not isinstance(condition, (Dirichlet, Neumann, Robin, Absorbing, Initial)):
+            raise ValueError(
+                f"Local contract {type(condition).__name__} on periodic field "
+                f"{spec.field!r} has no certified seam-compatibility data; enforce it "
+                "jointly or softly."
+            )
+        identity = condition.label or f"{type(condition).__name__}:{spec.field}:{index}"
+        coefficients: tuple[Any, ...] = ()
+        if isinstance(condition, Robin):
+            coefficients = (
+                condition.dirichlet_coefficient,
+                condition.neumann_coefficient,
+                condition.normal,
+            )
+        elif isinstance(condition, Absorbing):
+            coefficients = (condition.wavespeed, condition.normal)
+        elif isinstance(condition, Neumann):
+            coefficients = (condition.normal,)
+        contracts.append(
+            _LocalPeriodicContract(
+                identity, spec.component, condition.target, coefficients, condition
+            )
+        )
+    if pipe.initial_overlay is not None:
+        for order, target in pipe.initial_overlay.targets.items():
+            contracts.append(
+                _LocalPeriodicContract(
+                    f"Initial:{pipe.field}:order-{order}",
+                    pipe.initial_overlay.component,
+                    target,
+                    (),
+                    None,
+                    initial_order=order,
+                )
+            )
+    identities = tuple(contract.identity for contract in contracts)
+    if len(set(identities)) != len(identities):
+        raise ValueError(
+            f"Local contracts of periodic field {pipe.field!r} need unique labels to "
+            f"be recorded as preserved; got {identities!r}."
+        )
+    return tuple(contracts)
+
+
+def _seam_conflict(component: DomainComponent, declaration: Any, /) -> bool:
+    """Whether a local support contains part of an identified seam."""
+    identification = declaration.identification
+    selection = component.spec.selection_for(identification.label)
+    if isinstance(selection, (Boundary, FixedStart, FixedEnd, Fixed)):
+        return True
+    return isinstance(selection, CoordinateFace) and (
+        selection.axis == identification.component
+    )
+
+
+def _local_seam_relation(
+    contract: _LocalPeriodicContract, declaration: Periodic, evolution_var: str, /
+) -> Periodic:
+    """Compatibility is J(Bu) = B(h), not J(Bu) = h, for the seam target h."""
+    condition = contract.condition
+    if (
+        isinstance(condition, Dirichlet)
+        or (condition is None and contract.initial_order == 0)
+        or (isinstance(condition, Initial) and condition.order == 0)
+    ):
+        return declaration
+    constant = declaration.target_constant
+    if constant is not None:
+        if isinstance(condition, Robin):
+            target = condition.dirichlet_coefficient * constant
+        else:
+            # All normal and time derivatives annihilate a constant seam target.
+            target = jnp.zeros_like(constant)
+    elif condition is None:
+        target = dt_n(declaration.target, var=evolution_var, order=contract.initial_order)
+    else:
+        # The native residual subtracts its own target; restore it to apply only B.
+        target = (
+            condition.residual({declaration.source_field: declaration.target})
+            + contract.data
+        )
+    return Periodic(
+        declaration.source_field,
+        declaration.pairing,
+        transport=declaration.transport,
+        target=target,
+        value=declaration.value,
+        trace_actions=(declaration.source_action, declaration.target_action),
+        label=declaration.label,
+    )
+
+
+def _depends_on_identified(data: Any, declarations: tuple[Any, ...], /) -> bool:
+    return isinstance(data, DomainFunction) and any(
+        declaration.identification.label in data.deps for declaration in declarations
+    )
+
+
+def _transverse_seam_factor(declaration: Any, /) -> np.ndarray:
+    """Seam action on data independent of the identified coordinate.
+
+    Every positive-order jet of such data vanishes, so ``J g = (t_0 I - s_0 Gamma) g``
+    with the order-zero target and source coefficients ``t_0`` and ``s_0``.
+    """
+    size = int(np.prod(declaration.value.shape)) if declaration.value.shape else 1
+
+    def order_zero(action: Any, /) -> complex:
+        return sum(
+            (
+                complex(coefficient)
+                for order, coefficient in zip(
+                    action.orders, np.asarray(action.coefficients), strict=True
+                )
+                if order == 0
+            ),
+            0.0,
+        )
+
+    transport = (
+        np.asarray(declaration.transport.matrix)
+        if isinstance(declaration.transport, EventLinearMap)
+        else np.asarray(declaration.transport) * np.eye(size)
+    )
+    return (
+        order_zero(declaration.target_action) * np.eye(size)
+        - order_zero(declaration.source_action) * transport
+    )
+
+
+def _require_local_event_commutation(
+    contract: _LocalPeriodicContract, declarations: tuple[Periodic, ...], /
+) -> None:
+    """Elementwise wall coefficients must commute with event transport and its lift."""
+    condition = contract.condition
+    if isinstance(condition, Robin):
+        coefficients = (
+            condition.dirichlet_coefficient,
+            condition.neumann_coefficient,
+        )
+    elif isinstance(condition, Absorbing):
+        coefficients = (condition.wavespeed,)
+    else:
+        return
+    for declaration in declarations:
+        transport = declaration.transport
+        if not isinstance(transport, EventLinearMap):
+            continue
+        matrix = np.asarray(transport.matrix)
+        diagonal_transport = np.array_equal(matrix, np.diag(np.diag(matrix)))
+        for coefficient in coefficients:
+            if isinstance(coefficient, DomainFunction):
+                if _field_value_issue(coefficient, ArrayCodomain()) is None:
+                    continue
+                if (
+                    diagonal_transport
+                    and _field_value_issue(
+                        coefficient, ArrayCodomain(declaration.value.axes)
+                    )
+                    is None
+                ):
+                    continue
+                raise ValueError(
+                    f"Local contract {contract.identity!r} has an eventwise coefficient "
+                    "without a proof of commutation with the periodic transport."
+                )
+            values = np.broadcast_to(np.asarray(coefficient), declaration.value.shape)
+            operator = np.diag(values.reshape((-1,)))
+            if not (
+                np.array_equal(operator @ matrix, matrix @ operator)
+                and np.array_equal(operator @ matrix.conj().T, matrix.conj().T @ operator)
+            ):
+                raise ValueError(
+                    f"Local contract {contract.identity!r} has eventwise coefficients "
+                    "that do not commute with the periodic transport."
+                )
+
+
+def _contract_status(
+    identity: str,
+    field: str,
+    data: Any,
+    declarations: tuple[Any, ...],
+    /,
+) -> Literal["certified", "unknown"]:
+    """Exact seam compatibility of local data, or ``"unknown"``.
+
+    Constant data is checked exactly. Data independent of every identified
+    coordinate is certified when the seam action annihilates it and the seam is
+    homogeneous, and data carrying a matching `PeriodicInputCertificate` is
+    certified by construction. Incompatibility proven by a check raises.
+    """
+    if not isinstance(data, DomainFunction):
+        value = jnp.asarray(data)
+        for declaration in declarations:
+            expected = (
+                jnp.zeros_like(value)
+                if declaration.target_constant is None
+                else declaration.target_constant
+            )
+            if declaration.target_constant is None or not bool(
+                np.array_equal(
+                    _constant_action(declaration, value),
+                    np.broadcast_to(np.asarray(expected), declaration.value.shape),
+                )
+            ):
+                raise ValueError(
+                    f"Local contract {identity!r} of field {field!r} has constant data "
+                    f"{value} incompatible with periodic declaration "
+                    f"{declaration.label or declaration.condition_id!r}."
+                )
+        return "certified"
+    if _depends_on_identified(data, declarations):
+        certified = all(
+            _certificate_issue(data, declaration, identity) is None
+            for declaration in declarations
+        )
+        return "certified" if certified else "unknown"
+    for declaration in declarations:
+        annihilated = bool(np.all(_transverse_seam_factor(declaration) == 0))
+        if not annihilated or not declaration.homogeneous:
+            return "unknown"
+    return "certified"
+
+
+def _periodic_preservation(
+    pipe: _FieldEnforcementPipeline,
+    prepared: PreparedPeriodicProjection,
+    field: str,
+    /,
+) -> tuple[PeriodicPreservationRecord, ...]:
+    """Certify, or only probe, that the later seam lift keeps local contracts.
+
+    The analytic seam lift corrects ``u`` by functions of the identified
+    coordinate times seam residuals of ``u``. On a support transverse to every
+    seam, with a boundary operator independent of the identified coordinate, the
+    local data ``g`` survives exactly when it satisfies the seam relations
+    ``J g = target``. Constant and transverse-only data are certified exactly;
+    other data is probed, which can refute but never prove compatibility, so a
+    probed contract is reported but never claimed as preserved.
+    """
+    if pipe.interior is not None:
+        raise ValueError(
+            f"InteriorAnchors on periodic field {field!r} are not preserved by the seam "
+            "lift; enforce the observations softly or with a joint typed realization "
+            "that preserves the periodic declarations."
+        )
+    contracts = _local_contracts(pipe)
+    if contracts and prepared.route != "analytic":
+        raise ValueError(
+            f"The {prepared.route!r} periodic route of field {field!r} does not preserve "
+            f"local hard contracts {tuple(c.identity for c in contracts)!r}: a coefficient "
+            "elimination is a representation-dependent correction and a construction "
+            "certificate does not survive local overlays. Assemble every constraint in "
+            "the representation, or use the analytic route."
+        )
+    declarations = tuple(
+        value for value in prepared.declarations if value.source_field == field
+    )
+    records = []
+    for contract in contracts:
+        identity, component, data = contract.identity, contract.component, contract.data
+        for declaration in declarations:
+            if _seam_conflict(component, declaration):
+                raise ValueError(
+                    f"Local contract {identity!r} of field {field!r} selects faces of the "
+                    f"identified coordinate {declaration.identification.label!r}; a seam "
+                    "is not a wall. Select the unidentified faces with "
+                    "phydrax.domain.physical_boundary(...)."
+                )
+        if any(
+            _depends_on_identified(value, declarations) for value in contract.coefficients
+        ):
+            raise ValueError(
+                f"Local contract {identity!r} of field {field!r} has boundary-operator "
+                "coefficients or normals that depend on an identified coordinate; the "
+                "seam lift does not commute with that operator. Enforce it softly or "
+                "with constant coefficients."
+            )
+        _require_local_event_commutation(contract, declarations)
+        local_relations = tuple(
+            _local_seam_relation(contract, declaration, pipe.evolution_var)
+            for declaration in declarations
+        )
+        status = _contract_status(identity, field, data, local_relations)
+        if status == "certified":
+            records.append(
+                PeriodicPreservationRecord(
+                    field=field,
+                    contract_id=identity,
+                    status="certified",
+                    probes=0,
+                    maximum_defect=0.0,
+                )
+            )
+            continue
+        if prepared.data_compatibility == "certified":
+            raise ValueError(
+                f"Local contract {identity!r} of field {field!r} has function data whose "
+                "seam compatibility cannot be proven, so composing it with the exact "
+                "seam lift could break it. Supply constant data, data independent of "
+                "the identified coordinate, or data carrying a PeriodicInputCertificate; "
+                "or prepare the projection with data_compatibility='probed' to accept "
+                "sampled compatibility evidence."
+            )
+        batch = component.sample(PointSampling(_PERIODIC_PROBES), key=jr.key(0))
+        defect = 0.0
+        for declaration in local_relations:
+            residual = declaration.action(data, data) - declaration.target
+            values = jnp.asarray(residual(batch).data)
+            defect = max(defect, float(jnp.max(jnp.abs(values))))
+        scale = max(1.0, float(jnp.max(jnp.abs(jnp.asarray(data(batch).data)))))
+        if not defect <= 1e-8 * scale:
+            raise ValueError(
+                f"Local contract {identity!r} of field {field!r} has data incompatible "
+                f"with its periodic seams (sampled seam defect {defect:.3e})."
+            )
+        records.append(
+            PeriodicPreservationRecord(
+                field=field,
+                contract_id=identity,
+                status="probed",
+                probes=_PERIODIC_PROBES,
+                maximum_defect=defect,
+            )
+        )
+    return tuple(records)
+
+
+def _admit_periodic_realizations(
+    pipelines: Mapping[str, _FieldEnforcementPipeline],
+    specs: tuple[EnforcementSpec, ...],
+    /,
+) -> tuple[EnforcementSpec, ...]:
+    """Refuse compositions that may break periodic seams and bind preservation."""
+    updated = list(specs)
+    for index, spec in enumerate(specs):
+        prepared = spec.realization
+        if not isinstance(prepared, PreparedPeriodicProjection):
+            continue
+        condition = spec.condition
+        if not isinstance(condition, Condition):
+            raise RuntimeError("A typed realization lost its typed condition.")
+        established = set(prepared.admission(condition).establishes)
+        for other_index, other in enumerate(specs):
+            if other_index == index:
+                continue
+            other_condition = other.condition
+            if other.realization is None or not isinstance(other_condition, Condition):
+                raise RuntimeError("A typed realization lost its typed condition.")
+            admission = other.realization.admission(other_condition)
+            overlap = tuple(
+                name for name in prepared.field_names if admission.may_write(name)
+            )
+            if overlap and not established <= set(admission.preserves):
+                if isinstance(other.realization, PreparedPeriodicProjection):
+                    raise ValueError(
+                        f"Fields {overlap!r} carry periodic declarations in two prepared "
+                        "projections; prepare all declarations of a field together."
+                    )
+                raise ValueError(
+                    f"Typed realization {other_condition.condition_id!r} may write "
+                    f"periodically enforced fields {overlap!r} without preserving their "
+                    "seam relations; fuse the conditions into one joint realization."
+                )
+        records = tuple(
+            record
+            for name in prepared.field_names
+            if name in pipelines
+            for record in _periodic_preservation(pipelines[name], prepared, name)
+        )
+        if records:
+            updated[index] = EnforcementSpec(
+                condition, realization=prepared.with_preservation(records)
+            )
+    return tuple(updated)
+
+
 class EnforcementProgram(StrictModule):
     """Compiled local ansätze followed by atomic typed field realizations."""
 
@@ -1919,7 +2504,7 @@ class EnforcementProgram(StrictModule):
             raise ValueError("Typed realization condition identifiers must be unique.")
         self.pipelines = frozendict(pipelines)
         self.order = _toposort(self.pipelines, field_order=tuple(field_order))
-        self.realization_specs = typed
+        self.realization_specs = _admit_periodic_realizations(self.pipelines, typed)
 
     @classmethod
     def build(

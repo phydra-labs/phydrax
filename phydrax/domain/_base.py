@@ -21,7 +21,7 @@ from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
 from ._measure import BaseMeasure
-from ._selection import Boundary, Interior, Selection
+from ._selection import Boundary, CoordinateFace, Interior, Selection
 
 
 EnforcementGateMethod: TypeAlias = Literal[
@@ -311,11 +311,77 @@ class AbstractGeometry(JointFactor):
                         "selected boundary-entity measure requires numerical estimation"
                     ),
                 )
+        elif isinstance(selection, CoordinateFace):
+            measure = BaseMeasure(
+                "counting" if self.spatial_dim == 1 else "hausdorff",
+                self.coordinate_face_mass(selection),
+            )
         else:
             raise TypeError(
                 f"Geometry factor {self.labels} does not support selection {type(selection).__name__}."
             )
         return FactorComponent(factor=self, selections=selections, measure=measure)
+
+    def coordinate_face_bounds(self) -> tuple[Array, Array]:
+        """Return the axis-aligned box ``(lower, upper)`` owning Cartesian faces."""
+        raise ValueError(
+            f"{type(self).__name__} does not expose Cartesian coordinate faces."
+        )
+
+    def coordinate_face_value(self, face: CoordinateFace, /) -> Array:
+        """Return the fixed coordinate value of one validated Cartesian face."""
+        if not isinstance(face, CoordinateFace):
+            raise TypeError("face must be a CoordinateFace.")
+        lower, upper = self.coordinate_face_bounds()
+        if face.axis >= self.spatial_dim:
+            raise ValueError(
+                f"CoordinateFace axis {face.axis} is outside the {self.spatial_dim}-dimensional "
+                f"coordinate of {self.label!r}."
+            )
+        return (lower if face.side == "lower" else upper)[face.axis]
+
+    def coordinate_face_mass(self, face: CoordinateFace, /) -> Mass:
+        """Return the exact transverse measure of one Cartesian face."""
+        self.coordinate_face_value(face)
+        lower, upper = self.coordinate_face_bounds()
+        widths = jnp.delete(upper - lower, face.axis)
+        return ExactMass(
+            jnp.prod(widths) if widths.size else jnp.asarray(1.0, dtype=jnp.float64)
+        )
+
+    def sample_coordinate_face(
+        self,
+        face: CoordinateFace,
+        num_points: int,
+        /,
+        *,
+        sampler: str = "latin_hypercube",
+        key: PRNGKey = DOC_KEY0,
+    ) -> Array:
+        """Sample one Cartesian face uniformly in its transverse coordinates."""
+        if isinstance(num_points, bool) or not isinstance(num_points, int):
+            raise TypeError("num_points must be an integer.")
+        if num_points <= 0:
+            raise ValueError("num_points must be positive.")
+        value = self.coordinate_face_value(face)
+        if self.spatial_dim == 1:
+            return jnp.full((num_points, 1), value, dtype=jnp.float64)
+        from ._hyperrectangle import HyperRectangle
+
+        lower, upper = self.coordinate_face_bounds()
+        transverse = HyperRectangle(
+            jnp.delete(lower, face.axis), jnp.delete(upper, face.axis)
+        ).sample_interior(num_points, sampler=sampler, key=key)
+        transverse = jnp.asarray(transverse, dtype=jnp.float64).reshape(
+            (num_points, self.spatial_dim - 1)
+        )
+        return jnp.insert(transverse, face.axis, value, axis=1)
+
+    def coordinate_face_normal(self, face: CoordinateFace, /) -> Array:
+        """Return the constant outward unit normal of one Cartesian face."""
+        self.coordinate_face_value(face)
+        sign = -1.0 if face.side == "lower" else 1.0
+        return sign * jnp.eye(self.spatial_dim, dtype=jnp.float64)[face.axis]
 
     def _replace_labels(
         self,

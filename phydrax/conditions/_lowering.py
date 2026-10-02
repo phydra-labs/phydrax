@@ -312,6 +312,14 @@ def lower_condition(
                 "An existing Condition cannot be re-declared while lowering."
             )
         return condition
+    from ._periodic import Periodic
+
+    if isinstance(condition, Periodic):
+        return condition.as_condition(
+            fields=fields,
+            codomain=codomain,
+            condition_id=condition_id,
+        )
     source_fields = (
         ProductFieldSpec(
             tuple(

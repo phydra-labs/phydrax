@@ -22,6 +22,7 @@ from phydrax.domain import (
     DomainFunction,
 )
 from phydrax.domain._derivative import DerivativeRuleProvider
+from phydrax.domain._function import _drop_model_construction_certificates
 
 from ..._strict import StrictModule
 from ._domain_ops import _coord_axis_position, _factor_and_dim, grad, partial, partial_n
@@ -277,7 +278,7 @@ def _native_partial_function(
     return DomainFunction(
         domain=source.domain,
         deps=source.deps,
-        metadata=source.metadata,
+        metadata=_drop_model_construction_certificates(source.metadata),
         func=_NativePartialCallable(source, requests),
     )
 
@@ -304,7 +305,7 @@ class _CompositionDerivativeRule(DerivativeRule):
         return DomainFunction(
             domain=self.function.domain,
             deps=self.function.deps,
-            metadata=self.function.metadata,
+            metadata=_drop_model_construction_certificates(self.function.metadata),
             func=_CompositionPartialCallable(
                 self.function, _append_partial(self.requests, request)
             ),
@@ -419,6 +420,6 @@ def _gradient_function(
     return DomainFunction(
         domain=source.domain,
         deps=source.deps,
-        metadata=source.metadata,
+        metadata=_drop_model_construction_certificates(source.metadata),
         func=_GradientCallable(source, var, options),
     )

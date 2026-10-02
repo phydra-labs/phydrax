@@ -2359,7 +2359,7 @@ def _dense_svd_active_projection(
     /,
 ) -> Array:
     synthesis = jnp.conj(jnp.swapaxes(state.vh, -1, -2))
-    basis = synthesis * state.retained[..., None, :]
+    basis = synthesis * state.retained.astype(synthesis.dtype)[..., None, :]
     if state.source_projection is not None:
         basis = jnp.matmul(state.source_projection, basis)
     basis = jax.lax.stop_gradient(basis)

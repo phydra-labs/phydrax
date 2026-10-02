@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
+from phydrax.domain._function import _drop_model_construction_certificates
 
 from ..._strict import StrictModule
 from ...metrix import (
@@ -131,7 +132,7 @@ def _kahler_operator(
             operation,
             normalization,
         ),
-        metadata=potential.metadata,
+        metadata=_drop_model_construction_certificates(potential.metadata),
     )
 
 

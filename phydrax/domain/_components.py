@@ -53,6 +53,7 @@ from ._ragged_series_dataset import RaggedSeriesDatasetDomain
 from ._scalar import AbstractScalarDomain
 from ._selection import (
     Boundary,
+    CoordinateFace,
     Fixed,
     FixedEnd,
     FixedStart,
@@ -229,11 +230,66 @@ def _sample_geometry(
         return jnp.asarray(
             geom.sample_boundary(num_points, sampler=sampler, key=key), dtype=jnp.float64
         )
+    if isinstance(component, CoordinateFace):
+        return geom.sample_coordinate_face(
+            component, num_points, sampler=sampler, key=key
+        )
     if isinstance(component, Fixed):
         raise ValueError(
             "Fixed(x) is not supported for geometries in sampling; use a unary DomainFunction mask instead."
         )
     raise TypeError(f"Unsupported geometry component {type(component).__name__}.")
+
+
+def _coordinate_face_grid(
+    geom: AbstractGeometry,
+    face: CoordinateFace,
+    label: str,
+    *,
+    axis_specs: tuple[AbstractAxisSpec, ...] | None,
+    counts: tuple[int, ...] | None,
+    sampler: str,
+    key: PRNGKey,
+    axis_discretization_by_axis: dict[str, AxisDiscretization],
+) -> tuple[Array, ...]:
+    """Return per-component grid coordinates of one Cartesian face.
+
+    The face component is the single node ``x[face.axis]`` at the face value; only
+    the tangential components, in increasing coordinate order, carry the requested
+    axis specifications or counts. Every component keeps its coordinate axis name.
+    """
+    value = jnp.asarray(geom.coordinate_face_value(face), dtype=jnp.float64)
+    lower, upper = geom.coordinate_face_bounds()
+    tangential = tuple(i for i in range(geom.spatial_dim) if i != face.axis)
+    requested = axis_specs if axis_specs is not None else counts
+    if requested is None or len(requested) != len(tangential):
+        raise ValueError(
+            f"coord_separable[{label!r}] on CoordinateFace({face.axis}, {face.side!r}) "
+            f"must request the {len(tangential)} tangential components."
+        )
+    coords: list[Array]
+    if axis_specs is not None:
+        coords = []
+        for component, spec in zip(tangential, axis_specs, strict=True):
+            disc = spec.materialize(lower[component], upper[component])
+            axis_discretization_by_axis[_axis_name_for_coord(label, component)] = disc
+            coords.append(jnp.asarray(disc.nodes, dtype=jnp.float64))
+    elif tangential:
+        from ._hyperrectangle import HyperRectangle
+
+        if counts is None:
+            raise RuntimeError("Tangential face sampling requires coordinate counts.")
+        transverse = HyperRectangle(
+            jnp.delete(lower, face.axis), jnp.delete(upper, face.axis)
+        )
+        sampled, _ = transverse._sample_interior_separable(
+            counts, sampler=sampler, key=key
+        )
+        coords = list(sampled)
+    else:
+        coords = []
+    coords.insert(face.axis, value.reshape((1,)))
+    return tuple(coords)
 
 
 def _sample_scalar(
@@ -750,6 +806,18 @@ class DomainComponent(StrictModule):
             if axis is None:
                 raise RuntimeError("Free explicit coordinates require a sampling axis.")
             value = _explicit_point_array(self.domain, label, raw[label])
+            if isinstance(selection, CoordinateFace) and isinstance(
+                factor, AbstractGeometry
+            ):
+                face_value = factor.coordinate_face_value(selection)
+                lower, upper = factor.coordinate_face_bounds()
+                value = eqx.error_if(
+                    value,
+                    ~jnp.all(jnp.isfinite(value) & (value >= lower) & (value <= upper))
+                    | ~jnp.all(value[:, selection.axis] == face_value),
+                    f"Explicit points for {label!r} must lie on the selected "
+                    "coordinate face within its bounds.",
+                )
             count = value.shape[0]
             if point_count is None:
                 point_count = count
@@ -894,11 +962,11 @@ class DomainComponent(StrictModule):
         structure = structure.canonicalize(self.domain.labels, fixed_labels=fixed_labels)
 
         if isinstance(num_points, int):
-            if len(structure.blocks) != 1:
+            if len(structure.blocks) > 1:
                 raise ValueError(
                     "num_points=int is only valid for paired sampling (exactly one block)."
                 )
-            num_points_by_block = (int(num_points),)
+            num_points_by_block = (num_points,) if structure.blocks else ()
         else:
             if len(num_points) != len(structure.blocks):
                 raise ValueError(
@@ -1125,11 +1193,19 @@ class DomainComponent(StrictModule):
                     "coord_separable requires a geometry/scalar label; got "
                     f"{lbl!r} with factor {type(factor).__name__}."
                 )
-            if not isinstance(comp, Interior):
+            face = (
+                comp
+                if isinstance(comp, CoordinateFace)
+                and isinstance(factor, AbstractGeometry)
+                else None
+            )
+            if face is None and not isinstance(comp, Interior):
                 raise ValueError(
-                    "coord_separable currently supports only Interior() components; "
-                    f"got {type(comp).__name__} for {lbl!r}."
+                    "coord_separable supports only Interior() and CoordinateFace(...) "
+                    f"components; got {type(comp).__name__} for {lbl!r}."
                 )
+            # A coordinate face discretizes only its tangential components.
+            grid_dim = var_dim if face is None else var_dim - 1
 
             n_spec = coord_separable[lbl]
             where_fn = self.where.get(lbl)
@@ -1140,12 +1216,12 @@ class DomainComponent(StrictModule):
             if isinstance(n_spec, TensorGridPlan):
                 axis_specs = n_spec.axes
             elif isinstance(n_spec, AbstractAxisSpec):
-                axis_specs = (n_spec,) * var_dim
+                axis_specs = (n_spec,) * grid_dim
             elif isinstance(n_spec, int):
-                counts = (int(n_spec),) * var_dim
+                counts = (int(n_spec),) * grid_dim
             else:
                 seq = tuple(n_spec)
-                if not seq:
+                if not seq and grid_dim != 0:
                     raise ValueError(f"coord_separable[{lbl!r}] must be non-empty.")
                 axis_specs_candidate = tuple(
                     s for s in seq if isinstance(s, AbstractAxisSpec)
@@ -1164,7 +1240,29 @@ class DomainComponent(StrictModule):
 
             geometry_weight_arr: Array | None = None
             geometry_order = 0
-            if isinstance(factor, AbstractGeometry):
+            if face is not None:
+                if not isinstance(factor, AbstractGeometry):
+                    raise TypeError("Coordinate-face grids require a geometry factor.")
+                coords_out = _coordinate_face_grid(
+                    factor,
+                    face,
+                    lbl,
+                    axis_specs=axis_specs,
+                    counts=counts,
+                    sampler=sampler,
+                    key=coord_key_by_label[lbl],
+                    axis_discretization_by_axis=axis_discretization_by_axis,
+                )
+                mask = jnp.ones(
+                    tuple(coord.shape[0] for coord in coords_out), dtype=jnp.bool_
+                )
+                if where_fn is not None:
+                    grid = broadcasted_grid(coords_out)
+                    where_mask = jax.vmap(where_fn)(grid.reshape((-1, var_dim)))
+                    mask = mask & jnp.asarray(where_mask, dtype=jnp.bool_).reshape(
+                        grid.shape[:-1]
+                    )
+            elif isinstance(factor, AbstractGeometry):
                 if axis_specs is not None:
                     if len(axis_specs) != var_dim:
                         raise ValueError(
@@ -1502,9 +1600,10 @@ class DomainComponent(StrictModule):
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
 
         comp = self.spec.selection_for(var)
-        if not isinstance(comp, Boundary):
+        if not isinstance(comp, (Boundary, CoordinateFace)):
             raise ValueError(
-                "DomainComponent.normals is only defined for Boundary() components."
+                "DomainComponent.normals is only defined for Boundary() and "
+                "CoordinateFace(...) components."
             )
 
         factor = self.domain.factor(var)
@@ -1528,6 +1627,9 @@ class DomainComponent(StrictModule):
                 f"Expected geometry points to be rank-2 array, got shape {pts.shape}."
             )
 
+        if isinstance(comp, CoordinateFace):
+            n_unit = jnp.broadcast_to(factor.coordinate_face_normal(comp), pts.shape)
+            return cx.AxisArray(n_unit.reshape(x.data.shape), dims=x.dims)
         n = jnp.asarray(factor._boundary_normals(pts), dtype=jnp.float64)
         eps = jnp.finfo(jnp.float64).eps
         nrm = jnp.linalg.norm(n, axis=-1, keepdims=True) + eps
@@ -1545,9 +1647,10 @@ class DomainComponent(StrictModule):
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
 
         comp = self.spec.selection_for(var)
-        if not isinstance(comp, Boundary):
+        if not isinstance(comp, (Boundary, CoordinateFace)):
             raise ValueError(
-                "DomainComponent.normal is only defined for Boundary() components."
+                "DomainComponent.normal is only defined for Boundary() and "
+                "CoordinateFace(...) components."
             )
 
         factor = self.domain.factor(var)
@@ -1557,6 +1660,10 @@ class DomainComponent(StrictModule):
                 f"normal(var=...) requires a geometry label, got {type(factor).__name__}."
             )
 
+        if isinstance(comp, CoordinateFace):
+            return DomainFunction(
+                domain=self.domain, deps=(), func=factor.coordinate_face_normal(comp)
+            )
         return DomainFunction(
             domain=self.domain, deps=(var,), func=_NormalCallable(factor)
         )

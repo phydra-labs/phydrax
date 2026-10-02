@@ -12,6 +12,7 @@ from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
+from phydrax.domain._function import _drop_model_construction_certificates
 
 from ..._strict import StrictModule
 from ...metrix import LeviCivitaConnection, RiemannianMetric
@@ -320,7 +321,7 @@ def diffusion_covariance(diffusion: DomainFunction, /) -> DomainFunction:
         domain=sigma.domain,
         deps=sigma.deps,
         func=_DiffusionCovarianceCallable(sigma),
-        metadata=sigma.metadata,
+        metadata=_drop_model_construction_certificates(sigma.metadata),
     )
 
 
@@ -353,7 +354,7 @@ def stratonovich_to_ito_drift(
             sigma_promoted.deps.index(var),
             int(state_dim),
         ),
-        metadata=sigma_promoted.metadata,
+        metadata=_drop_model_construction_certificates(sigma_promoted.metadata),
     )
     return drift_promoted + correction
 
@@ -387,7 +388,7 @@ def _coordinate_to_covariant_drift(
             coordinate_position=deps.index(var),
             state_dim=int(state_dim),
         ),
-        metadata=drift_promoted.metadata,
+        metadata=_drop_model_construction_certificates(drift_promoted.metadata),
     )
 
 
@@ -516,7 +517,9 @@ def kolmogorov_generator(
                     ),
                     state_dim=int(state_dim),
                 ),
-                metadata=observable_factor.metadata,
+                metadata=_drop_model_construction_certificates(
+                    observable_factor.metadata
+                ),
             )
     fields = [observable_field, drift_ito]
     if covariance_ito is not None:
@@ -559,7 +562,7 @@ def kolmogorov_generator(
             ),
             state_dim=int(state_dim),
         ),
-        metadata=observable_promoted.metadata,
+        metadata=_drop_model_construction_certificates(observable_promoted.metadata),
     )
 
 
@@ -584,7 +587,7 @@ def _density_product(
             state_dim=int(state_dim),
             tensor=bool(tensor),
         ),
-        metadata=density_promoted.metadata,
+        metadata=_drop_model_construction_certificates(density_promoted.metadata),
     )
 
 

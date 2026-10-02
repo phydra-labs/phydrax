@@ -26,23 +26,13 @@ from .._function import DomainFunction
 from .._hyperrectangle import HyperRectangle
 from .._product_domain import ProductDomain
 from .._scalar import ScalarInterval
+from .._selection import Fixed
 from ..geometry1d import Interval1d
 from ._cover import PairedSupport, SubdomainCover, SubdomainPatch
+from ._periodic import _IdentityCoordinate, PeriodicIdentification
 
 
 _CastT = TypeVar("_CastT")
-_ValueT = TypeVar("_ValueT")
-
-
-class _IdentityCoordinate(StrictModule, NonTrainableState):
-    def __init__(self) -> None:
-        pass
-
-    def __call__(
-        self, value: _ValueT, /, *, key: PRNGKey | None = None, **kwargs: object
-    ) -> _ValueT:
-        del key, kwargs
-        return value
 
 
 def _periodic_image(
@@ -89,7 +79,7 @@ class _PeriodicCoordinate(StrictModule, NonTrainableState):
         **kwargs: object,
     ) -> Array:
         del key, kwargs
-        value = jnp.asarray(coordinate)
+        value = jnp.asarray(coordinate, dtype=jnp.float64)
         if not self.vector_coordinate:
             value = value[..., None]
         lower = jnp.asarray(self.lower, dtype=value.dtype)
@@ -142,7 +132,7 @@ class _BoxSupport(StrictModule, NonTrainableState):
         **kwargs: object,
     ) -> Array:
         del key, kwargs
-        value = jnp.asarray(coordinate)
+        value = jnp.asarray(coordinate, dtype=jnp.float64)
         if not self.vector_coordinate:
             value = value[..., None]
         value = _periodic_image(
@@ -201,7 +191,7 @@ class _BoxWindow(StrictModule, NonTrainableState):
         **kwargs: object,
     ) -> Array:
         del key, kwargs
-        value = jnp.asarray(coordinate)
+        value = jnp.asarray(coordinate, dtype=jnp.float64)
         if not self.vector_coordinate:
             value = value[..., None]
         support_lower = jnp.asarray(self.support_lower, dtype=value.dtype)
@@ -266,7 +256,7 @@ class _AffineCoordinate(StrictModule, NonTrainableState):
         **kwargs: object,
     ) -> Array:
         del key, kwargs
-        value = jnp.asarray(coordinate)
+        value = jnp.asarray(coordinate, dtype=jnp.float64)
         center = jnp.asarray(self.center, dtype=value.dtype)
         half_width = jnp.asarray(self.half_width, dtype=value.dtype)
         normalized = (value - center) / half_width
@@ -292,7 +282,7 @@ class _FaceEmbedding(StrictModule, NonTrainableState):
         **kwargs: object,
     ) -> Array:
         del key, kwargs
-        tangent_ = jnp.asarray(tangent)
+        tangent_ = jnp.asarray(tangent, dtype=jnp.float64)
         boundary = jnp.asarray([self.boundary], dtype=tangent_.dtype)
         return jnp.concatenate(
             (tangent_[..., : self.axis], boundary, tangent_[..., self.axis :]),
@@ -315,6 +305,8 @@ class AxisPartition(StrictModule, NonTrainableState):
         overlap_fraction: float = 0.0,
         periodic: bool = False,
     ) -> None:
+        if not isinstance(periodic, bool):
+            raise TypeError("periodic must be a boolean.")
         boundaries_ = tuple(float(value) for value in boundaries)
         if len(boundaries_) < 2:
             raise ValueError("AxisPartition requires at least two boundaries.")
@@ -344,7 +336,9 @@ class AxisPartition(StrictModule, NonTrainableState):
         overlap_fraction: float = 0.0,
         periodic: bool = False,
     ) -> AxisPartition:
-        count_ = int(count)
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError("count must be an integer.")
+        count_ = count
         if count_ <= 0:
             raise ValueError("count must be positive.")
         return cls(
@@ -479,7 +473,8 @@ def _interface_factor(
 ) -> JointFactor:
     dimension = lower.shape[0]
     if dimension == 1:
-        return ScalarInterval(0.0, 1.0, label=label)
+        bounds_lower, bounds_upper, _ = _factor_bounds(prototype)
+        return ScalarInterval(float(bounds_lower[0]), float(bounds_upper[0]), label=label)
     tangent_lower = np.delete(lower, axis)
     tangent_upper = np.delete(upper, axis)
     return HyperRectangle(tangent_lower, tangent_upper, label=label)
@@ -556,12 +551,18 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
             )
         if num_subdomains is None:
             counts = None
-        elif isinstance(num_subdomains, int):
+        elif isinstance(num_subdomains, int) and not isinstance(num_subdomains, bool):
             if num_subdomains <= 0:
                 raise ValueError("num_subdomains must be positive.")
-            counts = (int(num_subdomains),)
+            counts = (num_subdomains,)
         else:
+            if isinstance(num_subdomains, (bool, Real)):
+                raise TypeError("num_subdomains must contain integer counts.")
             counts = tuple(num_subdomains)
+            if any(
+                isinstance(value, bool) or not isinstance(value, int) for value in counts
+            ):
+                raise TypeError("num_subdomains must contain integer counts.")
             if not counts or any(value <= 0 for value in counts):
                 raise ValueError("num_subdomains entries must be positive.")
         boundaries_ = None if boundaries is None else tuple(boundaries)
@@ -578,10 +579,10 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
             else tuple(float(value) for value in overlap_fraction)  # ty: ignore[not-iterable]
         )
         periodic_values = (
-            (bool(periodic),)
-            if isinstance(periodic, bool)
-            else tuple(bool(value) for value in periodic)
+            (bool(periodic),) if isinstance(periodic, bool) else tuple(periodic)
         )
+        if any(not isinstance(value, bool) for value in periodic_values):
+            raise TypeError("periodic must contain boolean values.")
         if cover_id is not None and (not isinstance(cover_id, str) or not cover_id):
             raise ValueError("cover_id must be a non-empty string or None.")
         self.label = label
@@ -669,9 +670,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
         for axis, (partition, low, high) in enumerate(
             zip(partitions, lower, upper, strict=True)
         ):
-            if not np.isclose(partition.boundaries[0], low) or not np.isclose(
-                partition.boundaries[-1], high
-            ):
+            if partition.boundaries[0] != low or partition.boundaries[-1] != high:
                 raise ValueError(
                     f"Axis {axis} partition endpoints must match the factor bounds."
                 )
@@ -818,7 +817,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                     left_boundary = partition.boundaries[value + 1]
                     right_boundary = left_boundary
                     topology = "shared-interface"
-                elif partition.periodic and partition.count > 1:
+                elif partition.periodic:
                     neighbor = tuple(
                         0 if axis_ == axis else value_
                         for axis_, value_ in enumerate(index)
@@ -873,9 +872,22 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                     if vector_coordinate
                     else jnp.asarray(normal_array[0])
                 )
+                identification = (
+                    PeriodicIdentification(
+                        ambient,
+                        self.label,
+                        component=axis if vector_coordinate else None,
+                    )
+                    if topology == "periodic-interface"
+                    else None
+                )
                 pairings.append(
                     PairedSupport(
-                        interface_domain.component(),
+                        interface_domain.component(
+                            {interface_label: Fixed(right_boundary)}
+                            if dimension == 1
+                            else {}
+                        ),
                         left_coordinates,
                         right_coordinates,
                         pairing_id=(
@@ -886,12 +898,49 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                         normal=_constant_coordinate(interface_domain, normal_value),
                         codimension=1,
                         topology=topology,
+                        identification=identification,
                     )
                 )
 
-        maximum_overlap = math.prod(
-            2 if partition.count > 1 else 1 for partition in partitions
-        )
+        # Unequal cell widths can extend one patch across multiple narrow cells.
+        # Count the closed support intervals, including wrapped endpoint images.
+        axis_capacities: list[int] = []
+        for axis, partition in enumerate(partitions):
+            intervals = [
+                (
+                    support_bounds[index][0][axis],
+                    support_bounds[index][1][axis],
+                )
+                for index in index_space
+                if all(
+                    value == 0
+                    for component, value in enumerate(index)
+                    if component != axis
+                )
+            ]
+            candidates = np.asarray(
+                [lower[axis], upper[axis]]
+                + [value for start, end in intervals for value in (start, end)],
+                dtype=np.float64,
+            )
+            period = upper[axis] - lower[axis]
+            if partition.periodic:
+                candidates = np.concatenate(
+                    (candidates - period, candidates, candidates + period)
+                )
+            candidates = candidates[
+                (candidates >= lower[axis]) & (candidates <= upper[axis])
+            ]
+            coverage = np.zeros(candidates.shape, dtype=np.int64)
+            for start, end in intervals:
+                membership = (candidates >= start) & (candidates <= end)
+                if partition.periodic:
+                    membership |= (
+                        (candidates - period >= start) & (candidates - period <= end)
+                    ) | ((candidates + period >= start) & (candidates + period <= end))
+                coverage += membership
+            axis_capacities.append(int(np.max(coverage)))
+        maximum_overlap = math.prod(axis_capacities)
         identifier = self.cover_id or canonical_fingerprint(
             {
                 "kind": "cartesian-subdomain-cover",

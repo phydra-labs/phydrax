@@ -9,8 +9,12 @@ Ownership is explicit:
 - :mod:`phydrax.nn.population` constructs physical population codes and diagnosed decoders.
 - :mod:`phydrax.nn.quantum` contains antisymmetric continuum-electron amplitudes.
 - :mod:`phydrax.nn.operator` contains operator data, engines, adapters, and runtime policy.
+
+`PeriodicInputCertificate` is the construction certificate by which models
+such as certified periodic Fourier embeddings declare exact input periodicity.
 """
 
+from .._model import PeriodicInputCertificate
 from . import (
     activations,
     atomistic,
@@ -36,6 +40,7 @@ __all__ = [
     "models",
     "operator",
     "parameters",
+    "PeriodicInputCertificate",
     "population",
     "quantum",
 ]

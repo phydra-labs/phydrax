@@ -29,7 +29,7 @@ from ._factorizations import (
     refresh_factorization,
 )
 from ._materialization import MaterializationPolicy, materialize
-from ._operators import AbstractLinearOperator, DenseLinearOperator
+from ._operators import _materialize_by_basis, AbstractLinearOperator, DenseLinearOperator
 from ._policies import RankPolicy, SolveResourcePolicy
 from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace, RHSLayout
 from ._subspaces import LinearSubspace
@@ -628,6 +628,14 @@ def _bind_prepared_constraint(
     identity = jnp.eye(rows, dtype=_coordinate_dtype(operator.target))
     target_block = _unflatten_coordinate_block(operator.target, identity)
     solve_result = factorization.solve(target_block, rhs_layout=RHSLayout((rows,)))
+    if not bool(jnp.all(solve_result.successful)):
+        raise RuntimeError(
+            "Constraint right-inverse block solve failed: "
+            f"status={np.asarray(solve_result.status)!r}, "
+            f"residual_norm={np.asarray(solve_result.diagnostics.residual_norm)!r}, "
+            "normal_residual_norm="
+            f"{np.asarray(solve_result.diagnostics.normal_residual_norm)!r}."
+        )
     right_matrix = _flatten_vector_block(operator.source, solve_result.value, rows)
     if right_matrix.shape != (columns, rows):
         raise RuntimeError(
@@ -808,12 +816,13 @@ def _dense_constraint_operator(
         operator_kind = "structured"
         setup_matvec_count = 0
     else:
-        identity = jnp.eye(operator.source.size, dtype=_coordinate_dtype(operator.source))
-        matrix = jnp.asarray(operator.mv_block(identity))
+        # Probe one canonical coordinate at a time, rather than allocating a
+        # source-square identity unrelated to the bounded rectangular output.
+        matrix = _materialize_by_basis(operator)
         expected = (operator.target.size, operator.source.size)
         if matrix.shape != expected or matrix.dtype != coordinate_dtype:
             raise ValueError(
-                "Matrix-free constraint block action must return canonical coordinates "
+                "Matrix-free constraint probing must return canonical coordinates "
                 f"with shape/dtype {expected} and {coordinate_dtype}."
             )
         operator_kind = "matrix-free"

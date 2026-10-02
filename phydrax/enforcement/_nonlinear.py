@@ -61,6 +61,7 @@ from ._realization import (
     ConditionEvaluationContext,
     FieldMap,
     FieldRealizationResult,
+    RealizationAdmission,
     RealizationStatus,
 )
 
@@ -316,6 +317,23 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         )
 
     @checked
+    def admission(self, condition: Condition, /) -> RealizationAdmission:
+        """Write the chart's declared fields; a callable chart may write any field."""
+        sources = condition.fields.sources
+        if isinstance(self.chart, AdditiveCorrectionChart):
+            return RealizationAdmission(
+                reads=tuple(dict.fromkeys((*sources, *self.chart.field_names))),
+                writes=self.chart.field_names,
+                establishes=(condition.condition_id,),
+            )
+        return RealizationAdmission(
+            reads=sources,
+            writes=(),
+            writes_unknown=True,
+            establishes=(condition.condition_id,),
+        )
+
+    @checked
     def realize(
         self,
         fields: FieldMap,
@@ -326,8 +344,6 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         if not isinstance(fields, Mapping):
             raise TypeError("fields must be a mapping.")
         current = RealizationLifecycleState.initial() if state is None else state
-        if not isinstance(current, RealizationLifecycleState):
-            raise TypeError("state must be RealizationLifecycleState or None.")
         field_values = frozendict(fields)
         self._bound(context.condition, field_values)
 
@@ -546,6 +562,10 @@ class LocalNonlinearRetraction(AbstractFieldRealization):
     ) -> FieldRealizationResult:
         return self.realization.realize(fields, state, context=context)
 
+    @checked
+    def admission(self, condition: Condition, /) -> RealizationAdmission:
+        return self.realization.admission(condition)
+
 
 class MinimumDistanceRetraction(AbstractFieldRealization):
     """First-order stationary minimum-distance retraction in chart coordinates."""
@@ -565,6 +585,10 @@ class MinimumDistanceRetraction(AbstractFieldRealization):
         context: ConditionEvaluationContext,
     ) -> FieldRealizationResult:
         return self.realization.realize(fields, state, context=context)
+
+    @checked
+    def admission(self, condition: Condition, /) -> RealizationAdmission:
+        return self.realization.admission(condition)
 
 
 def _relation_residual(bound: BoundCondition, value: Any, /) -> PyTree[Array]:

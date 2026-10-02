@@ -17,11 +17,16 @@ if TYPE_CHECKING:
 
 TRIAL_SPACE_CERTIFICATE_KEY = "trial_space_certificate"
 INPUT_CONVEX_CERTIFICATE_KEY = "input_convex_certificate"
+PERIODIC_INPUT_CERTIFICATE_KEY = "periodic_input_certificate"
 # Metadata keys under which models attach construction certificates to the
 # bound domain function. Transforms that do not preserve a certified
 # construction drop every one of these keys.
 MODEL_CONSTRUCTION_CERTIFICATE_KEYS = frozenset(
-    {TRIAL_SPACE_CERTIFICATE_KEY, INPUT_CONVEX_CERTIFICATE_KEY}
+    {
+        TRIAL_SPACE_CERTIFICATE_KEY,
+        INPUT_CONVEX_CERTIFICATE_KEY,
+        PERIODIC_INPUT_CERTIFICATE_KEY,
+    }
 )
 
 
@@ -97,6 +102,7 @@ __all__ = [
     "AxisModelEvaluator",
     "INPUT_CONVEX_CERTIFICATE_KEY",
     "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",
+    "PERIODIC_INPUT_CERTIFICATE_KEY",
     "LinearRepresentationProvider",
     "ModelEvaluator",
     "ModelMetadataProvider",

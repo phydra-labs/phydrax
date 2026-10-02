@@ -10,6 +10,7 @@ import equinox as eqx
 from jax import Array
 
 from phydrax.domain import AbstractGeometry, DomainFunction
+from phydrax.domain._function import _drop_model_construction_certificates
 
 from ..._strict import StrictModule
 from ...exterior import _algebra as algebra
@@ -451,7 +452,7 @@ def domain_wedge(
         domain=left.coefficients.domain,
         deps=deps,
         func=_DomainWedgeCallable(left, right, deps, product),
-        metadata=left.coefficients.metadata,
+        metadata=_drop_model_construction_certificates(left.coefficients.metadata),
     )
     return _with_coefficients(left, coefficients, output_type)
 
@@ -494,7 +495,7 @@ def domain_interior_product(
         domain=vector.domain,
         deps=deps,
         func=_DomainInteriorCallable(vector, form, deps),
-        metadata=form.coefficients.metadata,
+        metadata=_drop_model_construction_certificates(form.coefficients.metadata),
     )
     return _with_coefficients(form, coefficients, output_type)
 
@@ -517,7 +518,7 @@ def _scale_domain_form(
         domain=form.coefficients.domain,
         deps=form.coefficients.deps,
         func=_ScaleCallable(form.coefficients, scale),
-        metadata=form.coefficients.metadata,
+        metadata=_drop_model_construction_certificates(form.coefficients.metadata),
     )
     return _with_coefficients(form, coefficients, form.form_type)
 
@@ -571,7 +572,7 @@ def domain_hodge_star(
         domain=form.coefficients.domain,
         deps=deps,
         func=_DomainHodgeCallable(form, metric, deps),
-        metadata=form.coefficients.metadata,
+        metadata=_drop_model_construction_certificates(form.coefficients.metadata),
     )
     return _with_coefficients(form, coefficients, output_type)
 
@@ -625,7 +626,7 @@ def _convert_twist(
         domain=form.coefficients.domain,
         deps=form.coefficients.deps,
         func=_DomainTwistCallable(form, orientation, twist),
-        metadata=form.coefficients.metadata,
+        metadata=_drop_model_construction_certificates(form.coefficients.metadata),
     )
     return _with_coefficients(form, coefficients, form.form_type.with_twist(twist))
 
@@ -703,7 +704,7 @@ def domain_pullback_form(
             (mode, backend, "poly", False),
             coorientation,
         ),
-        metadata=form.coefficients.metadata,
+        metadata=_drop_model_construction_certificates(form.coefficients.metadata),
     )
     return DomainDifferentialForm(
         coefficients,

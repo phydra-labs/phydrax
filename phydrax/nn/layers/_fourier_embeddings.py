@@ -4,19 +4,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Literal
+import math
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.lax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ..._model import PERIODIC_INPUT_CERTIFICATE_KEY, PeriodicInputCertificate
 from ..._trainable import fixed_field
+from ..._validation import finite_real_scalar, nonnegative_integer, positive_integer
 from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import SMOOTH
@@ -29,7 +33,9 @@ def _canonical_passthrough(
     in_dim: int,
     /,
 ) -> tuple[int, ...]:
-    indices = tuple(passthrough)
+    indices = tuple(
+        nonnegative_integer(index, "`passthrough` index") for index in passthrough
+    )
     if len(set(indices)) != len(indices):
         raise ValueError(f"`passthrough` indices must be unique, got {indices}.")
     if any(index < 0 or index >= in_dim for index in indices):
@@ -105,6 +111,68 @@ def _periodic_feature_size(
             f"a positive even number, got {periodic_size}."
         )
     return periodic_size
+
+
+def _certified_periodic_inputs(
+    periodic_inputs: Mapping[int, float] | None,
+    wavevectors: Array,
+    passthrough: tuple[int, ...],
+    /,
+) -> tuple[tuple[int, float], ...]:
+    """Validate declared periodic inputs against fixed wavevectors and passthrough.
+
+    Input entry `i` is periodic with period `P` exactly when every wavevector
+    component `B[:, i]` is an integer multiple of `2*pi/P` and `x_i` is not
+    passed through raw. Wavevectors must equal the canonical floating-point
+    representation of the integer lattice; proximity is not construction proof.
+    """
+    if periodic_inputs is None:
+        return ()
+    if not isinstance(periodic_inputs, Mapping):
+        raise TypeError(
+            "`periodic_inputs` must be a mapping from flat input index to period."
+        )
+    if not periodic_inputs:
+        raise ValueError(
+            "`periodic_inputs` must declare at least one entry; pass None to declare none."
+        )
+    in_dim = wavevectors.shape[1]
+    matrix = np.asarray(wavevectors, dtype=np.float64)
+    entries: list[tuple[int, float]] = []
+    for raw_index, raw_period in periodic_inputs.items():
+        index = nonnegative_integer(raw_index, "`periodic_inputs` index")
+        if index >= in_dim:
+            raise ValueError(
+                f"`periodic_inputs` indices must lie in [0, {in_dim}), got {index}."
+            )
+        period = finite_real_scalar(raw_period, "`periodic_inputs` period")
+        if period <= 0.0:
+            raise ValueError(
+                f"`periodic_inputs` period of input {index} must be positive, got {period}."
+            )
+        if index in passthrough:
+            raise ValueError(
+                f"Input {index} is declared periodic but also passed through raw; "
+                "a raw coordinate feature is not periodic."
+            )
+        components = matrix[:, index]
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            harmonics = (components / (2.0 * math.pi)) * period
+            integers = np.rint(harmonics)
+            canonical = (2.0 * math.pi * integers) / period
+        if not bool(
+            np.all(np.isfinite(harmonics))
+            and np.all(np.abs(integers) <= 2**53)
+            and np.all(np.isfinite(canonical))
+            and np.all(components == canonical)
+            and np.all((integers == 0.0) == (components == 0.0))
+        ):
+            raise ValueError(
+                f"Every wavevector component of input {index} must be an integer "
+                f"multiple of 2*pi/{period}; got harmonic numbers {harmonics.tolist()}."
+            )
+        entries.append((index, period))
+    return tuple(sorted(entries))
 
 
 def _random_wavevectors(
@@ -235,9 +303,18 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
     For a matrix of row wavevectors $B$ and phases $p$, this returns
     $[\cos(Bx+p),\sin(Bx+p)]$, followed by selected raw coordinates and an
     optional constant. Wavevectors use angular-frequency units.
+
+    Declared `periodic_inputs` certify exact periodicity: when every component
+    $B_{:,i}$ is an integer multiple of $2\pi/P_i$ and $x_i$ is not passed
+    through, the embedding (and any model consuming only its output) satisfies
+    $f(x+P_i e_i)=f(x)$ for every parameter value. A bound `Domain.Model` field
+    then carries a `PeriodicInputCertificate` under the
+    `"periodic_input_certificate"` metadata key.
     """
 
     embedding_matrix: Array = fixed_field(kw_only=True)
+    periodic_inputs: tuple[tuple[int, float], ...] = eqx.field(static=True)
+    periodic_wavevectors: tuple[tuple[float, ...], ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -247,6 +324,7 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
+        periodic_inputs: Mapping[int, float] | None = None,
     ) -> None:
         r"""**Arguments:**
 
@@ -255,7 +333,18 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         - `phases`: Optional scalar or one phase per wavevector.
         - `passthrough`: Flattened input coordinates appended without encoding.
         - `include_constant`: Append a constant-one feature.
+        - `periodic_inputs`: Optional mapping from flattened input index to its
+          certified period. Every wavevector component of a certified index must
+          be an integer multiple of `2*pi/period` (checked, not rounded), and a
+          certified index must not appear in `passthrough`.
         """
+        in_dim = _get_size(_canonical_size(in_size))
+        certified = _certified_periodic_inputs(
+            periodic_inputs,
+            _as_wavevectors(wavevectors, in_dim, name="wavevectors"),
+            _canonical_passthrough(passthrough, in_dim),
+        )
+        self.periodic_inputs = certified
         self._initialize(
             in_size=in_size,
             embedding_matrix=wavevectors,
@@ -264,6 +353,20 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
             include_constant=include_constant,
             trainable=False,
         )
+        if certified:
+            matrix = np.asarray(self.embedding_matrix, dtype=np.float64)
+            self.periodic_wavevectors = tuple(
+                tuple(float(value) for value in matrix[:, index])
+                for index, _ in certified
+            )
+            if not bool(np.all(np.isfinite(matrix))) or not bool(
+                np.all(np.isfinite(np.asarray(self.phases)))
+            ):
+                raise ValueError(
+                    "Certified Fourier features require finite wavevectors and phases."
+                )
+        else:
+            self.periodic_wavevectors = ()
 
     @classmethod
     def from_periodic_modes(
@@ -272,26 +375,41 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         in_size: SizeLike,
         coordinate: int,
         period: float,
-        modes: Sequence[int],
+        modes: Sequence[int | np.integer],
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
     ) -> ExplicitFourierFeatureEmbeddings:
-        """Construct positive integer harmonics for one periodic coordinate."""
+        """Construct certified positive integer harmonics of one periodic coordinate.
+
+        Mode `n` contributes the angular wavevector `2*pi*n/period` along
+        `coordinate`, and the embedding certifies `coordinate` as periodic with
+        `period`. If the modes share a common divisor `g > 1`, the features are
+        also periodic with `period / g`: the certificate for `period` remains
+        exact, but the representable functions are restricted to period
+        `period / g`.
+        """
         in_dim = _get_size(_canonical_size(in_size))
-        coordinate = int(coordinate)
-        if coordinate < 0 or coordinate >= in_dim:
+        coordinate = nonnegative_integer(coordinate, "`coordinate`")
+        if coordinate >= in_dim:
             raise ValueError(f"`coordinate` must lie in [0, {in_dim}), got {coordinate}.")
-        period = float(period)
+        period = finite_real_scalar(period, "`period`")
         if period <= 0.0:
             raise ValueError(f"`period` must be positive, got {period}.")
-        mode_values = tuple(modes)
-        if not mode_values or any(mode <= 0 for mode in mode_values):
-            raise ValueError(
-                f"`modes` must contain positive integers, got {mode_values}."
-            )
+        mode_values = tuple(positive_integer(mode, "`modes` entry") for mode in modes)
+        if not mode_values:
+            raise ValueError("`modes` must contain at least one positive integer.")
         if len(set(mode_values)) != len(mode_values):
             raise ValueError(f"`modes` must be unique, got {mode_values}.")
+        if coordinate in tuple(passthrough):
+            raise ValueError(
+                f"Periodic coordinate {coordinate} must not appear in `passthrough`; "
+                "a raw coordinate feature is not periodic."
+            )
+        if any(mode > 2**53 for mode in mode_values):
+            raise ValueError(
+                "`modes` entries must be exactly representable in float64 (at most 2**53)."
+            )
 
         wavevectors = jnp.zeros((len(mode_values), in_dim), dtype=jnp.float64)
         angular_frequencies = (
@@ -304,7 +422,54 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
             phases=phases,
             passthrough=passthrough,
             include_constant=include_constant,
+            periodic_inputs={coordinate: period},
         )
+
+    def __call__(
+        self,
+        x: Array,
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+    ) -> Array:
+        if self.periodic_inputs:
+            if self.trainable or any(
+                index in self.passthrough for index, _ in self.periodic_inputs
+            ):
+                raise ValueError(
+                    "Certified Fourier inputs cannot be trainable or passed through raw."
+                )
+            invalid = ~jnp.all(jnp.isfinite(self.embedding_matrix)) | ~jnp.all(
+                jnp.isfinite(self.phases)
+            )
+            for (index, _), expected in zip(
+                self.periodic_inputs, self.periodic_wavevectors, strict=True
+            ):
+                invalid = invalid | jnp.any(
+                    self.embedding_matrix[:, index]
+                    != jnp.asarray(expected, dtype=jnp.float64)
+                )
+            x = eqx.error_if(
+                x,
+                invalid,
+                "Certified Fourier wavevectors or phases changed outside their construction.",
+            )
+        return super().__call__(x, key=key)
+
+    def model_metadata(self) -> Mapping[str, Any]:
+        """Attach the periodic-input certificate when periodic inputs are declared."""
+        if not self.periodic_inputs:
+            return {}
+        regularity = self._value_regularity()
+        if regularity is None:
+            raise RuntimeError("Fourier embeddings always declare their regularity.")
+        return {
+            PERIODIC_INPUT_CERTIFICATE_KEY: PeriodicInputCertificate(
+                input_size=_get_size(self.in_size),
+                periodic_inputs=self.periodic_inputs,
+                regularity=regularity,
+            )
+        }
 
 
 class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
