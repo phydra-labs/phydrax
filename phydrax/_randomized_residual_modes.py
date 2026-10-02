@@ -19,4 +19,12 @@ RandomizedResidualLossMode: TypeAlias = Literal[
 ]
 
 
-__all__ = ["RandomizedResidualLossMode"]
+RealizationSamplingDesign: TypeAlias = Literal[
+    "iid",
+    "finite_population",
+    "exact",
+    "unknown",
+]
+
+
+__all__ = ["RandomizedResidualLossMode", "RealizationSamplingDesign"]

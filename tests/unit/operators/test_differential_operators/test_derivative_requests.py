@@ -14,7 +14,6 @@ from phydrax.nn.activations import squared_relu
 from phydrax.operators.differential import (
     laplacian,
     partial_n,
-    plan_derivative_execution,
     trace_derivative_requests,
 )
 
@@ -58,7 +57,10 @@ def test_trace_derivative_requests_keeps_laplacian_contracted() -> None:
 
     assert len(requests) == 2
     assert any(request.contracted_laplacian for request in requests)
-    assert any(request.axes == (1,) for request in requests)
+    assert any(
+        request.steps == (phx.operators.differential.DerivativeStep("partial", "x", 1),)
+        for request in requests
+    )
     assert all(request.order <= 2 for request in requests)
 
 
@@ -82,8 +84,9 @@ def test_trace_derivative_requests_retains_high_order_for_generic_planning() -> 
     requests = trace_derivative_requests(condition.residual, {"u": u})
 
     assert tuple(request.order for request in requests) == (3,)
-    assert requests[0].axes == (0, 0, 0)
-    assert plan_derivative_execution(requests).strategy == "jvp"
+    assert requests[0].steps == (
+        phx.operators.differential.DerivativeStep("partial", "x", 0, 3),
+    )
 
 
 def test_trace_derivative_requests_retains_nested_laplacians() -> None:
@@ -104,7 +107,6 @@ def test_trace_derivative_requests_retains_nested_laplacians() -> None:
     requests = trace_derivative_requests(condition.residual, {"u": u})
 
     assert tuple(request.order for request in requests) == (2, 4)
-    assert plan_derivative_execution(requests).strategy == "jvp"
 
 
 def test_derivative_requests_scenario_1() -> None:

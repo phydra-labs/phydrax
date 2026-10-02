@@ -1,0 +1,4598 @@
+{
+  "deadline_seconds_per_phase": 120.0,
+  "deadline_seconds_per_case": 360.0,
+  "repeats": 3,
+  "field": "theta * exp(a @ x)",
+  "theta": 1.3,
+  "x": [
+    0.1,
+    -0.2
+  ],
+  "a": [
+    0.7,
+    -0.2
+  ],
+  "directions": [
+    [
+      0.5,
+      0.3
+    ],
+    [
+      -0.4,
+      0.6
+    ]
+  ],
+  "records": [
+    {
+      "case": "pure",
+      "phase": "forward",
+      "elapsed_seconds": 28.331965457997285,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.pure.forward.jsonl",
+      "events": [
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "imports"
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "planning"
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "ee36985403ef8b9b9df539291f746b86f0fa924c8e6f3c6ff21109c1cf49c4c7",
+            "requested_multiplicities": [
+              8
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.000975292
+          }
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "binding"
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "lowering",
+          "binding_seconds": 9.9666e-05
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "compilation",
+          "lowering_seconds": 0.020762459
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "first_execution",
+          "compilation_seconds": 0.050701209
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.000351709
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              1.7917e-05,
+              1.5834e-05,
+              1.475e-05
+            ],
+            "min_seconds": 1.475e-05,
+            "median_seconds": 1.5834e-05,
+            "mean_seconds": 1.6167e-05,
+            "std_seconds": 1.314188976771099e-06,
+            "max_seconds": 1.7917e-05
+          }
+        },
+        {
+          "case": "pure",
+          "phase": "forward",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "ee36985403ef8b9b9df539291f746b86f0fa924c8e6f3c6ff21109c1cf49c4c7",
+            "requested_multiplicities": [
+              8
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.000975292
+          },
+          "dtype": "float64",
+          "actual": 7.259383307982996e-05,
+          "reference": 7.259383307982995e-05,
+          "maximum_absolute_error": 1.3552527156068805e-20,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.020762459,
+          "compilation_seconds": 0.050701209,
+          "first_synchronized_execution_seconds": 0.000351709,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              1.7917e-05,
+              1.5834e-05,
+              1.475e-05
+            ],
+            "min_seconds": 1.475e-05,
+            "median_seconds": 1.5834e-05,
+            "mean_seconds": 1.6167e-05,
+            "std_seconds": 1.314188976771099e-06,
+            "max_seconds": 1.7917e-05
+          },
+          "compiler": {
+            "flops": 338,
+            "bytes_accessed": 1024,
+            "argument_bytes": 24,
+            "output_bytes": 8,
+            "temporary_bytes": 456,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 64,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 216,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "pure",
+      "phase": "parameter",
+      "elapsed_seconds": 23.325952332932502,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.pure.parameter.jsonl",
+      "events": [
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "imports"
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "planning"
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "ee36985403ef8b9b9df539291f746b86f0fa924c8e6f3c6ff21109c1cf49c4c7",
+            "requested_multiplicities": [
+              8
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.001187167
+          }
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "binding"
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "lowering",
+          "binding_seconds": 0.000145
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "compilation",
+          "lowering_seconds": 0.033947667
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "first_execution",
+          "compilation_seconds": 0.055219166
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.000274
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              2.2667e-05,
+              1.6084e-05,
+              1.5542e-05
+            ],
+            "min_seconds": 1.5542e-05,
+            "median_seconds": 1.6084e-05,
+            "mean_seconds": 1.8097666666666668e-05,
+            "std_seconds": 3.2385744120248686e-06,
+            "max_seconds": 2.2667e-05
+          }
+        },
+        {
+          "case": "pure",
+          "phase": "parameter",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "ee36985403ef8b9b9df539291f746b86f0fa924c8e6f3c6ff21109c1cf49c4c7",
+            "requested_multiplicities": [
+              8
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.001187167
+          },
+          "dtype": "float64",
+          "actual": 5.584141006140766e-05,
+          "reference": 5.5841410061407643e-05,
+          "maximum_absolute_error": 1.3552527156068805e-20,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.033947667,
+          "compilation_seconds": 0.055219166,
+          "first_synchronized_execution_seconds": 0.000274,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              2.2667e-05,
+              1.6084e-05,
+              1.5542e-05
+            ],
+            "min_seconds": 1.5542e-05,
+            "median_seconds": 1.6084e-05,
+            "mean_seconds": 1.8097666666666668e-05,
+            "std_seconds": 3.2385744120248686e-06,
+            "max_seconds": 2.2667e-05
+          },
+          "compiler": {
+            "flops": 322,
+            "bytes_accessed": 1016,
+            "argument_bytes": 16,
+            "output_bytes": 8,
+            "temporary_bytes": 456,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 64,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 216,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "pure",
+      "phase": "direction",
+      "elapsed_seconds": 24.409571124939248,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.pure.direction.jsonl",
+      "events": [
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "imports"
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "planning"
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "ee36985403ef8b9b9df539291f746b86f0fa924c8e6f3c6ff21109c1cf49c4c7",
+            "requested_multiplicities": [
+              8
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.001007792
+          }
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "binding"
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "lowering",
+          "binding_seconds": 8.9458e-05
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "compilation",
+          "lowering_seconds": 0.087142208
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "first_execution",
+          "compilation_seconds": 0.149629834
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.00757475
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              2.0708e-05,
+              1.6292e-05,
+              1.5875e-05
+            ],
+            "min_seconds": 1.5875e-05,
+            "median_seconds": 1.6292e-05,
+            "mean_seconds": 1.7624999999999998e-05,
+            "std_seconds": 2.1866472051979486e-06,
+            "max_seconds": 2.0708e-05
+          }
+        },
+        {
+          "case": "pure",
+          "phase": "direction",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "ee36985403ef8b9b9df539291f746b86f0fa924c8e6f3c6ff21109c1cf49c4c7",
+            "requested_multiplicities": [
+              8
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.001007792
+          },
+          "dtype": "float64",
+          "actual": [
+            [
+              0.0014018119491277503,
+              -0.0004005176997507859
+            ]
+          ],
+          "reference": [
+            [
+              0.0014018119491277508,
+              -0.00040051769975078593
+            ]
+          ],
+          "maximum_absolute_error": 4.336808689942018e-19,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.087142208,
+          "compilation_seconds": 0.149629834,
+          "first_synchronized_execution_seconds": 0.00757475,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              2.0708e-05,
+              1.6292e-05,
+              1.5875e-05
+            ],
+            "min_seconds": 1.5875e-05,
+            "median_seconds": 1.6292e-05,
+            "mean_seconds": 1.7624999999999998e-05,
+            "std_seconds": 2.1866472051979486e-06,
+            "max_seconds": 2.0708e-05
+          },
+          "compiler": {
+            "flops": 689,
+            "bytes_accessed": 1752,
+            "argument_bytes": 24,
+            "output_bytes": 16,
+            "temporary_bytes": 840,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 72,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 216,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-linear",
+      "phase": "forward",
+      "elapsed_seconds": 22.963114916929044,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-linear.forward.jsonl",
+      "events": [
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "7d797095603c2db38c255931ca5e35833f06a6a749cf0891895627e28d4efcb5",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "linear"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.002357625
+          }
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "lowering",
+          "binding_seconds": 0.000100375
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "compilation",
+          "lowering_seconds": 0.0540445
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "first_execution",
+          "compilation_seconds": 0.101120084
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.001168625
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              6.1209e-05,
+              5.325e-05,
+              0.000130542
+            ],
+            "min_seconds": 5.325e-05,
+            "median_seconds": 6.1209e-05,
+            "mean_seconds": 8.1667e-05,
+            "std_seconds": 3.4712251814020945e-05,
+            "max_seconds": 0.000130542
+          }
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "forward",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "7d797095603c2db38c255931ca5e35833f06a6a749cf0891895627e28d4efcb5",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "linear"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.002357625
+          },
+          "dtype": "float64",
+          "actual": 0.0002627530114400979,
+          "reference": 0.000262753011440099,
+          "maximum_absolute_error": 1.0842021724855044e-18,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.0540445,
+          "compilation_seconds": 0.101120084,
+          "first_synchronized_execution_seconds": 0.001168625,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              6.1209e-05,
+              5.325e-05,
+              0.000130542
+            ],
+            "min_seconds": 5.325e-05,
+            "median_seconds": 6.1209e-05,
+            "mean_seconds": 8.1667e-05,
+            "std_seconds": 3.4712251814020945e-05,
+            "max_seconds": 0.000130542
+          },
+          "compiler": {
+            "flops": 528,
+            "bytes_accessed": 3393,
+            "argument_bytes": 40,
+            "output_bytes": 8,
+            "temporary_bytes": 1752,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 80,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 216,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-linear",
+      "phase": "parameter",
+      "elapsed_seconds": 22.124992207973264,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-linear.parameter.jsonl",
+      "events": [
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "7d797095603c2db38c255931ca5e35833f06a6a749cf0891895627e28d4efcb5",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "linear"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.002553666
+          }
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "lowering",
+          "binding_seconds": 8.225e-05
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "compilation",
+          "lowering_seconds": 0.116173333
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "first_execution",
+          "compilation_seconds": 0.093526292
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.001468958
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              9.075e-05,
+              0.000134541,
+              0.000172084
+            ],
+            "min_seconds": 9.075e-05,
+            "median_seconds": 0.000134541,
+            "mean_seconds": 0.00013245833333333333,
+            "std_seconds": 3.323710792004757e-05,
+            "max_seconds": 0.000172084
+          }
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "parameter",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "7d797095603c2db38c255931ca5e35833f06a6a749cf0891895627e28d4efcb5",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "linear"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.002553666
+          },
+          "dtype": "float64",
+          "actual": 0.00020211770110776758,
+          "reference": 0.00020211770110776844,
+          "maximum_absolute_error": 8.673617379884035e-19,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.116173333,
+          "compilation_seconds": 0.093526292,
+          "first_synchronized_execution_seconds": 0.001468958,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              9.075e-05,
+              0.000134541,
+              0.000172084
+            ],
+            "min_seconds": 9.075e-05,
+            "median_seconds": 0.000134541,
+            "mean_seconds": 0.00013245833333333333,
+            "std_seconds": 3.323710792004757e-05,
+            "max_seconds": 0.000172084
+          },
+          "compiler": {
+            "flops": 460,
+            "bytes_accessed": 3330,
+            "argument_bytes": 32,
+            "output_bytes": 8,
+            "temporary_bytes": 1928,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 80,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 216,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-linear",
+      "phase": "direction",
+      "elapsed_seconds": 33.81909775000531,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-linear.direction.jsonl",
+      "events": [
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "7d797095603c2db38c255931ca5e35833f06a6a749cf0891895627e28d4efcb5",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "linear"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.002288792
+          }
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "lowering",
+          "binding_seconds": 8.5e-05
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "compilation",
+          "lowering_seconds": 0.411316875
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "first_execution",
+          "compilation_seconds": 0.464356917
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.002174541
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000813,
+              0.000732833,
+              0.000575084
+            ],
+            "min_seconds": 0.000575084,
+            "median_seconds": 0.000732833,
+            "mean_seconds": 0.0007069723333333333,
+            "std_seconds": 9.88351702729797e-05,
+            "max_seconds": 0.000813
+          }
+        },
+        {
+          "case": "mixed-linear",
+          "phase": "direction",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "7d797095603c2db38c255931ca5e35833f06a6a749cf0891895627e28d4efcb5",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "linear"
+            ],
+            "required_regularity_order": 8,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    1
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    2
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    3
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    1,
+                    4
+                  ],
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    1
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    2
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    3
+                  ]
+                ],
+                "order": 8
+              },
+              {
+                "coefficients": [
+                  [
+                    "d1",
+                    1,
+                    4
+                  ]
+                ],
+                "order": 8
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.002288792
+          },
+          "dtype": "float64",
+          "actual": [
+            [
+              0.0025369256276975088,
+              -0.0007248358936278599
+            ],
+            [
+              -0.0018392710800806777,
+              0.0005255060228801947
+            ]
+          ],
+          "reference": [
+            [
+              0.002536925627697507,
+              -0.0007248358936278593
+            ],
+            [
+              -0.0018392710800806931,
+              0.0005255060228801981
+            ]
+          ],
+          "maximum_absolute_error": 1.5395670849294163e-17,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.411316875,
+          "compilation_seconds": 0.464356917,
+          "first_synchronized_execution_seconds": 0.002174541,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000813,
+              0.000732833,
+              0.000575084
+            ],
+            "min_seconds": 0.000575084,
+            "median_seconds": 0.000732833,
+            "mean_seconds": 0.0007069723333333333,
+            "std_seconds": 9.88351702729797e-05,
+            "max_seconds": 0.000813
+          },
+          "compiler": {
+            "flops": 1688,
+            "bytes_accessed": 20794,
+            "argument_bytes": 40,
+            "output_bytes": 32,
+            "temporary_bytes": 8744,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 104,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 216,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-single",
+      "phase": "forward",
+      "elapsed_seconds": 65.77769958402496,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-single.forward.jsonl",
+      "events": [
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "01e18c147cf766cd42cbe9f1739d07942b9f8745c5a8682f1a58682ece25986d",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 44,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    6,
+                    1
+                  ]
+                ],
+                "order": 44
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.032757542
+          }
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "lowering",
+          "binding_seconds": 0.000104708
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "compilation",
+          "lowering_seconds": 1.569355458
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "first_execution",
+          "compilation_seconds": 10.646422292
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.001833917
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000344417,
+              0.000578667,
+              0.000410667
+            ],
+            "min_seconds": 0.000344417,
+            "median_seconds": 0.000410667,
+            "mean_seconds": 0.00044458366666666666,
+            "std_seconds": 9.859351173153109e-05,
+            "max_seconds": 0.000578667
+          }
+        },
+        {
+          "case": "mixed-single",
+          "phase": "forward",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "01e18c147cf766cd42cbe9f1739d07942b9f8745c5a8682f1a58682ece25986d",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 44,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    6,
+                    1
+                  ]
+                ],
+                "order": 44
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.032757542
+          },
+          "dtype": "float64",
+          "actual": 0.00026275301144009893,
+          "reference": 0.000262753011440099,
+          "maximum_absolute_error": 5.421010862427522e-20,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 1.569355458,
+          "compilation_seconds": 10.646422292,
+          "first_synchronized_execution_seconds": 0.001833917,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000344417,
+              0.000578667,
+              0.000410667
+            ],
+            "min_seconds": 0.000344417,
+            "median_seconds": 0.000410667,
+            "mean_seconds": 0.00044458366666666666,
+            "std_seconds": 9.859351173153109e-05,
+            "max_seconds": 0.000578667
+          },
+          "compiler": {
+            "flops": 4508,
+            "bytes_accessed": 4768,
+            "argument_bytes": 40,
+            "output_bytes": 8,
+            "temporary_bytes": 5768,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 80,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 1080,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-single",
+      "phase": "parameter",
+      "elapsed_seconds": 80.2651237079408,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-single.parameter.jsonl",
+      "events": [
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "01e18c147cf766cd42cbe9f1739d07942b9f8745c5a8682f1a58682ece25986d",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 44,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    6,
+                    1
+                  ]
+                ],
+                "order": 44
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.050846875
+          }
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "lowering",
+          "binding_seconds": 0.000102417
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "compilation",
+          "lowering_seconds": 2.664456958
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "first_execution",
+          "compilation_seconds": 12.176582083
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.006212125
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000102417,
+              0.000236792,
+              9.8875e-05
+            ],
+            "min_seconds": 9.8875e-05,
+            "median_seconds": 0.000102417,
+            "mean_seconds": 0.000146028,
+            "std_seconds": 6.419612767657147e-05,
+            "max_seconds": 0.000236792
+          }
+        },
+        {
+          "case": "mixed-single",
+          "phase": "parameter",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "01e18c147cf766cd42cbe9f1739d07942b9f8745c5a8682f1a58682ece25986d",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 44,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    6,
+                    1
+                  ]
+                ],
+                "order": 44
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.050846875
+          },
+          "dtype": "float64",
+          "actual": 0.00020211770110776842,
+          "reference": 0.00020211770110776844,
+          "maximum_absolute_error": 2.710505431213761e-20,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 2.664456958,
+          "compilation_seconds": 12.176582083,
+          "first_synchronized_execution_seconds": 0.006212125,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000102417,
+              0.000236792,
+              9.8875e-05
+            ],
+            "min_seconds": 9.8875e-05,
+            "median_seconds": 0.000102417,
+            "mean_seconds": 0.000146028,
+            "std_seconds": 6.419612767657147e-05,
+            "max_seconds": 0.000236792
+          },
+          "compiler": {
+            "flops": 4420,
+            "bytes_accessed": 4760,
+            "argument_bytes": 32,
+            "output_bytes": 8,
+            "temporary_bytes": 5768,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 80,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 1080,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-single",
+      "phase": "direction",
+      "elapsed_seconds": 67.20724091702141,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-single.direction.jsonl",
+      "events": [
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "01e18c147cf766cd42cbe9f1739d07942b9f8745c5a8682f1a58682ece25986d",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 44,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    6,
+                    1
+                  ]
+                ],
+                "order": 44
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.105655209
+          }
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "lowering",
+          "binding_seconds": 8.95e-05
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "compilation",
+          "lowering_seconds": 4.948664209
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "first_execution",
+          "compilation_seconds": 16.580877417
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.008161292
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000886417,
+              0.000559208,
+              0.000301834
+            ],
+            "min_seconds": 0.000301834,
+            "median_seconds": 0.000559208,
+            "mean_seconds": 0.0005824863333333334,
+            "std_seconds": 0.000239221977215491,
+            "max_seconds": 0.000886417
+          }
+        },
+        {
+          "case": "mixed-single",
+          "phase": "direction",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "01e18c147cf766cd42cbe9f1739d07942b9f8745c5a8682f1a58682ece25986d",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "single"
+            ],
+            "required_regularity_order": 44,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    6,
+                    1
+                  ]
+                ],
+                "order": 44
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.105655209
+          },
+          "dtype": "float64",
+          "actual": [
+            [
+              0.0025369256276975075,
+              -0.0007248358936278594
+            ],
+            [
+              -0.0018392710800806931,
+              0.0005255060228801981
+            ]
+          ],
+          "reference": [
+            [
+              0.002536925627697507,
+              -0.0007248358936278593
+            ],
+            [
+              -0.0018392710800806931,
+              0.0005255060228801981
+            ]
+          ],
+          "maximum_absolute_error": 4.336808689942018e-19,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 4.948664209,
+          "compilation_seconds": 16.580877417,
+          "first_synchronized_execution_seconds": 0.008161292,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000886417,
+              0.000559208,
+              0.000301834
+            ],
+            "min_seconds": 0.000301834,
+            "median_seconds": 0.000559208,
+            "mean_seconds": 0.0005824863333333334,
+            "std_seconds": 0.000239221977215491,
+            "max_seconds": 0.000886417
+          },
+          "compiler": {
+            "flops": 83226,
+            "bytes_accessed": 32600,
+            "argument_bytes": 40,
+            "output_bytes": 32,
+            "temporary_bytes": 11592,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 104,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 1080,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-prime",
+      "phase": "forward",
+      "elapsed_seconds": 37.1716079589678,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-prime.forward.jsonl",
+      "events": [
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "cb980a2d7e0253ce0c96494f0c8e9dca0f5bb959695d77527c4738e0aee28f7b",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "prime"
+            ],
+            "required_regularity_order": 48,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    7,
+                    1
+                  ]
+                ],
+                "order": 48
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.010306417
+          }
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "lowering",
+          "binding_seconds": 0.000112542
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "compilation",
+          "lowering_seconds": 0.705313417
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "first_execution",
+          "compilation_seconds": 6.651588083
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.002376042
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000355791,
+              0.000344333,
+              0.000327959
+            ],
+            "min_seconds": 0.000327959,
+            "median_seconds": 0.000344333,
+            "mean_seconds": 0.0003426943333333333,
+            "std_seconds": 1.142129523691988e-05,
+            "max_seconds": 0.000355791
+          }
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "forward",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "cb980a2d7e0253ce0c96494f0c8e9dca0f5bb959695d77527c4738e0aee28f7b",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "prime"
+            ],
+            "required_regularity_order": 48,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    7,
+                    1
+                  ]
+                ],
+                "order": 48
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.010306417
+          },
+          "dtype": "float64",
+          "actual": 0.00026275301144009893,
+          "reference": 0.000262753011440099,
+          "maximum_absolute_error": 5.421010862427522e-20,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.705313417,
+          "compilation_seconds": 6.651588083,
+          "first_synchronized_execution_seconds": 0.002376042,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000355791,
+              0.000344333,
+              0.000327959
+            ],
+            "min_seconds": 0.000327959,
+            "median_seconds": 0.000344333,
+            "mean_seconds": 0.0003426943333333333,
+            "std_seconds": 1.142129523691988e-05,
+            "max_seconds": 0.000355791
+          },
+          "compiler": {
+            "flops": 5302,
+            "bytes_accessed": 5216,
+            "argument_bytes": 40,
+            "output_bytes": 8,
+            "temporary_bytes": 6344,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 80,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 1176,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-prime",
+      "phase": "parameter",
+      "elapsed_seconds": 32.7021888330346,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-prime.parameter.jsonl",
+      "events": [
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "cb980a2d7e0253ce0c96494f0c8e9dca0f5bb959695d77527c4738e0aee28f7b",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "prime"
+            ],
+            "required_regularity_order": 48,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    7,
+                    1
+                  ]
+                ],
+                "order": 48
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.011046166
+          }
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "lowering",
+          "binding_seconds": 8.6459e-05
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "compilation",
+          "lowering_seconds": 0.799602958
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "first_execution",
+          "compilation_seconds": 6.045205834
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.001803667
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000451,
+              0.000382125,
+              0.000407
+            ],
+            "min_seconds": 0.000382125,
+            "median_seconds": 0.000407,
+            "mean_seconds": 0.00041337499999999995,
+            "std_seconds": 2.8477147270516185e-05,
+            "max_seconds": 0.000451
+          }
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "parameter",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "cb980a2d7e0253ce0c96494f0c8e9dca0f5bb959695d77527c4738e0aee28f7b",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "prime"
+            ],
+            "required_regularity_order": 48,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    7,
+                    1
+                  ]
+                ],
+                "order": 48
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.011046166
+          },
+          "dtype": "float64",
+          "actual": 0.00020211770110776842,
+          "reference": 0.00020211770110776844,
+          "maximum_absolute_error": 2.710505431213761e-20,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 0.799602958,
+          "compilation_seconds": 6.045205834,
+          "first_synchronized_execution_seconds": 0.001803667,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000451,
+              0.000382125,
+              0.000407
+            ],
+            "min_seconds": 0.000382125,
+            "median_seconds": 0.000407,
+            "mean_seconds": 0.00041337499999999995,
+            "std_seconds": 2.8477147270516185e-05,
+            "max_seconds": 0.000451
+          },
+          "compiler": {
+            "flops": 5206,
+            "bytes_accessed": 5208,
+            "argument_bytes": 32,
+            "output_bytes": 8,
+            "temporary_bytes": 6344,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 80,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 1176,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    },
+    {
+      "case": "mixed-prime",
+      "phase": "direction",
+      "elapsed_seconds": 48.69465624995064,
+      "journal": "benchmarks/taylor_gradient_diagnostic.json.mixed-prime.direction.jsonl",
+      "events": [
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "imports"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "planning"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "inputs",
+          "plan": {
+            "plan_id": "cb980a2d7e0253ce0c96494f0c8e9dca0f5bb959695d77527c4738e0aee28f7b",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "prime"
+            ],
+            "required_regularity_order": 48,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    7,
+                    1
+                  ]
+                ],
+                "order": 48
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.015145417
+          }
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "binding"
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "lowering",
+          "binding_seconds": 0.000103584
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "compilation",
+          "lowering_seconds": 2.750238208
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "first_execution",
+          "compilation_seconds": 18.393452708
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "warm_execution",
+          "first_synchronized_execution_seconds": 0.003486958
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "analytic_check",
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000953042,
+              0.001047792,
+              0.001583333
+            ],
+            "min_seconds": 0.000953042,
+            "median_seconds": 0.001047792,
+            "mean_seconds": 0.0011947223333333334,
+            "std_seconds": 0.00027749844241044345,
+            "max_seconds": 0.001583333
+          }
+        },
+        {
+          "case": "mixed-prime",
+          "phase": "direction",
+          "stage": "complete",
+          "status": "passed",
+          "plan": {
+            "plan_id": "cb980a2d7e0253ce0c96494f0c8e9dca0f5bb959695d77527c4738e0aee28f7b",
+            "requested_multiplicities": [
+              4,
+              4
+            ],
+            "actual_strategies": [
+              "prime"
+            ],
+            "required_regularity_order": 48,
+            "schedules": [
+              {
+                "coefficients": [
+                  [
+                    "d0",
+                    5,
+                    1
+                  ],
+                  [
+                    "d1",
+                    7,
+                    1
+                  ]
+                ],
+                "order": 48
+              }
+            ],
+            "resources": {
+              "max_order": 128,
+              "max_certificate_states": 65536,
+              "max_linear_terms": 4096,
+              "max_candidates": 256,
+              "workset_size": 1,
+              "max_logical_buffer_elements": 1048576
+            },
+            "planning_seconds": 0.015145417
+          },
+          "dtype": "float64",
+          "actual": [
+            [
+              0.0025369256276975075,
+              -0.0007248358936278594
+            ],
+            [
+              -0.0018392710800806927,
+              0.000525506022880198
+            ]
+          ],
+          "reference": [
+            [
+              0.002536925627697507,
+              -0.0007248358936278593
+            ],
+            [
+              -0.0018392710800806931,
+              0.0005255060228801981
+            ]
+          ],
+          "maximum_absolute_error": 4.336808689942018e-19,
+          "relative_tolerance": 1e-07,
+          "absolute_tolerance": 1e-12,
+          "lowering_seconds": 2.750238208,
+          "compilation_seconds": 18.393452708,
+          "first_synchronized_execution_seconds": 0.003486958,
+          "warmed": {
+            "count": 3,
+            "samples_seconds": [
+              0.000953042,
+              0.001047792,
+              0.001583333
+            ],
+            "min_seconds": 0.000953042,
+            "median_seconds": 0.001047792,
+            "mean_seconds": 0.0011947223333333334,
+            "std_seconds": 0.00027749844241044345,
+            "max_seconds": 0.001583333
+          },
+          "compiler": {
+            "flops": 113358,
+            "bytes_accessed": 39360,
+            "argument_bytes": 40,
+            "output_bytes": 32,
+            "temporary_bytes": 12808,
+            "generated_code_bytes": 0,
+            "source": "jax-compiled-executable",
+            "unavailable_reason": null
+          },
+          "environment": {
+            "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+            "python_version": "3.12.8",
+            "phydrax_version": "0.2.2",
+            "platform": "macOS-15.7.2-arm64-arm-64bit",
+            "machine": "arm64",
+            "processor": "arm",
+            "logical_cpus": 10,
+            "numpy_version": "2.5.3",
+            "jaxlib_version": "0.11.2",
+            "default_float_dtype": "float64",
+            "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+            "jax": {
+              "version": "0.11.2",
+              "backend": "cpu",
+              "x64_enabled": true,
+              "devices": [
+                {
+                  "platform": "cpu",
+                  "kind": "cpu"
+                }
+              ]
+            },
+            "performance_environment": {
+              "OMP_NUM_THREADS": null,
+              "OPENBLAS_NUM_THREADS": null,
+              "NPROC": null,
+              "MKL_NUM_THREADS": null,
+              "VECLIB_MAXIMUM_THREADS": null,
+              "XLA_FLAGS": null,
+              "JAX_PLATFORMS": null,
+              "JAX_PLATFORM_NAME": null,
+              "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+              "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+              "JAX_COMPILATION_CACHE_DIR": null
+            }
+          },
+          "logical_retained_bytes": 104,
+          "logical_retained_scope": "Dynamic inputs, captured field arrays and result; excludes host plan metadata.",
+          "logical_working_bytes_estimate": 1176,
+          "logical_working_scope": "Curve input/output series only; excludes reverse-mode tape, field intermediates and compiler temporaries."
+        }
+      ],
+      "returncode": 0,
+      "status": "passed",
+      "timeout_stage": null
+    }
+  ],
+  "qualified": true
+}

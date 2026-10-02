@@ -7,6 +7,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from math import isfinite
+from pathlib import Path
 from typing import Any, Literal
 
 import equinox as eqx
@@ -18,18 +19,35 @@ from jaxtyping import Key
 
 import phydrax as phx
 from benchmarks._runtime import (
+    capture_benchmark_identity,
+    capture_environment,
+    logical_array_bytes,
+    measure_host,
     measure_lower_and_compile,
     measure_repeated,
     measure_synchronized,
     synchronize,
+)
+from phydrax.equations import (
+    analyze_randomized_compilation,
+    compile_pde_randomized_term,
+    RandomizedDifferentialPlan,
+)
+from phydrax.equations._randomized_compile import (
+    RandomizedDifferentialMethod,
+    RandomizedExecutionBackend,
+    RandomizedPopulation,
 )
 from phydrax.operators import (
     coordinate_second_derivative_samples,
     DimensionSamplingPolicy,
     stochastic_trace_samples,
     StochasticTracePolicy,
+    TaylorContractionPolicy,
+    TaylorContractionResources,
 )
 from phydrax.optim import adam
+from tools.differential_operator_benchmarks import measure_kernel
 
 
 BenchmarkProblem = Literal[
@@ -1446,17 +1464,233 @@ def run_high_dimensional_reference_benchmarks(
     }
 
 
+def _native_taylor_pde_record(
+    dimension: int,
+    method: RandomizedDifferentialMethod,
+    backend: RandomizedExecutionBackend,
+    population: RandomizedPopulation,
+    *,
+    points: int,
+    probes: int,
+    workset: int,
+    repeats: int,
+    seed: int,
+) -> dict[str, Any]:
+    bilaplacian = method != "hutchinson"
+    domain = phx.domain.HyperRectangle(
+        jnp.full((dimension,), -0.5, dtype=jnp.float64),
+        jnp.full((dimension,), 0.5, dtype=jnp.float64),
+        label="x",
+    )
+    field = phx.equations.PDEExpression.field("u")
+    expression = field.laplacian("x")
+    if bilaplacian:
+        expression = expression.laplacian("x")
+    problem = phx.equations.PDEProblemIR(
+        coordinates=(
+            phx.equations.PDECoordinate("x", "space", size=dimension, bounds=(-0.5, 0.5)),
+        ),
+        fields=(phx.equations.PDEField("u", coordinates=("x",)),),
+        equations=(
+            phx.equations.PDEEquation(
+                "governing", expression, phx.equations.PDEExpression.constant(0.0)
+            ),
+        ),
+    )
+    population_size = dimension * dimension if bilaplacian else dimension
+    taylor_policy = TaylorContractionPolicy(
+        strategy="linear", resources=TaylorContractionResources(workset_size=workset)
+    )
+    if method == "dimension":
+        plan = RandomizedDifferentialPlan(
+            method,
+            backend=backend,
+            population=population,
+            taylor_policy=taylor_policy,
+            dimension_policy=DimensionSamplingPolicy(
+                population_size, min(probes, population_size)
+            ),
+            loss_mode="independent_product",
+        )
+    else:
+        plan = RandomizedDifferentialPlan(
+            method,
+            backend=backend,
+            taylor_policy=taylor_policy,
+            trace_policy=StochasticTracePolicy(probes, distribution="normal"),
+            loss_mode="u_statistic",
+        )
+    report, planning_seconds = measure_host(
+        lambda: analyze_randomized_compilation(problem, "governing", plan)
+    )
+    if not report.supported:
+        raise ValueError(
+            f"Native PDE benchmark is unsupported: {report.rejection_reasons}."
+        )
+    compiled, binding_seconds = measure_synchronized(
+        lambda: compile_pde_randomized_term(
+            problem,
+            "governing",
+            plan,
+            component=domain.component(),
+            sampling=phx.domain.PointSampling(
+                points, layout=phx.domain.SampleLayout((("x",),))
+            ),
+            sampling_mode="fixed",
+            fixed_batch_key=jr.key(seed),
+        )
+    )
+    batch = compiled.term.sample(key=jr.key(seed + 1))
+
+    def basis(position: Array) -> Array:
+        squared_radius = jnp.sum(position**2)
+        if bilaplacian:
+            return squared_radius**2 / jnp.asarray(
+                8 * dimension * (dimension + 2), dtype=jnp.float64
+            )
+        return squared_radius / jnp.asarray(2 * dimension, dtype=jnp.float64)
+
+    bound_basis = domain.Function("x")(basis)
+    coefficient = jnp.asarray(0.7, dtype=jnp.float64)
+
+    def operation(weight: Array) -> Array:
+        samples = compiled.term.residual_evaluator(
+            {"u": domain.Parameter(weight) * bound_basis},
+            batch.collocation,
+            batch.left_key,
+        )
+        return jnp.stack((jnp.mean(samples.mean), jnp.mean(samples.standard_error)))
+
+    logical_curve_bytes = sum(
+        min(workset, len(contractions.schedules))
+        * (contractions.required_regularity_order + 1)
+        * (dimension + 1)
+        * 8
+        for _, contractions in report.contraction_plans
+    )
+    retained_bytes = logical_array_bytes((batch, coefficient, bound_basis, compiled.term))
+    value, execution = measure_kernel(
+        operation,
+        (coefficient,),
+        repeats=repeats,
+        retained_bytes=retained_bytes,
+        working_bytes=points * plan.num_realizations * logical_curve_bytes
+        if backend == "jet"
+        else None,
+    )
+
+    def objective(weight: Array) -> Array:
+        return compiled.term.loss(
+            {"u": domain.Parameter(weight) * bound_basis}, batch=batch
+        )
+
+    gradient, gradient_timing = measure_kernel(
+        jax.grad(objective),
+        (coefficient,),
+        repeats=repeats,
+        retained_bytes=retained_bytes,
+    )
+    diagnostics = compiled.term.diagnostics(
+        {"u": domain.Parameter(coefficient) * bound_basis}, batch=batch
+    )
+    return {
+        "case": "bilaplacian" if bilaplacian else "laplacian",
+        "dimension": dimension,
+        "method": method,
+        "backend": backend,
+        "population": population,
+        "population_size": report.population_size,
+        "points": points,
+        "probe_count": plan.num_realizations,
+        "workset": workset,
+        "host_planning_certification_seconds": planning_seconds,
+        "residual_binding_seconds": binding_seconds,
+        "sampling_design": diagnostics.sampling_design,
+        "uncertainty_available": diagnostics.uncertainty_available,
+        "contraction_certificates": report.contraction_certificates,
+        "value": float(value[0]),
+        "analytic_reference": float(coefficient),
+        "absolute_error": abs(float(value[0]) - float(coefficient)),
+        "reported_standard_error": float(value[1])
+        if diagnostics.uncertainty_available
+        else None,
+        "loss": float(diagnostics.objective),
+        "parameter_gradient": float(gradient),
+        "execution": execution,
+        "gradient_timing": gradient_timing,
+        "finite": bool(diagnostics.finite),
+    }
+
+
+def run_native_taylor_pde_benchmarks(
+    dimensions: Sequence[int],
+    *,
+    points: int = 4,
+    probes: int = 8,
+    workset: int = 4,
+    repeats: int = 3,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """Only native differential PDE variants; no duplicated solver campaign."""
+    if not dimensions or any(value < 2 for value in dimensions):
+        raise ValueError("Taylor PDE dimensions must be at least two.")
+    if points < 1 or probes < 2 or workset < 1 or repeats < 1:
+        raise ValueError("points/workset/repeats must be positive; probes at least two.")
+    jax.config.update("jax_enable_x64", True)
+    records: list[dict[str, Any]] = []
+    variants: tuple[tuple[RandomizedDifferentialMethod, RandomizedPopulation], ...] = (
+        ("hutchinson", "coordinate"),
+        ("gaussian_bilaplacian", "coordinate"),
+        ("dimension", "coordinate"),
+        ("dimension", "terms"),
+    )
+    backends: tuple[RandomizedExecutionBackend, ...] = ("ad", "jet")
+    for dimension in dimensions:
+        for method, population in variants:
+            for backend in backends:
+                records.append(
+                    _native_taylor_pde_record(
+                        dimension,
+                        method,
+                        backend,
+                        population,
+                        points=points,
+                        probes=probes,
+                        workset=workset,
+                        repeats=repeats,
+                        seed=seed,
+                    )
+                )
+    driver = Path(__file__).resolve()
+    return {
+        "dimensions": list(dimensions),
+        "seed": seed,
+        "environment": capture_environment().to_dict(),
+        "identity": capture_benchmark_identity(
+            driver.parent.parent, driver, ("records", "environment")
+        ).to_dict(),
+        "records": records,
+        "interpretation": "Fixed probes compare native AD and Jet execution. Analytic radial monomials have derivative equal to their scalar coefficient; randomized error is not deterministic error.",
+    }
+
+
 def _parse_dimensions(value: str, /) -> tuple[int, ...]:
     return tuple(int(item) for item in value.split(",") if item)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--suite", choices=("reference", "methods"), default="reference")
+    parser.add_argument(
+        "--suite", choices=("reference", "methods", "taylor"), default="reference"
+    )
     parser.add_argument("--dimensions", default="10,100")
     parser.add_argument("--num-samples", type=int, default=4096)
     parser.add_argument("--num-probes", type=int, default=64)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--points", type=int, default=4)
+    parser.add_argument("--workset", type=int, default=4)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--include-training", action="store_true")
     parser.add_argument("--deep-picard-paths", type=int, default=32)
@@ -1471,10 +1705,22 @@ def main() -> None:
     parser.add_argument("--score-samples", type=int, default=128)
     args = parser.parse_args()
     dimensions = _parse_dimensions(args.dimensions)
+    if args.smoke:
+        dimensions = (2,)
+        args.num_samples, args.num_probes, args.repeats, args.points = 8, 2, 2, 2
     if args.suite == "reference":
         result = run_high_dimensional_reference_benchmarks(
             dimensions,
             num_samples=args.num_samples,
+            repeats=args.repeats,
+            seed=args.seed,
+        )
+    elif args.suite == "taylor":
+        result = run_native_taylor_pde_benchmarks(
+            dimensions,
+            points=args.points,
+            probes=args.num_probes,
+            workset=args.workset,
             repeats=args.repeats,
             seed=args.seed,
         )
@@ -1497,7 +1743,10 @@ def main() -> None:
             deep_splitting_iterations=args.deep_splitting_iterations,
             score_samples=args.score_samples,
         )
-    print(json.dumps(result, sort_keys=True))
+    serialized = json.dumps(result, sort_keys=True, allow_nan=False)
+    if args.output is not None:
+        args.output.write_text(serialized + "\n", encoding="utf-8")
+    print(serialized)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+from itertools import product
 from typing import Any
 
 import jax
@@ -32,6 +33,7 @@ def _noisy_evaluator(*, num_realizations: Any, scale: Any) -> Any:
             sample_shape=(count,),
             mask=collocation.get("mask"),
             weights=collocation.get("weights"),
+            sampling_design="iid",
         )
 
     return evaluate
@@ -39,52 +41,54 @@ def _noisy_evaluator(*, num_realizations: Any, scale: Any) -> Any:
 
 def test_randomized_residual_objective_scenario_1() -> None:
     parameter = jnp.asarray(0.7)
-    objective = RandomizedResidualTerm(
-        _noisy_evaluator(num_realizations=4096, scale=1.5),
-        collocation={"count": 1},
+    realizations = jnp.asarray(tuple(product((-1.0, 1.0), repeat=2)))
+
+    def evaluator(functions: Any, collocation: Any, key: Any) -> Any:
+        del key
+        value = _parameter(functions)
+        return RandomizedResidualSamples(
+            value * (1.0 + collocation),
+            sampling_design="iid",
+        )
+
+    unbiased = RandomizedResidualTerm(
+        evaluator,
+        collocation=realizations[0],
         sampling_mode="fixed",
         loss_mode="u_statistic",
     )
-    batch = objective.sample(key=jr.key(4))
-
-    value = objective.loss(_functions(parameter), batch=batch)
-    gradient = jax.grad(lambda value_: objective.loss(_functions(value_), batch=batch))(
-        parameter
-    )
-
-    assert jnp.allclose(value, parameter**2, atol=8e-2)
-    assert jnp.allclose(gradient, 2.0 * parameter, atol=8e-2)
-    assert objective.diagnostics(_functions(parameter), batch=batch).passed
-    parameter = jnp.asarray(0.4)
-    collocation = {"count": 8192}
-    evaluator = _noisy_evaluator(num_realizations=4, scale=2.0)
-    u_statistic = RandomizedResidualTerm(
+    biased = RandomizedResidualTerm(
         evaluator,
-        collocation=collocation,
-        sampling_mode="fixed",
-        loss_mode="u_statistic",
-    )
-    plug_in = RandomizedResidualTerm(
-        evaluator,
-        collocation=collocation,
+        collocation=realizations[0],
         sampling_mode="fixed",
         loss_mode="plug_in",
     )
-    independent = RandomizedResidualTerm(
-        evaluator,
-        collocation=collocation,
-        sampling_mode="fixed",
-        loss_mode="independent_product",
+
+    def enumerated_loss(value: Any, term: Any) -> Any:
+        return jnp.mean(
+            jnp.stack(
+                tuple(
+                    term.loss(
+                        _functions(value),
+                        batch=phx.terms.RandomizedResidualBatch(
+                            noise, *jr.split(jr.key(4))
+                        ),
+                    )
+                    for noise in realizations
+                )
+            )
+        )
+
+    assert jnp.allclose(enumerated_loss(parameter, unbiased), parameter**2)
+    assert jnp.allclose(enumerated_loss(parameter, biased), 1.5 * parameter**2)
+    assert jnp.allclose(
+        jax.grad(lambda value: enumerated_loss(value, unbiased))(parameter),
+        2.0 * parameter,
     )
-    shared_key = jr.key(8)
-
-    unbiased = u_statistic.loss(_functions(parameter), key=shared_key)
-    biased = plug_in.loss(_functions(parameter), key=shared_key)
-    product = independent.loss(_functions(parameter), key=shared_key)
-
-    assert jnp.allclose(unbiased, parameter**2, atol=8e-2)
-    assert jnp.allclose(product, parameter**2, atol=8e-2)
-    assert jnp.allclose(biased - unbiased, 1.0, atol=8e-2)
+    assert jnp.allclose(
+        jax.grad(lambda value: enumerated_loss(value, biased))(parameter),
+        3.0 * parameter,
+    )
     objective = RandomizedResidualTerm(
         _noisy_evaluator(num_realizations=2, scale=1.0),
         collocation={"count": 1},
@@ -117,6 +121,7 @@ def test_vector_complex_residuals_masks_and_weights_reduce_correctly() -> None:
             event_shape=(2,),
             mask=batch["mask"],
             weights=batch["weights"],
+            sampling_design="exact",
         )
 
     objective = RandomizedResidualTerm(
@@ -139,7 +144,9 @@ def test_resampled_collocation_is_materialized_once_per_optimizer_update() -> No
     def evaluator(functions: Any, batch: Any, key: Any) -> Any:
         del key
         residual = _parameter(functions) - batch["target"]
-        return RandomizedResidualSamples(jnp.stack((residual, residual)))
+        return RandomizedResidualSamples(
+            jnp.stack((residual, residual)), sampling_design="exact"
+        )
 
     objective = RandomizedResidualTerm(
         evaluator,
@@ -170,6 +177,7 @@ def test_zero_valid_mass_is_rejected() -> None:
             jnp.ones((2, 3)),
             sample_shape=(3,),
             mask=jnp.zeros((3,), dtype="bool"),
+            sampling_design="exact",
         )
 
     objective = RandomizedResidualTerm(
@@ -180,3 +188,50 @@ def test_zero_valid_mass_is_rejected() -> None:
 
     with pytest.raises(Exception, match="zero valid"):
         objective.loss({}, key=jr.key(0))
+
+
+def test_complex_vector_iid_objective_and_gradient_by_exact_enumeration() -> None:
+    base = jnp.asarray([[1.0 + 2.0j, 2.0j], [3.0, 4.0j], [999.0, 999.0]])
+    noise = jnp.asarray([[0.5 + 0.25j, 1.0j], [2.0j, -1.0], [0.0, 0.0]])
+    mask = jnp.asarray([True, True, False])
+    weights = jnp.asarray([1.0, 3.0, 100.0])
+    signs = tuple(product((-1.0, 1.0), repeat=2))
+
+    def evaluate(functions: Any, collocation: Any, key: Any) -> Any:
+        del key
+        values = _parameter(functions) * (
+            base[None, ...] + collocation[:, None, None] * noise[None, ...]
+        )
+        return RandomizedResidualSamples(
+            values,
+            sample_shape=(3,),
+            event_shape=(2,),
+            mask=mask,
+            weights=weights,
+            sampling_design="iid",
+        )
+
+    term = RandomizedResidualTerm(
+        evaluate, collocation=(), sampling_mode="fixed", loss_mode="u_statistic"
+    )
+    keys = jr.split(jr.key(12))
+
+    def expectation(parameter: Any) -> Any:
+        return jnp.mean(
+            jnp.stack(
+                tuple(
+                    term.loss(
+                        _functions(parameter),
+                        batch=phx.terms.RandomizedResidualBatch(
+                            jnp.asarray(realization), *keys
+                        ),
+                    )
+                    for realization in signs
+                )
+            )
+        )
+
+    parameter = jnp.asarray(0.7)
+    squared_norm = (9.0 + 3.0 * 25.0) / 4.0
+    assert jnp.allclose(expectation(parameter), parameter**2 * squared_norm)
+    assert jnp.allclose(jax.grad(expectation)(parameter), 2.0 * parameter * squared_norm)

@@ -221,6 +221,31 @@ component of `probability_current`; its zero target represents a reflecting
 boundary. Positivity, normalization, initial data, and flux remain separate
 conditions.
 
+### Randomized derivative objectives
+
+`RandomizedResidualTerm` and `RandomizedMomentPenalty` distinguish the operator
+mean, uncertainty of that mean, and the squared-mean objective. Squaring one
+noisy realization introduces estimator-variance bias. The IID U-statistic and
+independent-product modes instead require an explicit valid sampling law; their
+individual estimates may be negative.
+
+Without-replacement coordinate samples are dependent and retain their finite
+population size and correction. A complete population, including a one-term
+population, is exact and has zero sampling error. One nonexact realization
+cannot identify empirical mean uncertainty: its standard error remains NaN
+with `uncertainty_available=False`. This is not a numerical failure of a
+finite plug-in or independently grouped objective. Provenance IDs and distinct
+keys alone do not establish independence or unbiasedness of an external callback.
+
+Certified Taylor extraction controls mathematical derivative identity and
+regularity, not Monte Carlo error or floating-point accuracy. Its logical-buffer
+limits are separate from model/compiler memory. `stochastic_bilaplacian_samples`
+uses the Gaussian fourth moment and does not claim Rademacher compatibility.
+The residual diagnostics' aggregated mean standard error is not a confidence
+interval for the squared objective. For model selection use an independent
+fixed objective, never the minimum signed training realization.
+
+
 ## Static random fields
 
 `phydrax.stochastic` separates a Gaussian coefficient realization from spatial

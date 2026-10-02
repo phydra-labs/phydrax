@@ -25,6 +25,7 @@ from phydrax.domain._derivative import DerivativeRuleProvider
 
 from ..._strict import StrictModule
 from ._domain_ops import _coord_axis_position, _factor_and_dim, grad, partial, partial_n
+from ._requests import DerivativeStep
 
 
 if TYPE_CHECKING:
@@ -215,6 +216,23 @@ class _NativePartialCallable(StrictModule, _FormDerivativeProvider):
         self.requests = requests
 
     def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
+        rule = self.source.derivative_rule
+        if rule is not None and self.requests:
+            steps = tuple(
+                DerivativeStep("partial", var, axis, order, options[1])
+                for var, axis, order, options in self.requests
+            )
+            mode, _, basis, periodic = self.requests[-1][3]
+            complete = rule.derive_path(steps, mode=mode, basis=basis, periodic=periodic)
+            if complete is not None:
+                if not isinstance(complete, DomainFunction):
+                    raise TypeError(
+                        "DerivativeRule.derive_path must return a DomainFunction or None."
+                    )
+                call_args = tuple(
+                    args[self.source.deps.index(label)] for label in complete.deps
+                )
+                return _function_value(complete, call_args, key=key, kwargs=kwargs)
         derivative = self.source
         for var, axis, order, options in self.requests:
             mode, backend, basis, periodic = options

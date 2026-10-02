@@ -40,6 +40,21 @@
 - Native compact multiword key grouping and seeded deterministic/compensated
   signed reduction, preserving existing scalar consumers; explicit lifecycle
   archive limits support the complete retained projector statistical records.
+- Certified native Taylor derivative contractions: normalized multi-input curves,
+  exact integer-partition and signed-binomial certificates, bounded deterministic
+  and prime-based planning, shared schedules, live parameter/direction gradients,
+  nominal result contracts, and explicit regularity/resource/precision refusal.
+- Ordered derivative paths and native whole-path ownership through pointwise
+  binding; high-order deterministic/randomized PDE compilation, compact signed
+  term populations, bounded heterogeneous dispatch, and Gaussian bilaplacian
+  realizations without dense derivative tensors or probe-by-coordinate storage.
+- Sampling-design evidence through randomized residual/moment objectives:
+  finite-population correction, exact singleton handling, unknown uncertainty,
+  valid independent-group products, and refusal of biased adaptive/self-fitted
+  integration laws in unbiased loss modes. Existing deterministic defaults and
+  native HVP/probe streams remain unchanged.
+- Runnable high-order solver example and capacity-controlled, phase-separated
+  contraction/PDE benchmark drivers with compiler and logical-memory evidence.
 - Prepared meshfree approximation in `phydrax.discretization.meshfree`: bounded
   certified neighborhoods, batched GMLS/PHS-RBF-FD, enforced stencil admission,
   sparse point-cloud elliptic solves, explicit hyperviscosity, and native

@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +20,19 @@ from .._doc import DOC_KEY0
 from .._model import ModelBinding
 from .._strict import StrictModule
 from ..typing import PRNGKey
+from ._derivative import (
+    DerivativeBackend,
+    DerivativeBasis,
+    DerivativeMode,
+    DerivativeRule,
+    DerivativeRuleProvider,
+)
 from ._structure import GridBatch, PointBatch
+
+
+if TYPE_CHECKING:
+    from ..operators.differential._requests import DerivativeStep
+    from ._function import DomainFunction
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +138,100 @@ class PointwiseEvaluator(StrictModule):
             )
             mapped = jax.vmap(mapped, in_axes=in_axes, out_axes=0)
         return mapped(*coordinate_values)
+
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule | None:
+        """Derive from the current wrapped callable, without storing its rule."""
+        from ._function import DomainFunction
+
+        provider = self.function
+        if isinstance(provider, DerivativeRuleProvider):
+            source = DomainFunction(
+                domain=function.domain,
+                deps=function.deps,
+                func=provider,
+                metadata=function.metadata,
+            )
+            rule = provider.derivative_rule_for(source)
+            return None if rule is None else _PointwiseDerivativeRule(rule)
+        return None
+
+
+def _pointwise_derivative(function: DomainFunction | None, /) -> DomainFunction | None:
+    if function is None:
+        return None
+    if isinstance(function.func, (PointwiseEvaluator, BatchEvaluator)):
+        return function
+    from ._function import DomainFunction
+
+    return DomainFunction(
+        domain=function.domain,
+        deps=function.deps,
+        func=PointwiseEvaluator(function.func, binding=FunctionBinding(pass_key=True)),
+        metadata=function.metadata,
+        derivative_rule=function.explicit_derivative_rule,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _PointwiseDerivativeRule(DerivativeRule):
+    """Adapt owned point derivatives back to the bound coordinate call contract."""
+
+    rule: DerivativeRule
+
+    def derive(
+        self,
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        return _pointwise_derivative(
+            self.rule.derive(
+                var=var,
+                axis=axis,
+                order=order,
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+        )
+
+    def derive_laplacian(
+        self,
+        *,
+        var: str,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        return _pointwise_derivative(
+            self.rule.derive_laplacian(
+                var=var,
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+        )
+
+    def derive_path(
+        self,
+        steps: tuple[DerivativeStep, ...],
+        /,
+        *,
+        mode: DerivativeMode,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        return _pointwise_derivative(
+            self.rule.derive_path(steps, mode=mode, basis=basis, periodic=periodic)
+        )
 
 
 class BatchEvaluator(abc.ABC):

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import lru_cache
+from math import prod
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -16,8 +18,18 @@ from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.linalg as la
 
+from ..._randomized_residual_modes import RealizationSamplingDesign
+from ..._sampling._addressing import derive_key, SampleAddress
+from ..._sampling._moments import (
+    realization_moments,
+    uncertainty_available,
+    validate_sampling_design,
+)
 from ..._strict import StrictModule
 from ...typing import parse, PRNGKey
+from ._taylor_contracts import TaylorContractionPolicy, TaylorContractionRequest
+from ._taylor_execution import evaluate_taylor_contractions
+from ._taylor_planning import plan_taylor_contractions, TaylorContractionPlan
 
 
 ProbeDistribution: TypeAlias = Literal["rademacher", "normal"]
@@ -130,8 +142,8 @@ class StochasticTracePolicy(StrictModule):
         distribution: ProbeDistribution = "rademacher",
     ) -> None:
         count = int(num_probes)
-        if count < 2:
-            raise ValueError("num_probes must be at least two to estimate uncertainty.")
+        if count < 1:
+            raise ValueError("num_probes must be positive.")
         distribution = parse(distribution, ProbeDistribution, "distribution")
         self.num_probes = count
         self.distribution = distribution
@@ -157,8 +169,8 @@ class StochasticOperatorEstimate(StrictModule):
         error_array = jnp.asarray(standard_error)
         if value_array.shape != error_array.shape:
             raise ValueError("value and standard_error must have the same shape.")
-        if int(num_probes) < 2:
-            raise ValueError("num_probes must be at least two.")
+        if int(num_probes) < 1:
+            raise ValueError("num_probes must be positive.")
         distribution = parse(distribution, ProbeDistribution, "distribution")
         self.value = value_array
         self.standard_error = error_array
@@ -181,6 +193,8 @@ class StochasticOperatorSamples(StrictModule):
     dependence_ids: Array
     num_probes: int = eqx.field(static=True)
     distribution: ProbeDistribution = eqx.field(static=True)
+    sampling_design: RealizationSamplingDesign = eqx.field(static=True)
+    population_size: int | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -189,16 +203,18 @@ class StochasticOperatorSamples(StrictModule):
         *,
         distribution: ProbeDistribution,
         dependence_ids: ArrayLike | None = None,
+        sampling_design: RealizationSamplingDesign = "unknown",
+        population_size: int | None = None,
     ) -> None:
         samples = jnp.asarray(values)
-        if samples.ndim < 1 or samples.shape[0] < 2:
-            raise ValueError("values must contain at least two probe realizations.")
+        if samples.ndim < 1 or samples.shape[0] < 1:
+            raise ValueError("values must contain at least one probe realization.")
         distribution = parse(distribution, ProbeDistribution, "distribution")
         count = samples.shape[0]
-        mean = jnp.mean(samples, axis=0)
-        centered = samples - mean
-        sample_variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(count - 1)
-        standard_error = jnp.sqrt(sample_variance / float(count))
+        design = validate_sampling_design(sampling_design, population_size, count)
+        mean, sample_variance, standard_error = realization_moments(
+            samples, design, population_size
+        )
         ids = (
             jnp.arange(count, dtype=jnp.int32)
             if dependence_ids is None
@@ -213,6 +229,12 @@ class StochasticOperatorSamples(StrictModule):
         self.dependence_ids = ids
         self.num_probes = count
         self.distribution = distribution
+        self.sampling_design = design
+        self.population_size = population_size
+
+    @property
+    def uncertainty_available(self) -> bool:
+        return uncertainty_available(self.sampling_design, self.num_probes)
 
     def estimate(self) -> StochasticOperatorEstimate:
         return StochasticOperatorEstimate(
@@ -270,6 +292,81 @@ def stochastic_trace_samples(
     return StochasticOperatorSamples(
         jax.vmap(one)(probes),
         distribution=resolved.distribution,
+        sampling_design="iid",
+    )
+
+
+@lru_cache(maxsize=64)
+def _bilaplacian_plan(
+    policy: TaylorContractionPolicy | None,
+) -> TaylorContractionPlan:
+    """Reuse immutable fourth-order metadata, never a callable or numerical point."""
+    return plan_taylor_contractions(
+        (TaylorContractionRequest(("probe",), (4,)),), policy=policy
+    )
+
+
+def stochastic_bilaplacian_samples(
+    function: Callable[[Array], Array],
+    state: ArrayLike,
+    key: PRNGKey,
+    /,
+    *,
+    policy: StochasticTracePolicy | None = None,
+    taylor_policy: TaylorContractionPolicy | None = None,
+) -> StochasticOperatorSamples:
+    r"""Unbiased Gaussian bilaplacian samples ``D⁴f(state)[v,v,v,v] / 3``.
+
+    The Gaussian fourth moment contracts the symmetric fourth derivative into
+    three copies of the bilaplacian. Rademacher probes do not have that moment
+    identity and are refused. Taylor evaluation owns derivative normalization.
+    """
+    resolved = StochasticTracePolicy(distribution="normal") if policy is None else policy
+    if not isinstance(resolved, StochasticTracePolicy):
+        raise TypeError("policy must be a StochasticTracePolicy or None.")
+    if resolved.distribution != "normal":
+        raise ValueError("Gaussian bilaplacian sampling requires normal probes.")
+    state_array = jnp.asarray(state)
+    if state_array.ndim < 1 or not jnp.issubdtype(state_array.dtype, jnp.floating):
+        raise ValueError("state must be a real floating array with at least one axis.")
+    plan = _bilaplacian_plan(taylor_policy)
+    root = parse(key, PRNGKey, "key")
+    probe_root = derive_key(
+        root, SampleAddress("differential", "bilaplacian", role="probe")
+    )
+    prototype = jax.eval_shape(function, state_array)
+    retained = (resolved.num_probes + 3) * prod(prototype.shape) + resolved.num_probes
+    if retained > plan.policy.resources.max_logical_buffer_elements:
+        raise ValueError("Gaussian bilaplacian samples exceed retained-buffer resources.")
+    if resolved.num_probes > jnp.iinfo(jnp.int32).max:
+        raise ValueError("num_probes exceeds the native int32 probe capacity.")
+
+    def one(index: Array, /) -> Array:
+        probe = jr.normal(
+            jr.fold_in(probe_root, index),
+            state_array.shape,
+            dtype=state_array.dtype,
+        )
+        result = evaluate_taylor_contractions(
+            function, (state_array,), {"probe": (probe,)}, plan
+        )
+        value = eqx.error_if(
+            result.values[0],
+            ~jnp.all(result.finite) | ~jnp.all(result.derivative_valid),
+            "Gaussian bilaplacian contraction failed its numerical derivative contract.",
+        )
+        return value / jnp.asarray(3, dtype=value.dtype)
+
+    # Probe addresses are independent of the requested count and execution layout.
+    # Rematerialization avoids retaining every full directional Jet for reverse AD.
+    values = jax.lax.map(
+        jax.checkpoint(one),
+        jnp.arange(resolved.num_probes, dtype=jnp.int32),
+    )
+    return StochasticOperatorSamples(
+        values,
+        distribution=resolved.distribution,
+        sampling_design="iid",
     )
 
 
@@ -323,6 +420,7 @@ def stochastic_divergence_samples(
     return StochasticOperatorSamples(
         jax.vmap(one)(probes),
         distribution=resolved.distribution,
+        sampling_design="iid",
     )
 
 
@@ -391,6 +489,7 @@ def estimate_kolmogorov_generator(
 __all__ = [
     "exact_state_divergence",
     "ProbeDistribution",
+    "stochastic_bilaplacian_samples",
     "stochastic_divergence_samples",
     "StochasticOperatorEstimate",
     "StochasticOperatorSamples",
