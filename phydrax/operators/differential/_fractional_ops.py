@@ -18,7 +18,7 @@ from ..._doc import DOC_KEY0
 from ..._sampling import materialize_design
 from ...typing import PRNGKey
 from ..integral._local_ops import _uniform_ball_rule
-from ._domain_ops import _factor_and_dim, _resolve_var, grad
+from ._domain_ops import _derivative_metadata, _factor_and_dim, _resolve_var, grad
 
 
 if TYPE_CHECKING:
@@ -96,7 +96,10 @@ def fractional_laplacian(
             return jnp.zeros_like(y)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain,
+            deps=u.deps,
+            func=_zero,
+            metadata=_derivative_metadata(u.metadata),
         )
 
     if radius is None:
@@ -145,7 +148,9 @@ def fractional_laplacian(
         weights = w * kern
         return jnp.tensordot(weights, num, axes=(0, 0))
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=u.domain, deps=u.deps, func=_op, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def _gmc_cdf(alpha: float, *, max_k: int = 100000, tol: float = 1e-12) -> Array:
@@ -239,7 +244,10 @@ def fractional_derivative_gl_mc(
             return jnp.zeros_like(y)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain,
+            deps=u.deps,
+            func=_zero,
+            metadata=_derivative_metadata(u.metadata),
         )
 
     axis_i = int(axis)
@@ -347,7 +355,9 @@ def fractional_derivative_gl_mc(
             key = DOC_KEY0
         return _per_point_base(*args, key=key, **kwargs)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=u.domain, deps=u.deps, func=_op, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def riesz_fractional_derivative_gl_mc(

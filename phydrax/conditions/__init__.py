@@ -55,6 +55,7 @@ from ._ir import (
     ValueAxis,
 )
 from ._lowering import bind_condition, BoundCondition, lower_condition
+from ._periodic import JetAction, Periodic, PeriodicTraceAction
 from ._relations import (
     AbstractConditionRelation,
     Complementarity,
@@ -131,6 +132,7 @@ __all__ = [
     "Inequality",
     "Initial",
     "JetDeclaration",
+    "JetAction",
     "LinearTraceEquation",
     "LinearTraceExpression",
     "lower_condition",
@@ -141,6 +143,8 @@ __all__ = [
     "Observation",
     "OperatorCapabilities",
     "OperatorLinearization",
+    "Periodic",
+    "PeriodicTraceAction",
     "PointJet",
     "point_jet",
     "ProbabilisticConditioningEvidence",

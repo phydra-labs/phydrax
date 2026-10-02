@@ -10,6 +10,7 @@ from typing import Any, TYPE_CHECKING
 from phydrax.domain import Domain, DomainFunction
 
 from .._strict import StrictModule
+from ..domain._function import _drop_model_construction_certificates
 
 
 if TYPE_CHECKING:
@@ -94,6 +95,9 @@ def pullback(
     Dependencies not present in ``substitutions`` pass through unchanged when a
     same-named coordinate exists on the target domain. Every other dependency must
     have an explicit substitution.
+
+    The result keeps ``f.metadata`` except a periodic-input certificate: an
+    arbitrary substitution need not commute with the certified translations.
 
     **Arguments:**
 
@@ -185,7 +189,7 @@ def pullback(
             replacement_positions=tuple(replacement_positions),
             passthrough_positions=tuple(passthrough_positions),
         ),
-        metadata=f.metadata,
+        metadata=_drop_model_construction_certificates(f.metadata),
     )
 
 

@@ -251,7 +251,13 @@ class Domain(StrictModule):
         resulting `PortBindingEvidence` is the field's `port_binding`. Models
         without intrinsic ports take no mapping.
         """
-        from .._model import ModelBinding, ModelEvaluator, ModelMetadataProvider
+        from .._model import (
+            ModelBinding,
+            ModelEvaluator,
+            ModelMetadataProvider,
+            PERIODIC_INPUT_CERTIFICATE_KEY,
+            PeriodicInputCertificate,
+        )
         from .._model._ports import (
             bind_model_ports,
             intrinsic_model_ports,
@@ -300,19 +306,34 @@ class Domain(StrictModule):
                     )
                 resolved_binding = binding
 
+            model_evaluator = ConcatenatedModelEvaluator(
+                model,
+                domain_labels=self.labels,
+                deps=tuple(deps_),
+                binding=resolved_binding,
+            )
             metadata: dict[str, Any] = {}
             if isinstance(model, ModelMetadataProvider):
-                declared = model.model_metadata()
-                if not isinstance(declared, Mapping):
-                    raise TypeError("Model metadata providers must return a mapping.")
-                if any(not isinstance(name, str) or not name for name in declared):
-                    raise ValueError("Model metadata keys must be nonempty strings.")
+                declared = model_evaluator.model_metadata()
                 if PORT_BINDING_METADATA_KEY in declared:
                     raise ValueError(
                         f"Model metadata key {PORT_BINDING_METADATA_KEY!r} is reserved "
                         "for the domain port binding."
                     )
                 metadata.update(declared)
+                certificate = declared.get(PERIODIC_INPUT_CERTIFICATE_KEY)
+                if isinstance(certificate, PeriodicInputCertificate):
+                    shapes = tuple(self.coordinate(dep).event_shape for dep in deps_)
+                    if any(shape is None for shape in shapes):
+                        raise ValueError(
+                            "PeriodicInputCertificate requires dense domain coordinates."
+                        )
+                    input_size = sum(prod(shape) for shape in shapes if shape is not None)
+                    if certificate.input_size != input_size:
+                        raise ValueError(
+                            "PeriodicInputCertificate input_size does not match the packed "
+                            f"domain input: {certificate.input_size} != {input_size}."
+                        )
 
             site = f"Domain.Model{tuple(deps_)!r}"
             model_ports = intrinsic_model_ports(model)
@@ -343,12 +364,7 @@ class Domain(StrictModule):
             return DomainFunction(
                 domain=self,
                 deps=deps_,
-                func=ConcatenatedModelEvaluator(
-                    model,
-                    domain_labels=self.labels,
-                    deps=tuple(deps_),
-                    binding=resolved_binding,
-                ),
+                func=model_evaluator,
                 metadata=metadata,
             )
 

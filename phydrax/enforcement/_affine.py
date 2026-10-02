@@ -26,6 +26,7 @@ from ..conditions._evidence import (
 from ..conditions._ir import (
     ArrayCodomain,
     codomains_compatible,
+    Condition,
     ConditionCodomain,
     FieldCodomain,
     ProductCodomain,
@@ -52,6 +53,7 @@ from ._realization import (
     AbstractFieldRealization,
     ConditionEvaluationContext,
     FieldRealizationResult,
+    RealizationAdmission,
     RealizationStatus,
 )
 
@@ -1006,6 +1008,24 @@ class PreparedAffineProjector(AbstractFieldRealization):
         residual = self.assembly.residual(fields, context=context, key=key)
         return _tree_norm(residual, batch=batch, key=key)
 
+    @checked
+    def admission(self, condition: Condition, /) -> RealizationAdmission:
+        """Read the bound condition sources and write the joint correction fields."""
+        reads = tuple(
+            dict.fromkeys(
+                source
+                for bound in self.assembly.bound_conditions
+                for source in bound.condition.fields.sources
+            )
+        )
+        del condition
+        return RealizationAdmission(
+            reads=reads,
+            writes=self.assembly.correction_fields,
+            establishes=self.assembly.condition_ids,
+        )
+
+    @checked
     def realize(
         self,
         fields: Mapping[str, Any],
@@ -1127,6 +1147,7 @@ class ExactAffineProjector(AbstractFieldRealization):
     ) -> Array | None:
         return self.prepared.constraint_defect(fields, **kwargs)
 
+    @checked
     def realize(
         self,
         fields: Mapping[str, Any],
@@ -1135,6 +1156,10 @@ class ExactAffineProjector(AbstractFieldRealization):
         context: ConditionEvaluationContext,
     ) -> FieldRealizationResult:
         return self.prepared.realize(fields, state, context=context)
+
+    @checked
+    def admission(self, condition: Condition, /) -> RealizationAdmission:
+        return self.prepared.admission(condition)
 
 
 def prepare_affine_projector(

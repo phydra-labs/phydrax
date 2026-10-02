@@ -15,6 +15,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.solver.functional_decomposition._checkpoint as decomposition_checkpoint
+from phydrax._strict import StrictModule
 
 
 def _fixed_penalty(condition: Any, *, count: Any = 8) -> Any:
@@ -186,6 +187,53 @@ class _PoleTerm(phx.terms.AbstractScalarTerm):
     ) -> Any:
         del key, iter_, kwargs
         return (functions[self.fields[0]].func.value - 1.0) ** -2
+
+
+class _Affine(StrictModule, phx.ParameterOwner):
+    offset: jax.Array
+    slope: jax.Array
+
+    def __call__(self, x: Any, /) -> Any:
+        return self.offset + self.slope * x[0]
+
+
+def test_periodic_self_seam_term_trains_one_patch_field() -> None:
+    # ``u = a + b x`` on ``[0, 1]`` with seam residual ``u(1) - u(0) = b``: the
+    # penalty ``b^2`` has gradient ``(0, 2b)``, so one SGD step at rate 0.1 maps
+    # ``(a, b) = (0.5, 2)`` to ``(0.5, 1.6)`` and leaves the offset untouched.
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 1, periodic=True)
+    (patch,) = cover.patches
+    (seam,) = cover.pairings
+    family = phx.domain.LocalFieldFamily(
+        "u",
+        cover,
+        {
+            patch.patch_id: patch.domain.Function("x")(
+                _Affine(jnp.asarray(0.5), jnp.asarray(2.0))
+            )
+        },
+    )
+    condition = phx.conditions.Periodic(family.ref(patch.patch_id), seam)
+    problem = phx.solver.FunctionalDecompositionProblem.broken(
+        family,
+        phx.solver.ScopedFunctionalTerm(
+            _fixed_penalty(condition), phx.solver.PairScope(seam.pairing_id)
+        ),
+    )
+    prepared = phx.solver.prepare_functional_decomposition(
+        problem,
+        phx.solver.FunctionalDecompositionPlan(phx.solver.JointDecompositionTraining(1)),
+    )
+
+    result = phx.solver.solve_functional_decomposition(
+        prepared, optax.sgd(0.1), jit=True, keep_best=False
+    )
+
+    ends = patch.domain.component().points({"x": jnp.asarray([[0.0], [1.0]])})
+    np.testing.assert_allclose(
+        result.family.field(patch.patch_id)(ends).data, (0.5, 2.1), atol=1.0e-12
+    )
 
 
 def test_block_decomposition_host_control_stops_after_committed_sweep() -> None:

@@ -20,7 +20,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..conditions._evidence import AffineProjectionCertificate, ConditionRealizationStamp
-from ..conditions._ir import ProductFieldSpec
+from ..conditions._ir import Condition, ProductFieldSpec
 from ..conditions._lowering import BoundCondition
 from ..conditions._relations import Equality
 from ..linalg._constraint_operators import (
@@ -45,6 +45,7 @@ from ._realization import (
     AbstractFieldRealization,
     ConditionEvaluationContext,
     FieldRealizationResult,
+    RealizationAdmission,
     RealizationStatus,
 )
 
@@ -398,8 +399,6 @@ class LinearConditionAssembly(StrictModule, NonTrainableState):
             raise ValueError("Assembly evidence row shape differs from the target space.")
         if operator.target.dtype != np.dtype(evidence.row_dtype):
             raise TypeError("Assembly evidence row dtype differs from the target space.")
-        if codomain_coordinates is not None and not callable(codomain_coordinates):
-            raise TypeError("codomain_coordinates must be callable or None.")
         version = _version(numeric_version)
         self.operator = operator
         self.evidence = evidence
@@ -646,15 +645,6 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
         numeric_version: int = 0,
         prepared_id: str | None = None,
     ) -> None:
-        if not isinstance(
-            native_coefficient_space, AbstractVectorSpace
-        ) or not isinstance(coefficient_space, AbstractVectorSpace):
-            raise TypeError("Coefficient spaces must be AbstractVectorSpace values.")
-        if any(
-            not callable(action)
-            for action in (extraction, replacement, synthesis, assembly)
-        ):
-            raise TypeError("Linear representation actions must be callable.")
         if certificate.field_spec_id != field_spec.field_spec_id:
             raise ValueError("Representation certificate names a different field spec.")
         if certificate.field_names != field_spec.sources:
@@ -670,8 +660,6 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
                     "Representations without a real-coordinate map require compatible spaces."
                 )
         else:
-            if not isinstance(real_coordinates, AbstractRealCoordinateMap):
-                raise TypeError("real_coordinates must be an AbstractRealCoordinateMap.")
             if not real_coordinates.source_space.compatible(
                 native_coefficient_space
             ) or not real_coordinates.coordinate_space.compatible(coefficient_space):
@@ -1157,6 +1145,16 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
             self.assembly.coordinates(target)
         )
 
+    @checked
+    def admission(self, condition: Condition, /) -> RealizationAdmission:
+        """Read and replace exactly the represented fields."""
+        represented = self.representation.field_spec.sources
+        return RealizationAdmission(
+            reads=tuple(dict.fromkeys((*condition.fields.sources, *represented))),
+            writes=represented,
+            establishes=(condition.condition_id,),
+        )
+
     def _failed(
         self,
         state: RealizationLifecycleState,
@@ -1190,8 +1188,6 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
         context: ConditionEvaluationContext,
     ) -> FieldRealizationResult:
         current = RealizationLifecycleState.initial() if state is None else state
-        if not isinstance(current, RealizationLifecycleState):
-            raise TypeError("state must be RealizationLifecycleState or None.")
         proposal = propose_refresh((), current, context=context)
         validation = validate_refresh(proposal)
         committed = commit_refresh(current, proposal, validation)

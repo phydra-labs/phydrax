@@ -16,7 +16,7 @@ from phydrax.geometry import regularized_delta_values, regularized_heaviside_val
 
 from ..._strict import StrictModule
 from ..._validation import positive_finite_float
-from ._domain_ops import div, dt, grad
+from ._domain_ops import _derivative_metadata, div, dt, grad
 
 
 if TYPE_CHECKING:
@@ -101,7 +101,7 @@ def regularized_heaviside(
         domain=field.domain,
         deps=field.deps,
         func=UnaryFieldEvaluator(field.func, _CompactHeaviside(width_)),
-        metadata=field.metadata,
+        metadata=_derivative_metadata(field.metadata),
     )
 
 
@@ -123,7 +123,7 @@ def regularized_delta(
         domain=field.domain,
         deps=field.deps,
         func=UnaryFieldEvaluator(field.func, _CompactDelta(width_)),
-        metadata=field.metadata,
+        metadata=_derivative_metadata(field.metadata),
     )
 
 

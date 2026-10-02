@@ -12,7 +12,7 @@ from jax import Array
 from phydrax.domain import DomainFunction
 
 from ..._strict import StrictModule
-from ._domain_ops import directional_derivative
+from ._domain_ops import _derivative_metadata, directional_derivative
 
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ def _validated_vector_field(
         domain=field.domain,
         deps=field.deps,
         func=_VectorFieldCallable(field, dimension, role),
-        metadata=field.metadata,
+        metadata=_derivative_metadata(field.metadata),
     )
 
 

@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from math import factorial
 from typing import Any, Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -20,6 +21,7 @@ from phydrax.domain import (
     AbstractScalarDomain,
     Boundary,
     ComponentSum,
+    CoordinateFace,
     Domain,
     DomainComponent,
     DomainFunction,
@@ -64,6 +66,55 @@ class _IdentityCallable(StrictModule):
                 )
             return x[0]
         return x
+
+
+class _CoordinateFaceGate(StrictModule):
+    """Dimensionless gate vanishing exactly on selected Cartesian faces.
+
+    Each selected face contributes its normalized coordinate distance; both faces of
+    one coordinate contribute ``4 (x_c - a)(b - x_c) / L_c^2``. The gate depends only
+    on the selected coordinates, so it preserves every other coordinate relation,
+    including periodic seams.
+    """
+
+    lower: tuple[float, ...] = eqx.field(static=True)
+    upper: tuple[float, ...] = eqx.field(static=True)
+    faces: tuple[tuple[int, str], ...] = eqx.field(static=True)
+
+    def __init__(
+        self, factor: AbstractGeometry, faces: Sequence[CoordinateFace], /
+    ) -> None:
+        lower, upper = factor.coordinate_face_bounds()
+        selected = tuple(sorted({(face.axis, face.side) for face in faces}))
+        if not selected:
+            raise ValueError("A coordinate-face gate needs at least one face.")
+        for face in faces:
+            factor.coordinate_face_value(face)
+        self.lower = tuple(float(value) for value in np.asarray(lower))
+        self.upper = tuple(float(value) for value in np.asarray(upper))
+        self.faces = selected
+
+    def __call__(
+        self, points: ArrayLike, /, *, key: PRNGKey | None = None, **kwargs: Any
+    ) -> Array:
+        del key, kwargs
+        x = jnp.asarray(points)
+        value = jnp.ones(x.shape[:-1], dtype=x.dtype)
+        axes = sorted({axis for axis, _ in self.faces})
+        for axis in axes:
+            lower, upper = self.lower[axis], self.upper[axis]
+            width = upper - lower
+            coordinate = x[..., axis]
+            sides = {side for face_axis, side in self.faces if face_axis == axis}
+            if sides == {"lower", "upper"}:
+                value = (
+                    value * 4.0 * (coordinate - lower) * (upper - coordinate) / width**2
+                )
+            elif sides == {"lower"}:
+                value = value * (coordinate - lower) / width
+            else:
+                value = value * (upper - coordinate) / width
+        return value
 
 
 class _InitialPolynomialCallable(StrictModule):
@@ -464,9 +515,17 @@ def enforce_dirichlet(
         value_fn = DomainFunction(domain=u.domain, deps=(), func=value, metadata={})
 
     if isinstance(factor, AbstractGeometry):
+        if isinstance(comp, CoordinateFace):
+            gate = DomainFunction(
+                domain=component.domain,
+                deps=(var,),
+                func=_CoordinateFaceGate(factor, (comp,)),
+            )
+            return blend_with_gate(value_fn, u, gate)
         if not isinstance(comp, Boundary):
             raise ValueError(
-                "enforce_dirichlet for geometry vars requires component Boundary()."
+                "enforce_dirichlet for geometry vars requires component Boundary() "
+                "or CoordinateFace(...)."
             )
         _reject_filtered_boundary(
             component,

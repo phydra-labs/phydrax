@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -16,7 +18,9 @@ from ..._trainable import NonTrainableState
 from ...typing import checked, parse
 from .._components import DomainComponent
 from .._domain import Domain
+from .._evaluation import PointwiseEvaluator
 from .._function import DomainFunction
+from ._periodic import PeriodicIdentification
 
 
 CoordinateMap = tuple[tuple[str, DomainFunction], ...]
@@ -57,6 +61,44 @@ def _coordinate_map(
 
 def _coordinate_dict(values: CoordinateMap, /) -> dict[str, DomainFunction]:
     return dict(values)
+
+
+def _native_field_metadata(field: DomainFunction, /) -> dict[str, Any] | None:
+    from ._cartesian import (
+        _AffineCoordinate,
+        _BoxSupport,
+        _BoxWindow,
+        _FaceEmbedding,
+        _PeriodicCoordinate,
+    )
+    from ._periodic import _FaceProjection, _IdentityCoordinate
+
+    function = (
+        field.func.function if isinstance(field.func, PointwiseEvaluator) else field.func
+    )
+    if not isinstance(
+        function,
+        (
+            _AffineCoordinate,
+            _BoxSupport,
+            _BoxWindow,
+            _FaceEmbedding,
+            _PeriodicCoordinate,
+            _FaceProjection,
+            _IdentityCoordinate,
+        ),
+    ):
+        return None
+    return {
+        "type": type(function).__qualname__,
+        "parameters": asdict(function),
+    }
+
+
+def _native_coordinate_metadata(
+    coordinates: CoordinateMap, /
+) -> list[tuple[str, dict[str, Any] | None]]:
+    return [(label, _native_field_metadata(field)) for label, field in coordinates]
 
 
 class SubdomainPatch(StrictModule, NonTrainableState):
@@ -137,7 +179,13 @@ class SubdomainPatch(StrictModule, NonTrainableState):
 
 
 class PairedSupport(StrictModule, NonTrainableState):
-    """One physical support carrying paired traces from two local domains."""
+    """One physical support carrying paired traces from two local domains.
+
+    A ``"periodic-interface"`` pairing carries the `PeriodicIdentification` that
+    glues its two faces. Its right side is the identification's lower (source)
+    face and its left side the upper (target) face. Only an identified periodic
+    seam may join a patch to itself.
+    """
 
     component: DomainComponent
     left_coordinates: CoordinateMap
@@ -148,6 +196,7 @@ class PairedSupport(StrictModule, NonTrainableState):
     right_patch_id: str = eqx.field(static=True)
     codimension: int = eqx.field(static=True)
     topology: PairingTopology = eqx.field(static=True)
+    identification: PeriodicIdentification | None
 
     @checked
     def __init__(
@@ -163,15 +212,28 @@ class PairedSupport(StrictModule, NonTrainableState):
         normal: DomainFunction | None = None,
         codimension: int = 1,
         topology: PairingTopology = "shared-interface",
+        identification: PeriodicIdentification | None = None,
     ) -> None:
         left_id = _identifier(left_patch_id, "left_patch_id")
         right_id = _identifier(right_patch_id, "right_patch_id")
-        if left_id == right_id:
+        topology = parse(topology, PairingTopology, "topology")
+        if topology == "periodic-interface":
+            if not isinstance(identification, PeriodicIdentification):
+                raise TypeError(
+                    "A periodic-interface pairing requires a PeriodicIdentification."
+                )
+        elif identification is not None:
+            raise ValueError(
+                "Only periodic-interface pairings carry a periodic identification."
+            )
+        if left_id == right_id and topology != "periodic-interface":
             raise ValueError("A paired support must join two distinct patches.")
-        codimension_ = int(codimension)
+        if isinstance(codimension, bool) or not isinstance(codimension, int):
+            raise TypeError("codimension must be an integer.")
+        codimension_ = codimension
         if codimension_ < 0:
             raise ValueError("codimension must be non-negative.")
-        topology = parse(topology, PairingTopology, "topology")
+
         if topology == "overlap-volume" and codimension_ != 0:
             raise ValueError("Overlap-volume pairings require codimension=0.")
         if topology != "overlap-volume" and codimension_ == 0:
@@ -183,17 +245,70 @@ class PairedSupport(StrictModule, NonTrainableState):
                 raise ValueError("normal must live on the paired-support domain.")
 
         self.component = component
-        self.left_coordinates = tuple(left_coordinates.items())
-        self.right_coordinates = tuple(right_coordinates.items())
+        self.left_coordinates = _coordinate_map(
+            left_coordinates,
+            labels=tuple(sorted(left_coordinates)),
+            domain=component.domain,
+            name="left_coordinates",
+        )
+        self.right_coordinates = _coordinate_map(
+            right_coordinates,
+            labels=tuple(sorted(right_coordinates)),
+            domain=component.domain,
+            name="right_coordinates",
+        )
         self.normal = normal
         self.pairing_id = _identifier(pairing_id, "pairing_id")
         self.left_patch_id = left_id
         self.right_patch_id = right_id
         self.codimension = codimension_
         self.topology = topology
+        self.identification = identification
+
+    @property
+    def source_side(self) -> Literal["right"]:
+        """Side carrying the periodic source (lower) face."""
+        self._require_periodic()
+        return "right"
+
+    @property
+    def target_side(self) -> Literal["left"]:
+        """Side carrying the periodic target (upper) face."""
+        self._require_periodic()
+        return "left"
+
+    @property
+    def self_seam(self) -> bool:
+        """Whether this periodic seam joins one patch to itself."""
+        return self.left_patch_id == self.right_patch_id
+
+    def _require_periodic(self) -> None:
+        if self.identification is None:
+            raise ValueError(
+                f"Paired support {self.pairing_id!r} is not a periodic identification."
+            )
+
+    def coordinate_labels(self, side: Literal["left", "right"], /) -> tuple[str, ...]:
+        """Labels pulled back by one side's coordinate map."""
+        if side == "left":
+            return tuple(label for label, _ in self.left_coordinates)
+        if side == "right":
+            return tuple(label for label, _ in self.right_coordinates)
+        raise ValueError("side must be 'left' or 'right'.")
 
     def bind(self, left: SubdomainPatch, right: SubdomainPatch, /) -> None:
         """Validate this pairing against its endpoint patches."""
+        if not isinstance(left, SubdomainPatch) or not isinstance(right, SubdomainPatch):
+            raise TypeError("Paired-support endpoints must be SubdomainPatch objects.")
+        if not left.ambient_domain.same_support(right.ambient_domain):
+            raise ValueError("Paired-support endpoints must share an ambient domain.")
+        if (
+            self.identification is not None
+            and not self.identification.domain.same_support(left.ambient_domain)
+        ):
+            raise ValueError(
+                "The periodic identification must live on the ambient domain."
+            )
         if left.patch_id != self.left_patch_id or right.patch_id != self.right_patch_id:
             raise ValueError(
                 "Paired-support endpoints do not match the supplied patches."
@@ -243,26 +358,85 @@ class PairedSupport(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-8,
     ) -> PairedSupportEvidence:
-        """Audit physical map agreement and normal magnitude on fixed points."""
+        """Audit physical map agreement and normal magnitude on fixed points.
+
+        For a periodic seam the two ambient images must differ by the
+        identification shift, modulo the period along the identified direction
+        only; transverse coordinates must agree exactly.
+        """
+        if not math.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("tolerance must be finite and non-negative.")
         self.bind(left, right)
         mismatch = jnp.asarray(0.0)
-        if self.topology != "periodic-interface":
-            left_ambient = _coordinate_dict(left.to_ambient)
-            right_ambient = _coordinate_dict(right.to_ambient)
-            for label in left.ambient_domain.labels:
-                left_values = self.trace(left_ambient[label], side="left")(points).data
-                right_values = self.trace(right_ambient[label], side="right")(points).data
+        left_ambient = _coordinate_dict(left.to_ambient)
+        right_ambient = _coordinate_dict(right.to_ambient)
+        identification = self.identification
+        if identification is not None:
+            from ._cartesian import _PeriodicCoordinate
+
+            endpoint_records: tuple[
+                tuple[
+                    CoordinateMap,
+                    dict[str, DomainFunction],
+                    Literal["left", "right"],
+                    float,
+                ],
+                ...,
+            ] = (
+                (self.left_coordinates, left_ambient, "left", identification.upper),
+                (self.right_coordinates, right_ambient, "right", identification.lower),
+            )
+            for coordinates, ambient, side, expected in endpoint_records:
+                ambient_coordinate = ambient[identification.label]
+                function = (
+                    ambient_coordinate.func.function
+                    if isinstance(ambient_coordinate.func, PointwiseEvaluator)
+                    else ambient_coordinate.func
+                )
+                if (
+                    isinstance(function, _PeriodicCoordinate)
+                    and function.direction == "to-ambient"
+                ):
+                    # The native cover map canonicalizes upper to lower. Its input
+                    # retains endpoint orientation before that quotient operation.
+                    if len(ambient_coordinate.deps) != 1:
+                        raise ValueError(
+                            "A native periodic coordinate map requires one dependency."
+                        )
+                    endpoint = dict(coordinates)[ambient_coordinate.deps[0]](points).data
+                else:
+                    endpoint = self.trace(ambient_coordinate, side=side)(points).data
+                if identification.vector_coordinate:
+                    component = identification.component
+                    if component is None:
+                        raise RuntimeError(
+                            "A vector identification requires a component."
+                        )
+                    endpoint = endpoint[..., component]
                 mismatch = jnp.maximum(
                     mismatch,
-                    jnp.max(jnp.abs(left_values - right_values)),
+                    jnp.max(jnp.abs(endpoint - expected)),
                 )
+        for label in left.ambient_domain.labels:
+            left_values = self.trace(left_ambient[label], side="left")(points).data
+            right_values = self.trace(right_ambient[label], side="right")(points).data
+            defect = left_values - right_values
+            if identification is not None and label == identification.label:
+                period = identification.period
+                shift = identification.shift()
+                defect = defect - shift
+                # Only the identified direction wraps: a transverse offset equal
+                # to the period is a twisted seam, not this identification.
+                defect = defect - shift * jnp.round(defect / period)
+            mismatch = jnp.maximum(mismatch, jnp.max(jnp.abs(defect)))
         normal_error = jnp.asarray(0.0)
         if self.normal is not None:
-            normal_values = jnp.asarray(self.normal(points).data)
-            if normal_values.ndim == 1:
-                magnitude = jnp.abs(normal_values)
-            else:
+            normal_field = self.normal(points)
+            normal_values = jnp.asarray(normal_field.data)
+            if normal_field.dims and normal_field.dims[-1] is None:
                 magnitude = jnp.linalg.norm(normal_values, axis=-1)
+            else:
+                magnitude = jnp.abs(normal_values)
             normal_error = jnp.max(jnp.abs(magnitude - 1.0))
         mismatch_value = float(mismatch)
         normal_value = float(normal_error)
@@ -360,6 +534,7 @@ class SubdomainCover(StrictModule, NonTrainableState):
             raise ValueError("A subdomain cover requires at least one patch.")
         if any(not isinstance(patch, SubdomainPatch) for patch in patches_):
             raise TypeError("patches must contain SubdomainPatch objects.")
+        patches_ = tuple(sorted(patches_, key=lambda patch: patch.patch_id))
         patch_ids = tuple(patch.patch_id for patch in patches_)
         if len(set(patch_ids)) != len(patch_ids):
             raise ValueError("Subdomain patch IDs must be unique.")
@@ -383,10 +558,15 @@ class SubdomainCover(StrictModule, NonTrainableState):
                 by_id[pairing.right_patch_id],
             )
 
+        pairings_ = tuple(sorted(pairings_, key=lambda pairing: pairing.pairing_id))
+        if not isinstance(exact_coverage, bool):
+            raise TypeError("exact_coverage must be a boolean.")
         if maximum_overlap is None:
             maximum_overlap_ = None
         else:
-            maximum_overlap_ = int(maximum_overlap)
+            if isinstance(maximum_overlap, bool) or not isinstance(maximum_overlap, int):
+                raise TypeError("maximum_overlap must be an integer or None.")
+            maximum_overlap_ = maximum_overlap
             if maximum_overlap_ <= 0:
                 raise ValueError("maximum_overlap must be positive when supplied.")
 
@@ -410,8 +590,9 @@ class SubdomainCover(StrictModule, NonTrainableState):
         """Content revision of this cover for revision-bound interface bindings.
 
         Declared cover, patch, and pairing IDs, pairing topology, codimension,
-        normal presence, coordinate labels, and every numeric array leaf (patch
-        bounds, map parameters) are content-addressed. Maps authored as opaque
+        normal presence, coordinate labels, native coordinate/support/window
+        parameters (including static fields), periodic identification revisions,
+        and every numeric array leaf are content-addressed. Maps authored as opaque
         Python callables are identified only through the declared IDs, so
         replacing such a map requires a new ``cover_id``.
         """
@@ -420,6 +601,28 @@ class SubdomainCover(StrictModule, NonTrainableState):
                 "kind": "subdomain-cover-revision",
                 "cover_id": self.cover_id,
                 "ambient": list(self.ambient.labels),
+                "native_maps": {
+                    "patches": [
+                        [
+                            patch.patch_id,
+                            _native_field_metadata(patch.support),
+                            None
+                            if patch.window is None
+                            else _native_field_metadata(patch.window),
+                            _native_coordinate_metadata(patch.to_local),
+                            _native_coordinate_metadata(patch.to_ambient),
+                        ]
+                        for patch in self.patches
+                    ],
+                    "pairings": [
+                        [
+                            pairing.pairing_id,
+                            _native_coordinate_metadata(pairing.left_coordinates),
+                            _native_coordinate_metadata(pairing.right_coordinates),
+                        ]
+                        for pairing in self.pairings
+                    ],
+                },
                 "patches": [
                     [patch.patch_id, list(patch.domain.labels)] for patch in self.patches
                 ],
@@ -432,6 +635,11 @@ class SubdomainCover(StrictModule, NonTrainableState):
                         pairing.codimension,
                         pairing.normal is not None,
                     ]
+                    + (
+                        []
+                        if pairing.identification is None
+                        else [pairing.identification.revision]
+                    )
                     for pairing in self.pairings
                 ],
                 "exact_coverage": self.exact_coverage,
@@ -444,8 +652,11 @@ class SubdomainCover(StrictModule, NonTrainableState):
 
     @property
     def adjacency(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Distinct neighboring patches; a periodic self-seam is not a neighbor."""
         neighbors = {patch_id: set() for patch_id in self.patch_ids}
         for pairing in self.pairings:
+            if pairing.left_patch_id == pairing.right_patch_id:
+                continue
             neighbors[pairing.left_patch_id].add(pairing.right_patch_id)
             neighbors[pairing.right_patch_id].add(pairing.left_patch_id)
         return tuple(

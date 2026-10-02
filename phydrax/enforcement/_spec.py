@@ -24,6 +24,7 @@ from phydrax.conditions.initial import Initial
 from phydrax.domain import (
     Boundary,
     ComponentSum,
+    CoordinateFace,
     DomainComponent,
     DomainFunction,
     Fixed,
@@ -237,7 +238,7 @@ def _stage(component: DomainComponent, evolution_var: str, /) -> EnforcementStag
     selections = tuple(
         component.spec.selection_for(label) for label in component.domain.labels
     )
-    if any(isinstance(selection, Boundary) for selection in selections):
+    if any(isinstance(selection, (Boundary, CoordinateFace)) for selection in selections):
         return "boundary"
     if evolution_var in component.domain.labels and isinstance(
         component.spec.selection_for(evolution_var), (FixedStart, FixedEnd, Fixed)

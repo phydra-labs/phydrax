@@ -20,7 +20,13 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..domain import Domain, DomainFunction
+from ..conditions._ir import (
+    ConditionCodomain,
+    FieldCodomain,
+    ProductCodomain,
+    validate_codomain_value,
+)
+from ..domain import DomainFunction
 from ..domain._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -51,6 +57,16 @@ def _names(values: Sequence[str], /) -> tuple[str, ...]:
     if not names or any(not name for name in names) or len(set(names)) != len(names):
         raise ValueError("Fiber field names must be nonempty and unique.")
     return names
+
+
+def _codomain_supports(codomain: ConditionCodomain, /) -> tuple[tuple[str, ...], ...]:
+    if isinstance(codomain, FieldCodomain):
+        return (codomain.support.domain.labels,)
+    if isinstance(codomain, ProductCodomain):
+        return tuple(
+            labels for factor in codomain.factors for labels in _codomain_supports(factor)
+        )
+    raise TypeError("Analytic fiber residuals require field or product codomains.")
 
 
 def _checked(
@@ -164,8 +180,9 @@ def _same_product_layout(left: Any, right: Any, /) -> bool:
     return False
 
 
+@checked
 def _factor_layout(value: cx.AxisArray, name: str, /) -> tuple[tuple[int, ...], int, int]:
-    if not isinstance(value, cx.AxisArray) or value.data.ndim < 2:
+    if value.data.ndim < 2:
         raise TypeError(f"{name} must be a matrix-valued phydrax.axes.AxisArray.")
     if value.dims[-2:] != (None, None) or any(dim is None for dim in value.dims[:-2]):
         raise ValueError(
@@ -180,6 +197,8 @@ def _factor_layout(value: cx.AxisArray, name: str, /) -> tuple[tuple[int, ...], 
     )
 
 
+# Keep runtime lift kernels unwrapped to preserve their callable identities;
+# their nominal guards continue to own direct calls.
 def _local_mv(matrix: cx.AxisArray, residual: cx.AxisArray, /) -> cx.AxisArray:
     if not isinstance(residual, cx.AxisArray):
         raise TypeError("A fiber residual must be a phydrax.axes.AxisArray.")
@@ -282,6 +301,7 @@ class BatchedFiberFactor(StrictModule):
     factor_id: str = eqx.field(static=True)
     numeric_version: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         right_inverse: cx.AxisArray,
@@ -404,13 +424,19 @@ class FiberProjectionDerivativeRule(DerivativeRule):
 
 
 class AnalyticFiberProjectionUnit(StrictModule):
-    """A continuum fiber action, target, and right-inverse lift."""
+    """A continuum fiber action, target, and right-inverse lift.
 
-    action: Callable
-    target: Callable
-    lift: Callable
+    ``residual_codomain`` declares the residual field, or the ordered product of
+    residual fields whose supports may differ (for example the transverse seams of
+    two identified coordinates). Action and target values are validated against it
+    before lifting.
+    """
+
+    action: Callable[[Mapping[str, Any], Any], Any]
+    target: Callable[[Mapping[str, Any], Any], Any]
+    lift: Callable[[Any, Any], Mapping[str, Any]]
     derivative_action: FiberDerivativeAction | None
-    residual_domain: Domain
+    residual_codomain: FieldCodomain | ProductCodomain
     evidence: Any
     field_names: tuple[str, ...] = eqx.field(static=True)
     condition_ids: tuple[str, ...] = eqx.field(static=True)
@@ -421,10 +447,10 @@ class AnalyticFiberProjectionUnit(StrictModule):
     @checked
     def __init__(
         self,
-        action: Callable,
-        target: Callable,
-        lift: Callable,
-        residual_domain: Domain,
+        action: Callable[[Mapping[str, Any], Any], Any],
+        target: Callable[[Mapping[str, Any], Any], Any],
+        lift: Callable[[Any, Any], Mapping[str, Any]],
+        residual_codomain: FieldCodomain | ProductCodomain,
         /,
         *,
         field_names: Sequence[str],
@@ -435,8 +461,7 @@ class AnalyticFiberProjectionUnit(StrictModule):
         unit_id: str | None = None,
         numeric_version: int = 0,
     ) -> None:
-        if not callable(action) or not callable(target) or not callable(lift):
-            raise TypeError("Analytic fiber action, target, and lift must be callable.")
+        supports = _codomain_supports(residual_codomain)
         names, ids, version = (
             _names(field_names),
             tuple(str(value) for value in condition_ids),
@@ -445,9 +470,9 @@ class AnalyticFiberProjectionUnit(StrictModule):
         if version < 0 or any(not value for value in ids):
             raise ValueError("Condition IDs and numeric version are invalid.")
         self.action, self.target, self.lift = action, target, lift
-        self.derivative_action, self.residual_domain, self.evidence = (
+        self.derivative_action, self.residual_codomain, self.evidence = (
             derivative_action,
-            residual_domain,
+            residual_codomain,
             evidence,
         )
         (
@@ -467,7 +492,7 @@ class AnalyticFiberProjectionUnit(StrictModule):
                 "kind": "analytic-fiber",
                 "fields": names,
                 "conditions": ids,
-                "domain": residual_domain.labels,
+                "supports": supports,
                 "version": version,
             },
         )
@@ -475,23 +500,32 @@ class AnalyticFiberProjectionUnit(StrictModule):
     def corrections(
         self, fields: Mapping[str, Any], context: Any, /
     ) -> frozendict[str, Any]:
-        residual = _sub(self.target(fields, context), self.action(fields, context))
-        return _checked(self.lift(residual, context), self.field_names)
+        target = validate_codomain_value(
+            self.residual_codomain, self.target(fields, context), path="fiber target"
+        )
+        action = validate_codomain_value(
+            self.residual_codomain, self.action(fields, context), path="fiber action"
+        )
+        return _checked(self.lift(_sub(target, action), context), self.field_names)
 
     def homogeneous_corrections(
         self, fields: Mapping[str, Any], context: Any, /
     ) -> frozendict[str, Any]:
-        return _checked(
-            self.lift(_negate(self.action(fields, context)), context), self.field_names
+        action = validate_codomain_value(
+            self.residual_codomain, self.action(fields, context), path="fiber action"
         )
+        return _checked(self.lift(_negate(action), context), self.field_names)
 
 
 class RealizedFiberProjectionUnit(StrictModule):
     """A fiber unit exact on a fixed residual grid or basis realization."""
 
-    action: Callable
-    target: Callable
-    synthesis: Callable
+    action: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any]
+    target: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any]
+    synthesis: Callable[
+        [cx.AxisArray, Mapping[str, Any], Any, object, PRNGKey | None],
+        Mapping[str, Any],
+    ]
     factor: BatchedFiberFactor
     evidence: Any
     field_names: tuple[str, ...] = eqx.field(static=True)
@@ -499,11 +533,15 @@ class RealizedFiberProjectionUnit(StrictModule):
     exactness_scope: FiberExactnessScope = eqx.field(static=True)
     unit_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        action: Callable,
-        target: Callable,
-        synthesis: Callable,
+        action: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any],
+        target: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any],
+        synthesis: Callable[
+            [cx.AxisArray, Mapping[str, Any], Any, object, PRNGKey | None],
+            Mapping[str, Any],
+        ],
         factor: BatchedFiberFactor,
         /,
         *,
@@ -512,15 +550,6 @@ class RealizedFiberProjectionUnit(StrictModule):
         evidence: Any = None,
         unit_id: str | None = None,
     ) -> None:
-        if (
-            not callable(action)
-            or not callable(target)
-            or not callable(synthesis)
-            or not isinstance(factor, BatchedFiberFactor)
-        ):
-            raise TypeError(
-                "Realized fiber callables and BatchedFiberFactor are required."
-            )
         names, ids = _names(field_names), tuple(str(value) for value in condition_ids)
         self.action, self.target, self.synthesis, self.factor = (
             action,
@@ -595,9 +624,12 @@ class RealizedFiberProjectionUnit(StrictModule):
 class SeparableFiberProjectionUnit(StrictModule):
     """An axiswise fiber unit sharing one prepared reduced factorization."""
 
-    action: Callable
-    target: Callable
-    synthesis: Callable
+    action: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any]
+    target: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any]
+    synthesis: Callable[
+        [cx.AxisArray, Mapping[str, Any], Any, object, PRNGKey | None],
+        Mapping[str, Any],
+    ]
     operator: PreparedConstraintOperator
     reduction: Any
     evidence: Any
@@ -606,11 +638,15 @@ class SeparableFiberProjectionUnit(StrictModule):
     exactness_scope: FiberExactnessScope = eqx.field(static=True)
     unit_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        action: Callable,
-        target: Callable,
-        synthesis: Callable,
+        action: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any],
+        target: Callable[[Mapping[str, Any], Any, object, PRNGKey | None], Any],
+        synthesis: Callable[
+            [cx.AxisArray, Mapping[str, Any], Any, object, PRNGKey | None],
+            Mapping[str, Any],
+        ],
         operator: PreparedConstraintOperator,
         /,
         *,
@@ -621,15 +657,6 @@ class SeparableFiberProjectionUnit(StrictModule):
         exactness_scope: FiberExactnessScope = "realization",
         unit_id: str | None = None,
     ) -> None:
-        if (
-            not callable(action)
-            or not callable(target)
-            or not callable(synthesis)
-            or not isinstance(operator, PreparedConstraintOperator)
-        ):
-            raise TypeError(
-                "Separable fiber callables and PreparedConstraintOperator are required."
-            )
         names, ids = _names(field_names), tuple(str(value) for value in condition_ids)
         self.action, self.target, self.synthesis, self.operator = (
             action,
@@ -823,6 +850,7 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
     derivative_action: FiberDerivativeAction | None
     field_name: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         fields: Mapping[str, Any],
@@ -867,6 +895,7 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
         return value
 
 
+@checked
 def realized_fiber_functions(
     fields: Mapping[str, Any],
     state: FiberProjectionState,

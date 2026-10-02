@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
@@ -16,7 +17,6 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import (
     standard_derivative_matrix,
-    standard_vandermonde,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -33,7 +33,12 @@ from ._basis import (
     _analysis_from_synthesis,
     _legendre_normalizers,
     AbstractSpectralBasisPlan,
+    ChebyshevBasisPlan,
+    CosineBasisPlan,
+    FourierBasisPlan,
+    LegendreBasisPlan,
     PreparedSpectralAxis,
+    SineBasisPlan,
     SpectralBoundaryKind,
     SpectralModeLayout,
 )
@@ -48,6 +53,10 @@ class SpectralTraceTerm(StrictModule, NonTrainableState):
     term_id: str = eqx.field(static=True)
 
     def __init__(self, derivative_order: int, coefficient: float = 1.0, /) -> None:
+        if isinstance(derivative_order, bool) or not isinstance(
+            derivative_order, Integral
+        ):
+            raise TypeError("Trace derivative order must be an integer.")
         order = int(derivative_order)
         coefficient_ = float(coefficient)
         if order < 0 or not np.isfinite(coefficient_) or coefficient_ == 0.0:
@@ -212,21 +221,19 @@ def _trace_row(
     normalizers = _basis_normalizers(prepared)
     if prepared.family in ("chebyshev", "legendre"):
         length = float(np.asarray(prepared.length))
-        evaluation = standard_vandermonde(
-            prepared.family,
-            jnp.asarray((point,)),
-            count - 1,
-        )[0]
+        evaluation = point ** np.arange(count, dtype=np.int64)
         row = np.zeros((count,), dtype=np.float64)
         for term in constraint.terms:
+            if term.derivative_order >= count:
+                continue
             derivative = standard_derivative_matrix(
                 prepared.family,
                 count,
                 term.derivative_order,
                 scale=2.0 / length,
-                dtype=prepared.precision.physical_dtype,
+                dtype=jnp.float64,
             )
-            row += term.coefficient * np.asarray(evaluation @ derivative) * normalizers
+            row += term.coefficient * (evaluation @ np.asarray(derivative)) * normalizers
         return row
     if any(term.derivative_order != 0 for term in constraint.terms):
         raise ValueError(
@@ -246,6 +253,175 @@ def _constraint_matrix(
         tuple(_trace_row(prepared, constraint) for constraint in conditions.constraints),
         axis=0,
     )
+
+
+def _seam_scalar(value: ArrayLike, name: str, /) -> np.ndarray:
+    scalar = np.asarray(value)
+    if scalar.ndim != 0:
+        raise ValueError(f"{name} must be a scalar.")
+    if not np.issubdtype(scalar.dtype, np.number):
+        raise TypeError(f"{name} must be a real or complex number.")
+    if not np.isfinite(scalar) or scalar == 0:
+        raise ValueError(f"{name} must be finite and nonzero.")
+    return scalar
+
+
+def _seam_terms(
+    terms: Mapping[int, ArrayLike],
+    name: str,
+    /,
+) -> tuple[tuple[int, np.ndarray], ...]:
+    if not isinstance(terms, Mapping) or not terms:
+        raise TypeError(f"{name} must be a nonempty derivative-order mapping.")
+    if any(isinstance(order, bool) or not isinstance(order, Integral) for order in terms):
+        raise TypeError(f"{name} derivative orders must be integers.")
+    orders = sorted(terms)
+    if orders[0] < 0:
+        raise ValueError(f"{name} derivative orders must be nonnegative.")
+    return tuple(
+        (order, _seam_scalar(terms[order], f"{name} coefficients")) for order in orders
+    )
+
+
+def _seam_side_row(
+    prepared: PreparedSpectralAxis,
+    side: Literal["lower", "upper"],
+    terms: tuple[tuple[int, np.ndarray], ...],
+    dtype: np.dtype,
+    /,
+) -> np.ndarray:
+    """Return `sum_k a_k d^k phi_n(side)` on a bounded unconstrained axis."""
+    row = np.zeros((prepared.mode_count,), dtype=dtype)
+    match prepared.plan:
+        case ChebyshevBasisPlan() | LegendreBasisPlan():
+            for order, coefficient in terms:
+                unit = _trace_row(
+                    prepared, SpectralTraceConstraint.derivative(side, order)
+                )
+                with np.errstate(over="ignore", invalid="ignore"):
+                    row += coefficient * unit
+        case SineBasisPlan() | CosineBasisPlan():
+            numbers = np.asarray(prepared.modes.mode_numbers, dtype=np.float64)
+            length = float(np.asarray(prepared.length))
+            cosine = isinstance(prepared.plan, CosineBasisPlan)
+            edge = np.where(
+                ((numbers == 0) | (numbers == prepared.mode_count - 1))
+                if cosine
+                else numbers == prepared.mode_count,
+                np.sqrt(0.5),
+                1.0,
+            )
+            amplitude = np.sqrt(2.0 / length) * edge
+            parity = (
+                np.where(numbers % 2 == 0, 1.0, -1.0)
+                if side == "upper"
+                else np.ones_like(numbers)
+            )
+            wave = np.pi * numbers / length
+            for order, coefficient in terms:
+                phase = ((1.0, 0.0, -1.0, 0.0) if cosine else (0.0, 1.0, 0.0, -1.0))[
+                    order % 4
+                ]
+                # Integer mode endpoint phases are structural zeros, not sin(pi*n)
+                # round-off. Skip them before potentially overflowing wave powers.
+                if phase != 0.0:
+                    with np.errstate(over="ignore", invalid="ignore"):
+                        row += coefficient * amplitude * wave**order * phase * parity
+        case _:
+            raise RuntimeError("Internal invariant failed: unsupported seam basis.")
+    if np.any(~np.isfinite(row)):
+        raise ValueError("Periodic endpoint trace is not representable in float64.")
+    return row
+
+
+def _fourier_seam_action(
+    prepared: PreparedSpectralAxis,
+    terms: tuple[tuple[int, np.ndarray], ...],
+    /,
+) -> np.ndarray:
+    """Return `sum_k a_k (i 2 pi m_n / L)^k`, the jet multiplier at either seam face."""
+    action = np.zeros((prepared.mode_count,), dtype=np.complex128)
+    numbers = np.asarray(prepared.modes.mode_numbers, dtype=np.float64)
+    length = float(np.asarray(prepared.length))
+    wave = 2.0j * np.pi * numbers / length
+    for order, coefficient in terms:
+        with np.errstate(over="ignore", invalid="ignore"):
+            action += coefficient * wave**order
+    if np.any(~np.isfinite(action)):
+        raise ValueError("Periodic Fourier trace is not representable in complex128.")
+    return action
+
+
+def periodic_trace_row(
+    prepared: PreparedSpectralAxis,
+    /,
+    *,
+    source_terms: Mapping[int, ArrayLike],
+    target_terms: Mapping[int, ArrayLike],
+    transport: ArrayLike = 1.0,
+) -> np.ndarray:
+    """Exact coefficient row of one paired seam relation on a prepared axis.
+
+    For `u = sum_n c_n phi_n`, synthesized by `prepared` from its coefficient
+    vector `c`, the returned host row `r` of length `prepared.mode_count`
+    satisfies
+
+    `r @ c = sum_k t_k d^k u(upper) - transport * sum_k s_k d^k u(lower)`,
+
+    where `t_k = target_terms[k]`, `s_k = source_terms[k]`, and derivatives are
+    taken in the physical coordinate of `prepared.domain`. This is the canonical
+    seam relation `T[u](upper) - transport * S[u](lower) = target` restricted to
+    one axis; tensor-product representations apply `kron(r, I_transverse)` so
+    every transverse coefficient participates.
+
+    Chebyshev and Legendre rows reuse the owner endpoint traces (orthonormal
+    Legendre scaling `sqrt((2n + 1) / L)`); sine and cosine rows use the
+    orthonormal point-synthesis rows. Fourier axes are boundary-free: their
+    modes `phi_n(x) = exp(2 pi i m_n (x - lower) / L) / sqrt(L)`, with `m_n` in
+    FFT order (the even-count Nyquist mode uses `m = -N/2`), coincide at both
+    seam faces, so the row is `(T_n - transport * S_n) / sqrt(L)` with the
+    exact modal jet multipliers `T_n`, `S_n`. Identity transport with equal
+    actions therefore gives an exactly zero row.
+
+    The row is `float64` for real terms on real-synthesis bases and
+    `complex128` for Fourier axes or any complex coefficient or transport.
+    Rational axes have no finite seam endpoints and constrained axes store
+    nullspace coordinates; both refuse with `ValueError`.
+    """
+    if not isinstance(prepared, PreparedSpectralAxis):
+        raise TypeError("prepared must be a PreparedSpectralAxis.")
+    source = _seam_terms(source_terms, "source_terms")
+    target = _seam_terms(target_terms, "target_terms")
+    transport_ = _seam_scalar(transport, "transport")
+    scalars = (transport_, *(value for _, value in source + target))
+    complex_terms = any(np.iscomplexobj(value) for value in scalars)
+    match prepared.plan:
+        case FourierBasisPlan():
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                seam = _fourier_seam_action(prepared, target) - transport_ * (
+                    _fourier_seam_action(prepared, source)
+                )
+                row = seam / np.sqrt(np.asarray(prepared.length, dtype=np.float64))
+        case (
+            ChebyshevBasisPlan()
+            | LegendreBasisPlan()
+            | SineBasisPlan()
+            | CosineBasisPlan()
+        ):
+            dtype = np.dtype(np.complex128 if complex_terms else np.float64)
+            upper = _seam_side_row(prepared, "upper", target, dtype)
+            lower = _seam_side_row(prepared, "lower", source, dtype)
+            with np.errstate(over="ignore", invalid="ignore"):
+                row = upper - transport_ * lower
+        case _:
+            raise ValueError(
+                "periodic_trace_row requires an unconstrained Fourier, Chebyshev, "
+                "Legendre, sine, or cosine axis; rational axes have no finite seam "
+                "endpoints and constrained axes store nullspace coordinates."
+            )
+    if np.any(~np.isfinite(row)):
+        raise ValueError("Periodic seam row is not representable in its host dtype.")
+    return row
 
 
 def _canonical_columns(values: np.ndarray, /) -> np.ndarray:
@@ -508,4 +684,5 @@ __all__ = [
     "SpectralBoundaryConditionPlan",
     "SpectralTraceConstraint",
     "SpectralTraceTerm",
+    "periodic_trace_row",
 ]

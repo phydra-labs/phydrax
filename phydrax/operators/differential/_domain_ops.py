@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ..mechanics._linear_elasticity import LinearElasticityTensor
 
 from ...domain._evaluation import evaluate_pointwise_callable
+from ...domain._function import _drop_model_construction_certificates
 from ...typing import parse, PRNGKey
 from ._array_ops import (
     _basis_nth_derivative,
@@ -71,6 +72,16 @@ _NeoHookeanFields: TypeAlias = tuple[
     tuple[int, ...],
     tuple[int, ...],
 ]
+
+
+def _derivative_metadata(metadata: Mapping[str, Any], /) -> Mapping[str, Any]:
+    """Carry user metadata, dropping source-bound construction certificates.
+
+    Coordinate differentiation changes the construction and its regularity;
+    source periodicity, convexity and trial-space claims do not certify the
+    derived field.
+    """
+    return _drop_model_construction_certificates(metadata)
 
 
 class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
@@ -254,10 +265,15 @@ def _structured_derivative_provider(
 
 
 def _const_scalar(fn: DomainFunction, /) -> float | None:
+    """Concrete scalar value of a constant field, or ``None``.
+
+    A constant traced inside a compiled step has no concrete value; the caller then
+    uses the general derivative route instead of a static exponent rule.
+    """
     if fn.deps:
         return None
     value = jnp.asarray(fn.func(key=None))
-    if value.ndim != 0:
+    if value.ndim != 0 or isinstance(value, jax.core.Tracer):
         return None
     return float(value)
 
@@ -313,7 +329,10 @@ def _try_structured_first_partial(
                 if abs(exp - float(exp_i)) < 1e-12:
                     if exp_i == 0:
                         return DomainFunction(
-                            domain=u.domain, deps=u.deps, func=0.0, metadata=u.metadata
+                            domain=u.domain,
+                            deps=u.deps,
+                            func=0.0,
+                            metadata=_derivative_metadata(u.metadata),
                         )
                     return float(exp_i) * (left ** (exp_i - 1)) * d_left
             base = _const_scalar(left)
@@ -698,7 +717,7 @@ def grad(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    out_metadata = u.metadata
+    out_metadata = _derivative_metadata(u.metadata)
 
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
@@ -903,7 +922,7 @@ def hessian(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    out_metadata = u.metadata
+    out_metadata = _derivative_metadata(u.metadata)
     _resolve_ad_mode("reverse", ad_engine)
 
     if var not in u.deps:
@@ -1204,7 +1223,9 @@ def directional_derivative(
         gu = jnp.asarray(g.func(*g_args, key=key, **kwargs))
         return jnp.sum(gu * vv, axis=-1)
 
-    return DomainFunction(domain=joined, deps=deps, func=_dd, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_dd, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def div(
@@ -1293,7 +1314,9 @@ def div(
             )
         return jnp.trace(jac, axis1=-2, axis2=-1)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_div, metadata=u.metadata)
+    return DomainFunction(
+        domain=u.domain, deps=u.deps, func=_div, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def curl(
@@ -1393,7 +1416,12 @@ def curl(
         curl_z = jac[..., 1, 0] - jac[..., 0, 1]
         return jnp.stack((curl_x, curl_y, curl_z), axis=-1)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=u.metadata)
+    return DomainFunction(
+        domain=u.domain,
+        deps=u.deps,
+        func=_curl,
+        metadata=_derivative_metadata(u.metadata),
+    )
 
 
 def vector_curl_2d(
@@ -1430,7 +1458,12 @@ def vector_curl_2d(
             )
         return jacobian[..., 1, 0] - jacobian[..., 0, 1]
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=u.metadata)
+    return DomainFunction(
+        domain=u.domain,
+        deps=u.deps,
+        func=_curl,
+        metadata=_derivative_metadata(u.metadata),
+    )
 
 
 def scalar_curl_2d(
@@ -1471,7 +1504,7 @@ def scalar_curl_2d(
         domain=value.domain,
         deps=value.deps,
         func=_curl,
-        metadata=value.metadata,
+        metadata=_derivative_metadata(value.metadata),
     )
 
 
@@ -1558,7 +1591,12 @@ def div_tensor(
             )
         return ein.contract("...iji->...j", gradient)
 
-    return DomainFunction(domain=T.domain, deps=T.deps, func=_divT, metadata=T.metadata)
+    return DomainFunction(
+        domain=T.domain,
+        deps=T.deps,
+        func=_divT,
+        metadata=_derivative_metadata(T.metadata),
+    )
 
 
 def cauchy_strain(
@@ -1677,7 +1715,9 @@ def strain_rate_magnitude(
         d = jnp.asarray(D.func(*args, key=key, **kwargs))
         return jnp.sqrt(2.0 * jnp.sum(d * d, axis=(-2, -1)))
 
-    return DomainFunction(domain=D.domain, deps=D.deps, func=_mag, metadata=D.metadata)
+    return DomainFunction(
+        domain=D.domain, deps=D.deps, func=_mag, metadata=_derivative_metadata(D.metadata)
+    )
 
 
 def _trace_last2(T: DomainFunction, /, *, keepdims: bool = False) -> DomainFunction:
@@ -1694,7 +1734,7 @@ def _trace_last2(T: DomainFunction, /, *, keepdims: bool = False) -> DomainFunct
         domain=T.domain,
         deps=T.deps,
         func=_tr,
-        metadata=T.metadata,
+        metadata=_derivative_metadata(T.metadata),
     )
 
 
@@ -1797,7 +1837,7 @@ def linear_elastic_stress(
         domain=u.domain,
         deps=u.deps,
         func=_stress,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -2089,7 +2129,7 @@ def laplacian(
         )
 
     if var not in u.deps:
-        out_metadata = u.metadata
+        out_metadata = _derivative_metadata(u.metadata)
 
         def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
@@ -2208,7 +2248,7 @@ def laplacian(
                 out = out + d2
             return out
 
-        out_metadata = u.metadata
+        out_metadata = _derivative_metadata(u.metadata)
         return DomainFunction(
             domain=u.domain,
             deps=u.deps,
@@ -2268,7 +2308,7 @@ def bilaplacian(
             domain=u.domain,
             deps=u.deps,
             func=_zero,
-            metadata=u.metadata,
+            metadata=_derivative_metadata(u.metadata),
         )
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
@@ -2395,7 +2435,7 @@ def bilaplacian(
         domain=u.domain,
         deps=u.deps,
         func=_bilap,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -2449,7 +2489,7 @@ def partial(
 
     use_jvp = ad_engine in ("auto", "jvp")
 
-    out_metadata = u.metadata
+    out_metadata = _derivative_metadata(u.metadata)
 
     idx = u.deps.index(var) if var in u.deps else None
 
@@ -2659,7 +2699,7 @@ def partial_n(
             ad_engine="auto",
         )
 
-    out_metadata = u.metadata
+    out_metadata = _derivative_metadata(u.metadata)
 
     if var not in u.deps:
 
@@ -3095,7 +3135,7 @@ def div_k_grad(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -3305,7 +3345,7 @@ def div_diag_k_grad(
             domain=joined,
             deps=deps,
             func=_op,
-            metadata=u.metadata,
+            metadata=_derivative_metadata(u.metadata),
         )
 
     if backend != "jet":
@@ -3414,7 +3454,7 @@ def div_diag_k_grad(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -3512,7 +3552,7 @@ def div_K_grad(
         domain=joined,
         deps=deps,
         func=_flux,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
     return div(
         flux,
@@ -3575,7 +3615,7 @@ def deformation_gradient(
         domain=G.domain,
         deps=G.deps,
         func=_F,
-        metadata=G.metadata,
+        metadata=_derivative_metadata(G.metadata),
     )
 
 
@@ -3619,7 +3659,9 @@ def green_lagrange_strain(
         C = jnp.swapaxes(Fx, -1, -2) @ Fx
         return 0.5 * (C - I)
 
-    return DomainFunction(domain=F.domain, deps=F.deps, func=_E, metadata=F.metadata)
+    return DomainFunction(
+        domain=F.domain, deps=F.deps, func=_E, metadata=_derivative_metadata(F.metadata)
+    )
 
 
 def svk_pk2_stress(
@@ -3726,7 +3768,7 @@ def pk1_from_pk2(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -3787,7 +3829,7 @@ def cauchy_from_pk2(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -3903,7 +3945,7 @@ def neo_hookean_reference_energy(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -3968,7 +4010,7 @@ def neo_hookean_pk1(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -4034,7 +4076,7 @@ def neo_hookean_cauchy(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -4210,7 +4252,7 @@ def von_mises_stress(
         domain=sigma.domain,
         deps=sigma.deps,
         func=_op,
-        metadata=sigma.metadata,
+        metadata=_derivative_metadata(sigma.metadata),
     )
 
 
@@ -4429,7 +4471,7 @@ def linear_elastic_cauchy_stress_2d(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )
 
 
@@ -4566,5 +4608,5 @@ def linear_elastic_orthotropic_stress_2d(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=u.metadata,
+        metadata=_derivative_metadata(u.metadata),
     )

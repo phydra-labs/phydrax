@@ -647,6 +647,19 @@ def test_flipped_paired_support_normal_is_refused_at_attachment() -> None:
             PairedSupportAttachment(flipped, pairing.pairing_id, patch, points)
 
 
+def test_periodic_self_seam_is_refused_as_a_two_sided_physical_interface() -> None:
+    domain = phx.domain.HyperRectangle(np.zeros(2), np.asarray([2.0, 1.0]))
+    cover = phx.domain.cartesian_subdomain_cover(
+        domain, "x", (1, 1), periodic=(True, False), cover_id="ring"
+    )
+    (seam,) = cover.pairings
+    points = seam.component.sample(phx.domain.PointSampling(4), key=jr.key(1))
+
+    assert seam.self_seam
+    with pytest.raises(ValueError, match="periodic self-seam"):
+        PairedSupportAttachment(cover, seam.pairing_id, seam.left_patch_id, points)
+
+
 def test_law_sides_must_lie_on_the_attached_mesh_wall(plate: Plate) -> None:
     """Independent geometry: the wall is ``x = 0, 0 <= y <= 1`` and the left
     part (``x <= 0``) has outward normal ``+e_x`` on it."""

@@ -13,7 +13,7 @@ import phydrax.ein as ein
 from phydrax.domain import AbstractScalarDomain, DomainComponent, DomainFunction
 
 from ...metrix import RiemannianMetric, tangent_projector_from_normal
-from ._domain_ops import _factor_and_dim, _resolve_var, curl, grad
+from ._domain_ops import _derivative_metadata, _factor_and_dim, _resolve_var, curl, grad
 
 
 if TYPE_CHECKING:
@@ -69,7 +69,9 @@ def tangential_component(
         dot = jnp.sum(wv * nv, axis=-1, keepdims=True)
         return wv - dot * nv
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=w.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_op, metadata=_derivative_metadata(w.metadata)
+    )
 
 
 def surface_grad(
@@ -131,7 +133,9 @@ def surface_grad(
             f"surface_grad got incompatible ranks: grad(u).ndim={gv.ndim}, normal.ndim={nv.ndim}."
         )
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_op, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def surface_div(
@@ -191,7 +195,9 @@ def surface_div(
             )
         return ein.contract("...ij,...ji->...", P, Jv)
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=v.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_op, metadata=_derivative_metadata(v.metadata)
+    )
 
 
 def surface_curl_scalar(
@@ -243,7 +249,9 @@ def surface_curl_scalar(
         gv = jnp.asarray(sg2.func(*[args[i] for i in sg_pos], key=key, **kwargs))
         return jnp.cross(nv, gv)
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_op, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def surface_curl_vector(
@@ -294,7 +302,9 @@ def surface_curl_vector(
         cv = jnp.asarray(c2.func(*[args[i] for i in c_pos], key=key, **kwargs))
         return jnp.sum(nv * cv, axis=-1)
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=v.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_op, metadata=_derivative_metadata(v.metadata)
+    )
 
 
 def ambient_surface_hessian_trace(
@@ -361,7 +371,9 @@ def ambient_surface_hessian_trace(
             f"ambient_surface_hessian_trace got incompatible ranks: H.ndim={Hv.ndim}, P.ndim={P.ndim}."
         )
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined, deps=deps, func=_op, metadata=_derivative_metadata(u.metadata)
+    )
 
 
 def laplace_beltrami(

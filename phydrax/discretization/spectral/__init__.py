@@ -52,6 +52,7 @@ from ._conservation import (
 from ._constraints import (
     BoundaryLiftPlan,
     ConstrainedBasisPlan,
+    periodic_trace_row,
     PreparedBoundaryLift,
     SpectralBoundaryConditionPlan,
     SpectralTraceConstraint,
@@ -344,6 +345,7 @@ __all__ = [
     "SpectralPrecisionPolicy",
     "SpectralTraceConstraint",
     "SpectralTraceTerm",
+    "periodic_trace_row",
     "project_tensor_spectral_symmetries",
     "compare_spectral_eigen_resolutions",
     "prepare_spectral_modal_transfer",

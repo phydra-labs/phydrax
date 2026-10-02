@@ -48,6 +48,8 @@ class Interval1d(_AbstractGeometry1D):
     ) -> None:
         start_arr = jnp.asarray(start, dtype=jnp.float64).reshape(())
         end_arr = jnp.asarray(end, dtype=jnp.float64).reshape(())
+        if not bool(jnp.isfinite(start_arr) & jnp.isfinite(end_arr)):
+            raise ValueError("Interval1d bounds must be finite.")
         if bool(start_arr >= end_arr):
             raise ValueError("`start` must be less than `end`.")
         if not isinstance(label, str) or not label:
@@ -94,6 +96,9 @@ class Interval1d(_AbstractGeometry1D):
     @property
     def bounds(self) -> Float[Literal[2], Literal[1]]:
         return jnp.array([[self.start], [self.end]], dtype=jnp.float64)
+
+    def coordinate_face_bounds(self) -> tuple[Array, Array]:
+        return self.start.reshape((1,)), self.end.reshape((1,))
 
     def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, Interval1d):

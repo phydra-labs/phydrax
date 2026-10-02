@@ -21,7 +21,12 @@ import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS, PortBindingEvidence
+from .._model import (
+    MODEL_CONSTRUCTION_CERTIFICATE_KEYS,
+    PERIODIC_INPUT_CERTIFICATE_KEY,
+    PeriodicInputCertificate,
+    PortBindingEvidence,
+)
 from .._strict import StrictModule
 from .._trainable import (
     ArrayRole,
@@ -650,7 +655,20 @@ class DomainFunction(StrictModule):
         )
 
     def with_metadata(self, **metadata: Any) -> "DomainFunction":
-        """Return a copy with `metadata` merged into the existing metadata."""
+        """Merge user metadata without replacing source-bound model evidence."""
+        for name in _BOUND_MODEL_METADATA_KEYS.intersection(metadata):
+            if name in self.metadata and metadata[name] is not self.metadata[name]:
+                raise ValueError(
+                    f"Cannot replace source-bound model metadata {name!r}; "
+                    "bind a new model to change its construction evidence."
+                )
+        if PERIODIC_INPUT_CERTIFICATE_KEY in metadata and not isinstance(
+            metadata[PERIODIC_INPUT_CERTIFICATE_KEY], PeriodicInputCertificate
+        ):
+            raise TypeError(
+                f"Metadata key {PERIODIC_INPUT_CERTIFICATE_KEY!r} must hold a "
+                "PeriodicInputCertificate."
+            )
         merged = dict(self.metadata)
         merged.update(metadata)
         return DomainFunction(

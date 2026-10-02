@@ -35,6 +35,7 @@ from ._objectives import (
     model_objective_values,
     ModelObjectiveProvider,
 )
+from ._periodic import PeriodicInputCertificate
 from ._ports import (
     ModelPorts,
     PortBindingEvidence,
@@ -50,6 +51,7 @@ from ._protocols import (
     MODEL_CONSTRUCTION_CERTIFICATE_KEYS,
     ModelEvaluator,
     ModelMetadataProvider,
+    PERIODIC_INPUT_CERTIFICATE_KEY,
     StructuredDerivativeProvider,
     TRIAL_SPACE_CERTIFICATE_KEY,
 )
@@ -105,6 +107,8 @@ __all__ = [
     "model_structure_recipe",
     "model_objective_values",
     "ModelInputMode",
+    "PERIODIC_INPUT_CERTIFICATE_KEY",
+    "PeriodicInputCertificate",
     "PortBindingEvidence",
     "PortMapping",
     "PortProvider",

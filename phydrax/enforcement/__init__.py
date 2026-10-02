@@ -135,12 +135,25 @@ from ._nonlinear import (
     RetractionObjective,
 )
 from ._observation import ObservationActionEvidence, PointObservationAction
+from ._periodic import (
+    PeriodicAxisEvidence,
+    PeriodicDataCompatibility,
+    PeriodicEqualityScope,
+    PeriodicPreservationRecord,
+    PeriodicPreservationStatus,
+    PeriodicProjectionEvidence,
+    PeriodicProjectionRoute,
+    PeriodicResourcePolicy,
+    prepare_periodic_projection,
+    PreparedPeriodicProjection,
+)
 from ._polynomial_representation import __all__ as _polynomial_representation_all
 from ._realization import (
     AbstractFieldRealization,
     ConditionEvaluationContext,
     FieldMap,
     FieldRealizationResult,
+    RealizationAdmission,
     RealizationStatus,
 )
 from ._representation_adapters import (
@@ -277,13 +290,23 @@ __all__ = [
     "PerStepRealizationSource",
     "PointKernelRepresenter",
     "PointObservationAction",
+    "PeriodicAxisEvidence",
+    "PeriodicDataCompatibility",
+    "PeriodicEqualityScope",
+    "PeriodicPreservationRecord",
+    "PeriodicPreservationStatus",
+    "PeriodicProjectionEvidence",
+    "PeriodicProjectionRoute",
+    "PeriodicResourcePolicy",
     "PositiveSemidefiniteProjection",
     "PositivityProvider",
     "PreparedAffineProjector",
+    "PreparedPeriodicProjection",
     "PreparedEnforcementStep",
     "PreparedLinearCorrection",
     "ProductLinearRepresentation",
     "RandomizedRealizationSource",
+    "RealizationAdmission",
     "RealizationFailure",
     "RealizationLifecyclePhase",
     "RealizationLifecycleState",
@@ -306,6 +329,7 @@ __all__ = [
     "commit_enforcement_step",
     "commit_refresh",
     "prepare_affine_projector",
+    "prepare_periodic_projection",
     "prepare_boundary_cover",
     "propose_refresh",
     "realized_fiber_functions",

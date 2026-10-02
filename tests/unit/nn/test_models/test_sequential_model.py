@@ -2,12 +2,19 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import ClassVar
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
+from jax import Array
 
+import phydrax as phx
+from phydrax.domain import ModelBinding
+from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.layers import RandomFourierFeatureEmbeddings
 from phydrax.nn.models import MLP, Sequential
+from phydrax.typing import PRNGKey
 
 
 def test_sequential_contracts() -> None:
@@ -55,3 +62,28 @@ def test_sequential_contracts() -> None:
     model = Sequential((m1, m2))
     with pytest.raises(TypeError, match="tuple input"):
         _ = model((jnp.asarray(0.1), jnp.asarray(0.2)), key=jr.key(2))
+
+
+class _IterationScale(_AbstractBaseModel):
+    in_size: int = 1
+    out_size: int = 1
+    _input_binding: ClassVar[ModelBinding] = ModelBinding.pointwise(
+        pass_key=False, pass_iter=True
+    )
+
+    def __call__(
+        self, x: Array, /, *, key: PRNGKey | None = None, iter_: Array | None = None
+    ) -> Array:
+        del key
+        iteration = jnp.array(0.0, dtype=jnp.float64) if iter_ is None else iter_
+        return x * jnp.exp(iteration)
+
+
+def test_sequential_bound_field_preserves_iteration_dependent_values() -> None:
+    model = Sequential((_IterationScale(), _IterationScale()))
+    field = phx.domain.Interval1d(0.0, 1.0).Model("x")(model)
+    point = jnp.asarray([0.25], dtype=jnp.float64)
+    initial = field.func(point, iter_=jnp.array(0.0, dtype=jnp.float64))
+    later = field.func(point, iter_=jnp.array(0.5, dtype=jnp.float64))
+    assert jnp.allclose(initial, point)
+    assert jnp.allclose(later, point * jnp.exp(1.0))

@@ -395,6 +395,13 @@ class PairedSupportAttachment(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
     ) -> None:
         pairing = cover.pairing(_identifier(pairing_id, "pairing_id"))
+        if pairing.left_patch_id == pairing.right_patch_id:
+            raise ValueError(
+                f"Paired support {pairing.pairing_id!r} is a periodic self-seam of patch "
+                f"{pairing.left_patch_id!r}; physical two-sided interface bindings "
+                "require two distinct patches. Couple the seam with "
+                "phydrax.conditions.Periodic instead."
+            )
         patch = _identifier(patch_id, "patch_id")
         if patch == pairing.left_patch_id:
             side, sided = "left", 1
