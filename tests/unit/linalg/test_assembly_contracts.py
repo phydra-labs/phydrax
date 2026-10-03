@@ -446,7 +446,7 @@ def test_structured_local_block_solve_is_exact_resource_bounded_and_differentiab
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes() -> None:
+def test_sparse_assembly_refresh_reuses_structure_and_rejects_route_changes() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
 
     def graph(
@@ -477,14 +477,8 @@ def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes() 
     )
     prepared = la.prepare_sparse_assembly(la.plan_sparse_assembly(initial), initial)
 
-    reordered_relation = phx.sparse.EdgeRelation(
-        jnp.asarray([1, 0, 2, 0, 1]),
-        jnp.asarray([1, 2, 0, 0, 1]),
-        source_size=3,
-        target_size=3,
-    )
     refreshed_operator = graph(
-        reordered_relation,
+        initial_relation,
         jnp.asarray([7.0, 11.0, 13.0, 17.0, 19.0]),
     )
     refreshed = la.refresh_sparse_assembly(prepared, refreshed_operator)
@@ -502,20 +496,26 @@ def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes() 
         la.materialize(refreshed_operator, dense_policy),
     )
 
+    # Route identity belongs to the prepared assembly: a refresh may not rebind
+    # routes, even ones that coalesce to the same canonical pattern.
+    reordered_relation = phx.sparse.EdgeRelation(
+        jnp.asarray([1, 0, 2, 0, 1]),
+        jnp.asarray([1, 2, 0, 0, 1]),
+        source_size=3,
+        target_size=3,
+    )
     changed_relation = phx.sparse.EdgeRelation(
         jnp.asarray([1, 0, 2, 0, 2]),
         jnp.asarray([1, 2, 0, 0, 2]),
         source_size=3,
         target_size=3,
     )
-    with pytest.raises(ValueError, match="symbolic pattern"):
-        la.refresh_sparse_assembly(
-            prepared,
-            graph(
-                changed_relation,
-                jnp.asarray([7.0, 11.0, 13.0, 17.0, 19.0]),
-            ),
-        )
+    for relation in (reordered_relation, changed_relation):
+        with pytest.raises(ValueError, match="unchanged relation routes"):
+            la.refresh_sparse_assembly(
+                prepared,
+                graph(relation, jnp.asarray([7.0, 11.0, 13.0, 17.0, 19.0])),
+            )
 
 
 def test_assembly_contracts_scenario_2() -> None:

@@ -1,5 +1,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Train-fitted marginal and joint feature support, without covariance repair."""
+"""Train-fitted marginal and joint feature support, without covariance repair.
+
+Support is empirical admission evidence, not predictive calibration. Coverage
+guarantees for predictions over disjoint complete cases belong to
+``phydrax.uq`` (``ProcessValidationSplit`` with ``ProcessConformalCalibrator``,
+``SplitConformal``, or ``FunctionalConformal``).
+"""
 
 from __future__ import annotations
 

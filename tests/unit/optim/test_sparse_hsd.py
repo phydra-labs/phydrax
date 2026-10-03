@@ -14,13 +14,16 @@ from phydrax.linalg import (
     LinearSolvePolicy,
     OperatorProperties,
     SolveResourcePolicy,
+    SparseFactorizationPolicy,
     TolerancePolicy,
 )
 from phydrax.optim import (
     cone_barrier_oracle,
     ConicProgram,
+    ConvexProgramStatus,
     ConvexSolvePolicy,
     ConvexTermination,
+    NativeConicNewtonRoute,
     NativeHomogeneousConic,
     NonnegativeCone,
     ProductCone,
@@ -97,16 +100,17 @@ def _initial_vector(program: ConicProgram) -> Array:
     )
 
 
+@pytest.mark.parametrize("route", ("factorized", "matrix-free"))
 @pytest.mark.parametrize("blocks", (1, 32))
 def test_sparse_feasible_conic_stops_only_after_original_kkt_complementarity(
-    blocks: int,
+    blocks: int, route: NativeConicNewtonRoute
 ) -> None:
     program = _positive_metric_program(blocks)
     tolerance = 1e-7
     result = solve_conic_program(
         program,
         policy=ConvexSolvePolicy(
-            NativeHomogeneousConic(),
+            NativeHomogeneousConic(newton=route),
             termination=ConvexTermination(absolute=tolerance, maximum_steps=64),
             failure=FailurePolicy("status"),
         ),
@@ -124,6 +128,22 @@ def test_sparse_feasible_conic_stops_only_after_original_kkt_complementarity(
     )
     assert float(result.kkt_residual_norm) <= tolerance
     assert abs(float(result.complementarity_gap)) <= tolerance
+
+
+def test_factorized_newton_refuses_reduced_pattern_over_budget() -> None:
+    program = _positive_metric_program(32)
+    starved = NativeHomogeneousConic(
+        factorization=SparseFactorizationPolicy(
+            "lu", ordering="approximate-minimum-degree", max_factor_nnz=8
+        )
+    )
+    with pytest.raises(ValueError):
+        solve_conic_program(
+            program,
+            policy=ConvexSolvePolicy(starved, failure=FailurePolicy("status")),
+        )
+    with pytest.raises(ValueError, match="symmetric indefinite"):
+        NativeHomogeneousConic(factorization=SparseFactorizationPolicy("cholesky"))
 
 
 def test_sparse_newton_direction_satisfies_consumer_equation_and_work_refusal() -> None:
@@ -158,3 +178,115 @@ def test_sparse_newton_direction_satisfies_consumer_equation_and_work_refusal() 
     )
     with pytest.raises(ValueError, match="Krylov|krylov|basis|budget"):
         _direction(program, barrier, vector, mu, linear=denied)
+
+
+def _orthant_ray_program(blocks: int, kind: str) -> tuple[ConicProgram, np.ndarray]:
+    """Sparse LP pairs with x >= 0 that are primal infeasible or unbounded.
+
+    ``primal``: x0 + x1 = -1 per block. ``dual``: min -(x0 + x1) with x0 = x1.
+    Returns the program and its dense constraint matrix for independent audits.
+    """
+    size = 2 * blocks
+    variables = ArraySpace(
+        (size,), dtype=jnp.float64, space_id=f"sparse-hsd-ray:{kind}:x:{blocks}"
+    )
+    constraints = ArraySpace(
+        (blocks + size,),
+        dtype=jnp.float64,
+        space_id=f"sparse-hsd-ray:{kind}:c:{blocks}",
+    )
+    base = np.arange(blocks) * 2
+    columns = np.concatenate((np.stack((base, base + 1), 1).reshape(-1), np.arange(size)))
+    rows = np.concatenate((np.repeat(np.arange(blocks), 2), blocks + np.arange(size)))
+    second = 1.0 if kind == "primal" else -1.0
+    values = np.concatenate((np.tile([1.0, second], blocks), -np.ones(size)))
+    dense = np.zeros((blocks + size, size))
+    dense[rows, columns] = values
+    matrix = SparseCoordinateOperator(
+        EdgeRelation(
+            jnp.asarray(columns, dtype=jnp.int32),
+            jnp.asarray(rows, dtype=jnp.int32),
+            source_size=size,
+            target_size=blocks + size,
+        ),
+        jnp.asarray(values),
+        source=variables,
+        target=constraints,
+    )
+    rhs = np.concatenate(
+        (np.full(blocks, -1.0 if kind == "primal" else 0.0), np.zeros(size))
+    )
+    program = ConicProgram(
+        None,
+        jnp.full((size,), 1.0 if kind == "primal" else -1.0, dtype=jnp.float64),
+        matrix,
+        jnp.asarray(rhs),
+        ProductCone((ZeroCone(blocks), NonnegativeCone(size))),
+        problem_id=f"sparse-hsd-ray-{kind}:{blocks}",
+        convexity_evidence="construction",
+    )
+    return program, dense
+
+
+def _ray_policy(maximum_steps: int) -> ConvexSolvePolicy:
+    return ConvexSolvePolicy(
+        NativeHomogeneousConic(),
+        termination=ConvexTermination(absolute=1e-7, maximum_steps=maximum_steps),
+        failure=FailurePolicy("status"),
+    )
+
+
+def test_sparse_primal_infeasible_program_stops_on_audited_dual_ray() -> None:
+    blocks = 32
+    program, dense = _orthant_ray_program(blocks, "primal")
+    result = solve_conic_program(program, policy=_ray_policy(64))
+    assert int(result.status) == int(ConvexProgramStatus.PRIMAL_INFEASIBLE)
+    assert not bool(result.successful)
+    assert int(result.iterations) < 64
+    certificate = result.certificate
+    assert bool(certificate.dual_ray_valid)
+    # Farkas audit independent of the solver: A^T y = 0, y in K*, b^T y < 0.
+    ray = np.asarray(certificate.inequality_dual_ray)
+    assert np.max(np.abs(dense.T @ ray)) <= 1e-8
+    assert np.min(ray[blocks:]) >= -1e-12
+    assert float(np.asarray(program.constraint_rhs) @ ray) < -1e-8
+
+
+def test_sparse_unbounded_program_stops_on_audited_primal_ray() -> None:
+    blocks = 32
+    program, dense = _orthant_ray_program(blocks, "dual")
+    result = solve_conic_program(program, policy=_ray_policy(64))
+    assert int(result.status) == int(ConvexProgramStatus.DUAL_INFEASIBLE)
+    assert int(result.iterations) < 64
+    certificate = result.certificate
+    assert bool(certificate.primal_ray_valid)
+    # Recession audit: -A d in K (zero rows vanish, orthant rows >= 0), q^T d < 0.
+    ray = np.asarray(certificate.primal_ray)
+    recession = -dense @ ray
+    assert np.max(np.abs(recession[:blocks])) <= 1e-8
+    assert np.min(recession[blocks:]) >= -1e-8
+    assert float(np.asarray(program.linear) @ ray) < -1e-8
+
+
+def test_sparse_infeasibility_without_certificate_stays_unresolved() -> None:
+    # Same infeasible program, but the requested certificates demand a ray
+    # objective below -1e3, which no normalized ray of this program can reach.
+    # Without an admissible certificate the bounded run stays unresolved.
+    program, _ = _orthant_ray_program(32, "primal")
+    policy = ConvexSolvePolicy(
+        NativeHomogeneousConic(),
+        termination=ConvexTermination(
+            absolute=1e-7,
+            primal_infeasible=1e3,
+            dual_infeasible=1e3,
+            maximum_steps=2,
+        ),
+        failure=FailurePolicy("status"),
+    )
+    result = solve_conic_program(program, policy=policy)
+    assert int(result.status) == int(ConvexProgramStatus.ITERATION_LIMIT)
+    assert int(result.iterations) == 2
+    assert not bool(result.successful)
+    assert not bool(result.certificate.dual_ray_valid)
+    assert not bool(result.certificate.primal_ray_valid)
+    assert float(result.certificate.dual_ray_objective) < 0.0

@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -147,3 +149,49 @@ def test_negative_offset_coupling_cannot_certify_a_nonconvex_potential() -> None
         invalid.input_convex_certificate()
     with pytest.raises(ValueError):
         invalid.model_execution_contract()
+
+
+def test_nondecreasing_input_convex_networks_stay_convex_under_convex_features() -> None:
+    joint = InputConvexNetwork(
+        in_size=3,
+        width_size=6,
+        depth=2,
+        input_monotonicity="nondecreasing",
+        key=jr.key(31),
+    )
+    partial = PartiallyInputConvexNetwork(
+        context_size=2,
+        convex_size=3,
+        width_size=6,
+        depth=2,
+        input_monotonicity="nondecreasing",
+        key=jr.key(32),
+    )
+    context = jnp.asarray([0.4, -1.3])
+    points = jr.normal(jr.key(33), (16, 3)) * 2.0
+
+    def composed(
+        model_value: Callable[[jax.Array], jax.Array], x: jax.Array
+    ) -> jax.Array:
+        # Squared and shifted-squared features are convex but not affine.
+        return model_value(jnp.stack((x[0] ** 2, (x[1] - x[2]) ** 2, x[2] ** 2)))
+
+    for value in (joint, lambda features: partial((context, features))):
+        gradients = jax.vmap(jax.grad(value))(points)
+        assert bool(jnp.all(gradients >= 0.0))
+        hessians = jax.vmap(jax.hessian(lambda x: composed(value, x)))(points)
+        assert float(jnp.min(jnp.linalg.eigvalsh(hessians))) >= -1e-9
+    certificate = joint.input_convex_certificate()
+    assert certificate.input_monotonicity == "nondecreasing"
+    unconstrained = InputConvexNetwork(in_size=3, width_size=6, depth=2, key=jr.key(31))
+    assert unconstrained.input_convex_certificate().input_monotonicity == "unconstrained"
+    assert certificate.certificate_id != (
+        unconstrained.input_convex_certificate().certificate_id
+    )
+    tampered = eqx.tree_at(
+        lambda model: model.input_layers[1].weight_transform,
+        joint,
+        PositiveTransform(minimum=-1.0),
+    )
+    with pytest.raises(ValueError, match="positive convex-input weights"):
+        tampered.input_convex_certificate()

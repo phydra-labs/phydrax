@@ -2,6 +2,55 @@
 
 This section collects public [Marimo](https://marimo.io) notebooks and directly runnable repository scripts.
 
+## Meshfree spatial and temporal workflows
+
+Run these checkout examples from the repository root with explicit float64
+support. The commands select implementations, not production release authority.
+
+```text
+JAX_ENABLE_X64=1 python -m examples.point_cloud_poisson
+JAX_ENABLE_X64=1 python -m examples.meshfree_bulk_advection_diffusion
+JAX_ENABLE_X64=1 python -m examples.meshfree_multilevel_poisson
+JAX_ENABLE_X64=1 python -m examples.meshfree_conservative_diffusion
+JAX_ENABLE_X64=1 python -m examples.meshfree_surface_laplace_beltrami
+JAX_ENABLE_X64=1 python -m examples.meshfree_open_surface_diffusion
+JAX_ENABLE_X64=1 python -m examples.meshfree_surface_vector_pde
+JAX_ENABLE_X64=1 python -m examples.meshfree_moving_surface_reaction_diffusion
+JAX_ENABLE_X64=1 python -m examples.meshfree_surface_topology_events
+JAX_ENABLE_X64=1 python -m examples.meshfree_higher_forms
+JAX_ENABLE_X64=1 python -m examples.meshfree_incompressible_flow
+JAX_ENABLE_X64=1 python -m examples.meshfree_lagrangian_flow
+JAX_ENABLE_X64=1 python -m examples.meshfree_elasticity
+JAX_ENABLE_X64=1 python -m examples.meshfree_bulk_surface_exchange
+JAX_ENABLE_X64=1 python -m examples.meshfree_mixed_method_coupling
+JAX_ENABLE_X64=1 python -m examples.meshfree_fluid_structure
+JAX_ENABLE_X64=1 python -m examples.meshfree_adaptive_learning
+JAX_ENABLE_X64=1 python -m examples.meshfree_hybrid_calibrated
+JAX_ENABLE_X64=1 python -m examples.meshfree_learned_edge_flux
+JAX_ENABLE_X64=1 python -m examples.meshfree_learned_metric_correction
+```
+
+The examples cover original-equation residuals, boundary/trace identity,
+conservation, native solver evidence, and admitted versus refused updates.
+Physical surface events require their multiregion authority. Higher-form PDEs
+require an oriented geometry-authorized complex; an abstract clique complex is
+a separate research route. Material particle mass and quadrature volume are
+distinct representations.
+
+`examples.meshfree_production_restart` and
+`examples.meshfree_production_epochs` provide checkpoint/restart CLI workflows;
+use their `--help` for repository and interruption controls. They retain live
+history, source/support identity, and migration receipts instead of treating
+same-shaped data as a compatible restart.
+
+See [Meshfree solvers](../guides_meshfree.md) and the
+[meshfree API](../api/discretization/meshfree.md) for precision, support,
+geometry, boundary, capacity, derivative, and refusal contracts.
+Qualification campaigns are independently selectable through
+`python -m tools.meshfree_qualification --help`. Automated numerical evidence,
+including forced-CPU distributed checks, does not authorize a GPU, multi-host,
+scientific-validation, or production-release claim.
+
 ## Black holes and numerical relativity
 
 ```text

@@ -974,7 +974,7 @@ def build_immersed_lbm_participant(
             residual_norm=residual,
             iterations=step.iterations + direct.evidence.iteration_count,
             work=step.work + direct.evidence.iteration_count,
-            auxiliary=(step, direct, post_lbm),
+            evidence=(step, direct, post_lbm),
         )
 
     return CallableCouplingSubsystem(
@@ -1053,7 +1053,7 @@ def build_immersed_fem_participant(
             residual_norm=step.residual_norm,
             iterations=step.iterations,
             work=step.work,
-            auxiliary=step,
+            evidence=step,
         )
 
     return CallableCouplingSubsystem(

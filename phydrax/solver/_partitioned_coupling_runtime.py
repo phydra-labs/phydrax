@@ -61,6 +61,7 @@ _ParticipantEvidence: TypeAlias = tuple[
     list[Array],
     list[Array],
     list[tuple[Any, ...]],
+    list[Any],
 ]
 
 
@@ -78,6 +79,7 @@ class _CouplingEvaluation(StrictModule):
     participant_error_reliable: Array
     participant_iterations: Array
     participant_work: Array
+    participant_evidence: tuple[Any, ...]
     successful: Array
     finite: Array
 
@@ -248,6 +250,7 @@ def _empty_evidence(
         [jnp.asarray(False) for _ in range(count)],
         [jnp.asarray(False) for _ in range(count)],
         [() for _ in range(count)],
+        [None for _ in range(count)],
     )
 
 
@@ -263,6 +266,7 @@ def _record_result(
     successful: list[Array],
     finite: list[Array],
     outputs: list[tuple[Any, ...]],
+    evidence: list[Any],
     /,
 ) -> None:
     candidate_states[subsystem_index] = result.candidate_state
@@ -274,6 +278,7 @@ def _record_result(
     successful[subsystem_index] = result.successful
     finite[subsystem_index] = _participant_finite(result)
     outputs[subsystem_index] = result.outputs
+    evidence[subsystem_index] = result.evidence
 
 
 def _apply_subsystem_outputs(
@@ -304,6 +309,7 @@ def _finalize_evaluation(
     successful: list[Array],
     finite: list[Array],
     outputs: list[tuple[Any, ...]],
+    evidence: list[Any],
     /,
 ) -> _CouplingEvaluation:
     residuals = tuple(
@@ -350,6 +356,7 @@ def _finalize_evaluation(
         ),
         participant_iterations=jnp.stack(iterations),
         participant_work=jnp.stack(work),
+        participant_evidence=tuple(evidence),
         successful=participant_success,
         finite=participant_finite & exchange_finite,
     )
@@ -375,6 +382,7 @@ def _global_jacobi_evaluation(
         successful,
         finite,
         outputs,
+        evidence,
     ) = _empty_evidence(prepared, start_state)
     for subsystem_index in range(len(prepared.subsystems)):
         input_values = tuple(
@@ -396,6 +404,7 @@ def _global_jacobi_evaluation(
             successful,
             finite,
             outputs,
+            evidence,
         )
     for subsystem_index, subsystem_outputs in enumerate(outputs):
         _apply_subsystem_outputs(
@@ -414,6 +423,7 @@ def _global_jacobi_evaluation(
         successful,
         finite,
         outputs,
+        evidence,
     )
 
 
@@ -438,6 +448,7 @@ def _global_gauss_seidel_evaluation(
         successful,
         finite,
         outputs,
+        evidence,
     ) = _empty_evidence(prepared, start_state)
     index_by_id = {
         subsystem.subsystem_id: index
@@ -464,6 +475,7 @@ def _global_gauss_seidel_evaluation(
             successful,
             finite,
             outputs,
+            evidence,
         )
         _apply_subsystem_outputs(
             prepared, subsystem_index, result.outputs, working_values, window
@@ -481,6 +493,7 @@ def _global_gauss_seidel_evaluation(
         successful,
         finite,
         outputs,
+        evidence,
     )
 
 
@@ -506,6 +519,7 @@ def _stagewise_evaluation(
         successful,
         finite,
         outputs,
+        evidence,
     ) = _empty_evidence(prepared, start_state)
     index_by_id = {
         subsystem.subsystem_id: index
@@ -546,6 +560,7 @@ def _stagewise_evaluation(
                     successful,
                     finite,
                     outputs,
+                    evidence,
                 )
                 _apply_subsystem_outputs(
                     prepared, subsystem_index, result.outputs, working_values, window
@@ -573,6 +588,7 @@ def _stagewise_evaluation(
                 successful,
                 finite,
                 outputs,
+                evidence,
             )
         for subsystem_index in stage.subsystem_indices:
             _apply_subsystem_outputs(
@@ -595,6 +611,7 @@ def _stagewise_evaluation(
         successful,
         finite,
         outputs,
+        evidence,
     )
 
 
@@ -1035,9 +1052,11 @@ def _window_result(
         differentiation_policy_id=prepared.differentiation.policy_id,
         numeric_version=prepared.numeric_version,
     )
+    participant_evidence = evaluation.participant_evidence
     if prepared.differentiation.mode == "none":
         candidate = _stop_state(candidate)
         accepted = _stop_state(accepted)
+        participant_evidence = tuple(_tree_stop(value) for value in participant_evidence)
     return CouplingWindowResult(
         candidate_state=candidate,
         accepted_state=accepted,
@@ -1049,6 +1068,7 @@ def _window_result(
         provenance=provenance,
         proposed_exchange_budget=proposed_budget,
         accepted_exchange_budget=jnp.where(successful, proposed_budget, 0.0),
+        participant_evidence=participant_evidence,
     )
 
 

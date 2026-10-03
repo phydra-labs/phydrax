@@ -184,12 +184,18 @@ invalidates every route; the exact required pair count is reported whenever no
 candidate buffer overflowed. The result also exposes the occupied coarse cells
 as logical cell slots, counts, and offsets into the Morton storage order.
 
-`DistributedMortonNeighborQueryPlan` shards sources, gathers target coordinates,
-computes each shard's exact local top-k set, and globally merges those sets by
-distance and stable ID. It returns globally indexed, target-sharded rows. This
-portable authority communicates all targets and `shard_count × target_count ×
-local_k` candidate summaries; it does not claim the communication complexity of
-a fully Morton-repartitioned multi-host tree.
+`DistributedNeighborQueryPlan` and `DistributedRadiusQueryPlan` run over a
+`DistributedPointLayout` with arbitrary uneven owners. Each target first
+queries its own owner, bounds its search radius by that local result and the
+published owner populations, and is sent only to owners whose (periodic)
+source boxes intersect the certified ball; answers merge by distance, stable
+ID, and owner. Targets are never replicated: communication is bounded by
+`maximum_remote_owners × halo_capacity` targets per owner pair, and overflow is
+a per-target refusal. `DistributedMortonNeighborQueryPlan` applies the same
+query to contiguous logical shards and returns globally indexed rows in
+logical target order. The owner-box shell needs one pass but its tightness
+depends on how compact the owner regions are; no locality-optimal
+repartitioning is implied.
 
 `ParticleOctreePlan3D` uses this substrate. Barnes--Hut uses a batched
 branchless walk over compact occupied nodes at moderate capacities and a

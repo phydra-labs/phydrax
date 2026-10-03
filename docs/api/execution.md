@@ -75,6 +75,66 @@ than `phx.service.ResourceRequest`.
 
 ::: phydrax.execution.ExecutionGroup
 
+## Memory measurement and certified envelopes
+
+Memory quantities are distinct measurements, never one number. A
+`MemoryMeasurement` records its method, its scope (`baseline` instantaneous or
+`peak` over a window), the source counter resolution, or an explicit
+`unavailable_reason`. `sample_host_memory` reports process RSS, the kernel RSS
+high-water mark, and host physical and available memory (Linux procfs; Darwin
+Mach). `sample_device_memory` reports the PJRT allocator limit, pool
+reservation, live allocations and allocator high-water mark, plus the bytes of
+live JAX arrays; the CPU provider exposes no allocator statistics, and the
+sample says so. `compiled_memory_estimate` returns XLA's buffer-assignment plan
+for a compiled executable, which is an estimate rather than a measurement.
+
+```python
+with phx.execution.PhaseMemorySampler("assemble", interval_seconds=0.005) as s:
+    assemble()
+evidence = s.evidence
+evidence.sampled_peak_resident       # sampled maximum, never an upper bound
+evidence.resident_peak_upper_bound   # kernel high-water mark at phase end
+evidence.interval_peak_resident      # exact only if the high-water mark rose
+payload = evidence.to_payload()
+```
+
+The sampler keeps constant-size state and reports its sample count and largest
+observed gap; transients shorter than the gap can be missed.
+
+`discover_resource_inventory` attaches local host and device samples to the
+`ResourceInventory` as evidence excluded from `inventory_id`, and uses the
+allocator limit as `DeviceResource.memory_bytes` when exposed. A
+`ResourceRequest(memory_envelope="certified")` admits a candidate only when its
+`ExecutionResourceEvidence` declares per-host (and, for accelerators,
+per-device) peak and reserve bytes with `memory_basis` `declared` or
+`compiler_analysis`, every placed host has measured available memory at least
+that footprint, and every placed accelerator has measured allocator headroom.
+Unknown evidence, a remote host without a sample, or a `sampled` basis refuses
+the plan instead of assuming free memory. The default `declared` envelope keeps
+checking ceilings against owner estimates only.
+
+::: phydrax.execution.PhaseMemorySampler
+
+---
+
+::: phydrax.execution.PhaseMemoryEvidence
+
+---
+
+::: phydrax.execution.MemoryMeasurement
+
+---
+
+::: phydrax.execution.HostMemorySample
+
+---
+
+::: phydrax.execution.DeviceMemorySample
+
+---
+
+::: phydrax.execution.CompiledMemoryEstimate
+
 ## Native global arrays and rank-local providers
 
 Native JAX global arrays are the default numerical route. Use
@@ -91,21 +151,46 @@ mapped regions. `Mpi4JaxCollectiveProvider` is an optional rank-local route with
 caller-owned communicator lifetime and operation-specific transformation
 support. Availability never implies qualification.
 
-### Distributed exact Morton queries
+### Distributed point relations
 
-`phydrax.discretization.spatial.DistributedMortonNeighborQueryPlan` is an
-explicit `shard_map` owner. Sources and target rows are partitioned over one
-named mesh axis. Every source shard receives target coordinates, computes an
-exact local top-k set through the native Morton plan, and all-gathers only
-candidate indices, stable IDs, distances, and masks. A stable global merge
-returns target-sharded rows in logical target order.
+`phydrax.discretization.spatial.DistributedOwnershipPlan` binds one owner per
+device of a one-dimensional `ExecutionGroup` mesh, a per-owner slot capacity,
+and the owner-to-process map. `DistributedPointLayout` stores owner-blocked
+points with stable global IDs, logical rows, and per-owner epochs; ownership may
+be arbitrarily uneven up to the capacity. `from_global` validates the owner
+map, capacity, and ID uniqueness on the host and orders each owner's rows by
+Morton code; `from_blocks` adopts device rows and audits ID uniqueness with a
+bounded all-to-all.
 
-The current portable implementation avoids source replication but gathers all
-targets on every shard. Its evidence reports shard-local capacities, global
-stable-ID uniqueness, finite input, completeness, and success. This is a
-qualified exact distribution route, not an assertion that communication is
-fully locality optimal. A future Morton repartition may replace the internal
-communication schedule without changing the result type.
+`DistributedNeighborQueryPlan` (k nearest) and `DistributedRadiusQueryPlan`
+(inclusive radius rows, optionally pair-once) never replicate targets. Owners
+publish source boxes and populations; each target searches its own owner,
+derives a certified search radius from that result and the owner populations,
+and is shipped only to owners whose periodic boxes intersect that ball.
+Answers return through bounded all-to-all packets and merge by
+`(distance, stable_id, owner)`. `maximum_remote_owners`, `halo_capacity`, local
+candidate capacity, and row width are explicit; exceeding one refuses the
+affected targets with a `DistributedRelationStatus` instead of truncating. A
+stale owner epoch reports every target as `MISSING_OWNER`. Ownership plans,
+query plans, and queries require `jax_enable_x64=True` (uint64 Morton codes,
+int64 stable IDs) and raise `ValueError` otherwise; float32 coordinates are
+supported with x64 enabled.
+
+`DistributedHaloPlan` binds owner-blocked routes to owned columns plus
+deduplicated halo columns. Its forward gather and transpose return every halo
+contribution exactly once, accumulating after owned contributions in ascending
+requesting-owner order. `DistributedPointLayout.migrate` moves each active row
+exactly once with its IDs, logical row, coordinates, payload, and sender epoch;
+any invalid destination, packet or receive overflow, or epoch inconsistency
+rolls every owner back atomically.
+
+`DistributedMortonNeighborQueryPlan` is the contiguous-logical-shard form of
+the same query over an `ExecutionGroup`, returning rows in logical target order
+with global logical source indices.
+
+Forced CPU devices (`--xla_force_host_platform_device_count`) demonstrate
+functional distributed parity only; accelerator and multi-host performance need
+real hardware campaigns.
 
 ::: phydrax.execution.shard_array_axis
 

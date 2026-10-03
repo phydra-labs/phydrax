@@ -3,6 +3,8 @@
 #
 from __future__ import annotations
 
+from typing import assert_never
+
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -26,7 +28,13 @@ from ...linalg import (
     TolerancePolicy,
 )
 from ._barrier import ConeBarrierOracle
-from ._cones import AbstractConvexCone, ProductCone, ZeroCone
+from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
+from ._native_hsd_factorized import (
+    factor_reduced_newton,
+    factorized_direction,
+    FactorizedNewtonFactor,
+    FactorizedNewtonPlan,
+)
 from ._policy import ConvexSolvePolicy, ConvexTermination, NativeHomogeneousConic
 from ._problem import (
     _conic_matrix_mv,
@@ -36,7 +44,20 @@ from ._problem import (
 )
 
 
+type _LoopState = tuple[Array, Array, Array, Array, Array]
+
+
 class HomogeneousConicState(StrictModule):
+    """Terminal homogeneous iterate recovered in original conic coordinates.
+
+    ``primal``, ``dual`` and ``slack`` are one consistent witness divided by the
+    safeguarded homogeneous scale. They are an optimal candidate when ``tau`` is
+    bounded away from zero and ray directions otherwise; the original-coordinate
+    audit decides which interpretation is certified. ``direction_failed`` records
+    that iteration stopped because a Newton direction failed or was non-finite,
+    which distinguishes a stalled method from an exhausted iteration budget.
+    """
+
     primal: Array
     dual: Array
     slack: Array
@@ -45,6 +66,7 @@ class HomogeneousConicState(StrictModule):
     active: Array
     iterations: Array
     last_linear_status: Array
+    direction_failed: Array
 
 
 def _split(cone: AbstractConvexCone, value: Array) -> tuple[Array, ...]:
@@ -68,6 +90,12 @@ def _centrality(
     ):
         if isinstance(block, ZeroCone):
             pieces.append(slack_block)
+        elif isinstance(block, NonnegativeCone):
+            # Primal-dual form s_i z_i = mu. The barrier form z + mu grad F(s)
+            # has Jacobian entries mu / s_i^2 = z_i^2 / mu that diverge on
+            # active rows as mu -> 0, stalling Newton at every active orthant
+            # constraint; the bilinear form stays bounded on the central path.
+            pieces.append(slack_block * dual_block - mu)
         else:
             local = barrier if not isinstance(cone, ProductCone) else None
             if local is None:
@@ -138,6 +166,34 @@ def _dual_step(cone: AbstractConvexCone, point: Array, direction: Array) -> Arra
     return jnp.where(accepted, 1.0, 0.995 * lower)
 
 
+def _newton_row_scale(program: ConicProgram, vector: Array) -> Array:
+    """Constant row scaling 1/(s_i + z_i) on orthant centrality rows.
+
+    Row scaling leaves the exact Newton direction unchanged. The linearized row
+    ``z_i ds_i + s_i dz_i`` divided by ``s_i + z_i`` has bounded coefficients in
+    both strict-complementarity limits: ``ds_i`` dominates on active rows
+    (``s_i -> 0``) and ``dz_i`` on inactive rows (``z_i -> 0``). This keeps the
+    dense LU and matrix-free Krylov systems well scaled near optimality.
+    """
+    n, m = program.num_variables, program.num_constraints
+    dual = vector[n : n + m]
+    slack = vector[n + m : n + 2 * m]
+    pieces: list[Array] = []
+    for block, slack_block, dual_block in zip(
+        _blocks(program.cone),
+        _split(program.cone, slack),
+        _split(program.cone, dual),
+        strict=True,
+    ):
+        if isinstance(block, NonnegativeCone):
+            pieces.append(1.0 / (slack_block + dual_block))
+        else:
+            pieces.append(jnp.ones_like(slack_block))
+    ones = jnp.ones((n + m,), dtype=vector.dtype)
+    tail = jnp.ones((2,), dtype=vector.dtype)
+    return jnp.concatenate((ones, *pieces, tail))
+
+
 def _direction(
     program: ConicProgram,
     barrier: ConeBarrierOracle,
@@ -153,8 +209,10 @@ def _direction(
             space_id=f"native-hsd:{program.structure_id}:coordinates",
         )
 
+        scale = _newton_row_scale(program, vector)
+
         def residual(value: Array) -> Array:
-            return _embedding_residual(program, barrier, value, mu)
+            return scale * _embedding_residual(program, barrier, value, mu)
 
         linearization = prepare_linearization(
             residual,
@@ -185,10 +243,11 @@ def _direction(
             -linearization.primal,
             policy=selected,
         )
-    residual = _embedding_residual(program, barrier, vector, mu)
-    jacobian = jax.jacfwd(lambda value: _embedding_residual(program, barrier, value, mu))(
-        vector
-    )
+    scale = _newton_row_scale(program, vector)
+    residual = scale * _embedding_residual(program, barrier, vector, mu)
+    jacobian = jax.jacfwd(
+        lambda value: scale * _embedding_residual(program, barrier, value, mu)
+    )(vector)
     return solve(
         LinearSystem(DenseLinearOperator(jacobian), problem_id="native-hsd-newton"),
         -residual,
@@ -196,14 +255,15 @@ def _direction(
     )
 
 
-def _normalized_kkt_converged(
+def _normalized_audit(
     program: ConicProgram,
     vector: Array,
     policy: ConvexSolvePolicy,
-) -> Array:
+) -> tuple[Array, Array]:
     # Reuse the canonical original-coordinate audit, including cone-block
-    # complementarity aggregation and requested relative/absolute thresholds.
-    # Unused ray/provenance outputs are eliminated from this scalar JAX action.
+    # complementarity aggregation, requested relative/absolute thresholds and
+    # the scale-normalized primal/dual ray certificates. Returns the optimality
+    # and certified-infeasibility decisions for the recovered witness.
     from ._clarabel import _audit_result
 
     n, m = program.num_variables, program.num_constraints
@@ -226,7 +286,9 @@ def _normalized_kkt_converged(
         "native-hsd-convergence",
         backend="phydrax",
     )
-    return (tau > jnp.sqrt(jnp.finfo(vector.dtype).eps)) & audit.successful
+    converged = (tau > jnp.sqrt(jnp.finfo(vector.dtype).eps)) & audit.successful
+    certified = audit.certificate.primal_ray_valid | audit.certificate.dual_ray_valid
+    return converged, ~converged & certified
 
 
 def _step_bound(
@@ -255,8 +317,14 @@ def solve_homogeneous_conic(
     maximum_steps: int,
     tolerance: float,
     policy: ConvexSolvePolicy | None = None,
+    newton: FactorizedNewtonPlan | None = None,
 ) -> HomogeneousConicState:
-    """Monotone homogeneous embedding with affine and centered Newton solves."""
+    """Monotone homogeneous embedding with affine and centered Newton solves.
+
+    Sparse programs solve Newton systems through the policy's explicit route:
+    ``"factorized"`` requires the structure's prepared ``newton`` plan and
+    ``"matrix-free"`` uses native GMRES. Dense programs use dense LU.
+    """
     if program.batch_shape:
         raise ValueError("Homogeneous conic kernel currently requires one case.")
     audit_policy = (
@@ -270,20 +338,63 @@ def solve_homogeneous_conic(
         if policy is None
         else policy
     )
+    method = audit_policy.method
+    if not isinstance(method, NativeHomogeneousConic):
+        raise TypeError("Homogeneous conic execution requires NativeHomogeneousConic.")
+    sparse = program.constraint_is_sparse or program.quadratic_is_sparse
+    relative_tolerance = min(1e-10, max(tolerance * 0.01, 1e-14))
+    absolute_tolerance = min(1e-12, max(tolerance * 0.01, 1e-14))
     linear_policy = None
-    if program.constraint_is_sparse or program.quadratic_is_sparse:
-        size = program.num_variables + 2 * program.num_constraints + 2
-        linear_policy = LinearSolvePolicy(
-            GMRES(restart=min(256, size)),
-            tolerance=TolerancePolicy(
-                relative=min(1e-10, max(tolerance * 0.01, 1e-14)),
-                absolute=min(1e-12, max(tolerance * 0.01, 1e-14)),
-                max_steps=max(64, 8 * size),
-            ),
-            differentiation=DifferentiationPolicy("none"),
-            failure=FailurePolicy("status"),
-            resources=audit_policy.resources,
+    factorized: FactorizedNewtonPlan | None = None
+    if sparse:
+        match method.newton:
+            case "factorized":
+                if newton is None:
+                    raise ValueError(
+                        "Factorized sparse homogeneous Newton systems require the "
+                        "prepared reduced-KKT plan of this program structure."
+                    )
+                if newton.structure_id != program.structure_id:
+                    raise ValueError(
+                        "Prepared reduced-KKT plan does not match the program structure."
+                    )
+                factorized = newton
+            case "matrix-free":
+                size = program.num_variables + 2 * program.num_constraints + 2
+                linear_policy = LinearSolvePolicy(
+                    GMRES(restart=min(256, size)),
+                    tolerance=TolerancePolicy(
+                        relative=relative_tolerance,
+                        absolute=absolute_tolerance,
+                        max_steps=max(64, 8 * size),
+                    ),
+                    differentiation=DifferentiationPolicy("none"),
+                    failure=FailurePolicy("status"),
+                    resources=audit_policy.resources,
+                )
+            case _ as unreachable:
+                assert_never(unreachable)
+    elif newton is not None:
+        raise ValueError("Dense homogeneous programs do not use a reduced-KKT plan.")
+
+    def newton_direction(
+        vector_: Array, mu_: Array, factor: FactorizedNewtonFactor | None
+    ) -> tuple[Array, Array, Array]:
+        if factorized is None or factor is None:
+            result = _direction(program, barrier, vector_, mu_, linear=linear_policy)
+            return result.value, result.successful, result.status.astype(jnp.int32)
+        return factorized_direction(
+            factorized,
+            factor,
+            program,
+            vector_,
+            mu_,
+            lambda value: _embedding_residual(program, barrier, value, mu_),
+            _newton_row_scale(program, vector_),
+            relative_tolerance,
+            absolute_tolerance,
         )
+
     reference = barrier.interior_reference(program.linear.dtype)
     dual = -barrier.gradient(reference)
     vector = jnp.concatenate(
@@ -297,24 +408,24 @@ def solve_homogeneous_conic(
     active = jnp.asarray(True)
     iterations = jnp.asarray(0, dtype=jnp.int32)
     last_linear_status = jnp.asarray(int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
+    direction_failed = jnp.asarray(False)
 
-    def iteration(
-        _: Array, state: tuple[Array, Array, Array, Array]
-    ) -> tuple[Array, Array, Array, Array]:
-        vector_, active_, iterations_, _ = state
+    def iteration(_: Array, state: _LoopState) -> _LoopState:
+        vector_, active_, iterations_, _, _ = state
         n, m = program.num_variables, program.num_constraints
         slack = vector_[n + m : n + 2 * m]
         dual_ = vector_[n : n + m]
         tau, kappa = vector_[-2], vector_[-1]
         mu = (jnp.sum(slack * dual_) + tau * kappa) / (barrier.parameter + 1.0)
-        affine_result = _direction(
-            program,
-            barrier,
-            vector_,
-            jnp.asarray(0.0, dtype=mu.dtype),
-            linear=linear_policy,
+        zero_mu = jnp.asarray(0.0, dtype=mu.dtype)
+        affine_factor = (
+            None
+            if factorized is None
+            else factor_reduced_newton(factorized, program, vector_, zero_mu)
         )
-        affine, affine_ok = affine_result.value, affine_result.successful
+        affine, affine_ok, affine_status = newton_direction(
+            vector_, zero_mu, affine_factor
+        )
         affine_step = _step_bound(program, barrier, vector_, affine)
         affine_vector = vector_ + affine_step * affine
         affine_mu = (
@@ -324,10 +435,16 @@ def solve_homogeneous_conic(
         sigma = jnp.clip(
             (affine_mu / jnp.maximum(mu, jnp.finfo(mu.dtype).tiny)) ** 3, 0.0, 1.0
         )
-        corrected_result = _direction(
-            program, barrier, vector_, sigma * mu, linear=linear_policy
+        # Orthant and zero-cone weights do not depend on mu, so the affine factor
+        # is reused; barrier-form cone blocks refactor at the centering mu.
+        corrected_factor = (
+            affine_factor
+            if factorized is None or factorized.multiplier_independent
+            else factor_reduced_newton(factorized, program, vector_, sigma * mu)
         )
-        corrected, corrected_ok = corrected_result.value, corrected_result.successful
+        corrected, corrected_ok, corrected_status = newton_direction(
+            vector_, sigma * mu, corrected_factor
+        )
         step = _step_bound(program, barrier, vector_, corrected)
         candidate = vector_ + step * corrected
         residual = jnp.max(
@@ -338,11 +455,8 @@ def solve_homogeneous_conic(
             ),
             initial=0.0,
         )
-        converged = (
-            (residual <= tolerance)
-            & (mu <= tolerance)
-            & _normalized_kkt_converged(program, candidate, audit_policy)
-        )
+        optimal, certified = _normalized_audit(program, candidate, audit_policy)
+        converged = (residual <= tolerance) & (mu <= tolerance) & optimal
         accepted = active_ & affine_ok & corrected_ok & jnp.all(jnp.isfinite(candidate))
         next_vector = jax.lax.cond(
             accepted,
@@ -350,28 +464,27 @@ def solve_homogeneous_conic(
             lambda _: vector_,
             operand=None,
         )
+        # A certified primal or dual ray terminates as early as optimality does;
+        # the final audit re-derives the certificate from the retained iterate.
         return (
             next_vector,
-            active_ & accepted & ~converged,
+            active_ & accepted & ~converged & ~certified,
             iterations_ + active_.astype(jnp.int32),
-            jnp.where(affine_ok, corrected_result.status, affine_result.status).astype(
-                jnp.int32
-            ),
+            jnp.where(affine_ok, corrected_status, affine_status).astype(jnp.int32),
+            active_ & ~accepted,
         )
 
-    def keep_iterating(state: tuple[Array, Array, Array, Array]) -> Array:
-        _, active_, count_, _ = state
+    def keep_iterating(state: _LoopState) -> Array:
+        _, active_, count_, _, _ = state
         return active_ & (count_ < maximum_steps)
 
-    def advance(
-        state: tuple[Array, Array, Array, Array],
-    ) -> tuple[Array, Array, Array, Array]:
+    def advance(state: _LoopState) -> _LoopState:
         return iteration(state[2], state)
 
-    vector, active, iterations, last_linear_status = jax.lax.while_loop(
+    vector, active, iterations, last_linear_status, direction_failed = jax.lax.while_loop(
         keep_iterating,
         advance,
-        (vector, active, iterations, last_linear_status),
+        (vector, active, iterations, last_linear_status, direction_failed),
     )
     n, m = program.num_variables, program.num_constraints
     slack = vector[n + m : n + 2 * m]
@@ -385,11 +498,12 @@ def solve_homogeneous_conic(
         ),
         initial=0.0,
     )
+    optimal, _ = _normalized_audit(program, vector, audit_policy)
     active = ~(
         jnp.all(jnp.isfinite(vector))
         & (residual <= tolerance)
         & (mu <= tolerance)
-        & _normalized_kkt_converged(program, vector, audit_policy)
+        & optimal
     )
     tau = vector[-2]
     safe_tau = jnp.maximum(tau, jnp.sqrt(jnp.finfo(tau.dtype).eps))
@@ -402,6 +516,7 @@ def solve_homogeneous_conic(
         active,
         iterations,
         last_linear_status,
+        direction_failed,
     )
 
 

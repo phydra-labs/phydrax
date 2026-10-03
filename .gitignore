@@ -46,6 +46,10 @@ benchmarks/*
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py
+# Meshfree campaign drivers and their retained measurement records.
+!benchmarks/meshfree*.py
+!benchmarks/meshfree*.json
+!benchmarks/compatible_projection_scaling.py
 # Native exterior-calculus drivers and their measured evidence records.
 !benchmarks/cochain_realization.py
 !benchmarks/cochain_realization.json

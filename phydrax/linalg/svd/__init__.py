@@ -10,6 +10,7 @@ from .._singular_subspaces import (
 from .._svd import plan_svd, prepare_svd, refresh_svd, svd
 from .._svd_contracts import (
     DenseSVD,
+    DenseSVDAlgorithm,
     DenseSVDState,
     PreparedSVDSolve,
     RandomizedSVD,
@@ -37,6 +38,7 @@ from .._svd_contracts import (
 
 __all__ = [
     "DenseSVD",
+    "DenseSVDAlgorithm",
     "DenseSVDState",
     "PreparedSVDSolve",
     "RandomizedSVD",

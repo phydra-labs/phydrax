@@ -286,6 +286,8 @@ def _alpha_delaunay_simplices(
             for left, right in zip(order[:-1], order[1:], strict=True)
         )
     else:
+        # Projected clouds have any intrinsic rank; the canonical geometry
+        # DelaunayTriangulation owns only 2-D and 3-D, so Qhull is used here.
         triangulation = Delaunay(projected)
         maximal = tuple(
             sorted(

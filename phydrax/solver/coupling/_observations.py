@@ -43,6 +43,7 @@ from ...discretization import (
     PreparedFluxAction,
     PreparedTraceAction,
 )
+from ...linalg import BlockSpace
 from ...measurement import (
     PointSampleSupport,
     PreparedQuantityField,
@@ -570,9 +571,13 @@ class PreparedFluxObservation(AbstractPreparedObservation):
     def evaluate(
         self, fields: FieldValues, arguments: Mapping[str, object], /
     ) -> PreparedQuantityField:
-        reaction = self.flux.evaluate(
-            fields[(self.component, self.field)], arguments[self.component]
+        space = self.flux.evaluator.state_space
+        state = (
+            tuple(fields[(self.component, name)] for name in space.names)
+            if isinstance(space, BlockSpace)
+            else fields[(self.component, self.field)]
         )
+        reaction = self.flux.evaluate(state, arguments[self.component])
         samples = jnp.sum(reaction).reshape((1,))
         valid = jnp.ones((1,), dtype=jnp.bool_)
         return self.identity.field(self.binding_id, self.scale, samples, valid)

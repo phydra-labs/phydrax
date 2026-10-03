@@ -149,7 +149,12 @@ class MultigridLevel(StrictModule):
 
 
 class MultigridSetupDiagnostics(StrictModule):
-    """Static setup accounting and dependency decisions for one hierarchy."""
+    """Static setup accounting and dependency decisions for one hierarchy.
+
+    ``prolongation_spectral_radii`` are the per-transition estimates of the
+    spectral radius of ``D^-1 A`` that scaled smoothed-aggregation prolongator
+    smoothing; empty for hierarchies with supplied transfers.
+    """
 
     level_dimensions: tuple[int, ...] = eqx.field(static=True)
     level_nnz: tuple[int | None, ...] = eqx.field(static=True)
@@ -165,6 +170,7 @@ class MultigridSetupDiagnostics(StrictModule):
     level_storage_bytes: tuple[int, ...] = eqx.field(static=True)
     compatible_relaxation_factors: tuple[float, ...] = eqx.field(static=True)
     aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    prolongation_spectral_radii: tuple[float, ...] = eqx.field(static=True)
     reuse_dependency_fingerprint: str | None = eqx.field(static=True)
 
     def __init__(
@@ -185,6 +191,7 @@ class MultigridSetupDiagnostics(StrictModule):
         level_storage_bytes: tuple[int, ...] = (),
         compatible_relaxation_factors: tuple[float, ...] = (),
         aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = (),
+        prolongation_spectral_radii: tuple[float, ...] = (),
     ) -> None:
         dimensions = tuple(level_dimensions)
         nonzeros = tuple(None if value is None else int(value) for value in level_nnz)
@@ -268,6 +275,14 @@ class MultigridSetupDiagnostics(StrictModule):
             raise ValueError(
                 "aggregate_candidate_ranks must contain positive ranks per transition."
             )
+        spectral_radii = tuple(float(value) for value in prolongation_spectral_radii)
+        if spectral_radii and (
+            len(spectral_radii) != len(transfers)
+            or any(not isfinite(value) or value <= 0.0 for value in spectral_radii)
+        ):
+            raise ValueError(
+                "prolongation_spectral_radii must be positive per hierarchy transition."
+            )
         self.level_nnz = nonzeros
         self.grid_complexity = grid
         self.operator_complexity = operator
@@ -282,6 +297,7 @@ class MultigridSetupDiagnostics(StrictModule):
         self.level_storage_bytes = level_bytes
         self.compatible_relaxation_factors = relaxation_factors
         self.aggregate_candidate_ranks = candidate_ranks
+        self.prolongation_spectral_radii = spectral_radii
 
 
 def _default_setup_diagnostics(

@@ -19,6 +19,7 @@ from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation, RelationExecutionPlan
 from ...typing import checked
 from .._periodic_cell import PeriodicCell
+from ..spatial import MortonAddressPlan
 from ._precision import ParticleAccumulation
 
 
@@ -73,6 +74,20 @@ class ParticleBox(StrictModule, NonTrainableState):
                 ),
                 "periodic_axes": list(axes),
             }
+        )
+
+    @classmethod
+    @checked
+    def from_address(cls, address: MortonAddressPlan, /) -> ParticleBox:
+        """The float64 particle box of one Morton address: same bounds and mask.
+
+        A meshfree flow that pairs SPH with GMLS derives its particle box here so
+        both reconstructions share one periodic cell.
+        """
+        return cls(
+            np.asarray(address.lower, dtype=np.float64),
+            np.asarray(address.upper, dtype=np.float64),
+            periodic_axes=address.periodic_axes,
         )
 
     @property

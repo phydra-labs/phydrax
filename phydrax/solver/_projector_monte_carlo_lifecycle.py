@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from os import PathLike
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +20,8 @@ from jax import Array
 from .._array_archive import array_payload_digest, ArrayArchiveLimits
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._identity import strict_module_payload
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..lifecycle import create, LifecycleArchive, ResultManifest, ResultRevision
 from ..typing import validate
 from ..units import ONE
@@ -294,21 +296,14 @@ def _destination_template(
     return template
 
 
-def _resource_restorer(
-    source_template: Mapping[str, Array],
-    /,
-) -> Callable[
-    [
-        Mapping[str, Any],
-        Mapping[str, Any],
-        Mapping[str, Array],
-        RuntimeCheckpointEncodingPlan,
-    ],
-    dict[str, Array],
-]:
-    # The callback is the owning native archive interchange boundary. No
-    # numerical/provider type is widened to Any outside that boundary.
-    def restore(
+@final
+class _ResourceRestorer(StrictModule, NonTrainableState):
+    """Resource-only archive replay with a dynamic source payload template."""
+
+    source_template: Mapping[str, Array]
+
+    def __call__(
+        self,
         source_arrays: Mapping[str, Any],
         specification: Mapping[str, Any],
         destination_template: Mapping[str, Array],
@@ -316,9 +311,9 @@ def _resource_restorer(
         /,
     ) -> dict[str, Array]:
         unpacked = _unpack_state_tree(
-            specification, source_arrays, source_template, encoding
+            specification, source_arrays, self.source_template, encoding
         )
-        payload = _validated_payload(unpacked, source_template)
+        payload = _validated_payload(unpacked, self.source_template)
         restored: dict[str, Array] = {}
         if set(payload) != set(destination_template):
             raise ValueError("Resource replay changed projector payload fields.")
@@ -336,8 +331,6 @@ def _resource_restorer(
                 value if value.shape == expected.shape else jnp.pad(value, widths)
             )
         return restored
-
-    return restore
 
 
 def transport_projector_monte_carlo_resources(
@@ -373,7 +366,7 @@ def transport_projector_monte_carlo_resources(
                 "scientific": source.scientific_id,
             }
         ),
-        restorer=_resource_restorer(source_payload),
+        restorer=_ResourceRestorer(source_payload),
     )
     envelope, _ = restore_runtime_checkpoint_arrays(
         _runtime_checkpoint_manifest(source_envelope),

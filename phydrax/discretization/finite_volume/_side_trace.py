@@ -27,7 +27,7 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 from math import prod
-from typing import assert_never, final, TypeAlias
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -93,6 +93,11 @@ FiniteVolumeFaceReconstruction: TypeAlias = (
 _MeshOwner: TypeAlias = (
     UnstructuredFiniteVolumeDiscretization | TriangleFiniteVolumeDiscretization
 )
+# Coefficient layout of a published field: "state" is the owner's cell-average
+# state (cells..., components); "scalar" is the one component of a
+# single-component structured field in the grid's own cell coordinate space
+# (the coordinates conservative cell operators act on).
+FiniteVolumeCoefficientLayout: TypeAlias = Literal["state", "scalar"]
 _EMBEDDING_TOLERANCE = 64.0 * float(np.finfo(np.float64).eps)
 
 
@@ -122,6 +127,36 @@ def finite_volume_field_space_id(discretization: FiniteVolumeFacetOwner, /) -> s
             "components": list(discretization.component_names),
         }
     )
+
+
+def finite_volume_scalar_space(
+    discretization: FiniteVolumeDiscretization, /
+) -> ArraySpace:
+    """Cell coordinate space of the one component of a scalar structured field.
+
+    The coordinates are the owner's cell averages in row-major cell order with
+    the unit component axis dropped; the space is the grid's cell field space
+    (cell-volume pairing), shared by conservative cell operators on that grid.
+    """
+    if not isinstance(discretization, FiniteVolumeDiscretization):
+        raise TypeError(
+            "Scalar cell layouts are published by structured FiniteVolumeDiscretization "
+            "owners."
+        )
+    if discretization.component_count != 1:
+        raise ValueError(
+            "A scalar cell layout drops the component axis of a one-component field; "
+            f"this owner carries {discretization.component_count} components."
+        )
+    state = _coefficient_space(discretization)
+    space = discretization.grid.field_space(
+        discretization.field_name,
+        entity_layout=discretization.cell_layout,
+        dtype=state.dtype,
+    ).vector_space
+    if not isinstance(space, ArraySpace):
+        raise TypeError("Structured cell field spaces are array valued.")
+    return space
 
 
 def structured_axis_edges(
@@ -994,6 +1029,53 @@ def _prepared_frame(
     return _facet_frame(discretization, domain, rule, side)
 
 
+def _layout_route(
+    discretization: FiniteVolumeFacetOwner,
+    layout: FiniteVolumeCoefficientLayout,
+    dofs: np.ndarray,
+    weights: np.ndarray,
+    /,
+) -> tuple[AbstractSideRoute, ArraySpace, np.ndarray]:
+    """Route, coefficient space, and support rows of one coefficient layout."""
+    match layout:
+        case "state":
+            space = _coefficient_space(discretization)
+            cells = SideGatherRoute(
+                dofs,
+                np.asarray(weights, dtype=space.dtype),
+                coefficient_shape=(
+                    _cell_count(discretization),
+                    discretization.component_count,
+                ),
+                mode="componentwise",
+                value_shape=(discretization.component_count,),
+            )
+            route: AbstractSideRoute = (
+                _TensorCellSideRoute(cells, space.shape)
+                if isinstance(discretization, FiniteVolumeDiscretization)
+                else cells
+            )
+            return route, space, _support_rows(discretization, dofs)
+        case "scalar":
+            if not isinstance(discretization, FiniteVolumeDiscretization):
+                raise ValueError(
+                    "Scalar cell layouts are published by structured finite-volume "
+                    "grids; mesh owners publish the cell-average state layout."
+                )
+            space = finite_volume_scalar_space(discretization)
+            # Every cell is one coefficient row, so the support rows are the
+            # row-major cells the face states read.
+            scalar = SideGatherRoute(
+                dofs,
+                np.asarray(weights, dtype=space.dtype),
+                coefficient_shape=space.shape,
+                row_shape=space.shape,
+            )
+            return scalar, space, np.unique(dofs)
+        case _:
+            assert_never(layout)
+
+
 def prepare_finite_volume_side_trace(
     discretization: FiniteVolumeFacetOwner,
     field_name: str,
@@ -1004,6 +1086,7 @@ def prepare_finite_volume_side_trace(
     quantity: SideTraceQuantity = "value",
     side: FieldTraceSide = "owner",
     reconstruction: FiniteVolumeFaceReconstruction | None = None,
+    layout: FiniteVolumeCoefficientLayout = "state",
 ) -> PreparedTraceAction:
     """Prepare the linear face state of a finite-volume field on selected facets.
 
@@ -1012,9 +1095,13 @@ def prepare_finite_volume_side_trace(
     `trace_degree=0`). Coefficient-linear reconstructions publish reconstructed
     face states (`representation="face-state"`) through per-facet gather routes
     whose transpose is exact. Nonlinear reconstructions are refused here; use
-    `prepare_finite_volume_nonlinear_face_trace`.
+    `prepare_finite_volume_nonlinear_face_trace`. `layout="scalar"` publishes a
+    one-component structured field on its cell coordinates
+    (`finite_volume_scalar_space`) as a scalar trace whose coefficient rows are
+    the cells; `"state"` keeps the owner's `(cells..., components)` state.
     """
     frame = _prepared_frame(discretization, field_name, domain, rule, quantity, side)
+    layout_ = parse(layout, FiniteVolumeCoefficientLayout, "layout")
     reconstruction_ = (
         PiecewiseConstantReconstruction() if reconstruction is None else reconstruction
     )
@@ -1027,20 +1114,8 @@ def prepare_finite_volume_side_trace(
             "transpose; prepare_nonlinear_face_trace publishes its face states with a "
             "linearization at a supplied state."
         )
-    space = _coefficient_space(discretization)
     dofs, weights = _linear_route(discretization, reconstruction_, frame)
-    cells = SideGatherRoute(
-        dofs,
-        np.asarray(weights, dtype=space.dtype),
-        coefficient_shape=(_cell_count(discretization), discretization.component_count),
-        mode="componentwise",
-        value_shape=(discretization.component_count,),
-    )
-    route: AbstractSideRoute = (
-        _TensorCellSideRoute(cells, space.shape)
-        if isinstance(discretization, FiniteVolumeDiscretization)
-        else cells
-    )
+    route, space, support_rows = _layout_route(discretization, layout_, dofs, weights)
     return PreparedTraceAction(
         _descriptor(
             discretization, domain, rule, frame, reconstruction_, representation, degree
@@ -1050,7 +1125,7 @@ def prepare_finite_volume_side_trace(
         sites=frame.sites,
         weights=frame.weights,
         normals=frame.normals,
-        support_rows=_support_rows(discretization, dofs),
+        support_rows=support_rows,
     )
 
 

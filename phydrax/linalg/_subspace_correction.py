@@ -17,7 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..typing import parse
-from ._assembly import assemble_sparse
+from ._assembly import assemble_sparse, SparseAssemblyPolicy
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._named_blocks import (
@@ -37,6 +37,7 @@ from ._preconditioner_properties import (
 from ._preconditioners import _prepared_action_cost, AbstractPreconditioner
 from ._preconditioning import (
     _source_cost,
+    _sparse_assembly_policy_payload,
     _validate_setup_operator,
     AbstractPreconditionerBuilder,
     PreconditionerSource,
@@ -65,11 +66,23 @@ def _identifier(value: str | None, payload: dict[str, object], /) -> str:
 
 
 class SubspaceCorrectionTerm(StrictModule):
-    """Restriction, prolongation, and local approximate-inverse recipe."""
+    """Restriction, prolongation, and local approximate-inverse recipe.
+
+    The local setup operator is the Galerkin block ``R A E``. ``E`` is the
+    prolongation unless ``local_extension`` is supplied: restricted and
+    partition-of-unity Schwarz solve the unweighted block ``R A Rᵀ`` but
+    prolongate the correction with weighted ``Rᵀ D``. Using the weighted
+    prolongation inside the block would change, and can singularize, the
+    local problem. ``assembly`` bounds the exact sparse assembly of that block
+    when both the system and the extension are sparse (the native default
+    limits otherwise apply).
+    """
 
     restriction: AbstractLinearOperator = fixed_field()
     prolongation: AbstractLinearOperator = fixed_field()
+    local_extension: AbstractLinearOperator | None = fixed_field()
     local_solver: PreconditionerSource
+    assembly: SparseAssemblyPolicy | None
     term_id: str = eqx.field(static=True)
 
     def __init__(
@@ -78,6 +91,9 @@ class SubspaceCorrectionTerm(StrictModule):
         prolongation: AbstractLinearOperator,
         local_solver: PreconditionerSource,
         /,
+        *,
+        local_extension: AbstractLinearOperator | None = None,
+        assembly: SparseAssemblyPolicy | None = None,
     ) -> None:
         if not isinstance(restriction, AbstractLinearOperator) or not isinstance(
             prolongation, AbstractLinearOperator
@@ -93,23 +109,45 @@ class SubspaceCorrectionTerm(StrictModule):
             raise ValueError(
                 "Restriction source and prolongation target must be the same global space."
             )
+        if local_extension is not None:
+            if not isinstance(local_extension, AbstractLinearOperator):
+                raise TypeError("local_extension must be a linear operator or None.")
+            if local_extension.batch_shape:
+                raise ValueError("Subspace-correction transfers must be unbatched.")
+            if not local_extension.source.compatible(
+                prolongation.source
+            ) or not local_extension.target.compatible(prolongation.target):
+                raise ValueError(
+                    "local_extension must map the local space into the global space."
+                )
         source_kind, source_id = _source_identifier(local_solver)
         if isinstance(local_solver, AbstractPreconditioner) and not (
             local_solver.space.compatible(restriction.target)
         ):
             raise ValueError("A supplied local solver must act on the local space.")
+        payload: dict[str, object] = {
+            "kind": "subspace-correction-term",
+            "restriction": restriction.operator_id,
+            "prolongation": prolongation.operator_id,
+            "local_solver_kind": source_kind,
+            "local_solver": source_id,
+        }
+        if local_extension is not None:
+            payload["local_extension"] = local_extension.operator_id
+        if assembly is not None:
+            if not isinstance(assembly, SparseAssemblyPolicy):
+                raise TypeError("assembly must be a SparseAssemblyPolicy or None.")
+            payload["assembly"] = _sparse_assembly_policy_payload(assembly)
         self.restriction = restriction
         self.prolongation = prolongation
+        self.local_extension = local_extension
         self.local_solver = local_solver
-        self.term_id = canonical_fingerprint(
-            {
-                "kind": "subspace-correction-term",
-                "restriction": restriction.operator_id,
-                "prolongation": prolongation.operator_id,
-                "local_solver_kind": source_kind,
-                "local_solver": source_id,
-            }
-        )
+        self.assembly = assembly
+        self.term_id = canonical_fingerprint(payload)
+
+
+def _galerkin_extension(term: SubspaceCorrectionTerm, /) -> AbstractLinearOperator:
+    return term.prolongation if term.local_extension is None else term.local_extension
 
 
 def _validate_terms(
@@ -139,12 +177,10 @@ def _local_setup_operator(
     /,
 ) -> AbstractLinearOperator:
     restriction = term.restriction
-    if (
-        isinstance(restriction, IdentityLinearOperator)
-        and restriction is term.prolongation
-    ):
+    extension = _galerkin_extension(term)
+    if isinstance(restriction, IdentityLinearOperator) and restriction is extension:
         return setup_operator
-    prolongation = term.prolongation
+    prolongation = extension
     if isinstance(restriction, BlockRestrictionLinearOperator) and isinstance(
         prolongation, BlockProlongationLinearOperator
     ):
@@ -154,7 +190,7 @@ def _local_setup_operator(
             setup_operator, restriction.selection, prolongation.selection
         )
     operator = restriction @ setup_operator @ prolongation
-    if _structurally_adjoint_transfers(term):
+    if _structurally_adjoint_transfers(restriction, prolongation):
         self_adjoint = setup_operator.properties.certifies("self_adjoint")
         positive = setup_operator.properties.certifies("positive_semidefinite")
         properties = OperatorProperties(
@@ -170,10 +206,14 @@ def _local_setup_operator(
             },
         )
         operator = eqx.tree_at(lambda value: value.properties, operator, properties)
+    if isinstance(term.local_solver, AbstractPreconditioner):
+        # A supplied prepared action never reads its local block (only the
+        # block's space is checked), so the block is not assembled.
+        return operator
     if isinstance(prolongation, AbstractSparseLinearOperator) and isinstance(
         setup_operator, AbstractSparseLinearOperator
     ):
-        return assemble_sparse(operator)
+        return assemble_sparse(operator, term.assembly)
     return operator
 
 
@@ -209,9 +249,11 @@ def _source_properties(
     return properties
 
 
-def _structurally_adjoint_transfers(term: SubspaceCorrectionTerm, /) -> bool:
-    restriction = term.restriction
-    prolongation = term.prolongation
+def _structurally_adjoint_transfers(
+    restriction: AbstractLinearOperator,
+    prolongation: AbstractLinearOperator,
+    /,
+) -> bool:
     return (
         (restriction is prolongation and restriction.properties.certifies("self_adjoint"))
         or (
@@ -245,7 +287,10 @@ def _resolved_properties(
     local_self_adjoint = all(
         value.certifies("self_adjoint") for value in local_properties
     )
-    adjoint_transfers = all(_structurally_adjoint_transfers(term) for term in terms)
+    adjoint_transfers = all(
+        _structurally_adjoint_transfers(term.restriction, term.prolongation)
+        for term in terms
+    )
     if multiplicative_sweep is None:
         self_adjoint = linear and local_self_adjoint and adjoint_transfers
         positive_definite = (
@@ -255,6 +300,7 @@ def _resolved_properties(
             and any(
                 isinstance(term.prolongation, IdentityLinearOperator)
                 and term.restriction is term.prolongation
+                and term.local_extension is None
                 for term in terms
             )
         )
@@ -332,7 +378,13 @@ def _prepare_terms(
         )
         _validate_prepared_local_solver(action, operator, expected)
         prepared.append(
-            SubspaceCorrectionTerm(term.restriction, term.prolongation, action)
+            SubspaceCorrectionTerm(
+                term.restriction,
+                term.prolongation,
+                action,
+                local_extension=term.local_extension,
+                assembly=term.assembly,
+            )
         )
     return tuple(prepared)
 
@@ -363,7 +415,13 @@ def _refresh_terms(
         )
         _validate_prepared_local_solver(action, operator, expected)
         refreshed.append(
-            SubspaceCorrectionTerm(term.restriction, term.prolongation, action)
+            SubspaceCorrectionTerm(
+                term.restriction,
+                term.prolongation,
+                action,
+                local_extension=term.local_extension,
+                assembly=term.assembly,
+            )
         )
     return tuple(refreshed)
 
@@ -569,23 +627,24 @@ class MultiplicativeSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         iteration: ArrayLike | None = None,
     ) -> PyTree[Array]:
         residual_ = self.space.validate(residual)
-        correction = jax.tree.map(jnp.zeros_like, residual_)
-        for index in self.term_order:
-            term = self.terms[index]
-            local_solver = cast(AbstractPreconditioner, term.local_solver)
-            defect = _subtract(
-                residual_,
-                self.setup_operator.mv(correction),
-            )
-            local_correction = local_solver.apply(
-                term.restriction.mv(defect),
-                iteration=iteration,
-            )
-            correction = _add(
-                correction,
-                term.prolongation.mv(local_correction),
-            )
+        first, *rest = self.term_order
+        # The sweep starts from a zero correction, whose defect is the residual.
+        correction = self._correction(first, residual_, iteration)
+        for index in rest:
+            defect = _subtract(residual_, self.setup_operator.mv(correction))
+            correction = _add(correction, self._correction(index, defect, iteration))
         return correction
+
+    def _correction(
+        self, index: int, defect: PyTree[Array], iteration: ArrayLike | None, /
+    ) -> PyTree[Array]:
+        term = self.terms[index]
+        local_solver = cast(AbstractPreconditioner, term.local_solver)
+        local_correction = local_solver.apply(
+            term.restriction.mv(defect),
+            iteration=iteration,
+        )
+        return term.prolongation.mv(local_correction)
 
     def cost_for(
         self,
@@ -597,17 +656,6 @@ class MultiplicativeSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(
             self, setup_operator, apply_workspace_multiplier=3 * len(self.term_order)
         )
-
-
-def _terms_properties(
-    terms: tuple[SubspaceCorrectionTerm, ...],
-    local_operators: tuple[AbstractLinearOperator, ...],
-    /,
-) -> tuple[PreconditionerProperties, ...]:
-    return tuple(
-        _source_properties(term.local_solver, operator)
-        for term, operator in zip(terms, local_operators, strict=True)
-    )
 
 
 def _builder_payload(
@@ -652,7 +700,11 @@ def _cost_for_terms(
         tuple(
             operator
             for term in terms
-            for operator in (term.restriction, term.prolongation)
+            for operator in (
+                term.restriction,
+                term.prolongation,
+                _galerkin_extension(term),
+            )
         )
     )
     preparation_workspace = 0
@@ -738,10 +790,9 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         setup_operator: AbstractLinearOperator,
         /,
     ) -> PreconditionerProperties:
-        local_operators = _local_setup_operators(self.terms, setup_operator)
-        return _resolved_properties(
+        return _prepared_properties(
             self.terms,
-            _terms_properties(self.terms, local_operators),
+            _local_setup_operators(self.terms, setup_operator),
             self.properties,
             multiplicative_sweep=None,
             setup_operator=setup_operator,
@@ -755,7 +806,13 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
         local_operators = _local_setup_operators(self.terms, setup_operator)
-        self.properties_for(setup_operator)
+        _prepared_properties(
+            self.terms,
+            local_operators,
+            self.properties,
+            multiplicative_sweep=None,
+            setup_operator=setup_operator,
+        )
         return _cost_for_terms(
             self.builder_id,
             self.terms,
@@ -772,7 +829,13 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
         local_operators = _local_setup_operators(self.terms, setup_operator)
-        properties = self.properties_for(setup_operator)
+        properties = _prepared_properties(
+            self.terms,
+            local_operators,
+            self.properties,
+            multiplicative_sweep=None,
+            setup_operator=setup_operator,
+        )
         terms = _prepare_terms(
             self.terms,
             local_operators,
@@ -800,7 +863,13 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         if preconditioner.builder_id != self.builder_id:
             raise ValueError("Subspace-correction refresh must preserve its builder ID.")
         local_operators = _local_setup_operators(self.terms, setup_operator)
-        properties = self.properties_for(setup_operator)
+        properties = _prepared_properties(
+            self.terms,
+            local_operators,
+            self.properties,
+            multiplicative_sweep=None,
+            setup_operator=setup_operator,
+        )
         terms = _refresh_terms(
             self.terms,
             preconditioner.terms,
@@ -862,10 +931,9 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         setup_operator: AbstractLinearOperator,
         /,
     ) -> PreconditionerProperties:
-        local_operators = _local_setup_operators(self.terms, setup_operator)
-        return _resolved_properties(
+        return _prepared_properties(
             self.terms,
-            _terms_properties(self.terms, local_operators),
+            _local_setup_operators(self.terms, setup_operator),
             self.properties,
             multiplicative_sweep=self.sweep,
             setup_operator=setup_operator,
@@ -879,7 +947,13 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
         local_operators = _local_setup_operators(self.terms, setup_operator)
-        self.properties_for(setup_operator)
+        _prepared_properties(
+            self.terms,
+            local_operators,
+            self.properties,
+            multiplicative_sweep=self.sweep,
+            setup_operator=setup_operator,
+        )
         return _cost_for_terms(
             self.builder_id,
             self.terms,
@@ -896,7 +970,13 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
         local_operators = _local_setup_operators(self.terms, setup_operator)
-        properties = self.properties_for(setup_operator)
+        properties = _prepared_properties(
+            self.terms,
+            local_operators,
+            self.properties,
+            multiplicative_sweep=self.sweep,
+            setup_operator=setup_operator,
+        )
         terms = _prepare_terms(
             self.terms,
             local_operators,
@@ -925,7 +1005,13 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         if preconditioner.builder_id != self.builder_id:
             raise ValueError("Subspace-correction refresh must preserve its builder ID.")
         local_operators = _local_setup_operators(self.terms, setup_operator)
-        properties = self.properties_for(setup_operator)
+        properties = _prepared_properties(
+            self.terms,
+            local_operators,
+            self.properties,
+            multiplicative_sweep=self.sweep,
+            setup_operator=setup_operator,
+        )
         terms = _refresh_terms(
             self.terms,
             preconditioner.terms,

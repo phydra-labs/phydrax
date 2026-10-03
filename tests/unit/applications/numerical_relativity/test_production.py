@@ -351,6 +351,7 @@ def _replace_status(state: Any, status: Any, checkpoint: Any) -> Any:
         state.moment_states,
         state.trigger_states,
         state.output_cursor,
+        state.evidence,
         status,
         checkpoint,
     )

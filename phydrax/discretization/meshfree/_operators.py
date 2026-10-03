@@ -40,6 +40,9 @@ class MeshfreeOperator(StrictModule):
             raise ValueError("functional_index is outside the prepared functional tuple.")
         relation = stencils.neighborhood.relation
         weights = stencils.weights[index]
+        # Default spaces carry the declared compute (source) and output
+        # (target) roles; actions accumulate in the accumulation role.
+        precision = stencils.neighborhood.precision
         if (source is not None and not isinstance(source, ArraySpace)) or (
             target is not None and not isinstance(target, ArraySpace)
         ):
@@ -49,7 +52,7 @@ class MeshfreeOperator(StrictModule):
         source_ = (
             ArraySpace(
                 (relation.source_size,),
-                dtype=weights.dtype,
+                dtype=precision.compute_dtype,
                 space_id=f"{stencils.neighborhood.neighborhood_id}:source",
             )
             if source is None
@@ -58,7 +61,7 @@ class MeshfreeOperator(StrictModule):
         target_ = (
             ArraySpace(
                 (relation.targets_per_case,),
-                dtype=weights.dtype,
+                dtype=precision.output_dtype,
                 space_id=f"{stencils.neighborhood.neighborhood_id}:target",
             )
             if target is None
@@ -74,7 +77,12 @@ class MeshfreeOperator(StrictModule):
             }
         )
         operator = SparseCoordinateOperator(
-            relation, weights, source=source_, target=target_, operator_id=identifier
+            relation,
+            weights,
+            source=source_,
+            target=target_,
+            accumulation_dtype=precision.accumulation_dtype,
+            operator_id=identifier,
         )
         self.operator = operator
         self.functional = stencils.functionals[index]

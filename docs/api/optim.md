@@ -196,6 +196,36 @@ Its unbatched execution uses the monotone homogeneous `(x, z, s, tau, kappa)`
 embedding with the quadratic perspective term, affine and centered Newton directions,
 cone-local barrier Hessians, and independent recovery/ray audits. Dense native bounds
 are lowered into the same product cone; fixed-topology sparse actions remain sparse.
+Orthant blocks use the primal-dual centrality `s_i z_i = mu`, so active nonnegative
+constraints converge instead of stalling on diverging barrier curvature.
+
+Sparse programs select their Newton solve explicitly with
+`NativeHomogeneousConic(newton=...)` (`NativeConicNewtonRoute`). The default
+`"factorized"` route eliminates slacks and every non-zero-cone multiplier into the
+symmetric quasi-definite system `[[Q + A_Cᵀ W A_C, A_Zᵀ], [A_Z, 0]]` (`W = z/s` on
+orthant rows, `mu ∇²F(s)` on barrier-form blocks) plus the standard two-right-hand-side
+`tau`/`kappa` elimination. `prepare_convex_program` analyzes that pattern once per
+program structure with the configured `SparseFactorizationPolicy` (default LU with
+approximate-minimum-degree ordering) and refuses when it exceeds the declared factor or
+symbolic budget; there is no silent route switch. Each iteration refreshes the numeric
+factor of the statically regularized matrix (sqrt(eps) relative primal and sqrt(eps)
+dual shifts), checks that its pivot inertia is exactly (n positive, zero-row count
+negative), refines toward the unregularized system, and accepts the direction only by
+its residual in the full embedding linearization: the requested Newton accuracy reports
+`SUCCESS`, an inexact-Newton direction within the `1e-4` forcing bound (dependent or
+numerically rank-deficient zero-cone rows) reports `STAGNATION`, and anything else is a
+failed direction. `"matrix-free"` keeps unpreconditioned native GMRES on the full
+embedding, with orthant rows equilibrated by `1/(s_i + z_i)`. `primal_step`,
+`dual_step`, and `extrapolation` only parameterize the first-order route used for
+batched programs and sparse programs with native bounds.
+The embedding stops as soon as the original-coordinate audit certifies optimality or a
+primal/dual ray, so infeasible and unbounded sparse programs return
+`PRIMAL_INFEASIBLE`/`DUAL_INFEASIBLE` with a valid certificate instead of exhausting
+the step budget. An uncertified stop after a failed Newton direction reports
+`NUMERICAL_FAILURE`; an uncertified exhausted budget reports `ITERATION_LIMIT`. The
+returned slack, cone multiplier, and bound multipliers are one consistent audited
+witness, and `NativeHomogeneousConic` declares `implicit_differentiation` through
+`prepare_conic_sensitivity`.
 
 The host-only `import_cvxpy_problem` and `export_cvxpy_program` boundary is limited to
 real continuous CVXPY problems that canonicalize to the supported LP/QP/product-cone
@@ -204,11 +234,17 @@ unsupported complex, custom, or integer graphs fail before execution.
 
 `prepare_conic_sensitivity(..., representation="matrix-free")` constructs a reusable
 `JacobianLinearOperator` and requires a caller-provided matching constructive or
-verified `StabilityLowerBound`; asserted, stale, or mismatched evidence fails closed.
-JVP and VJP solve the undamped operator and adjoint systems without basis
-materialization. `ConicGeneralizedDerivativePolicy` fixes an orthant zero selection
-and an optional approach direction for selected SOC/rotated-SOC/PSD strata during
-preparation. Exponential and power boundary strata remain explicitly unsupported.
+verified `StabilityLowerBound`; asserted, stale, or mismatched evidence fails closed,
+and a non-positive bound reports `SINGULAR_KKT`. JVP and VJP solve the undamped
+operator and adjoint systems without basis materialization; a solution is accepted
+only when its residual divided by the stability bound certifies the derivative within
+`regularity_tolerance`. Sparse operators are differentiated through their numerical
+coefficients with fixed topology. Bounds must be expressed as cone rows on this route.
+`ConicGeneralizedDerivativePolicy` fixes an orthant zero selection and an optional
+approach direction for selected SOC/rotated-SOC/PSD strata during preparation; the
+result keeps status `AMBIGUOUS_ACTIVE_SET` and names the selection in
+`generalized_selection`. Exponential and power boundary strata remain explicitly
+unsupported.
 
 ## Local optimizer-state compression
 
@@ -2049,18 +2085,36 @@ block topology remain static. `conic_primal_jvp` maps one `ConicProgramData` tan
 to a primal tangent. `conic_primal_vjp` maps a primal cotangent back to
 `ConicProgramData`.
 
-The ordinary derivative is available only when:
+Preparation classifies the audited slack and multiplier witnesses into a
+`ConicActiveSetEvidence` record. Rows follow the lowered order (original cone rows,
+then fixed, finite-lower, and finite-upper bound rows). Each row carries a
+`ConicConstraintRole`: `EQUALITY`, `ACTIVE`, `INACTIVE`, `BOUNDARY` (nonpolyhedral
+block with slack and multiplier on the boundary), or `AMBIGUOUS`. The record also
+publishes the strict-complementarity margin of `multiplier - slack` and its threshold,
+and the primal, dual, complementarity, and projection-KKT residual norms in original
+coordinates with the scale-aware KKT tolerance.
 
-- the audited forward result is optimal and finite;
-- the projection point is separated from every cone projection kink;
-- the projection-KKT Jacobian is numerically full rank;
-- the selected linear or adjoint solve converges with finite condition evidence.
+Every `ConicSensitivityResult` carries a per-case `ConicSensitivityStatus`, an
+`available` mask, and the evidence record. The value is published only where
+`available` is true and is NaN elsewhere in status mode; error-mode linear policies
+raise instead.
 
-Weak complementarity, an SOC apex or transition surface, a zero PSD eigenvalue, an
-EXP/POW axis or projection-region transition, nonunique primal-dual roots,
-infeasibility, and failed projection or linear solves return `regular=False` and NaN
-sensitivity values in status mode. Error-mode linear policies raise instead. Phydrax
-does not silently return a selected generalized derivative.
+- `REGULAR_FIXED_ACTIVE`: the forward witness is optimal, finite, and KKT-consistent in
+  original coordinates, strictly complementary, has the declared roles, and the
+  derivative system is nonsingular and solved. The value is the classical derivative
+  of the locally fixed-active solution map.
+- `AMBIGUOUS_ACTIVE_SET`: weak complementarity, an SOC apex or transition surface, a
+  zero PSD eigenvalue, or an EXP/POW projection transition. No derivative is
+  published by default. Only an explicitly selected `ConicGeneralizedDerivativePolicy`
+  (matrix-free route) publishes its selected generalized element.
+- `ACTIVE_SET_CHANGED`: `prepare_conic_sensitivity(..., fixed_active_set=previous.active_set)`
+  declared roles frozen at an earlier preparation of the same program structure, and
+  the new forward witness has different roles.
+- `SINGULAR_KKT`: the projection-KKT system has no nonsingularity or solve evidence,
+  for example LICQ failure with nonunique multipliers; `linear_status` separates rank
+  deficiency from iterative non-convergence.
+- `FORWARD_FAILED`: the forward result is unsuccessful, non-finite, or its witness
+  violates the original KKT conditions beyond tolerance.
 
 Native bounds are lowered into fixed, finite-lower, and finite-upper cone rows. A fixed
 bound has one valid tangent, so JVP inputs require equal lower and upper perturbations.
@@ -2112,6 +2166,18 @@ reverse = phydrax.optim.conic_primal_vjp(sensitivity, primal_cotangent)
 ---
 
 ::: phydrax.optim.ConicSensitivityResult
+
+---
+
+::: phydrax.optim.ConicSensitivityStatus
+
+---
+
+::: phydrax.optim.ConicConstraintRole
+
+---
+
+::: phydrax.optim.ConicActiveSetEvidence
 
 ---
 

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -61,3 +63,14 @@ def test_successful_atomic_write_replaces_existing_content(tmp_path: Any) -> Non
 
     assert destination.read_bytes() == b"new"
     assert tuple(tmp_path.glob(".artifact.bin.*.tmp")) == ()
+
+
+def test_atomic_write_creates_artifact_with_umask_derived_mode(tmp_path: Any) -> None:
+    destination = tmp_path / "artifact.json"
+    previous = os.umask(0o022)
+    try:
+        write_json_atomic(destination, {"a": 1})
+    finally:
+        os.umask(previous)
+
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o644

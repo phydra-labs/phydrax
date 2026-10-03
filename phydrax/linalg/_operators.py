@@ -1600,7 +1600,7 @@ def estimate_operator_action_cost(
 
     workspace, exact, operation_class = _operator_action_workspace(operator)
     resident = (
-        _array_tree_storage_bytes((operator, operator.sparse_storage()))
+        operator._resident_storage_bytes()
         if isinstance(operator, AbstractSparseLinearOperator)
         else _array_tree_storage_bytes(operator)
     )

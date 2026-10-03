@@ -19,6 +19,7 @@ from examples.meshfree_learned_edge_flux import (
     run_workflow,
 )
 from phydrax._training_kernel import TrainingRejectionBudgetError
+from phydrax.sparse import EdgeRelation
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +41,39 @@ def test_real_model_training_recovers_law_and_predicts_unseen_geometry(
     assert cast(float, metrics["conservation_defect"]) < 1e-9
     assert metrics["failure_rejected"] and metrics["coverage_refused"]
     assert cast(int, metrics["accepted_updates"]) > 0
+    assert metrics["metric_status"] == 0
+    assert cast(float, metrics["metric_max_normalized_residual"]) < 1e-9
+
+
+@pytest.mark.parametrize("dimension,size", [(2, 256), (3, 512)])
+def test_qualification_scale_signed_exact_metric_uses_all_equation_iterative_solve(
+    dimension: int, size: int
+) -> None:
+    recovery = prepare_recovery(size=size, dimension=dimension, seed=0)
+    exterior = recovery.prepared.problem.exterior
+    metric = exterior.metric_result
+    assert bool(metric.accepted) and bool(metric.exact)
+    assert metric.linear_result is not None
+    evidence = metric.linear_result.minimum_norm
+    assert evidence is not None and bool(evidence.stationarity_verified)
+    # Independent host audit of every original moment equation.
+    system = exterior.metric_system
+    relation = system.constraint.relation
+    assert isinstance(relation, EdgeRelation)
+    moments = np.zeros(system.constraint.target.size)
+    np.add.at(
+        moments,
+        np.asarray(relation.target_indices),
+        np.asarray(system.constraint.coefficients)
+        * np.asarray(metric.weights)[np.asarray(relation.source_indices)],
+    )
+    scaled = np.abs(moments - np.asarray(system.rhs)) / np.asarray(system.row_scaling)
+    assert float(np.max(scaled)) < 1e-8
+    solved = recovery.prepared.solve(
+        parameters={"constitutive-strength": jnp.asarray(recovery.truth_scale)}
+    )
+    assert bool(solved.accepted)
+    np.testing.assert_allclose(solved.state, recovery.reference, rtol=1e-8, atol=1e-9)
 
 
 def _unsuccessful_forward(

@@ -29,6 +29,7 @@ from ._balance_law_composition import (
     AdditiveIMEXTableau,
     ImplicitCallbacks,
 )
+from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
 class ImplicitConservationStageResult(StrictModule):
@@ -273,6 +274,57 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         return solved, rate, record
 
 
+class ConservationIMEXFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
+    """One conservative IMEX step published to native fixed-step rollouts.
+
+    Candidate, accepted state and success are the IMEX method's own (including
+    its validator); ``evidence`` retains per-stage solve success, iterations,
+    residual norms and status with an outcome-independent structure. Native
+    rollouts hold the state after the first refusal; no retry, clipping or
+    stabilization is added here.
+    """
+
+    method: ConservationIMEXMethod
+    method_id: str = eqx.field(static=True)
+
+    def __init__(self, method: ConservationIMEXMethod, /) -> None:
+        if not isinstance(method, ConservationIMEXMethod):
+            raise TypeError("method must be a ConservationIMEXMethod.")
+        self.method = method
+        self.method_id = canonical_fingerprint(
+            {"kind": "conservation-imex-fixed-step", "method": method.method_id}
+        )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        del step_index
+        result = self.method.step(time, state, step_size, args)
+        candidate = result.candidate_state
+        return FixedStepResult(
+            candidate,
+            result.accepted_state,
+            result.successful,
+            jnp.asarray(result.maximum_implicit_residual, dtype=candidate.dtype),
+            result.implicit_iterations,
+            jnp.asarray(self.method.tableau.stage_count, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.zeros((), dtype=candidate.real.dtype),
+            evidence={
+                "stage_successful": result.stage_successful,
+                "stage_iterations": result.stage_iterations,
+                "stage_residual_norms": result.stage_residual_norms,
+                "stage_status": result.stage_status,
+            },
+        )
+
+
 def _checked(result: Any, /) -> ImplicitConservationStageResult:
     if not isinstance(result, ImplicitConservationStageResult):
         raise TypeError("Implicit conservation solver must return stage result.")
@@ -414,6 +466,7 @@ def prepare_element_block_preconditioner(
 
 
 __all__ = [
+    "ConservationIMEXFixedStepMethod",
     "ConservationIMEXMethod",
     "ConservationIMEXResult",
     "ElementBlockPreconditioner",

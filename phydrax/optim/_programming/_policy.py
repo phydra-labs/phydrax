@@ -18,6 +18,7 @@ from ...linalg import (
     FailurePolicy,
     MaterializationPolicy,
     SolveResourcePolicy,
+    SparseFactorizationPolicy,
 )
 from ...typing import parse
 from ._types import ConvexProgramCapabilities
@@ -26,6 +27,7 @@ from ._types import ConvexProgramCapabilities
 ConvexDifferentiationMode: TypeAlias = Literal[
     "active-set-kkt", "barrier-kkt", "algorithmic", "none"
 ]
+NativeConicNewtonRoute: TypeAlias = Literal["factorized", "matrix-free"]
 
 
 class ConvexTermination(StrictModule):
@@ -90,11 +92,22 @@ class AbstractConvexProgramMethod(StrictModule):
 
 
 class NativeHomogeneousConic(AbstractConvexProgramMethod):
-    """JAX-native fixed-capacity primal-dual execution on built-in cones."""
+    """JAX-native fixed-capacity primal-dual execution on built-in cones.
+
+    ``newton`` selects how sparse homogeneous-embedding Newton systems are
+    solved. ``"factorized"`` eliminates slacks and non-zero-cone multipliers
+    into a quasi-definite reduced KKT system that is symbolically analyzed once
+    per program structure under ``factorization`` and numerically refreshed each
+    iteration; preparation refuses when the reduced pattern exceeds the declared
+    symbolic budget. ``"matrix-free"`` uses unpreconditioned native GMRES on
+    the full embedding. Dense programs always use the dense LU Newton solve.
+    """
 
     primal_step: float = eqx.field(static=True)
     dual_step: float = eqx.field(static=True)
     extrapolation: float = eqx.field(static=True)
+    newton: NativeConicNewtonRoute = eqx.field(static=True)
+    factorization: SparseFactorizationPolicy
 
     def __init__(
         self,
@@ -102,6 +115,8 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
         primal_step: float = 1e-2,
         dual_step: float = 1e-2,
         extrapolation: float = 1.0,
+        newton: NativeConicNewtonRoute = "factorized",
+        factorization: SparseFactorizationPolicy | None = None,
     ) -> None:
         primal = float(primal_step)
         dual = float(dual_step)
@@ -110,9 +125,34 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
             raise ValueError("Native conic steps must be finite and positive.")
         if not isfinite(extrapolation_) or not 0.0 <= extrapolation_ <= 1.0:
             raise ValueError("extrapolation must lie in [0, 1].")
+        route = parse(newton, NativeConicNewtonRoute, "newton")
+        factorization_ = (
+            SparseFactorizationPolicy("lu", ordering="approximate-minimum-degree")
+            if factorization is None
+            else factorization
+        )
+        if not isinstance(factorization_, SparseFactorizationPolicy):
+            raise TypeError("factorization must be a SparseFactorizationPolicy or None.")
+        if factorization_.kind != "lu":
+            raise ValueError(
+                "The reduced homogeneous KKT system is symmetric indefinite; "
+                "select SparseFactorizationPolicy('lu')."
+            )
+        if (
+            factorization_.fill_level is not None
+            or factorization_.drop_tolerance != 0.0
+            or factorization_.maximum_fill_per_row is not None
+            or factorization_.allow_pivot_replacement
+            or factorization_.diagonal_shift != 0.0
+        ):
+            raise ValueError(
+                "Native conic Newton factorizations must be complete and unmodified."
+            )
         self.primal_step = primal
         self.dual_step = dual
         self.extrapolation = extrapolation_
+        self.newton = route
+        self.factorization = factorization_
 
     @property
     def method_id(self) -> str:
@@ -134,7 +174,9 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
             warm_start=False,
             prepared_refresh=True,
             infeasibility_certificates=True,
-            implicit_differentiation=False,
+            # Fixed-active projection-KKT sensitivities of the audited witness
+            # through prepare_conic_sensitivity (dense and matrix-free routes).
+            implicit_differentiation=True,
             algorithmic_differentiation=False,
         )
 
@@ -144,6 +186,16 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
             ("primal_step", str(self.primal_step)),
             ("dual_step", str(self.dual_step)),
             ("extrapolation", str(self.extrapolation)),
+            ("newton", self.newton),
+            ("factorization_kind", self.factorization.kind),
+            ("factorization_ordering", self.factorization.ordering),
+            ("factorization_pivot_tolerance", repr(self.factorization.pivot_tolerance)),
+            ("factorization_max_factor_nnz", str(self.factorization.max_factor_nnz)),
+            ("factorization_max_factor_bytes", str(self.factorization.max_factor_bytes)),
+            (
+                "factorization_max_symbolic_work",
+                str(self.factorization.max_symbolic_work),
+            ),
         )
 
 
@@ -513,5 +565,6 @@ __all__ = [
     "DensePrimalDualQP",
     "MPAXr2HPDHG",
     "MPAXraPDHG",
+    "NativeConicNewtonRoute",
     "NativeHomogeneousConic",
 ]

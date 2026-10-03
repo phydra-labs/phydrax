@@ -162,6 +162,13 @@ are convex and nondecreasing. `PartiallyInputConvexNetwork` accepts
 `(context, convex_input)` and preserves convexity only in its second argument for
 each fixed context.
 
+With `input_monotonicity="nondecreasing"` every convex-input weight is also
+positive-transformed, so the potential is nondecreasing in each convex-input
+coordinate. Composed with convex features (for example squared norms of
+equivariant channels) it stays convex in the underlying variable; an affine
+feature of either sign enters as the pair `(l, -l)`. The certificate records
+`input_monotonicity`, and tampered input weights are refused.
+
 Both networks emit an `InputConvexCertificate` (capability `"input-convex"`)
 through `input_convex_certificate()`. The certificate records the construction,
 convex input and context sizes, activation, depth, and width; its

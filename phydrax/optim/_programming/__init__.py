@@ -26,8 +26,11 @@ from ._conic_cuts import (
 from ._conic_sensitivity import (
     conic_primal_jvp,
     conic_primal_vjp,
+    ConicActiveSetEvidence,
+    ConicConstraintRole,
     ConicProgramData,
     ConicSensitivityResult,
+    ConicSensitivityStatus,
     prepare_conic_sensitivity,
     PreparedConicSensitivity,
 )
@@ -101,6 +104,7 @@ from ._policy import (
     DensePrimalDualQP,
     MPAXr2HPDHG,
     MPAXraPDHG,
+    NativeConicNewtonRoute,
     NativeHomogeneousConic,
 )
 from ._power_cone import PowerCone
@@ -141,6 +145,9 @@ __all__ = [
     "CVXPYProgramBinding",
     "CVXPYVariableSlice",
     "ConicSensitivityResult",
+    "ConicActiveSetEvidence",
+    "ConicConstraintRole",
+    "ConicSensitivityStatus",
     "ConvexDifferentiationMode",
     "ConicGeneralizedDerivativePolicy",
     "ConvexDifferentiationPolicy",
@@ -173,6 +180,7 @@ __all__ = [
     "MixedIntegerStatus",
     "MixedIntegerWork",
     "NativeMixedIntegerBranchAndBound",
+    "NativeConicNewtonRoute",
     "NativeHomogeneousConic",
     "LinearProgram",
     "NonnegativeCone",

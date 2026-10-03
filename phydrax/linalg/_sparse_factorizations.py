@@ -22,6 +22,15 @@ from .._strict import StrictModule
 from ..typing import parse
 from ._properties import LinearCapabilityError
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
+from ._sparse_ordering import (
+    _order_pattern,
+    _pattern_identifier,
+    _validated_pattern,
+    _WorkMeter,
+    PreparedSparseOrdering,
+    SparseOrdering,
+    SparseOrderingPolicy,
+)
 from ._sparse_triangular import (
     analyze_sparse_triangular,
     solve_sparse_triangular,
@@ -31,7 +40,6 @@ from ._sparse_triangular import (
 
 
 SparseFactorizationKind: TypeAlias = Literal["auto", "lu", "cholesky"]
-SparseOrdering: TypeAlias = Literal["natural", "reverse-cuthill-mckee"]
 
 
 class SparseFactorizationStatus(IntEnum):
@@ -42,7 +50,11 @@ class SparseFactorizationStatus(IntEnum):
 
 
 class SparseFactorizationPolicy(StrictModule):
-    """Symbolic fill, ordering, dropping, and explicit pivot-replacement policy."""
+    """Symbolic fill, ordering, dropping, and explicit pivot-replacement policy.
+
+    ``ordering`` selects the symmetric fill-reducing ordering owned by
+    `prepare_sparse_ordering`; its work is charged to ``max_symbolic_work``.
+    """
 
     kind: SparseFactorizationKind = eqx.field(static=True)
     ordering: SparseOrdering = eqx.field(static=True)
@@ -131,6 +143,8 @@ class SparseFactorizationPlan(StrictModule):
     elimination updates. ``row_width``, ``column_width`` and ``upper_width``
     bound the fixed per-pivot windows: the longest factor row, the longest
     strictly lower column, and the longest strictly upper row.
+    ``ordering_id`` identifies the symmetric ordering ``permutation`` and
+    ``ordering_work`` is its share of ``symbolic_work``.
     """
 
     permutation: Array
@@ -160,6 +174,8 @@ class SparseFactorizationPlan(StrictModule):
     row_width: int = eqx.field(static=True)
     column_width: int = eqx.field(static=True)
     upper_width: int = eqx.field(static=True)
+    ordering_id: str = eqx.field(static=True)
+    ordering_work: int = eqx.field(static=True)
     storage_plan: Any = None
 
 
@@ -329,43 +345,6 @@ class PreparedSparseFactorization(StrictModule):
         )
 
 
-def _validated_pattern(
-    operator: AbstractSparseLinearOperator,
-    /,
-) -> tuple[SparseStorage, np.ndarray, np.ndarray]:
-    if not isinstance(operator, AbstractSparseLinearOperator):
-        raise TypeError("operator must be an AbstractSparseLinearOperator.")
-    storage = operator.sparse_storage()
-    if storage.shape[0] != storage.shape[1]:
-        raise ValueError("Sparse factorization requires a square operator.")
-    indices = np.asarray(storage.indices, dtype=np.int64)
-    indptr = np.asarray(storage.indptr, dtype=np.int64)
-    if indptr[0] != 0 or indptr[-1] != indices.size:
-        raise ValueError("CSR indptr endpoints are inconsistent with its indices.")
-    if np.any(indptr[1:] < indptr[:-1]):
-        raise ValueError("CSR indptr must be nondecreasing.")
-    if np.any(indices < 0) or np.any(indices >= storage.shape[1]):
-        raise ValueError("CSR column index is out of range.")
-    for row in range(storage.shape[0]):
-        columns = indices[indptr[row] : indptr[row + 1]]
-        if columns.size > 1 and np.any(columns[1:] <= columns[:-1]):
-            raise ValueError("Sparse factorization requires canonical sorted CSR rows.")
-    return storage, indices, indptr
-
-
-def _pattern_identifier(
-    shape: tuple[int, int], indices: np.ndarray, indptr: np.ndarray, /
-) -> str:
-    payload = b"|".join(
-        (
-            np.asarray(shape, dtype=np.int64).tobytes(),
-            indices.tobytes(),
-            indptr.tobytes(),
-        )
-    )
-    return sha256(payload).hexdigest()
-
-
 @dataclass
 class _SymbolicResourceTracker:
     size: int
@@ -439,6 +418,17 @@ class _SymbolicResourceTracker:
             )
         self.factor_bytes = required
 
+    def add_fixed_bytes(self, count: int, /) -> None:
+        projected = self.factor_bytes + count
+        if projected > self.max_factor_bytes:
+            self._refuse(
+                "factor_bytes",
+                projected,
+                self.max_factor_bytes,
+                factor_bytes=projected,
+            )
+        self.factor_bytes = projected
+
     def add_work(self, count: int = 1, /) -> None:
         projected = self.symbolic_work + count
         if projected > self.max_symbolic_work:
@@ -506,23 +496,42 @@ def _symbolic_resource_tracker(
     return tracker
 
 
-def _permutation(
-    shape: tuple[int, int],
+def _resolved_ordering(
+    storage: SparseStorage,
     indices: np.ndarray,
     indptr: np.ndarray,
-    ordering: SparseOrdering,
+    pattern_id: str,
+    policy: SparseFactorizationPolicy,
+    ordering: PreparedSparseOrdering | None,
+    tracker: _SymbolicResourceTracker,
     /,
-) -> np.ndarray:
-    if ordering == "natural":
-        return np.arange(shape[0], dtype=np.int64)
-    import scipy.sparse as sp
-    from scipy.sparse.csgraph import reverse_cuthill_mckee
+) -> PreparedSparseOrdering:
+    """Charge a prepared ordering, or prepare the policy's, before any fill.
 
-    graph = sp.csr_matrix((np.ones(indices.size), indices, indptr), shape=shape)
-    symmetric = graph + graph.T
-    return np.asarray(
-        reverse_cuthill_mckee(symmetric, symmetric_mode=True), dtype=np.int64
-    )
+    Ordering work is symbolic work: it is charged to ``max_symbolic_work``
+    before diagonal or fill entries are reserved, whether it was prepared here
+    or earlier, so equal orderings give equal plans.
+    """
+    if ordering is None:
+        return _order_pattern(
+            storage.shape[0],
+            indices,
+            indptr,
+            SparseOrderingPolicy(policy.ordering),
+            None,
+            _WorkMeter(None, tracker.add_work),
+        )
+    if not isinstance(ordering, PreparedSparseOrdering):
+        raise TypeError("ordering must be a PreparedSparseOrdering or None.")
+    if ordering.method != policy.ordering:
+        raise ValueError(
+            f"Prepared ordering method {ordering.method!r} differs from the "
+            f"policy ordering {policy.ordering!r}."
+        )
+    if ordering.pattern_id != pattern_id:
+        raise ValueError("Prepared ordering belongs to a different sparse pattern.")
+    tracker.add_work(ordering.work)
+    return ordering
 
 
 def _permuted_entries(
@@ -757,6 +766,8 @@ def prepare_sparse_factorization(
     operator: AbstractSparseLinearOperator,
     policy: SparseFactorizationPolicy | None = None,
     /,
+    *,
+    ordering: PreparedSparseOrdering | None = None,
 ) -> SparseFactorizationPlan:
     """Build a bounded host symbolic factorization plan without reading values.
 
@@ -765,6 +776,11 @@ def prepare_sparse_factorization(
     values is not a dense materialization, so ``MaterializationPolicy`` does not
     apply; solve plans charge the retained factor to
     ``SolveResourcePolicy.preconditioner_bytes``.
+
+    ``ordering`` reuses a `PreparedSparseOrdering` of this exact pattern whose
+    method matches ``policy.ordering``; otherwise the policy's ordering is
+    prepared with default capacities. Ordering work is charged first, so a
+    work cap below it refuses before any factor entry is reserved.
     """
     policy_ = SparseFactorizationPolicy() if policy is None else policy
     if not isinstance(policy_, SparseFactorizationPolicy):
@@ -811,14 +827,22 @@ def prepare_sparse_factorization(
     if kind == "cholesky" and not operator.properties.certifies("self_adjoint"):
         raise ValueError("Sparse Cholesky requires a certified self-adjoint operator.")
     tracker = _symbolic_resource_tracker(storage, policy_, kind, base_bytes)
+    input_pattern_id = _pattern_identifier(storage.shape, input_indices, input_indptr)
+    prepared_ordering = _resolved_ordering(
+        storage,
+        input_indices,
+        input_indptr,
+        input_pattern_id,
+        policy_,
+        ordering,
+        tracker,
+    )
+    ordering_work = tracker.symbolic_work
     for row in range(storage.shape[0]):
         tracker.add_work()
         tracker.add_factor_entry(row, row)
-    permutation = _permutation(
-        storage.shape, input_indices, input_indptr, policy_.ordering
-    )
-    inverse = np.empty_like(permutation)
-    inverse[permutation] = np.arange(permutation.size)
+    permutation = prepared_ordering.permutation
+    inverse = prepared_ordering.inverse_permutation
     entries = _permuted_entries(input_indices, input_indptr, permutation, tracker)
     rows = (
         _lu_symbolic_rows(storage.shape[0], entries, policy_.fill_level, tracker)
@@ -869,12 +893,11 @@ def prepare_sparse_factorization(
     else:
         upper_analysis = None
         upper_positions = None
-    input_pattern_id = _pattern_identifier(storage.shape, input_indices, input_indptr)
     plan_payload = b"|".join(
         (
             input_pattern_id.encode(),
             kind.encode(),
-            policy_.ordering.encode(),
+            prepared_ordering.ordering_id.encode(),
             str(policy_.fill_level).encode(),
             str(storage.batch_shape).encode(),
             str(storage.index_width).encode(),
@@ -885,6 +908,16 @@ def prepare_sparse_factorization(
             str(tracker.symbolic_work).encode(),
             factor_indices.tobytes(),
             factor_indptr.tobytes(),
+        )
+    )
+    # Level schedules are sized by the analyzed level histogram, so they are
+    # charged once both analyses exist; the plan identity keeps the
+    # pattern-determined bytes counted during symbolic construction.
+    tracker.add_fixed_bytes(
+        sum(
+            analysis.level_schedule.nbytes + analysis.transpose_level_schedule.nbytes
+            for analysis in (lower_analysis, upper_analysis)
+            if analysis is not None
         )
     )
     index_dtype = storage.indices.dtype
@@ -926,6 +959,8 @@ def prepare_sparse_factorization(
         row_width=row_width,
         column_width=column_width,
         upper_width=upper_width,
+        ordering_id=prepared_ordering.ordering_id,
+        ordering_work=ordering_work,
         storage_plan=storage_plan,
     )
 
@@ -1291,7 +1326,6 @@ __all__ = [
     "SparseFactorizationPolicy",
     "SparseFactorizationSolveResult",
     "SparseFactorizationStatus",
-    "SparseOrdering",
     "factorize_sparse",
     "prepare_sparse_factorization",
     "refresh_sparse_factorization",

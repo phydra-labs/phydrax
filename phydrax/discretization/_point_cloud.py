@@ -17,7 +17,12 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ..linalg import ArraySpace, DiagonalPairing
+from ..linalg import (
+    ArraySpace,
+    DiagonalPairing,
+    prepare_linearization,
+    PreparedLinearization,
+)
 from ..sparse import RowRelation
 from ._core import (
     DiscretizationCapability,
@@ -31,14 +36,18 @@ from ._spaces import DiscreteFieldSpace, TensorDofLayout
 from ._support import DiscreteSupport
 from ._tensor import AbstractStrongFormDiscretization
 from ._topology import EntitySet, PointTopology
+from ._views import FieldQueryEvidence
 from .meshfree._neighbors import _integer, _points, MeshfreeNeighborhoodPlan
 from .meshfree._stencils import (
+    LocalStencilEvidence,
     LocalStencilPolicy,
     LocalStencilReport,
     MeshfreeFunctional,
     prepare_local_stencils,
     PreparedLocalStencils,
+    refresh_local_stencils,
 )
+from .spatial import MortonAddressPlan
 
 
 @final
@@ -49,6 +58,8 @@ class PointCloudPlan(StrictModule):
     boundary_normals: Array
     boundary_quadrature_weights: Array | None
     stencil: LocalStencilPolicy
+    point_ids: Array
+    address: MortonAddressPlan
     neighbors: int = eqx.field(static=True)
     maximum_candidates: int | None = eqx.field(static=True)
     target_chunk_size: int | None = eqx.field(static=True)
@@ -65,6 +76,8 @@ class PointCloudPlan(StrictModule):
         boundary_quadrature_weights: ArrayLike | None = None,
         stencil: LocalStencilPolicy | None = None,
         neighbors: int | None = None,
+        point_ids: ArrayLike | None = None,
+        address: MortonAddressPlan | None = None,
         maximum_candidates: int | None = None,
         target_chunk_size: int | None = None,
     ) -> None:
@@ -86,14 +99,22 @@ class PointCloudPlan(StrictModule):
         feature_count = math.comb(
             points_.shape[1] + policy.polynomial_degree, policy.polynomial_degree
         )
+        if policy.support is not None and neighbors is None:
+            raise ValueError(
+                "A smooth fixed-radius support needs an explicit candidate capacity "
+                "(neighbors)."
+            )
         count = (
             min(points_.shape[0], 2 * feature_count) if neighbors is None else neighbors
         )
         neighborhood = MeshfreeNeighborhoodPlan(
             points_,
             count,
+            source_ids=point_ids,
+            address=address,
             maximum_candidates=maximum_candidates,
             target_chunk_size=target_chunk_size,
+            envelope=policy.support,
         )
         if neighborhood.neighbors < feature_count:
             raise ValueError("neighbors must cover the polynomial basis.")
@@ -140,6 +161,8 @@ class PointCloudPlan(StrictModule):
             None if boundary_weights is None else jnp.asarray(boundary_weights)
         )
         self.stencil = policy
+        self.point_ids = neighborhood.source_ids
+        self.address = neighborhood.address
         self.neighbors = neighborhood.neighbors
         self.maximum_candidates = neighborhood.maximum_candidates
         self.target_chunk_size = neighborhood.target_chunk_size
@@ -160,6 +183,7 @@ class PointCloudPlan(StrictModule):
                 "degree": policy.polynomial_degree,
                 "phs_power": policy.phs_power,
                 "weight_kernel": policy.weight_kernel,
+                "coordinate_order": policy.coordinate_order,
                 "condition_limit": policy.condition_limit,
                 "amplification_limit": policy.amplification_limit,
                 "acceptance": policy.acceptance,
@@ -172,7 +196,16 @@ class PointCloudPlan(StrictModule):
 
 @final
 class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
+    """Prepared strong-form point cloud of one support epoch.
+
+    ``plan`` holds the anchored reference geometry, stable point identities,
+    quadrature measures and boundary data; ``coordinates`` and the stencil
+    weights are the dynamic numerical state replaced by fixed-support
+    ``refresh``. New support discovery requires a new plan (epoch boundary).
+    """
+
     plan: PointCloudPlan
+    coordinates: Array
     relation: RowRelation
     stencils: PreparedLocalStencils
     derivative_weights: tuple[tuple[Array, Array], ...]
@@ -195,8 +228,11 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         neighborhood = MeshfreeNeighborhoodPlan(
             plan.points,
             plan.neighbors,
+            source_ids=np.asarray(plan.point_ids),
+            address=plan.address,
             maximum_candidates=plan.maximum_candidates,
             target_chunk_size=plan.target_chunk_size,
+            envelope=plan.stencil.support,
         ).prepare()
         functionals: list[MeshfreeFunctional] = []
         indices: list[tuple[int, ...]] = []
@@ -223,7 +259,8 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         )
         trust = np.asarray(neighborhood.trust_margin)
         relation = neighborhood.relation
-        entities = EntitySet("point_cloud_points", 0, np.arange(count))
+        entities = EntitySet("point_cloud_points", 0, np.asarray(plan.point_ids))
+        # Fixed-support refresh is implemented by ``refresh`` below.
         topology = PointTopology(
             entities,
             neighborhoods=relation,
@@ -268,7 +305,9 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             capabilities=capabilities,
             diagnostics=(
                 f"local-stencil-report:{stencils.report.report_id}",
-                "neighborhood-motion-bound:strict-displacement-less-than-gap/4",
+                "neighborhood-motion-bound:strict-displacement-less-than-gap/4"
+                if plan.stencil.support is None
+                else "smooth-support-motion-bound:strict-displacement-less-than-envelope",
             ),
             resource_counts={
                 "points": count,
@@ -290,6 +329,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             preparation=preparation,
         )
         self.plan = plan
+        self.coordinates = plan.points
         self.relation = relation
         self.stencils = stencils
         self.derivative_weights = derivative_weights
@@ -330,7 +370,93 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
 
     @property
     def points(self) -> Array:
-        return self.plan.points
+        return self.coordinates
+
+    @property
+    def stable_ids(self) -> Array:
+        return self.plan.point_ids
+
+    def refresh(self, points: ArrayLike, /) -> PointCloudRefresh:
+        """Refit derivative stencils at moved points on the frozen support.
+
+        Traceable and differentiable in ``points``. Displacement is measured
+        from the anchored plan geometry; measures, boundary data, stable
+        identities and the relation stay anchored to the epoch. The candidate
+        is returned with status; consumers must inspect ``accepted``. A
+        refused candidate carries NaN derivative weights.
+        """
+        coordinates = jnp.asarray(points, dtype=self.coordinates.dtype)
+        if coordinates.shape != self.coordinates.shape:
+            raise ValueError("Point-cloud refresh preserves point count and dimension.")
+        refreshed = refresh_local_stencils(self.stencils, coordinates, coordinates)
+        stencils = refreshed.stencils
+        derivative_weights = tuple(
+            (stencils.weights[2 * axis], stencils.weights[2 * axis + 1])
+            for axis in range(self.spatial_dimension)
+        )
+        mixed_weights = tuple(
+            (index, weights)
+            for (index, _), weights in zip(
+                self.mixed_weights, stencils.weights, strict=True
+            )
+        )
+        candidate = eqx.tree_at(
+            lambda item: (
+                item.coordinates,
+                item.stencils,
+                item.derivative_weights,
+                item.mixed_weights,
+            ),
+            self,
+            (coordinates, stencils, derivative_weights, mixed_weights),
+        )
+        return PointCloudRefresh(
+            discretization=candidate,
+            status=refreshed.status,
+            accepted=refreshed.accepted,
+            displacement=refreshed.displacement,
+            support_margin=refreshed.support_margin,
+            evidence=stencils.evidence,
+        )
+
+    def coordinate_sensitivity(
+        self, points: ArrayLike, /
+    ) -> PointCloudCoordinateSensitivity:
+        """Fixed-support coordinate linearization of every derivative stencil.
+
+        The published map sends point coordinates to the refitted weights of
+        every prepared derivative functional (``mixed_weights`` order) on the
+        frozen relation. Its JVP/VJP are genuine derivatives of that map with
+        per-row rank and conditioning evidence. A nearest-neighbor support is
+        differentiable only strictly inside its selection gap; a smooth
+        fixed-radius support across neighbors entering or leaving the radius
+        while the motion stays strictly inside its envelope. A refused
+        refresh (support exit, rank loss, nonfinite coordinates) publishes
+        NaN weights, tangents and cotangents.
+        """
+        coordinates = jnp.asarray(points, dtype=self.coordinates.dtype)
+        if coordinates.shape != self.coordinates.shape:
+            raise ValueError(
+                "Point-cloud sensitivity preserves point count and dimension."
+            )
+
+        def weights(
+            moved: Array,
+        ) -> tuple[tuple[Array, ...], tuple[Array, Array, LocalStencilEvidence]]:
+            refreshed = self.refresh(moved)
+            return (
+                tuple(item for _, item in refreshed.discretization.mixed_weights),
+                (refreshed.status, refreshed.accepted, refreshed.evidence),
+            )
+
+        linearization = prepare_linearization(weights, coordinates, has_aux=True)
+        status, accepted, evidence = linearization.auxiliary
+        return PointCloudCoordinateSensitivity(
+            linearization=linearization,
+            status=status,
+            accepted=accepted,
+            evidence=evidence,
+        )
 
     def _validate_state(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
@@ -511,7 +637,45 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         )
 
 
+@final
+class PointCloudRefresh(StrictModule):
+    """Status-returning fixed-support point-cloud refresh candidate.
+
+    ``status`` uses ``LocalStencilRefreshStatus``. ``discretization`` retains the
+    anchored plan (reference geometry, stable ids, measures, boundary data),
+    the frozen relation and the refitted derivative weights.
+    """
+
+    discretization: PreparedPointCloudDiscretization
+    status: Array
+    accepted: Array
+    displacement: Array
+    support_margin: Array
+    evidence: LocalStencilEvidence
+
+
+@final
+class PointCloudCoordinateSensitivity(StrictModule):
+    """Fixed-support coordinate linearization with its admission evidence.
+
+    ``linearization`` retains the published map's primal value and its
+    JVP/VJP at one coordinate state. ``status`` uses
+    ``LocalStencilRefreshStatus`` and ``accepted`` admits the whole map; a
+    refused map is NaN with NaN tangents and cotangents. ``evidence`` is the
+    native per-row rank/conditioning evidence: ``LocalStencilEvidence`` for
+    discretization stencil rows, ``FieldQueryEvidence`` for reconstruction
+    queries.
+    """
+
+    linearization: PreparedLinearization
+    status: Array
+    accepted: Array
+    evidence: LocalStencilEvidence | FieldQueryEvidence
+
+
 __all__ = [
+    "PointCloudCoordinateSensitivity",
     "PointCloudPlan",
+    "PointCloudRefresh",
     "PreparedPointCloudDiscretization",
 ]

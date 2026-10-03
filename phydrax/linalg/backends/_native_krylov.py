@@ -28,6 +28,7 @@ from .._certificates import KernelCertificate
 from .._operators import AbstractLinearOperator
 from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import (
+    Craig,
     FGMRES,
     GeneralizedLSMR,
     GMRES,
@@ -39,9 +40,10 @@ from .._policies import (
     ProjectedPCG,
 )
 from .._preconditioners import AbstractPreconditioner
-from .._problems import AbstractLinearProblem, LeastSquaresProblem
+from .._problems import AbstractLinearProblem, LeastSquaresProblem, MinimumNormProblem
 from .._results import LinearIterationMetrics, LinearSolveStatus
 from .._spaces import AbstractVectorSpace
+from .._structured_operators import RowGramLinearOperator
 from .._subspaces import LinearSubspace, NullspacePolicy
 from ..krylov._results import KrylovBreakdownStatus
 
@@ -86,8 +88,16 @@ _FGMRESResult: TypeAlias = tuple[
     tuple[Array, Array, Array, Array, Array, Array],
     IterationRuntimeState | None,
 ]
-# `_KrylovAuxiliary` followed by forward and adjoint matvec counts.
-_SolveAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# `_KrylovAuxiliary` followed by true-quantity confirmations and the
+# least-squares stationarity roundoff floor of the returned point.
+_LSMRResult: TypeAlias = tuple[
+    Array,
+    tuple[Array, Array, Array, Array, Array, Array, Array],
+    IterationRuntimeState | None,
+]
+# `_KrylovAuxiliary` followed by forward and adjoint matvec counts and the
+# least-squares stationarity roundoff floor (NaN for square methods).
+_SolveAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 _SolveResult: TypeAlias = tuple[Array, _SolveAuxiliary, IterationRuntimeState | None]
 
 # (x, r, z, p, rho, iterations, active, breakdown, confirmations, observed).
@@ -116,8 +126,11 @@ _PCGBatchedCarry: TypeAlias = tuple[
     Array,
 ]
 # (x, r1, r2, y, old beta, beta, dbar, epsilon, phibar, cosine, sine, w, w2,
-# iterations, active, breakdown, observed).
+# squared Lanczos Frobenius norm, confirmations, iterations, active, breakdown,
+# observed).
 _MINRESCarry: TypeAlias = tuple[
+    Array,
+    Array,
     Array,
     Array,
     Array,
@@ -200,6 +213,21 @@ class NativeKrylovState(StrictModule):
 
 
 class NativeKrylovBackendOutput(StrictModule):
+    """Native Krylov value and evidence.
+
+    Minimum-norm LSMR solves also return the zero-start multiplier ``y`` of the
+    adjoint witness solve ``min ||A* y - x||_M`` (target coordinates per
+    right-hand side) and the true stationarity residual ``||x - A* y||_M``; both
+    are ``None`` for every other problem. Least-squares LSMR solves return the
+    roundoff floor ``normal_residual_floor`` below which their stationarity
+    residual is accepted (``None`` for every other problem).
+
+    Craig solves also return ``left_null_direction``, the preconditioned
+    residual ``M (b - B z)`` per right-hand side, and ``least_squares_stationary``,
+    whether the preconditioned least-squares stationarity of that residual was
+    confirmed; on an inconsistent system that direction lies in ``null(B*)``.
+    """
+
     value: Array
     status: Array
     iterations: Array
@@ -209,6 +237,11 @@ class NativeKrylovBackendOutput(StrictModule):
     condition_estimate: Array
     singular_values: Array | None
     iteration_state: IterationRuntimeState | None
+    multiplier: Array | None
+    stationarity_residual: Array | None
+    normal_residual_floor: Array | None
+    left_null_direction: Array | None
+    least_squares_stationary: Array | None
 
 
 class _LSMRState(NamedTuple):
@@ -242,7 +275,42 @@ class _LSMRState(NamedTuple):
     condition: Array
     active: Array
     breakdown: Array
+    confirmations: Array
     iteration_state: IterationRuntimeState | None
+
+
+def _gated_loop[CarryT](
+    step: Callable[[Array, CarryT], CarryT],
+    state: CarryT,
+    max_steps: int,
+    running: Callable[[Array, CarryT], Array],
+    driver: KrylovLoopDriver,
+    /,
+) -> CarryT:
+    """Run ``fori_loop(0, max_steps, step, state)`` for steps that are identities
+    once ``running(index, state)`` is false.
+
+    ``"fixed-trip"`` keeps the static-length loop that reverse mode
+    differentiates. ``"early-exit"`` stops the loop at the first inactive step:
+    every later step would be an identity, so the result is identical while the
+    cost follows executed work instead of ``max_steps``, also under ``vmap``
+    (where a batched predicate runs until every lane is inactive).
+    """
+    if _fixed_trip(driver):
+        return jax.lax.fori_loop(0, max_steps, step, state)
+
+    def condition(carry: tuple[Array, CarryT]) -> Array:
+        index, current = carry
+        return (index < max_steps) & running(index, current)
+
+    def body(carry: tuple[Array, CarryT]) -> tuple[Array, CarryT]:
+        index, current = carry
+        return index + 1, step(index, current)
+
+    _, final = jax.lax.while_loop(
+        condition, body, (jnp.asarray(0, dtype=jnp.int32), state)
+    )
+    return final
 
 
 def _iteration_stop(state: IterationRuntimeState | None, /) -> Array:
@@ -331,7 +399,7 @@ def _runtime_controls(
     tolerance = plan.policy.tolerance
     structural_max_steps = tolerance.max_steps or (
         max(problem.operator.source.size, problem.operator.target.size)
-        if isinstance(problem, LeastSquaresProblem)
+        if isinstance(problem, (LeastSquaresProblem, MinimumNormProblem))
         else max(1, problem.operator.source.size)
     )
     relative = jnp.asarray(
@@ -500,6 +568,19 @@ def solve_native_krylov(
                 iteration=inner_plan,
                 iteration_state=observed_state,
             )
+        if method_name == Craig().name:
+            return _craig_solve(
+                problem,
+                target,
+                plan,
+                preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
+                iteration=inner_plan,
+                iteration_state=observed_state,
+            )
         raise ValueError(f"Unsupported native Krylov method {method_name!r}.")
 
     if rhs.shape[1] == 1:
@@ -542,6 +623,7 @@ def solve_native_krylov(
         breakdown,
         matvec_count,
         adjoint_matvec_count,
+        normal_residual_floor,
     ) = auxiliary
     tolerance = (relative_tolerance, absolute_tolerance)
     rhs_norms = jax.vmap(
@@ -549,14 +631,9 @@ def solve_native_krylov(
     )(rhs)
     converged = residual <= tolerance[1] + tolerance[0] * rhs_norms
     if isinstance(problem, LeastSquaresProblem):
-
-        def normal_reference_column(column: Array) -> Array:
-            _, adjoint, _, source_inner, target = _least_squares_actions(problem, column)
-            return _norm(adjoint(target), source_inner)
-
-        normal_reference = jax.vmap(normal_reference_column, in_axes=1)(rhs)
-        converged = normal_residual <= (tolerance[1] + tolerance[0] * normal_reference)
-        adjoint_matvec_count = adjoint_matvec_count + 1
+        # LSMR reports HAPPY only after its true stationarity residual met
+        # absolute + relative ||A* b|| or its roundoff floor at the returned point.
+        converged = breakdown == int(KrylovBreakdownStatus.HAPPY)
     status = jnp.full(rhs_norms.shape, int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(
         ~converged,
@@ -590,13 +667,67 @@ def solve_native_krylov(
         int(LinearSolveStatus.BREAKDOWN),
         status,
     )
+    craig_multiplier: Array | None = None
+    left_null_direction: Array | None = None
+    least_squares_stationary: Array | None = None
+    if method_name == Craig().name:
+        # Craig iterates on the multiplier y of B B* y = b; z = B* y lies in
+        # range(B*) exactly, so its minimum-norm stationarity residual is zero.
+        craig_multiplier = value
+        value = problem.operator.adjoint_mv_block(value)
+        constraint_residual = jax.lax.stop_gradient(
+            rhs - problem.operator.mv_block(value)
+        )
+        precondition = _preconditioner_action(
+            state.preconditioner, problem.operator.target
+        )
+        left_null_direction = jax.vmap(
+            lambda column: precondition(column, jnp.asarray(0, dtype=jnp.int32)),
+            in_axes=1,
+            out_axes=1,
+        )(constraint_residual)
+        least_squares_stationary = breakdown == int(KrylovBreakdownStatus.STAGNATION)
+        matvec_count = matvec_count + 1
     if plan.policy.differentiation.mode == "none":
         value = jax.lax.stop_gradient(value)
+    multiplier: Array | None = None
+    stationarity: Array | None = None
+    if craig_multiplier is not None:
+        multiplier = jax.lax.stop_gradient(craig_multiplier)
+        stationarity = jnp.zeros(rhs.shape[1], dtype=rhs.real.dtype)
+    elif isinstance(problem, MinimumNormProblem):
+        selected_lsmr = (
+            method if isinstance(method, (GeneralizedLSMR, LSMR)) else GeneralizedLSMR()
+        )
+
+        def witness_column(column: Array) -> tuple[Array, Array, Array, Array]:
+            return _stationarity_witness(
+                problem.operator,
+                column,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=structural_maximum_steps,
+                condition_limit=selected_lsmr.condition_limit,
+            )
+
+        # Evidence only: the witness is not differentiated.
+        multiplier, stationarity, witness_iterations, witness_confirmations = jax.vmap(
+            witness_column, in_axes=1, out_axes=(1, 0, 0, 0)
+        )(jax.lax.stop_gradient(value))
+        # The witness applies A* as its forward action and A as its adjoint; each
+        # true-quantity confirmation applies both.
+        matvec_count = matvec_count + witness_iterations + 2 + witness_confirmations
+        adjoint_matvec_count = (
+            adjoint_matvec_count + witness_iterations + 3 + witness_confirmations
+        )
     if method_name == ProjectedPCG().name:
         rank = (
             problem.operator.source.size
             - problem.nullspace_policy.certificate.right.dimension
         ).astype(jnp.int32)
+    elif isinstance(problem, MinimumNormProblem) and problem.rank_certificate is not None:
+        certificate = problem.rank_certificate
+        rank = jnp.where(certificate.matches(problem.operator), certificate.rank, -1)
     else:
         certified_rank = _certified_rank(problem.operator)
         rank = jnp.asarray(
@@ -613,6 +744,13 @@ def solve_native_krylov(
         condition_estimate=condition,
         singular_values=None,
         iteration_state=updated_iteration_state,
+        multiplier=multiplier,
+        stationarity_residual=stationarity,
+        normal_residual_floor=(
+            normal_residual_floor if isinstance(problem, LeastSquaresProblem) else None
+        ),
+        left_null_direction=left_null_direction,
+        least_squares_stationary=least_squares_stationary,
     )
 
 
@@ -679,7 +817,7 @@ def _square_solve(
             auxiliary = pcg_auxiliary[:5]
             matvec_count = auxiliary[0] + pcg_auxiliary[5] + 2
         elif method == "minres":
-            value, auxiliary, next_iteration_state = _minres_raw(
+            value, minres_auxiliary, next_iteration_state = _minres_raw(
                 selected_action,
                 target,
                 initial,
@@ -689,10 +827,12 @@ def _square_solve(
                 tolerance[0],
                 tolerance[1],
                 step_limit=max_steps,
+                driver=driver,
                 iteration=iteration,
                 iteration_state=iteration_state,
             )
-            matvec_count = auxiliary[0] + 2
+            auxiliary = minres_auxiliary[:5]
+            matvec_count = auxiliary[0] + minres_auxiliary[5] + 2
         else:
             if method == "gmres":
                 selected_method = (
@@ -742,6 +882,7 @@ def _square_solve(
                 *auxiliary,
                 jnp.asarray(matvec_count, dtype=jnp.int32),
                 jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(jnp.nan, dtype=auxiliary[1].dtype),
             ),
             next_iteration_state,
         )
@@ -818,6 +959,7 @@ def _square_pcg_batched(
             breakdown,
             action_count,
             jnp.zeros_like(action_count),
+            jnp.full_like(residual, jnp.nan),
         ),
         None,
     )
@@ -880,7 +1022,8 @@ def _pcg_batched_raw(
                 | (rho_ <= 0.0)
             )
             safe_denominator = jnp.where(invalid, 1.0, denominator)
-            alpha = rho_ / safe_denominator
+            # A broken-down step keeps the last valid iterate.
+            alpha = jnp.where(invalid, 0.0, rho_ / safe_denominator)
             candidate_x = x + alpha.astype(p.dtype)[None, :] * p
             recursive_r = r - alpha.astype(image.dtype)[None, :] * image
             recursive_norm = _norm(recursive_r, batched_inner)
@@ -960,7 +1103,13 @@ def _pcg_batched_raw(
             block_size=_pcg_checkpoint_block(max_steps),
         )
     else:
-        final = jax.lax.fori_loop(0, max_steps, step, state)
+        final = _gated_loop(
+            step,
+            state,
+            max_steps,
+            lambda index, current: jnp.any(current[6]) & (index < step_limit),
+            driver,
+        )
     x, _, _, _, _, iterations, _, breakdown, action_count = final
     true_residual = rhs - batched_action(x)
     residual_norm = _norm(true_residual, batched_inner)
@@ -1055,7 +1204,8 @@ def _pcg_raw(
                 | (rho_i <= 0.0)
             )
             safe_denominator = jnp.where(invalid, 1.0, denominator)
-            alpha = rho_i / safe_denominator
+            # A broken-down step keeps the last valid iterate.
+            alpha = jnp.where(invalid, 0.0, rho_i / safe_denominator)
             candidate_x = x_ + alpha.astype(p_.dtype) * p_
             recursive_r = r_ - alpha.astype(image.dtype) * image
             recursive_norm = _norm(recursive_r, inner)
@@ -1133,7 +1283,13 @@ def _pcg_raw(
             block_size=_pcg_checkpoint_block(max_steps),
         )
     else:
-        final = jax.lax.fori_loop(0, max_steps, step, state)
+        final = _gated_loop(
+            step,
+            state,
+            max_steps,
+            lambda index, current: current[6] & (index < step_limit),
+            driver,
+        )
     x, residual, _, _, _, iterations, _, breakdown, confirmations, iteration_state = final
     residual_norm = _norm(rhs - action(x), inner)
     auxiliary = (
@@ -1165,9 +1321,37 @@ def _minres_raw(
     absolute: Array,
     *,
     step_limit: Array | None = None,
+    driver: KrylovLoopDriver = "early-exit",
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-) -> _KrylovResult:
+    row_gram_stop: bool = False,
+) -> _PCGResult:
+    """Preconditioned MINRES whose stops are confirmed with true quantities.
+
+    A recurrence residual estimate within ``absolute + relative ||rhs||``
+    nominates convergence; the true residual ``rhs - A x`` (one action) must meet
+    the same threshold, otherwise the iteration continues.
+
+    ``row_gram_stop`` declares ``A = B B*`` (Craig's multiplier system for
+    ``B z = b``) and also stops, consistent or not, at a weighted least-squares
+    point of ``B z = b``: the witness ``d = M r`` satisfies
+    ``||B* d|| <= tol ||M^1/2 B|| ||r||_M`` with ``tol = max(relative,
+    sqrt(4 sqrt(m) eps))``, ``||B* d||^2 = <d, A d>`` and ``||M^1/2 B||^2 =
+    ||A_hat||`` (``A_hat = M^1/2 A M^1/2``, estimated by the Lanczos Frobenius
+    norm ``||T_k||_F``). This is LSMR's stationarity test for the preconditioned
+    ``M^1/2 B``. Its floor is the square root of LSMR's roundoff floor
+    ``4 sqrt(m) eps`` (``m`` rows) because Craig reaches ``B`` only through
+    ``B B*``. The Paige-Saunders recurrence
+    ``||A_hat r_hat_(k-1)|| = phibar_(k-1) sqrt(gbar_k^2 + dbar_(k+1)^2)`` never
+    exceeds ``||M^1/2 B|| ||B* d||``, so ``sqrt(gbar_k^2 + dbar_(k+1)^2) <= tol
+    ||T_k||_F`` is a necessary condition that nominates the previous iterate;
+    two true actions confirm it (``STAGNATION``) and the previous iterate is
+    returned. Past that point an inconsistent singular iteration only amplifies
+    roundoff. A relatively vanishing Lanczos vector closes the Krylov space and
+    ends the iteration (``NEAR_BREAKDOWN``) unless a confirmation succeeds.
+    Auxiliary entries are ``_KrylovAuxiliary`` followed by the confirmation
+    action count.
+    """
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = rhs - action(initial)
@@ -1176,22 +1360,29 @@ def _minres_raw(
     beta_one = jnp.sqrt(jnp.maximum(beta_one_squared, 0.0))
     rhs_norm = _norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
+    real_dtype = rhs.real.dtype
+    epsilon = jnp.finfo(real_dtype).eps
+    stationarity_tolerance = jnp.maximum(
+        relative, jnp.sqrt(4.0 * jnp.sqrt(float(rhs.size)) * epsilon)
+    )
     state: _MINRESCarry = (
         initial,
         residual,
         residual,
         y,
-        jnp.asarray(0.0, dtype=rhs.real.dtype),
+        jnp.asarray(0.0, dtype=real_dtype),
         beta_one,
-        jnp.asarray(0.0, dtype=rhs.real.dtype),
-        jnp.asarray(0.0, dtype=rhs.real.dtype),
+        jnp.asarray(0.0, dtype=real_dtype),
+        jnp.asarray(0.0, dtype=real_dtype),
         beta_one,
-        jnp.asarray(-1.0, dtype=rhs.real.dtype),
-        jnp.asarray(0.0, dtype=rhs.real.dtype),
+        jnp.asarray(-1.0, dtype=real_dtype),
+        jnp.asarray(0.0, dtype=real_dtype),
         jnp.zeros_like(rhs),
         jnp.zeros_like(rhs),
+        jnp.asarray(0.0, dtype=real_dtype),
         jnp.asarray(0, dtype=jnp.int32),
-        (beta_one > threshold) & ~_iteration_stop(iteration_state),
+        jnp.asarray(0, dtype=jnp.int32),
+        (_norm(residual, inner) > threshold) & ~_iteration_stop(iteration_state),
         jnp.where(
             beta_one_squared >= 0.0,
             int(KrylovBreakdownStatus.NONE),
@@ -1199,7 +1390,15 @@ def _minres_raw(
         ).astype(jnp.int32),
         iteration_state,
     )
-    epsilon = jnp.finfo(rhs.real.dtype).eps
+
+    def gram_stationarity(point: Array, index: Array) -> tuple[Array, Array]:
+        """True ``||r||_M = sqrt(<r, M r>)`` and ``||B* M r|| = sqrt(<M r, A M r>)``."""
+        true_residual = rhs - action(point)
+        witness = precondition(true_residual, index)
+        return (
+            jnp.sqrt(jnp.maximum(jnp.real(inner(true_residual, witness)), 0.0)),
+            jnp.sqrt(jnp.maximum(jnp.real(inner(witness, action(witness))), 0.0)),
+        )
 
     def step(index: Array, current: _MINRESCarry) -> _MINRESCarry:
         (
@@ -1216,6 +1415,8 @@ def _minres_raw(
             sine,
             w,
             w2,
+            tnorm2,
+            confirmations,
             iterations,
             active,
             breakdown,
@@ -1237,19 +1438,23 @@ def _minres_raw(
                 sine_i,
                 w_i,
                 w2_i,
+                tnorm2_i,
+                confirmations_i,
                 _,
                 _,
                 _,
                 observed_i,
             ) = operand
-            safe_beta = jnp.where(beta_i > epsilon, beta_i, 1.0)
+            # Lanczos normalizations divide by any positive norm; an absolute
+            # floor would discard the basis of a small-norm operator or rhs.
+            safe_beta = jnp.where(beta_i > 0.0, beta_i, 1.0)
             v = y_i / safe_beta.astype(y_i.dtype)
             next_y = action(v)
             next_y = jax.lax.cond(
                 index > 0,
                 lambda value: (
                     value
-                    - (beta_i / jnp.where(old_beta_i > epsilon, old_beta_i, 1.0)).astype(
+                    - (beta_i / jnp.where(old_beta_i > 0.0, old_beta_i, 1.0)).astype(
                         r1_.dtype
                     )
                     * r1_
@@ -1272,7 +1477,7 @@ def _minres_raw(
             next_epsln = sine_i * next_beta
             next_dbar = -cosine_i * next_beta
             gamma = jnp.sqrt(gbar * gbar + next_beta * next_beta)
-            safe_gamma = jnp.maximum(gamma, epsilon)
+            safe_gamma = jnp.where(gamma > 0.0, gamma, epsilon)
             next_cosine = gbar / safe_gamma
             next_sine = next_beta / safe_gamma
             phi = next_cosine * phibar_i
@@ -1285,33 +1490,76 @@ def _minres_raw(
                 - delta.astype(next_w2.dtype) * next_w2
             ) / safe_gamma.astype(v.dtype)
             next_x = x_ + phi.astype(next_w.dtype) * next_w
+            # beta_0 normalizes the RHS, not the operator's Lanczos matrix.
+            operator_beta = jnp.where(index > 0, beta_i, 0.0)
+            next_tnorm2 = tnorm2_i + alpha * alpha + operator_beta**2 + next_beta**2
+            anorm = jnp.sqrt(next_tnorm2)
             residual_estimate = jnp.abs(next_phibar)
-            converged = residual_estimate <= threshold
-            invalid = (
+            nominated = residual_estimate <= threshold
+            infinity = jnp.asarray(jnp.inf, dtype=real_dtype)
+            true_norm = jax.lax.cond(
+                nominated,
+                lambda: _norm(rhs - action(next_x), inner),
+                lambda: infinity,
+            )
+            converged = nominated & (true_norm <= threshold)
+            confirmation_actions = jnp.where(nominated, 1, 0)
+            if row_gram_stop:
+                stationary_nominated = ~converged & (
+                    jnp.sqrt(gbar * gbar + next_dbar * next_dbar)
+                    <= stationarity_tolerance * anorm
+                )
+                previous_norm_m, previous_adjoint = jax.lax.cond(
+                    stationary_nominated,
+                    lambda: gram_stationarity(x_, jnp.asarray(index, dtype=jnp.int32)),
+                    lambda: (infinity, infinity),
+                )
+                stationary = stationary_nominated & (
+                    previous_adjoint
+                    <= stationarity_tolerance * jnp.sqrt(anorm) * previous_norm_m
+                )
+                confirmation_actions = confirmation_actions + jnp.where(
+                    stationary_nominated, 2, 0
+                )
+            else:
+                stationary = jnp.asarray(False)
+            next_confirmations = confirmations_i + confirmation_actions.astype(jnp.int32)
+            invariant = next_beta <= epsilon * anorm
+            output_x = jnp.where(stationary, x_, next_x)
+            invalid = ~stationary & (
                 (beta_squared < 0.0)
                 | ~jnp.isfinite(residual_estimate)
                 | jnp.any(~jnp.isfinite(next_x))
             )
             status = jnp.where(
-                invalid,
-                int(KrylovBreakdownStatus.NONFINITE_ACTION),
+                converged,
+                int(KrylovBreakdownStatus.HAPPY),
                 jnp.where(
-                    converged,
-                    int(KrylovBreakdownStatus.HAPPY),
-                    int(KrylovBreakdownStatus.NONE),
+                    stationary,
+                    int(KrylovBreakdownStatus.STAGNATION),
+                    jnp.where(
+                        invalid,
+                        int(KrylovBreakdownStatus.NONFINITE_ACTION),
+                        jnp.where(
+                            invariant,
+                            int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                            int(KrylovBreakdownStatus.NONE),
+                        ),
+                    ),
                 ),
             ).astype(jnp.int32)
+            completed = jnp.where(stationary, index, index + 1).astype(jnp.int32)
             next_iteration = _update_krylov_iteration(
                 iteration,
                 observed_i,
-                index + 1,
+                completed,
                 residual_estimate,
                 rhs_norm,
                 status,
-                matvec_count=index + 2,
+                matvec_count=index + 2 + next_confirmations,
             )
             return (
-                next_x,
+                output_x,
                 next_r1,
                 next_r2,
                 preconditioned,
@@ -1324,8 +1572,14 @@ def _minres_raw(
                 next_sine,
                 next_w,
                 next_w2,
-                jnp.asarray(index + 1, dtype=jnp.int32),
-                ~invalid & ~converged & ~_iteration_stop(next_iteration),
+                next_tnorm2,
+                next_confirmations,
+                completed,
+                ~invalid
+                & ~converged
+                & ~stationary
+                & ~invariant
+                & ~_iteration_stop(next_iteration),
                 status,
                 next_iteration,
             )
@@ -1337,8 +1591,14 @@ def _minres_raw(
             current,
         )
 
-    result = jax.lax.fori_loop(0, max_steps, step, state)
-    x, *_, iterations, _, breakdown, iteration_state = result
+    result = _gated_loop(
+        step,
+        state,
+        max_steps,
+        lambda index, current: current[16] & (index < step_limit),
+        driver,
+    )
+    x, *_, confirmations, iterations, _, breakdown, iteration_state = result
     residual_norm = _norm(rhs - action(x), inner)
     return (
         x,
@@ -1348,6 +1608,7 @@ def _minres_raw(
             jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
             jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
             breakdown,
+            confirmations,
         ),
         iteration_state,
     )
@@ -1561,9 +1822,14 @@ def _fgmres_raw(
                         (orthogonal, projection),
                     )
                     next_norm = _norm(orthogonal, inner)
+                    # Relative to the Hessenberg column scale ||A v||: an
+                    # absolute floor would flag every small-norm operator as a
+                    # near-invariant subspace. A near-invariant subspace ends the
+                    # cycle as a restart; the cycle then decides from the true
+                    # residual whether it was lucky, progressing, or stagnant.
                     near_breakdown = next_norm <= jnp.sqrt(
                         jnp.finfo(rhs.real.dtype).eps
-                    ) * jnp.maximum(_norm(image, inner), 1.0)
+                    ) * _norm(image, inner)
                     basis_i = basis_i.at[local_index + 1].set(
                         (
                             orthogonal
@@ -1683,7 +1949,13 @@ def _fgmres_raw(
                         iteration_i + 1,
                         estimated_norm,
                         rhs_norm,
-                        step_breakdown,
+                        # A near-invariant step is a restart, not yet a failure;
+                        # the cycle reports genuine breakdown from true residuals.
+                        jnp.where(
+                            step_breakdown == int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                            int(KrylovBreakdownStatus.NONE),
+                            step_breakdown,
+                        ),
                         matvec_count=iteration_i + 2,
                     )
                     return (
@@ -1778,6 +2050,15 @@ def _fgmres_raw(
             next_best = jnp.minimum(inner_best, candidate_norm)
             next_stagnant = inner_stagnant
             stagnated = next_stagnant >= stagnation_iterations
+            # A near-invariant Krylov subspace that still reduced the true
+            # residual is restarted from the new residual. Only an invariant
+            # direction without true-residual progress is a genuine breakdown.
+            progressing_restart = (
+                inner_breakdown == int(KrylovBreakdownStatus.NEAR_BREAKDOWN)
+            ) & (
+                candidate_norm
+                < cycle_norm * (1.0 - jnp.sqrt(jnp.finfo(rhs.real.dtype).eps))
+            )
             final_breakdown = jnp.where(
                 finite_candidate,
                 jnp.where(
@@ -1785,7 +2066,8 @@ def _fgmres_raw(
                     int(KrylovBreakdownStatus.HAPPY),
                     jnp.where(
                         (inner_breakdown != int(KrylovBreakdownStatus.NONE))
-                        & (inner_breakdown != int(KrylovBreakdownStatus.HAPPY)),
+                        & (inner_breakdown != int(KrylovBreakdownStatus.HAPPY))
+                        & ~progressing_restart,
                         inner_breakdown,
                         jnp.where(
                             stagnated,
@@ -1877,6 +2159,72 @@ def _fgmres_raw(
     )
 
 
+def _craig_solve(
+    problem: AbstractLinearProblem,
+    rhs: Array,
+    plan: LinearSolvePlan,
+    *,
+    preconditioner: AbstractPreconditioner | None,
+    relative: Array,
+    absolute: Array,
+    max_steps: Array,
+    structural_max_steps: int,
+    iteration: IterationPlan | None = None,
+    iteration_state: IterationRuntimeState | None = None,
+) -> _SolveResult:
+    """Preconditioned Krylov solve of ``B B* y = b`` from zero, returning ``y``.
+
+    The iteration is preconditioned MINRES: on a consistent system it converges
+    like conjugate gradients (``B B*`` is positive semidefinite and every
+    preconditioner is positive definite), and its residual ``b - B B* y`` is the
+    true constraint residual of ``z = B* y``, confirmed with true actions before
+    every stop. A redundant consistent system has a singular ``B B*`` whose range
+    contains ``b``. An inconsistent ``b`` is never declared converged: MINRES
+    approaches the preconditioned least-squares point, where the weighted
+    residual ``M r`` lies in ``null(B*)`` and is a left-null witness. Its
+    stationarity ``||B* M r|| <= max(relative, sqrt(eps)) ||M^1/2 B|| ||r||_M`` is
+    confirmed with true actions and reported as ``STAGNATION``; the iteration
+    stops there instead of amplifying roundoff along ``null(B*)``. Conjugate
+    gradients have no such point on an inconsistent singular system.
+    """
+    operator = problem.operator
+    gram = RowGramLinearOperator(operator)
+    target = operator.target
+    y, minres_auxiliary, next_iteration_state = _minres_raw(
+        lambda vector: _action_coordinates(gram, vector),
+        rhs,
+        jnp.zeros_like(rhs),
+        lambda left, right: _space_inner(target, left, right),
+        _preconditioner_action(preconditioner, target),
+        structural_max_steps,
+        relative,
+        absolute,
+        step_limit=max_steps,
+        driver=_loop_driver(plan),
+        iteration=iteration,
+        iteration_state=iteration_state,
+        row_gram_stop=True,
+    )
+    iterations, residual, normal, condition, breakdown, confirmations = minres_auxiliary
+    # B B* actions: one per step plus the initial and final residuals, and the
+    # confirmation actions; z = B* y adds one adjoint action.
+    gram_actions = iterations + confirmations + 2
+    return (
+        y,
+        (
+            iterations,
+            residual,
+            normal,
+            condition,
+            breakdown,
+            jnp.asarray(gram_actions, dtype=jnp.int32),
+            jnp.asarray(gram_actions + 1, dtype=jnp.int32),
+            jnp.asarray(jnp.nan, dtype=residual.dtype),
+        ),
+        next_iteration_state,
+    )
+
+
 def _least_squares_solve(
     problem: AbstractLinearProblem,
     rhs: Array,
@@ -1910,17 +2258,24 @@ def _least_squares_solve(
         absolute,
         method.condition_limit,
         method.damping,
+        constraint=isinstance(problem, MinimumNormProblem),
         step_limit=max_steps,
+        driver=_loop_driver(plan),
         iteration=iteration,
         iteration_state=iteration_state,
     )
-    iterations = auxiliary[0]
+    iterations, confirmations = auxiliary[0], auxiliary[5]
+    # A least-squares solve spends one adjoint action on its acceptance reference.
+    reference_actions = 0 if isinstance(problem, MinimumNormProblem) else 1
     return (
         value,
         (
-            *auxiliary,
-            jnp.asarray(iterations + 3, dtype=jnp.int32),
-            jnp.asarray(iterations + 2, dtype=jnp.int32),
+            *auxiliary[:5],
+            jnp.asarray(iterations + 3 + confirmations, dtype=jnp.int32),
+            jnp.asarray(
+                iterations + 2 + confirmations + reference_actions, dtype=jnp.int32
+            ),
+            auxiliary[6],
         ),
         next_iteration_state,
     )
@@ -1939,10 +2294,30 @@ def _lsmr_raw(
     condition_limit: float,
     damping: float,
     *,
+    constraint: bool = False,
+    normal_residual_limit: Array | None = None,
     step_limit: Array | None = None,
+    driver: KrylovLoopDriver = "early-exit",
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-) -> _KrylovResult:
+) -> _LSMRResult:
+    """Native LSMR returning ``_KrylovAuxiliary``, true-quantity confirmations, and
+    the stationarity roundoff floor of the returned point.
+
+    Both modes stop only on true quantities; recurrence estimates merely schedule
+    one confirming forward and adjoint action. ``constraint=True`` solves an exact
+    (minimum-norm) constraint: it stops on a confirmed true residual or a
+    scale-free least-squares stationary point (reported as ``STAGNATION``), never
+    on an absolute normal-residual threshold. Otherwise the least-squares
+    stationarity residual ``||A*(b - A x) - d^2 x||`` is accepted (``HAPPY``)
+    against the reference of the solve status, ``absolute + relative ||A* b||``,
+    or against its evaluation roundoff floor ``4 sqrt(max(m, n)) eps ||A|| ||r||``
+    (``||A||`` the recurrence Frobenius estimate): the probabilistic rounding scale
+    of ``A* r`` for a large residual, below which no iterate can be distinguished
+    from a stationary point.
+    A supplied ``normal_residual_limit`` additionally bounds the confirmed normal
+    residual before declaring stationarity (used by certified derivative actions).
+    """
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = _target_subtract(rhs, action(initial))
@@ -1985,8 +2360,30 @@ def _lsmr_raw(
         condition=jnp.asarray(1.0, dtype=rhs[0].real.dtype),
         active=(norm_b > 0.0) & (alpha * beta > 0.0) & ~_iteration_stop(iteration_state),
         breakdown=jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32),
+        confirmations=jnp.asarray(0, dtype=jnp.int32),
         iteration_state=iteration_state,
     )
+    roundoff = (
+        4.0
+        * math.sqrt(max(initial.size, rhs[0].size + rhs[1].size))
+        * float(jnp.finfo(rhs[0].real.dtype).eps)
+    )
+    # Least-squares acceptance reference of the solve status (one adjoint action).
+    normal_target = (
+        absolute
+        if constraint
+        else absolute + relative * _norm(adjoint(rhs), source_inner)
+    )
+
+    def true_quantities(point: Array) -> tuple[Array, Array]:
+        true_residual = _target_subtract(rhs, action(point))
+        gradient = adjoint(true_residual)
+        if damping:
+            gradient = gradient - damping**2 * point
+        return _target_norm(true_residual, target_inner), _norm(gradient, source_inner)
+
+    def stationarity_floor(norm_a: Array, residual_norm: Array) -> Array:
+        return roundoff * norm_a * residual_norm
 
     def step(index: Array, current: _LSMRState) -> _LSMRState:
         def execute(value: _LSMRState) -> _LSMRState:
@@ -2052,9 +2449,64 @@ def _lsmr_raw(
             )
             normal_residual = jnp.abs(zeta_bar)
             next_iteration_index = value.iteration + 1
-            converged = (residual_norm <= absolute + relative * norm_b) | (
-                normal_residual <= absolute + relative * norm_a * residual_norm
-            )
+            if constraint:
+                # An exact constraint stops only on true quantities; recurrence
+                # estimates merely schedule one forward plus one adjoint action.
+                # It stops on a true residual within tolerance, or on a
+                # least-squares stationary point (r orthogonal to the range) by
+                # the scale-free backward-error test ||A* r|| <= tol ||A|| ||r||
+                # (||A|| the recurrence Frobenius estimate), never on an absolute
+                # normal-residual threshold, which would stop early by a factor of
+                # the smallest singular value. Estimated normal residuals drift
+                # from true ones without reorthogonalization, so a stationary
+                # estimate alone never stops.
+                residual_threshold = absolute + relative * norm_b
+                stationarity_tolerance = jnp.maximum(
+                    relative, jnp.finfo(residual_norm.dtype).eps
+                )
+                triggered = (residual_norm <= residual_threshold) | (
+                    normal_residual <= stationarity_tolerance * norm_a * residual_norm
+                )
+
+                infinity = jnp.asarray(jnp.inf, dtype=residual_norm.dtype)
+                confirmed_residual, confirmed_normal = jax.lax.cond(
+                    triggered, lambda: true_quantities(x), lambda: (infinity, infinity)
+                )
+                converged = confirmed_residual <= residual_threshold
+                stationary = (
+                    triggered
+                    & ~converged
+                    & (
+                        confirmed_normal
+                        <= stationarity_tolerance * norm_a * confirmed_residual
+                    )
+                )
+                if normal_residual_limit is not None:
+                    stationary = stationary & (confirmed_normal <= normal_residual_limit)
+                confirmations = value.confirmations + triggered.astype(jnp.int32)
+            else:
+                residual_threshold = absolute + relative * norm_b
+                triggered = (
+                    normal_residual
+                    <= jnp.maximum(
+                        normal_target, stationarity_floor(norm_a, residual_norm)
+                    )
+                ) | (residual_norm <= residual_threshold)
+                infinity = jnp.asarray(jnp.inf, dtype=residual_norm.dtype)
+                confirmed_residual, confirmed_normal = jax.lax.cond(
+                    triggered, lambda: true_quantities(x), lambda: (infinity, infinity)
+                )
+                # Unconfirmed steps carry infinite placeholders (and an infinite
+                # floor), so acceptance is gated on the confirmation itself.
+                converged = triggered & (
+                    confirmed_normal
+                    <= jnp.maximum(
+                        normal_target,
+                        stationarity_floor(norm_a, confirmed_residual),
+                    )
+                )
+                stationary = jnp.asarray(False)
+                confirmations = value.confirmations + triggered.astype(jnp.int32)
             condition_limited = condition >= condition_limit
             finite = (
                 jnp.all(jnp.isfinite(x))
@@ -2068,9 +2520,13 @@ def _lsmr_raw(
                     converged,
                     int(KrylovBreakdownStatus.HAPPY),
                     jnp.where(
-                        recurrence_breakdown,
-                        int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
-                        int(KrylovBreakdownStatus.NONE),
+                        stationary,
+                        int(KrylovBreakdownStatus.STAGNATION),
+                        jnp.where(
+                            recurrence_breakdown,
+                            int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                            int(KrylovBreakdownStatus.NONE),
+                        ),
                     ),
                 ),
                 int(KrylovBreakdownStatus.NONFINITE_ACTION),
@@ -2082,8 +2538,8 @@ def _lsmr_raw(
                 residual_norm,
                 norm_b,
                 breakdown,
-                matvec_count=next_iteration_index + 2,
-                adjoint_matvec_count=next_iteration_index + 2,
+                matvec_count=next_iteration_index + 2 + confirmations,
+                adjoint_matvec_count=next_iteration_index + 2 + confirmations,
                 normal_residual_norm=normal_residual,
                 condition_estimate=condition,
             )
@@ -2118,10 +2574,12 @@ def _lsmr_raw(
                 condition,
                 finite
                 & ~converged
+                & ~stationary
                 & ~condition_limited
                 & ~recurrence_breakdown
                 & ~_iteration_stop(next_iteration),
                 breakdown,
+                confirmations,
                 next_iteration,
             )
 
@@ -2132,9 +2590,32 @@ def _lsmr_raw(
             current,
         )
 
-    state = jax.lax.fori_loop(0, max_steps, step, state)
-    true_residual = _target_norm(_target_subtract(rhs, action(state.x)), target_inner)
-    true_normal = _norm(adjoint(_target_subtract(action(state.x), rhs)), source_inner)
+    state = _gated_loop(
+        step,
+        state,
+        max_steps,
+        lambda index, current: current.active & (index < step_limit),
+        driver,
+    )
+    true_residual, true_normal = true_quantities(state.x)
+    floor = stationarity_floor(state.norm_a, true_residual)
+    breakdown = state.breakdown
+    if not constraint:
+        # Final classification from the returned point's true stationarity, so
+        # an unexecuted, recurrence-ended, or condition-limited solve reports
+        # HAPPY exactly when the solve status accepts it.
+        accepted = jnp.isfinite(true_normal) & (
+            true_normal <= jnp.maximum(normal_target, floor)
+        )
+        breakdown = jnp.where(
+            accepted,
+            int(KrylovBreakdownStatus.HAPPY),
+            jnp.where(
+                breakdown == int(KrylovBreakdownStatus.HAPPY),
+                int(KrylovBreakdownStatus.NONE),
+                breakdown,
+            ),
+        ).astype(jnp.int32)
     return (
         state.x,
         (
@@ -2142,10 +2623,106 @@ def _lsmr_raw(
             true_residual,
             true_normal,
             state.condition,
-            state.breakdown,
+            breakdown,
+            state.confirmations,
+            floor,
         ),
         state.iteration_state,
     )
+
+
+class MinimumNormLSMRResult(NamedTuple):
+    value: Array
+    iterations: Array
+    residual_norm: Array
+    normal_residual_norm: Array
+    breakdown: Array
+    confirmations: Array
+
+
+def _minimum_norm_lsmr(
+    action: _Action,
+    adjoint: _Action,
+    rhs: Array,
+    domain_size: int,
+    domain_inner: _Inner,
+    codomain_inner: _Inner,
+    /,
+    *,
+    max_steps: int,
+    relative: Array,
+    absolute: Array,
+    condition_limit: float,
+    normal_residual_limit: Array | None = None,
+) -> MinimumNormLSMRResult:
+    """Undamped zero-start LSMR for one coordinate column.
+
+    Every iterate lies in the range of ``adjoint``, so the limit is the
+    pseudoinverse (minimum-norm least-squares) solution in the declared pairings.
+    It stops on a confirmed true residual or a scale-free least-squares stationary
+    point subject to ``normal_residual_limit`` when supplied; residual norms are
+    recomputed with true actions.
+    """
+    empty = jnp.zeros((0,), dtype=rhs.dtype)
+
+    def pair_action(vector: Array) -> _TargetPair:
+        return action(vector), empty
+
+    def pair_adjoint(pair: _TargetPair) -> Array:
+        return adjoint(pair[0])
+
+    def pair_inner(left: _TargetPair, right: _TargetPair) -> Array:
+        return codomain_inner(left[0], right[0])
+
+    value, auxiliary, _ = _lsmr_raw(
+        pair_action,
+        pair_adjoint,
+        (rhs, empty),
+        jnp.zeros((domain_size,), dtype=rhs.dtype),
+        domain_inner,
+        pair_inner,
+        max_steps,
+        relative,
+        absolute,
+        condition_limit,
+        0.0,
+        constraint=True,
+        normal_residual_limit=normal_residual_limit,
+    )
+    iterations, residual, normal, _, breakdown, confirmations, _ = auxiliary
+    return MinimumNormLSMRResult(
+        value, iterations, residual, normal, breakdown, confirmations
+    )
+
+
+def _stationarity_witness(
+    operator: AbstractLinearOperator,
+    value: Array,
+    /,
+    *,
+    relative: Array,
+    absolute: Array,
+    max_steps: int,
+    condition_limit: float,
+) -> tuple[Array, Array, Array, Array]:
+    """Multiplier ``y`` of ``min ||A* y - x||_M`` and the true ``||x - A* y||_M``.
+
+    The residual bounds the distance of ``x`` from ``range(A*)``, i.e. the
+    component of ``x`` in ``null(A)``, without materializing any nullspace.
+    """
+    result = _minimum_norm_lsmr(
+        lambda vector: _adjoint_coordinates(operator, vector),
+        lambda vector: _action_coordinates(operator, vector),
+        value,
+        operator.target.size,
+        lambda left, right: _space_inner(operator.target, left, right),
+        lambda left, right: _space_inner(operator.source, left, right),
+        max_steps=max_steps,
+        relative=relative,
+        absolute=absolute,
+        condition_limit=condition_limit,
+    )
+    return result.value, result.residual_norm, result.iterations, result.confirmations
 
 
 def _least_squares_actions(

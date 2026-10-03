@@ -1,5 +1,5 @@
 {
-  "catalog_id": "e2c92c63b301abe5b4084228768ab2d64f5f8295eec3ad7b97f1aa2541684856",
+  "catalog_id": "798533040bc4bb3307072f7d199cd4d714db46ea91039e1b9aa2b2f15ecbaee8",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -10697,8 +10697,265 @@
       ]
     },
     {
+      "capability": "meshfree.abstract-clique-forms",
+      "declaration_id": "5e1c19e98809795cf8a7e6a47d65b36cab80d5c35fd3486b90f393662c1f2c4e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.abstract-clique-forms.profile",
+          "profile_id": "2f6534196545158b708e1070bd1060abd6ac2a6cae5bccbb65dabfc43891df68",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "abstract-fidelity",
+            "betti-circle",
+            "d-squared-zero",
+            "independent-reference",
+            "independent-review",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "simplex-capacity-refusal",
+            "work-bound",
+            "work-capacity-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "abstract-radius-clique-no-geometry",
+                "method": "radius-clique-exact-integer-chain",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.abstract-clique-forms",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9f67d1495755601809dae6cc98cbf18754bfc3a0cac770642a298cbc73fa9cbb"
+            }
+          ],
+          "version": "research"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.adaptive-refinement",
+      "declaration_id": "b0581297da7d3d525d35b9377c37caa69809afae19b7bc88171d20c60c8c5b59",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.adaptive-refinement.profile",
+          "profile_id": "33657b8fd96bdbd35cd776ec649b33e7a6d928c66b3b53ff76e6235dbcdd494a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "capacity-refusal",
+            "epoch-conservation",
+            "epoch-stability",
+            "epochs-published",
+            "equal-points-gain",
+            "equal-work-gain",
+            "error-monotone",
+            "independent-reference",
+            "independent-review",
+            "proposals-admitted",
+            "public-workflow",
+            "rejected-coarsening",
+            "rejected-coarsening-rollback",
+            "resource-envelope",
+            "scaling",
+            "solve-status"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-sphere-implicit-level-set-fibonacci",
+                "method": "phs-rbf-fd-degree3-vs-degree4-indicator-h-refinement-laplace-beltrami",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.adaptive-refinement",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "88f68e1fa7a7577e6a48e65e0933cc776e3c7cc7669ec1286ed0fdf3fd9d8b2a"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 2048,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-jittered-lattice-projected-boundary-children",
+                "method": "phs-rbf-fd-degree3-probe-residual-dorfler-h-refinement",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.adaptive-refinement",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f1a131a74cae2e16afb7dbb41c9a843d5f3f977ac823bab8937fddd414a85051"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.bulk-evolution",
+      "declaration_id": "89d9679b4fe30295768648af160c372601e84331fe305b851a73b475aff4b564",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.bulk-evolution.profile",
+          "profile_id": "efb493ad48f96810852c84027595e24ac71e0ac58284a513487b32db907c313d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "ale-gcl-free-stream",
+            "ale-gcl-position",
+            "ale-gcl-volume",
+            "ale-material-minus-mesh",
+            "convergence-spatial",
+            "independent-reference",
+            "independent-review",
+            "public-workflow",
+            "rebase-continuation",
+            "resource-envelope",
+            "rollback",
+            "rollout-status",
+            "scaling",
+            "state-held",
+            "step-refusal",
+            "support-refusal-status",
+            "temporal-order"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-shell-lattice",
+                "method": "gmls-degree3-collocation-ale-adr",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-evolution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7dd8681c0f33cb6bc263efe3d2b2afa3ad7bc6141e88454339649a79d0ace1d2"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-jittered-lattice",
+                "method": "gmls-degree3-collocation-adr",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-evolution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b711b1ac202db3224de1f646ef91c1bbb59795d8c7f02777ca6ccd3aa05ef15b"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-jittered-lattice",
+                "method": "gmls-degree3-collocation-adr",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "imex-ars-222"
+              },
+              "capability": "meshfree.bulk-evolution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f7911f021f802831bc08f6199bf0e7cdf25c4a6884df0fcc6f18a2d1428c3d07"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "meshfree.bulk-surface-exchange",
-      "declaration_id": "698cbc2426a61078baee5bf49ce3062b7cd7858841761ce0b9ef383f8b655f4e",
+      "declaration_id": "720e324803723c3ba7e9fcf5e87ba7502f81a3b119d35f23a72b04680b97da18",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -10718,30 +10975,302 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.bulk-surface-exchange.profile",
-          "profile_id": "c4057cd97c6a71ac26177c86bd772ddf19e61dc9e04719c102d7342490a90ac6",
+          "profile_id": "a3d31edf5f54c10b70ce9c25559eb1fcfcef2c9a5237b70e86988c0db93ce880",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
             "analytic",
             "conservation",
-            "convergence",
+            "independent-reference",
+            "independent-review",
             "public-workflow",
-            "resource",
+            "resource-envelope",
             "scaling",
-            "window-lag"
+            "window-lag",
+            "window-status"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "balance": "closed-exchange-ledger",
-                "coupling": "native-bulk-surface",
-                "kinetics": "langmuir",
-                "window": "explicit-buffer"
+                "boundary": "bulk-surface-interface",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-interface-in-box",
+                "method": "langmuir-bulk-surface-exchange",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "explicit-window-buffer"
               },
               "capability": "meshfree.bulk-surface-exchange",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "afe68425d649c900341d716a0ff0a5d1fa1b057baa47a6269e349460d1d65fb2"
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.bulk-transport",
+      "declaration_id": "c4c875df75a77ccd45b78c7c8d5d8bd849b2252e748c6ebde58e4fc4181d9adf",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.bulk-transport.profile",
+          "profile_id": "a9b8ed3f576e6c359ddb6a57c4e124489374a2e6dcbd30cc78d128d58a230116",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "bound-preservation",
+            "candidate-kept-raw",
+            "cfl-certificate",
+            "cfl-refusal",
+            "conservation-ledger",
+            "convergence-l1",
+            "independent-reference",
+            "independent-review",
+            "mass-conservation",
+            "metric-admission",
+            "negative-state-status",
+            "owner-unchanged",
+            "positivity",
+            "public-workflow",
+            "refresh-refused",
+            "resource-envelope",
+            "rollback",
+            "rollout-status",
+            "scaling",
+            "state-held",
+            "step-refusal",
+            "topology-refusal-status"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "lattice-boundary-nodes",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-fixed-topology-refresh",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "22c53b13aecff0bbed9e8dbeabaac1c91ec6551e73b8bfd7c4a26153a76602ed"
+            },
+            {
+              "attributes": {
+                "boundary": "inflow-outflow",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-reconstructed",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "48a0a2ef787c42ea5f2a556f928b31cc3e9439db2b5e2a4b29e23f35949de054"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-tangential",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-reconstructed",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6c07e43c2203445e0012990ee7a55fc5a3233cfffffa41931c5d79f37198f5cf"
+            },
+            {
+              "attributes": {
+                "boundary": "inflow-outflow",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-upwind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7472d11ec0909b39ee944a9afdc5938fabd9c37c955abb28a1c2db160ca477e6"
+            },
+            {
+              "attributes": {
+                "boundary": "inflow-outflow",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-limited",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "764fd45093d9a77de0b5389900fde2dff2308988f77dafd14fa04ce8a4519e37"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-tangential",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-upwind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "933e7ce3cc72b2aa476713897326e97d865dfa241f0ed6b67c32712d01fe9cf8"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-tangential",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-limited",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c8ceca3832c13bfa634923cdaaca04c31d320a8cd192dd00be6854da3bcd284a"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-tangential",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-control-volumes",
+                "method": "edge-graph-limited-graph-diffusion",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "imex-ars-222"
+              },
+              "capability": "meshfree.bulk-transport",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fd33330c3ea1b49e9dafae3e007c58d573e50aed30baacce7decaf270f0f7b6c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.calibrated-prediction",
+      "declaration_id": "b00dcef0a8423f6481fbc94d20b904975ab4d23beb7f14b46df8880483e2a3fc",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.calibrated-prediction.profile",
+          "profile_id": "bf6aea1d1cc49a7caf0079206f18da7d932ade8ae5a386986dc84304a2a27045",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "cases-accepted",
+            "held-out-coverage",
+            "independent-reference",
+            "independent-review",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "shift-no-guarantee",
+            "split-disjoint"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 512,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-frame-cloud-and-interior-fv-grid",
+                "method": "split-conformal-probe-values-hybrid-overlap",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.calibrated-prediction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "480561440564e4a077ff20be01921d8763931f007124ca1f4500c8e9d4ace182"
             }
           ],
           "version": "candidate"
@@ -10751,7 +11280,7 @@
     },
     {
       "capability": "meshfree.conservative-exterior",
-      "declaration_id": "a656267805b1f78b060f41c4c86a449d507ff68b790f418583533d5a5521c078",
+      "declaration_id": "fcdc8a0c0c6ee76e178057063353bb396184948c37ab0f1e32dcb580297133b5",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -10771,7 +11300,7 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.conservative-exterior.profile",
-          "profile_id": "7611431e7ad8e6a5f034a159538650d6f6e1ee7e0b6b23b9dd01a6c90d81333b",
+          "profile_id": "382e9cafce33d7e1eca3557ec1c710c773a4a6d7ac5f09b2f5522e4e2fa91c12",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -10781,22 +11310,920 @@
             "conservation",
             "coordinate-derivative",
             "feasibility",
+            "independent-reference",
+            "independent-review",
+            "moment",
+            "nonnegative-refusal",
             "public-workflow",
-            "resource",
+            "resource-envelope",
             "scaling"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "conservation": "incidence-ledger",
-                "coordinate-derivative": "fixed-topology",
-                "dimension": "2,3",
-                "moments": "feasibility-certified",
-                "nonnegative": "may-refuse"
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 4096,
+                "derivative-class": "fixed-topology-coordinate",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-nodal-control-volumes",
+                "method": "edge-moment-metric-exact-signed-and-nonnegative-conic",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
               },
               "capability": "meshfree.conservative-exterior",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "ae489c0829a2fe8ea1fc24e7b51acd13465c34f58f4e1f2373dd5fd2badfc1eb"
+              "support_tuple_id": "3acefa600c7d3a81f3ee07b95035fcd508ee7c756b9faf4163ea0066d6bd3c1d"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 4096,
+                "derivative-class": "fixed-topology-coordinate",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-nodal-control-volumes",
+                "method": "edge-moment-metric-exact-signed-and-nonnegative-conic",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.conservative-exterior",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "434478d0c77cfc61dd16a7c2611d9464a6070b0890e8e4c19f92ec46e6ace0e8"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 4096,
+                "derivative-class": "fixed-topology-coordinate",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-nodal-control-volumes",
+                "method": "edge-moment-metric-exact-signed-and-nonnegative-conic",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.conservative-exterior",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f665935b89bcfeba3912759c08bfd6f4182ad13897387b6d53eae4fd8f686bca"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.distributed",
+      "declaration_id": "76c5ddec359187d20b693221902bb678c8a665bb2061d7e37b32a4d0400b81a9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.distributed.profile",
+          "profile_id": "4c8226d88bfd39b22c703c81fa20984638a987919605d459a6289a402e5e5a14",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "action-parity",
+            "conservation",
+            "declared-refusal",
+            "duality",
+            "halo-exactly-once",
+            "independent-reference",
+            "independent-review",
+            "knn-completeness",
+            "migration",
+            "precision-roles",
+            "public-workflow",
+            "radius-pair-once",
+            "reductions",
+            "resource-envelope",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "08a8e9f77241bf702c39746f3ed3fe0678a9f697e062cf9ff15d5e923e3cf3b4"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0d7767cf4b4687ed336a7e4868ddcb4ac90e390a38ccfecd8a1fc4cb0ebb9556"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic-all-axes",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "inverse-quadratic-neighbor-row-smoother-shell-knn-halo",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "21cdecf297caea580777f8390dae6f4d9e5b4492ea9c9983f2021fec046ae140"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "29b39afc4c73e141333da358eec667241ba2650464040577544cd521adfa03ff"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "335e2a72a8e15481a8e24416c2fcb22c8869111a1cf1abfef8a22b754b89cfa0"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "37cf020234b3f45ec34c2faa2f2b6e28c19ad8fc8d66c71029601b48f7f98adc"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "537b44c1312eadb794072d4d82628922d5893c600f73a555f408399c9706eb89"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5a967f922f966efd58799ea9c936e847321ce27019dd9dfdd444e49f0e5d006b"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5af86963deae0edd5d90acc1cb9c5ff003826987578c84935987a999c1b3b54b"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "648672f4cb29408e21e45b33deca69b0395d79a6806828d53906f0c46939525c"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "declared-distributed-capacity-ownership-precision-refusals",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "659176185dc0039268ce4a82e220722e821823fbf9ea6b831689a0d6bdfdfcb8"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "708e358b2b6e85688ae38a17d2202e3e5c2b46624184ce89976abfbcd76e9a03"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "declared-distributed-capacity-ownership-precision-refusals",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "717e486a04c3c4ccbf6709132b7e3dad0fd539a6c1676ce2ef154789848987f8"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7308695c044faf77433ad79b9d78d0cb23fd493bac0cdbd53e1bb3e8bde2aa02"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "74c3dacae683143e89554a690640f2b3c8b9307baa52e33c8bbedb737e096d0b"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8338d821d144bac72415758b67bd98b7fe4d5b212eb6831e00a221fac8db9f1e"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8398eb03f961e5ef0a6e45990a55661cb2f25d4115b85fb12454e8a010abcf42"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "declared-distributed-capacity-ownership-precision-refusals",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "94c1dea0d2e99ed4c7850685b6094876e296e31e27032ab2ba3d3f1a74092757"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9986893b6b783c3aca4e9b143c00d4cd827926035978e29e0889acb455d64fdf"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-device-gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9b307dd7418da839063d5390c9a28b442858eee90dbf005c897227ba9f3f8c2a"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9c8fe65ac9a1bab3c769f088d548aa36a66642b18b53fb8a1973ee7b73fdeb99"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic-all-axes",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "inverse-quadratic-neighbor-row-smoother-shell-knn-halo",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a1ca0e01eeb4a8447cff8fb4bd2dc612a5603358cb3163dd8b9d768f6a98f541"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ab6fa67ee3e7ae82ef286076032b2bad422748393c94a00875b8705ac3865f64"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "af5bc9477585b31e1375ae247d18860295402dff4f3e30b704620fe796c9ee1a"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-device-gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b958e6007359d64580c7cb20d1623a3e1407c6bacd98bd9254c66d6c0dda0e27"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu-forced-multi-device",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "declared-distributed-capacity-ownership-precision-refusals",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c1c4778ec7df68754ebc9cc552643b0df1d912e3c255263670cd34dab2c1baeb"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-device-gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "mixed",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c8b8b180a81e8b084124b01ca6b9e328a80277e5803729e4ce40d0c87abb4282"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d8e6c5c0312dce1790b808086e101d74ca6dd1bc5111a4e843694d76cae8738b"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-device-gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "dcd1db53d8f3dcecd7a0ef2f5f917464f0bc154755f0d6d2279e16c720e3ab80"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "dee595fe326f3214e0a014561b55dc82a8e6594cb72e135df65ddccd70369d45"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic-all-axes",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "inverse-quadratic-neighbor-row-smoother-shell-knn-halo",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e54bc56c6baf0cf8df4e9f343664e630ceb59af3a10eb65968f88e1454ff6e9c"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e97e13402e40caf38bcfa09ac01174c092196328b4708c96107c4f75f75d88a4"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-device-gpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f3a33c43e76b7f341c661c2593a1d59cc6d9d82c0d326f9e34f999ee6fef4709"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f65f90fd8a3c20471c23f5be00767a595a7a020dbc703ac9420fbe77a10e74e4"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f6e941de3873c07a5f6de03d0ecb887208d09cc55fc75939dd8cfafb4ce72b03"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-device-gpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f7b56efeb98908676f484ca7a57a1dcbbb1d67f9935f890ca883c5e57220c73b"
+            },
+            {
+              "attributes": {
+                "boundary": "open-box",
+                "capacity": 1048576,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "multi-host-cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls-laplacian-shell-knn-halo-bind",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fb0fc372d40c6b8c9aa7c19ede5825bd6817420b99cf86c1d762ccf394e87122"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic-all-axes",
+                "capacity": 4096,
+                "derivative-class": "linear-action-jvp-vjp",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "inverse-quadratic-neighbor-row-smoother-shell-knn-halo",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fdd7cd279a6cb1de6aa1ae8ae8a988bf2d34d7e4293e719c9d628c6ccfdea622"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.elasticity",
+      "declaration_id": "9af0785bbbeb971728e563b583dde00aebfd3db3e50633373d008a468666890e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.elasticity.profile",
+          "profile_id": "f04737a17816e1462b5f3110d50f6326b7f40af46e0497f09cce45bee45b5a06",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "convergence",
+            "declared-refusal",
+            "energy-work",
+            "independent-reference",
+            "independent-review",
+            "mixed-stability",
+            "public-workflow",
+            "resource-envelope",
+            "rigid-modes",
+            "scaling"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "traction-face-dirichlet",
+                "capacity": 4225,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-jittered-lattice-trapezoid-measure",
+                "method": "small-strain-phs3-collocated-gmres-auxiliary",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elasticity",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "00aae284d3188d0e11e5995ac9c1c53f2223289e7a25843dcf2cf0fe7927c61d"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-clamped",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-jittered-lattice-trapezoid-measure",
+                "method": "herrmann-mixed-pspg-phs3",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elasticity",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0c7458698eac0261b3156f955d2f74f24d58a0be8f1bcb5f1b467e23a9f920dc"
+            },
+            {
+              "attributes": {
+                "boundary": "rollers-traction",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-jittered-lattice-trapezoid-measure",
+                "method": "neo-hookean-incremental-newton-phs3",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "incremental-load-steps"
+              },
+              "capability": "meshfree.elasticity",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a26582c35512b87307a121fe44c73854962e66b428cf04d08b068294413eab19"
+            },
+            {
+              "attributes": {
+                "boundary": "rollers-traction",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-jittered-lattice-trapezoid-measure",
+                "method": "small-strain-phs3-collocated-gmres-auxiliary",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elasticity",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d3512981ba5c9663d5c2e337d17679ab95e07d8eea79b23efd4ae99a96209c16"
             }
           ],
           "version": "candidate"
@@ -10806,7 +12233,7 @@
     },
     {
       "capability": "meshfree.elliptic-solve",
-      "declaration_id": "381cfb349371f2649e2a0625ff4902dad3b194974e5d2b29ea04db0cfa881b11",
+      "declaration_id": "ffe12de85795d8b51190fb38807f41a40aab890f91fbbfbe6d59d7f7def10018",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -10826,30 +12253,1481 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.elliptic-solve.profile",
-          "profile_id": "9e653affc44b3e85804fee03b3fcd100824ca0733d0c2913a2b982910e29c7ef",
+          "profile_id": "e842518a5006cea7d4f7957c7dab8a9bf687ff83b2172a0350f9a3cc9f2f7660",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
             "analytic",
-            "boundary",
-            "convergence",
+            "boundary-equations",
+            "convergence-maximum_solution_error",
+            "independent-reference",
+            "independent-review",
             "public-workflow",
-            "resource",
+            "resource-envelope",
             "scaling",
+            "solve-status",
             "true-residual"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "boundary": "dirichlet,neumann,robin",
-                "dimension": "2,3",
-                "operator": "prepared-sparse",
-                "stabilization": "configured-not-universal"
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
               },
               "capability": "meshfree.elliptic-solve",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "3a3a9d523be6371da2ee9468908a14597c5b1c4019baadb8b837c48652b6d739"
+              "support_tuple_id": "065d0f3fd3da32e9672a1239b31911339e7f5f07db8a61d4d1e2f5eac383e2e9"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "07dccbb4826f40edad8000ec3521b4607b8580f00fc9af3d40fe6874dda77733"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "119def8283900cd068753bb65c60a23f62dcd90763796be42af5e7517014a1a1"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "15e8fc874e6d98f6220fd5d02a4971cf04b5392cd3b208e339e3f3cfdfb8f76b"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "17c9ffbbfa100c84e5423fdbb733a213a7a50d3c7dff4824cdc5e0148cdbf776"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1e11ebb0860b660f41b8700a7f0c5cf7e69c0bd60789cffd108d9406f13ef746"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "20c5d3fa04c79e4fe31bcc27c64975f3f85f8364d3dcb214a87a63447fc98f28"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2adcabe007b8e4800376113be20f54fc4fb911fa0b924fd430935fbb99f2f860"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4122218b10d3dfc3cc37f7b688d46aa6fb0bb649d17e4da0303a7abbcba98350"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4188e7cffbd24b31c7d17f26b09dd64bbfd3443270ea31bdb76df04036d44dc1"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "49d5812a3b8224978be786a0ddaa83083ff3a3716bef82d9d2c2ac2ba466a23f"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4f5d7e85a3943309da29bea5d3f720e59a8c4c5fc7dccd269ed2a541f5aa3599"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "51d16626411eb4ae204f83786c3246d754288b7a4b6451320f6a24802a5a9858"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5319eb0d5fd452ca40324db505a2c1e770905201f543a417ca7aa32a518943f1"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "56ec1959bdc434513e4894df8792551a2862e392ee8fa49ede2fa9f27c0d952e"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5c3338f9ebec39781cb99ca66db5ee920db18f64464f30a627fc6445e168944f"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "687029e153c71f2fa9faa652a442f30d9982d26ebb42e179bb66ac64f2cbd8b9"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7b6b110f664b4d1dbfc8bb69d7a3a6f8ddd75c14c384f447a6a8c6775edc2c99"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "80340cb57912fcc5122159eb5fb14497588abf1deb31f32d4181c4af45791927"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8bd4ca22f338e0412925de11c82f0675c4149d09dc1cea6ac55b50a32e849175"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8e708e6fc5a1866c035b974acc4b58a72a4de09c6538600de030536ebc8feb06"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9345ec9e0bd3eed49d2cef5100d374356e13ebc0e3b68b1deafe6a0e6bfa613f"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a63fb32046e91bbb9b5f4a843fbb6d28de92ec752e598768daa1b5056c14dff4"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b6f32dcfcec5d4159a1de5c059ab05704d13621284c9b1112c014434a972e36f"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c1bd3619f8c33ac1ea0196c782519343a257f7a9adc1c5a2264966c8c55d0dcd"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c7cfd916a941667a1bb18a4f59e4f0ed8998be342ff95e5388f6f539a5805efd"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c7fd0b90816c029f7b82190ddc81ff85e9822d5cb7e0c12f2c06d094e634e1da"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d5085d8204e396aefed66cc765cb075b481055d981dea4425116a4e6bfe90f15"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "gmls-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d546866ea6eb76527e56c275e1e9abae674aeea7b0a4d2f3ea0b52ece904c51e"
+            },
+            {
+              "attributes": {
+                "boundary": "neumann",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "da4f890d69b37fadcaa81cb45b5a33d5e58d9f02cc5b7f866d3d63c7117d7402"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ddf2e115c30fed538304a6f8cea2bb12351301ac35701f227949c150da345225"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e014d9e21dcbb847516244884b8f3b729d715683393c2f65b79a8a8cb2cc675d"
+            },
+            {
+              "attributes": {
+                "boundary": "mixed",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ef9a165533221bf08991e018c10a65514ebeda92371fd8eb8ac97bb48c3dec3d"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-box-perturbed-samples",
+                "method": "phs-rbf-fd-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f3e56ebdc3b1e2cbfd7154204f02ad20fc65742691e57fbab502f8be04796d7d"
+            },
+            {
+              "attributes": {
+                "boundary": "robin",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f7ce3ff703620b21818d778bc8cf11928d9989514be8ee9ab9880e8e525214fe"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "native-point-primary-tensor-grid-sbp-norm",
+                "method": "native-tensor-sbp-interior-order-2-dissipative",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.elliptic-solve",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f874e3b716118ea86ba3c0c18b048e13669b00300839fa822b2ccbeb3affecc3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.fluid-structure",
+      "declaration_id": "a728525a77247611bf7c7607215f1e9c9655f14627301bea4c83097823fdb5ed",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.fluid-structure.profile",
+          "profile_id": "c895e0c9259ded7ba6a1dedb1aa34a042f014a9bc01263a0fb63f73b9baab906",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "force",
+            "independent-reference",
+            "independent-review",
+            "interface-certificate",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "work-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "paired-interface-dirichlet-walls",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "polygon-chart-authorized-adjacent-rectangles",
+                "method": "monolithic-mortar-vector-transmission-phs3-ghost-dense-lu",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "implicit-quasi-static-step"
+              },
+              "capability": "meshfree.fluid-structure",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4fcf365cfb95123901f7653fa15fdea6685cd5013ed862799ddef6ba769e6534"
+            },
+            {
+              "attributes": {
+                "boundary": "paired-interface-manufactured-dirichlet-walls",
+                "capacity": 2178,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "polygon-chart-authorized-adjacent-rectangles",
+                "method": "monolithic-mortar-vector-transmission-phs3-ghost-dense-lu",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "implicit-quasi-static-step"
+              },
+              "capability": "meshfree.fluid-structure",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4fd2c248be32b7bd3f87032f07ee28d44a8b4f7d12d04944421820aaf6b6050a"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.higher-forms",
+      "declaration_id": "5666695cff219687637e2139357eeab45f3008f9e6b07ad324d1f5796d82cb6c",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.higher-forms.profile",
+          "profile_id": "929765aa2bf20d3301826832e1bd1870c8366c2a6e8de2252438b18772986b9d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "abstract-clique-refusal",
+            "betti-audit-refusal",
+            "commutation",
+            "d-squared-zero",
+            "geometry-admission",
+            "geometry-authorized-fidelity",
+            "harmonic-absolute",
+            "hodge-adjoint",
+            "hodge-laplace-consumer",
+            "hodge-positivity",
+            "hodge-reproduction",
+            "independent-reference",
+            "independent-review",
+            "measure-audit-refusal",
+            "orientation-audit-refusal",
+            "patch-capacity-refusal",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "stokes"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "absolute-and-relative-boundary-complex",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cellmesh-tunneled-slab-domain",
+                "method": "gmls-p1-k-form-moment-reconstruction-sparse-hodge",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.higher-forms",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "33da3c92684cb5d8a3765e69e3d748740f2d31b0f393c70acd91ecd810213ccc"
+            },
+            {
+              "attributes": {
+                "boundary": "absolute-and-relative-boundary-complex",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cellmesh-holed-square-domain",
+                "method": "gmls-p1-k-form-moment-reconstruction-sparse-hodge",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.higher-forms",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6526533a02c7133360f111481df1e5d5a14040642c0a0327e90e149a94d291a2"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cellmesh-icosphere-closed-surface",
+                "method": "gmls-p1-k-form-moment-reconstruction-sparse-hodge",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.higher-forms",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "798efb1d49bfc8831a9e99b314e05a07d7caa68827fe0c7328f73d3e3124df24"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.hybrid-schwarz",
+      "declaration_id": "81a1cd9793f940db459287b876a4502dec91d2168ae7e82905b9a050501fe453",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.hybrid-schwarz.profile",
+          "profile_id": "18e6ddeb9ff678a1727769dc4d88606b73e68ea0f4f878022b699462f25c5ebe",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "cloud-order",
+            "component-residual",
+            "grid-order",
+            "hybrid-vs-monolithic",
+            "independent-reference",
+            "independent-review",
+            "overlap-transfer-rows",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "schwarz-accepted",
+            "schwarz-additive-convergence",
+            "schwarz-multiplicative-convergence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-frame-cloud-and-interior-fv-grid",
+                "method": "phs-rbf-fd-degree3-cloud-fv-grid-overlap-dirichlet-gmres-schwarz",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.hybrid-schwarz",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5945a83fd0846f6034fa0031891793af1011c772ff12d2d7b30a33e027d36574"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.incompressible-flow",
+      "declaration_id": "ee76395acb14ae7b5d2b2e57a59bce3c43e131ee0dff27ace63020541511de23",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.incompressible-flow.profile",
+          "profile_id": "c2bd52ba695a820acd150be87f763b30ecd33a7c54a36a1450a37af97ed73483",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "conservation",
+            "convergence",
+            "declared-refusal",
+            "divergence",
+            "independent-reference",
+            "independent-review",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "spurious-modes"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 1024,
+                "derivative-class": "pressure-projection-jvp-vjp",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-square-lattice-minimum-image-charts",
+                "method": "exterior-projection-reconstructed-transport-phs3",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "ars-222"
+              },
+              "capability": "meshfree.incompressible-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "999f96f687abb241834227bcbcff5c785c08de343e0f8a6430cb4cb663ca4982"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-square-jittered-lattice-trapezoid-measure",
+                "method": "generalized-stokes-pspg-phs3-collocated",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.incompressible-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a77ed260db20b3269dc2c2b60043324b9ec98238a39cc19e844669c1debfe4ce"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.joint-transfer",
+      "declaration_id": "adf72b7df0993bc95f225d516b1784c060516a0533813d1849f934b686271365",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.joint-transfer.profile",
+          "profile_id": "8283c59a462f427550749dd958837cafd9d8c0cd25ddc2aa76764fa7463116f9",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "admission",
+            "conservation-audit",
+            "conservation-independent",
+            "constant-reproduction",
+            "convergence-remap",
+            "coverage-witness",
+            "declared-status",
+            "dual-identity",
+            "independent-reference",
+            "independent-review",
+            "moment-reproduction",
+            "positivity",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "transfer-withheld",
+            "witness-margin",
+            "witness-residual"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-conservative-signed",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "05cba40412c24e1ed3c956b33adbb350d42e05f4b7ab6eba0e593eff98cb1fe8"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube-with-exterior-target",
+                "method": "point-transfer-joint-radius-routes",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "146d6c16cb8bd08e9542eb1d4b62af18902c23c0dc7d8cbb5c325fd1c62c12fe"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-joint-signed-degree2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2a1486b10699a113e154d3a5acaeaa251def637c2237274e40c9c20e8ab63e60"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-midpoint-unit-cube",
+                "method": "point-transfer-joint-nonnegative-degree1",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "32653a2961000fa08a071153eec8451298f820c169797adf30a5c7d137927f0d"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-conservative-signed",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4188ca49f38cde8016a7df72e294686ad330bef37b2f8c9c86352ca536e54e1e"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-conservative-positive",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "656f0fdb2f8b5c87b2b1d9d07e9de36f2beca53b35d10f939ff6ec83560591e1"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube-dilated-target-measure",
+                "method": "point-transfer-joint-nonnegative-constant",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "670d135a3bc9cdb84fa2084cfe303a289157628a95123987e8db0ee1d40f2771"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube-3x-refined-source",
+                "method": "point-transfer-conservative-signed",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7922867807821020a88689bace8b63f681d7486d0c335b564c8f1d77992cd8f1"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube-with-exterior-target",
+                "method": "point-transfer-joint-radius-routes",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "874e6548eb5413928b6ec00598427931316176f3102db1fab3ee628dbab1b44e"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-joint-nonnegative-constant",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8e2a569889c1069905c819b752ca8fec7fa5e0993670002a775e180e538c0201"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-conservative-positive",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8eede027e2d9ea3126d77402a12cc4bbdb8e9233ce380648db4eb10e2f5e5558"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube-dilated-target-measure",
+                "method": "point-transfer-joint-nonnegative-constant",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b1f7b410a4a6e002cc2fc56005ba8613976f1159a253fc82bd6c732972714769"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube-3x-refined-source",
+                "method": "point-transfer-conservative-signed",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cee8a8cda85ce2d3e55114b38d3bc0e9f13ed7848f44add7b87592a97e1dfaf1"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-midpoint-unit-cube",
+                "method": "point-transfer-joint-nonnegative-degree1",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e199c466736dce479d0509f20272888b683fb6237dd01e3d6155001055f9c032"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-joint-nonnegative-constant",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ec76d24b2c46dc73511a038bef4d1123f754f2d61f5e202f92b979440bddab6d"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-simpson-unit-cube",
+                "method": "point-transfer-joint-signed-degree2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f77d518cb3ff34a5414b54c1b99294b1183fc702f05acdd9319d609c9b858e86"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "tensor-midpoint-unit-cube",
+                "method": "point-transfer-joint-signed-degree2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f7ab178a1c6ab70b67b892d82f2d1d03e8e0ea70d8ef6d09ead0ba8a1551d215"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 65536,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "tensor-midpoint-unit-cube",
+                "method": "point-transfer-joint-signed-degree2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.joint-transfer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ff6719846842960c7e242c07a63789417d4ac693a0fed01f891dce14ac0574d1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.lagrangian-flow",
+      "declaration_id": "9acd9a023c57762aec1993054cd56c2766b827dfa3c7b0584b59203b12d365b3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.lagrangian-flow.profile",
+          "profile_id": "f4677edfb9f581e2199c35b96ce6730a9cf65d786fa643c9847cc7fd12ec9dbe",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "conservation",
+            "declared-refusal",
+            "divergence",
+            "independent-reference",
+            "independent-review",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "sph-interoperability"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-jittered-cell-lattice",
+                "method": "measure-transfer-conservative-positive-material-to-quadrature",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.lagrangian-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3fcd35f0bd183962878588e5461b4638b3d692f89e8928f20732814ace8dc2bb"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-cell-lattice",
+                "method": "lagrangian-gmls-weak-projection-quadrature-volume",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "explicit-predictor-projection"
+              },
+              "capability": "meshfree.lagrangian-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "667ab18d400041c47898da217174b5af4d7ff035686fc0e15af96e2b66f30566"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-cell-lattice",
+                "method": "lagrangian-gmls-weak-projection-material-mass-sph-wendland-c2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "explicit-predictor-projection"
+              },
+              "capability": "meshfree.lagrangian-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a94280b43ee1a6562807dd31cebf5793a3902995e3b3ac8f34fb46862c4d8d9d"
             }
           ],
           "version": "candidate"
@@ -10859,7 +13737,7 @@
     },
     {
       "capability": "meshfree.learned-constitutive-flux",
-      "declaration_id": "d9b68d33b4a38b3a84a7b98c7201c00a1ad587579d0174f28c4252a4daee4cff",
+      "declaration_id": "ed094c2057fcddcb9e8132e1d15e9a4d38b6a52273187ebd39f2d5ddf219fc34",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -10879,31 +13757,271 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.learned-constitutive-flux.profile",
-          "profile_id": "6bfa5974ab7911453e146887a5fb29729d5909228bebe4d3bc4dc17bacb82845",
+          "profile_id": "c1e86061adc564415ac9a6c8854ba6b97a03e2730506d8cd19c80fc296d1558f",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
-            "analytic",
+            "adjoint-status",
+            "conservation",
             "coverage",
             "implicit-derivative",
+            "independent-reference",
+            "independent-review",
             "law-recovery",
             "newton-refusal",
+            "primal-status",
             "public-workflow",
-            "resource",
+            "resource-envelope",
             "scaling"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "coverage-refusal": true,
-                "derivative": "implicit",
-                "law": "bounded-covered-features",
-                "solve": "native-nonlinear"
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 1024,
+                "derivative-class": "implicit-adjoint",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-nodal-control-volumes",
+                "method": "learned-monotone-edge-flux-native-newton",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
               },
               "capability": "meshfree.learned-constitutive-flux",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "251581288b34172c5738efcd5ed8140414b2aef9d7979ff727fa309c5e76ca48"
+              "support_tuple_id": "4d972e734815f6e20f7bc24bfe54b27c3ae795e91b9151bb154bef77ee5d21c4"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 1024,
+                "derivative-class": "implicit-adjoint",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-nodal-control-volumes",
+                "method": "learned-monotone-edge-flux-native-newton",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-constitutive-flux",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8f04cd364a322274654075c04da1511afd9a78d314425010637e21e0e9e8798e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.learned-correction",
+      "declaration_id": "c7e625d9c61175a7b243cf8dfa890fc0f69a4b59bf9ba68cf0743006d2a13409",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.learned-correction.profile",
+          "profile_id": "ad3a53b4627405a3c35fcefef8f55f392ba80e3cd0b699a7e0d4b902f98dd6ca",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "accepted-updates",
+            "adjoint-status",
+            "coercivity",
+            "correction-admitted",
+            "coverage-control-admitted",
+            "coverage-refusal",
+            "derivative-availability",
+            "failed-step-rejected",
+            "implicit-gradient",
+            "independent-reference",
+            "independent-review",
+            "moment-exactness",
+            "positivity-conflict",
+            "primal-status",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "sign-margin",
+            "trained-admitted",
+            "training-loss-reduction"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 1024,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-nodal-control-volumes-refined-query",
+                "method": "edge-geometry-empirical-coverage-refuse",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-correction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "87b7208b4f13551284423baaa8ea7fe2abdc85d0cf421a9827452d3015488cf5"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 256,
+                "derivative-class": "implicit-adjoint",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-nodal-control-volumes",
+                "method": "edge-moment-metric-learned-log-linear-training",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-correction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "beec5a910d2eb66703dd2641f144c20e331ed2aaaa4d375cf4d08b40a534b931"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 256,
+                "derivative-class": "projection-tangent",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "jittered-cartesian-nodal-control-volumes",
+                "method": "edge-moment-metric-learned-candidate-nonnegative-conic-projection",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-correction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d598a28827b43db4c0088dbaf4e2a3157512139d9be45db5ba1b9cd63c978ec1"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-incomplete-axial-neighborhood",
+                "capacity": 256,
+                "derivative-class": "projection-tangent",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "jittered-cartesian-nodal-control-volumes",
+                "method": "edge-moment-metric-learned-candidate-signed-minimum-norm-projection",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-correction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f7b5a10df8586e30bfd452b9e0f572088f62daeec515ec7f89c82cb5fdfb5235"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.learned-coupled-law",
+      "declaration_id": "85372a07c4aa634109366e28b80000a089d0340a05d3f2ef9076b3f71f7a9ea1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.learned-coupled-law.profile",
+          "profile_id": "7f2e683815eedf3e6233736e40867b680ad57baf50ff57a64f159e50191aa3c0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "independent-reference",
+            "independent-reversal",
+            "independent-review",
+            "jacobian-coercivity",
+            "jacobian-symmetry",
+            "lipschitz-bound",
+            "public-workflow",
+            "resource-envelope",
+            "reversal-parity",
+            "rotation-covariance",
+            "rotoreflection-covariance",
+            "scaling",
+            "strong-monotonicity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 1024,
+                "derivative-class": "jacobian-blocks",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "random-gaussian-edge-frame-ring",
+                "method": "o3-invariant-convex-monotone-coupled-edge-flux",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-coupled-law",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "06a32270d226ce25768c9ed5e573d8032d82b84bf1ae376d1bfb534d60e58a38"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 1024,
+                "derivative-class": "jacobian-blocks",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "random-gaussian-edge-frame-ring",
+                "method": "o3-equivariant-lipschitz-coupled-edge-flux",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.learned-coupled-law",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1a9c889f96642d52c091c4b1dc5543e18d3e41a9e89e630a695634dcf410c52c"
             }
           ],
           "version": "candidate"
@@ -10913,7 +14031,7 @@
     },
     {
       "capability": "meshfree.moving-surface",
-      "declaration_id": "afe9a8578176354d700cce88acf46b24651d032f9a10330671666a8e36f6c507",
+      "declaration_id": "85dc0cce6b27a2decce13f48e8d08517d2d1b45dd9d59e09e55d7f2898bf358f",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -10933,31 +14051,42 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.moving-surface.profile",
-          "profile_id": "b83f3ebfff1723a1e94ed81efb80c066a33f7ad6977468d5a4ee830777b0134c",
+          "profile_id": "b15b7f553a97254dbf2e802938e066260e6336c7f08eef5bb51328bf1184f558",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
-            "analytic",
             "conservation",
             "dilution",
-            "epoch-transition",
+            "epoch-remap",
+            "independent-reference",
+            "independent-review",
             "public-workflow",
             "repeated-remap",
-            "resource",
-            "scaling"
+            "repeated-shift",
+            "resource-envelope",
+            "rollback",
+            "scaling",
+            "step-status"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "embedding-dimension": 3,
-                "evolution": "native-material-ale",
-                "remap": "explicit-mass-ledger",
-                "topology": "explicit-epoch"
+                "boundary": "closed-surface",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "prescribed-expanding-sphere",
+                "method": "surface-material-ale-reaction-diffusion",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "additive-imex"
               },
               "capability": "meshfree.moving-surface",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "7cfac9d9c78641456ef066617e1e9398c39ef5dee70560042ee4d106dbaba133"
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
             }
           ],
           "version": "candidate"
@@ -10967,7 +14096,7 @@
     },
     {
       "capability": "meshfree.multilevel",
-      "declaration_id": "3eceecf28e4eebce02c7b67ef2b41a62761900f5c088b0dfe8a2432d3f18c027",
+      "declaration_id": "7c22b4f14a0f53b380259120e6baf13c0f79db5446073c130405fc36e179b2a4",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -10987,15 +14116,19 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.multilevel.profile",
-          "profile_id": "ad19d17dea1fda8a8ea4adce97a0aa5dadc2ca9116a78da5e843bf62c88828d0",
+          "profile_id": "a31ae59633391c5b250d73b22bcaf53f47503f896d2044d7597ec5283fd24638",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
             "analytic",
+            "derivative-solve",
             "fine-system-cost",
+            "independent-reference",
+            "independent-review",
             "public-workflow",
-            "resource",
+            "refresh-residual",
+            "resource-envelope",
             "scaling",
             "transfer-reproduction",
             "true-residual"
@@ -11003,14 +14136,660 @@
           "support_tuples": [
             {
               "attributes": {
-                "coarse-space": "declared-affine-degree",
-                "dimension": "2,3",
-                "fine-system-comparison": "native-ilu,native-smoothed-aggregation",
-                "hierarchy": "native-point-cloud"
+                "boundary": "dirichlet-convex-hull",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmres-native-ilu",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
               },
               "capability": "meshfree.multilevel",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "53c83b9bb54b694cc20cdc70da01b1ae325753e7a07ab641ff26c8fb0340c6e7"
+              "support_tuple_id": "72fa1ef073ea7e27402eb78e6a26f1bc54e69a1debcabd1730982a4d09c1370f"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-convex-hull",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmres-native-ilu",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.multilevel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8844acd2ec99b16a5a575565d1382d0a1aadae6c0cd75335f1d9174dcffc3c91"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-convex-hull",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmres-meshfree-multilevel",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.multilevel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8a237383802eb71a4241ce7f22866193a074a01c7f147f65a97a65cb6b0b9faf"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-convex-hull",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmres-native-smoothed-aggregation",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.multilevel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b00ab3df3d716d50d49aae6d3d49865a54756fe2bda12e8785c7e68fe8a960aa"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-convex-hull",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmres-meshfree-multilevel",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.multilevel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d3313883383e900fbe25ee41f0bec3fe5d70cd5f15015ec13a1b2b69426551ad"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-convex-hull",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmres-native-smoothed-aggregation",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.multilevel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ebc5191243eb1d043582e25a4f69021ff67bcd26c9f62e0b04882ac946ee3c8c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.physical-topology",
+      "declaration_id": "84eb0bf5aef202e1355b630e358def196cec9151911cedc1bb6e48df42aab3bc",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.physical-topology.profile",
+          "profile_id": "f1ddf170d1bed80d54fe4a11765fed2aa5ca065d1650ca5c866fcb42662303f0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "all-history-remap",
+            "authority-agreement",
+            "ccd-certified",
+            "content-conservation",
+            "continuation-published",
+            "controller-carried",
+            "epoch-published",
+            "history-conservation",
+            "history-route-refusal",
+            "independent-reference",
+            "independent-review",
+            "physical-lineage",
+            "public-workflow",
+            "receipt-ledger",
+            "region-removed",
+            "region-split-lineage",
+            "resource-envelope",
+            "rollback-derivative-withheld",
+            "rollback-failed-history",
+            "rollback-refused",
+            "rollback-source-returned",
+            "rollback-values-unchanged",
+            "scaling",
+            "value-derivative",
+            "value-vjp"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "closed-foam-films",
+                "capacity": 8192,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "multiregion-icosphere-bubbles",
+                "method": "multiregion-merge-meshfree-epoch",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.physical-topology",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "13434a788382f90880166a22b77e02c4bc525d58e73d6861388ddf0471afc0d0"
+            },
+            {
+              "attributes": {
+                "boundary": "fixed-ring-boundary",
+                "capacity": 8192,
+                "derivative-class": "frozen-transfer-value",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "multiregion-catenoid",
+                "method": "multiregion-pinch-region-split-meshfree-epoch",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.physical-topology",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3239b3d7175198d64c474ed38b1faee5e47c860083ed82968f9f221c08adc6a9"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.runtime-restart",
+      "declaration_id": "ab88622b2a95e3b17ea2bb3c42f365200229f04bea734695578654ecc31c081f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.runtime-restart.profile",
+          "profile_id": "eec32ff7e50e9c1d90c09db36f58f28ef1acbf38dab9ea9b037c06f92ec842b0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "completed",
+            "continuation",
+            "foreign-case",
+            "history-window-refusal",
+            "identity-restart-partition-refused",
+            "independent-reference",
+            "independent-review",
+            "live-history",
+            "memory-evidence",
+            "migration-committed",
+            "partition-changed",
+            "placement-only-roles",
+            "public-workflow",
+            "refusal-evidence-retained",
+            "refused-epoch",
+            "refused-newton-evidence",
+            "replay-class",
+            "replay-classification",
+            "resource-envelope",
+            "resume-from-commit",
+            "rng-controller",
+            "scaling",
+            "sigkill-interrupt",
+            "stale-capacity",
+            "stale-geometry",
+            "stale-precision",
+            "stale-program",
+            "stale-source",
+            "store-unchanged",
+            "truncated-archive"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "bulk-surface-interface",
+                "capacity": 256,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-interface-in-box",
+                "method": "langmuir-bulk-surface-newton-production-run",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "bitwise-replay",
+                "temporal-method": "implicit-newton-fixed-step"
+              },
+              "capability": "meshfree.runtime-restart",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1f7418cdde5793e02298a8519148fb7979ed4056c7c12390b364af5041523335"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 256,
+                "derivative-class": "none",
+                "device": "cpu-forced-multi-device",
+                "dimension": 2,
+                "geometry-authority": "unit-square-uniform-random-owner-blocked",
+                "method": "gmls-degree2-explicit-diffusion-distributed-production-run",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "bitwise-transport-reduction-order-continuation",
+                "temporal-method": "explicit-euler"
+              },
+              "capability": "meshfree.runtime-restart",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3cfe4a178359b7998f0f91c088fd7795caa4f44661d31f1b3b0dd2983fb20f5c"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 256,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-jittered-lattice",
+                "method": "gmls-degree2-ale-adr-production-run-support-epoch",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "bitwise-replay",
+                "temporal-method": "ssprk33"
+              },
+              "capability": "meshfree.runtime-restart",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3d4b328b69a35115e450fecc981adc5bfb291055e187e9be3fd718e5c2b3472f"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 256,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "prescribed-expanding-sphere",
+                "method": "surface-material-reaction-diffusion-production-run-live-history",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "bitwise-replay",
+                "temporal-method": "moving-surface-fixed-step"
+              },
+              "capability": "meshfree.runtime-restart",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "afdf39641cf4e76bc1b853fd4bf327a8f5faee3164f9d58056d19ad889ca64f4"
+            },
+            {
+              "attributes": {
+                "boundary": "periodic",
+                "capacity": 100,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "periodic-unit-square-jittered-lattice",
+                "method": "gmls-degree3-reaction-diffusion-production-cli",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "bitwise-replay",
+                "temporal-method": "imex-ars-222"
+              },
+              "capability": "meshfree.runtime-restart",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "bf4ea6579dd9b09d5348ea2d63f383e3d5ab2fd773d7ac565aa17c2b19c9ab51"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.sensitivities",
+      "declaration_id": "8d360de5afd0df8c88b5a390ca213fb6e94251af6e1aaac293d6751034079bff",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.sensitivities.profile",
+          "profile_id": "fedfad3869995a8cbae358726838a48b8f937d4fb3177cc785a06549c993aca8",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "contract-identity",
+            "derivative-availability",
+            "independent-reference",
+            "independent-review",
+            "jvp-finite-difference",
+            "public-workflow",
+            "refusal-nan-jvp",
+            "refusal-status",
+            "resource-envelope",
+            "scaling",
+            "vjp-duality"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "fixed-support-coordinate-jvp-vjp",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "unit-cube-jittered-lattice",
+                "method": "gmls-wendland-c2-smooth-envelope-point-cloud",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1c0e0e50ea8da7936ba9c31c63411cccff504d15bc4cd8aa5928f454f4c7d3f7"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "frozen-remap-value-tangent-adjoint",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-supports",
+                "method": "conservative-positive-point-transfer-live-history-remap",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1d69adaa0e9cb21dac63779d9763adee9e7f5ebdf70b1488b0ae6c0c8a5cf9a2"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "frozen-remap-value-tangent-adjoint",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-supports",
+                "method": "conservative-positive-point-transfer-live-history-remap",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "25ccd5b2ddb6220b957809dd181616be6ac95b6fe7e06662e1e9ea1272d5c793"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "fixed-support-coordinate-jvp-vjp",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-jittered-lattice",
+                "method": "gmls-wendland-c2-smooth-envelope-point-cloud",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2f4a3ce4181fb0047472da3322bfc13fe9d2b0c52e2186003450aa42d4963ea5"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 1024,
+                "derivative-class": "smooth-support-cutoff-crossing",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "ball-sources-oblique-cutoff-crossing",
+                "method": "gmls-wendland-c2-smooth-envelope-local-stencil",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4aa4be3faa10e80f7db9375d8723362342fbfb59d2b05621e4347693eff27d83"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 64,
+                "derivative-class": "knn-selection-gap",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "axis-equidistant-selection-tie",
+                "method": "gmls-knn-local-stencil",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6891c665fabcf43c17496fec51d00041de770b69d0734c2a890f4b5ce2a361d9"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-lattice-boundary",
+                "capacity": 4096,
+                "derivative-class": "strict-active-fixed-set-kkt-jvp",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "cartesian-lattice-nodal-control-volumes",
+                "method": "edge-moment-metric-nonnegative-conic",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "86bec3e3b361d87bfcdd5e2c1668fe0c1242efda074ab4473d43a4ed5f5c3d38"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 64,
+                "derivative-class": "knn-selection-gap",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "axis-equidistant-selection-tie",
+                "method": "gmls-knn-local-stencil",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "87bafa697cee96aa961766cabd61f2db5bed1909054d16b968d7f90ae65de35d"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "frozen-remap-value-tangent-adjoint",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "unit-cube-stratified-supports",
+                "method": "conservative-positive-point-transfer-live-history-remap",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a4a3d4f6283d9e486738de49bb4e475db1b62cd1a7dd23bb98c372fb9a9f9a83"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 1024,
+                "derivative-class": "smooth-support-cutoff-crossing",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "ball-sources-oblique-cutoff-crossing",
+                "method": "gmls-wendland-c2-smooth-envelope-local-stencil",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b22bf6bc74120776bed56703f688273ea17382a43caa5d26418e9ea68dcd9c44"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 4096,
+                "derivative-class": "fixed-support-coordinate-jvp-vjp",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-jittered-lattice",
+                "method": "gmls-wendland-c2-smooth-envelope-point-cloud",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c9749e37d2b484ce5a904038ded3c8f0406e8285b9466e9083b32c535e6f0aca"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 64,
+                "derivative-class": "knn-selection-gap",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "axis-equidistant-selection-tie",
+                "method": "gmls-knn-local-stencil",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d367ef267a44b1d1a04478ce59b62f2809f3d979cb870f5f3dbe2fc3cf414019"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-lattice-boundary",
+                "capacity": 4096,
+                "derivative-class": "strict-active-fixed-set-kkt-jvp",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "cartesian-lattice-nodal-control-volumes",
+                "method": "edge-moment-metric-nonnegative-conic",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "df5f01ec66d901cf5569b37d2adb34d02257020196d9f6e684f61644a57284b2"
+            },
+            {
+              "attributes": {
+                "boundary": "dirichlet-lattice-boundary",
+                "capacity": 4096,
+                "derivative-class": "strict-active-fixed-set-kkt-jvp",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "cartesian-lattice-nodal-control-volumes",
+                "method": "edge-moment-metric-nonnegative-conic",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.sensitivities",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ef2b206056acd427684c4c7779547a3f89e8434e22f52ec881b2e58244e011fe"
             }
           ],
           "version": "candidate"
@@ -11020,7 +14799,7 @@
     },
     {
       "capability": "meshfree.strong-form",
-      "declaration_id": "92a36be4b81aa63b59a8ff0b7cbdf4df03de3441daad3d1abbd63b08131b8b17",
+      "declaration_id": "e6890eb7bcf890b458047eff412d86aaad94318077ae1ddaf4300c418a85d73a",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -11040,30 +14819,184 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.strong-form.profile",
-          "profile_id": "c76e69c3f4975fd3f6e7d6ed6e7b1fed94d48c0ff4ec1a3b3b7c6d27cb63b1e2",
+          "profile_id": "5529df43d420b025b4bbb89994ab6c4f30a6a6fd235d88f3b480396067503049",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
             "analytic",
-            "convergence",
+            "convergence-first-derivative",
+            "convergence-laplacian",
+            "declared-refusal",
+            "independent-reference",
+            "independent-review",
             "public-workflow",
-            "resource",
-            "row-refusal",
+            "resource-envelope",
+            "row-acceptance",
             "scaling"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "dimension": "2,3",
-                "methods": "phs-rbf-fd,gmls",
-                "neighbors": "bounded-morton",
-                "polynomials": "bounded-degree",
-                "row-refusal": true
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "phs-rbf-fd",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
               },
               "capability": "meshfree.strong-form",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "ac9bbe38fa017f8589eabda977c3e3a053856a22ab035b7192175468364b6fb2"
+              "support_tuple_id": "12586b72df5f3dce06f0cb3e8d9b9e59a4060d68c98d50789e30430d6e6a7d57"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3046192a0bce48c11326ebe14de8b6464ea08e74a168237b9010cc39211efaff"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4af6e7cfbe7857f1d2886629dbcfbf945301172f4cf31b5a7faa404acb2fc45e"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5230babe46386f92110162be7ca2da1fb4312c5fadd24bb5b5f88f1d0420743d"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "phs-rbf-fd",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7513a09f8abf075ce64897e6751f4d2f97becc2a279fcc2fbdb6a7768a2a7f97"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "77dd40b42d43df3e76a7014aa7d9f9133adffc4e6886517a5a3d25d1e444efdc"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "87863d2d49650507febbd557b02747ac68e4ed8f668e37dfecd797089deb577b"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 1,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "gmls",
+                "precision": "float32",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b348a01be00e52872cb3e29af57fadfb628234d5f185d75d2bd1c1f3119c75a6"
+            },
+            {
+              "attributes": {
+                "boundary": "none",
+                "capacity": 16384,
+                "derivative-class": "coordinate-orders-1-2",
+                "device": "cpu",
+                "dimension": 2,
+                "geometry-authority": "unit-cube-stratified-samples",
+                "method": "phs-rbf-fd",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.strong-form",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b817ff62efa9cb7d596d270a6f4bab80342c1ea0c61780b4cfedfd70981add79"
             }
           ],
           "version": "candidate"
@@ -11073,7 +15006,7 @@
     },
     {
       "capability": "meshfree.surface-operators",
-      "declaration_id": "80db11fd84c7531dfd6bc87c9c43ddc95f4410f880741c9e680deec04d087de9",
+      "declaration_id": "963a3ce93d0b988e4dfceb8b27c2b8216656762a84c986fd3dd9ba8d4b251498",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -11093,30 +15026,228 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "meshfree.surface-operators.profile",
-          "profile_id": "a457c0341c41c71a5d884904bce4f858ab309a33d6bdbac7af404c2741f0bb8d",
+          "profile_id": "580bde1ed19823a2a359261a24d7a51f30922c7a8d03763974e87e4efbf8e7a2",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
           "required_gates": [
             "analytic",
             "convergence",
-            "geometry-refusal",
+            "geometry-admission",
+            "independent-reference",
+            "independent-review",
             "normal-comparison",
             "public-workflow",
-            "resource",
+            "resource-envelope",
             "scaling"
           ],
           "support_tuples": [
             {
               "attributes": {
-                "embedding-dimension": 3,
-                "geometry": "supplied-or-sampled-normals",
-                "intrinsic-dimension": 2,
-                "reach": "estimate-not-certificate"
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-sampled-fit",
+                "method": "surface-gmls-laplace-beltrami-degree-2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
               },
               "capability": "meshfree.surface-operators",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "b78f7e654584bbdaa43ca77b11a974731ccfd0d49d88a36d1d0cf0e45bc90241"
+              "support_tuple_id": "2585e38d54e8bb25ad3e69ae01940fc5052c30a59464d74ece681039ca9bdcc6"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "torus-sampled-fit",
+                "method": "surface-gmls-laplace-beltrami-degree-2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "41137a4034eac38533e4dee27a7c481cdc79673f010456006c5782bf5e7d351b"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "torus-implicit-level-set",
+                "method": "surface-gmls-laplace-beltrami-degree-4",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4127bf1e9e2e72ee19b5694eb808d00a45aabb6460cc54059475b8bf0fc36986"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-implicit-level-set",
+                "method": "surface-gmls-laplace-beltrami-degree-4",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "442968bdf9793a4deb59f6bc5996fac146d72536a3ca0ef8a33651801c9d1593"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-sampled-fit",
+                "method": "surface-gmls-laplace-beltrami-degree-4",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "469be3350a977ebd5205286fe5f689ecf1766289a7c0c0f264f6a9097853ced7"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "torus-implicit-level-set",
+                "method": "surface-gmls-laplace-beltrami-degree-2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "69e59012a939b7a211fb2a5b6f9ed04964e096a11d5ccf5e0b40d29cb588c70e"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "torus-sampled-fit",
+                "method": "surface-gmls-laplace-beltrami-degree-4",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b352dd43beb2157e3dc92d18ad3845fc4d0bba126298b423cf3b667743b11ed2"
+            },
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 16384,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-implicit-level-set",
+                "method": "surface-gmls-laplace-beltrami-degree-2",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-operators",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f65b83720a7d3e9e6b31ec216389e92ab884cfc88773ab34e28a736c65c70524"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshfree.surface-stokes",
+      "declaration_id": "3885c680a9982124a7146f1bb85681c5febafbdf61cbec58c5c1155c2aba47f4",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.meshfree",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshfree.surface-stokes.profile",
+          "profile_id": "041c5918457102f6dc1fa30ca3642da054bb7fea735c343c57112683fa17459e",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic",
+            "convergence",
+            "declared-refusal",
+            "independent-reference",
+            "independent-review",
+            "killing-modes",
+            "public-workflow",
+            "resource-envelope",
+            "scaling",
+            "tangency"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundary": "closed-surface",
+                "capacity": 4096,
+                "derivative-class": "none",
+                "device": "cpu",
+                "dimension": 3,
+                "geometry-authority": "sphere-exact-implicit-normals",
+                "method": "surface-strain-form-stokes-brinkman-gmls-degree-4",
+                "precision": "float64",
+                "provider": "phydrax-native",
+                "reproducibility": "deterministic-seeded",
+                "temporal-method": "none"
+              },
+              "capability": "meshfree.surface-stokes",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fd00c211d5300d9636af6d052e97b3c94914ad6dae23b1d28a441e9987701e0a"
             }
           ],
           "version": "candidate"

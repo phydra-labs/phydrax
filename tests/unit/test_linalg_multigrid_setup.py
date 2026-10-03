@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -323,7 +324,8 @@ def test_galerkin_route_planning_preserves_sparse_and_matrix_free_paths() -> Non
     )
     # ty: ignore[unresolved-attribute]
     assert sparse_hierarchy.levels[1].operator.sparse_storage().canonical
-    assert sparse_hierarchy.sparse_assemblies[0] is not None
+    # Rebuild-all refresh retains no symbolic product recipe as state.
+    assert sparse_hierarchy.sparse_assemblies == (None,)
     assert jnp.allclose(
         la.materialize(
             sparse_hierarchy.levels[1].operator,
@@ -524,29 +526,33 @@ def test_smoothed_aggregation_costs_terminal_coarse_solver_not_fine_operator() -
         _poisson_matrix(size),
         properties=_positive_definite_properties(),
     )
+    # Vaněk aggregation of the 8-node chain gives the aggregates {0,1},
+    # {2,3,4}, {5,6,7}: a 3-dimensional terminal coarse level (9 dense
+    # entries) below the 64-entry fine operator.
     builder = la.SmoothedAggregationHierarchyBuilder(
         la.SmoothedAggregationPolicy(
             strength_threshold=0.25,
-            max_levels=4,
+            max_levels=2,
             minimum_coarse_size=2,
             prolongation_smoothing_steps=1,
         ),
         la.JacobiPreconditionerBuilder(),
         la.DenseInversePreconditionerBuilder(),
     )
-    fitting = la.MaterializationPolicy(max_entries=4, max_bytes=1_000_000)
+    fitting = la.MaterializationPolicy(max_entries=9, max_bytes=1_000_000)
     accepted = builder.cost_for(operator, materialization=fitting)
     hierarchy = builder.prepare_hierarchy(operator, materialization=fitting)
     rejected = builder.cost_for(
         operator,
         materialization=la.MaterializationPolicy(
-            max_entries=3,
+            max_entries=8,
             max_bytes=1_000_000,
         ),
     )
 
     assert accepted.accepted
-    assert hierarchy.diagnostics.level_dimensions[-1] == 2
+    assert hierarchy.diagnostics.level_dimensions == (8, 3)
+    assert hierarchy.diagnostics.aggregate_assignments == ((0, 0, 1, 1, 1, 2, 2, 2),)
     assert not rejected.accepted
     assert "dense" in rejected.reason
 
@@ -576,3 +582,157 @@ def test_optional_pyamg_conversion_produces_jittable_phydrax_hierarchy() -> None
         jax.jit(lambda value: action.apply(value))(rhs),
         action.apply(rhs),
     )
+
+
+def _grid_laplacian(dimension: int, side: int) -> Any:
+    """Dirichlet five-point (2-D) or seven-point (3-D) graph Laplacian."""
+    chain = _poisson_matrix(side)
+    identity = jnp.eye(side)
+    matrix = jnp.zeros((side**dimension, side**dimension))
+    for axis in range(dimension):
+        term = chain if axis == 0 else identity
+        for index in range(1, dimension):
+            term = jnp.kron(term, chain if index == axis else identity)
+        matrix = matrix + term
+    return matrix
+
+
+def _jacobi_smoothed_aggregation(
+    *, minimum_coarse_size: int, refresh_mode: la.MultigridRefreshMode = "rebuild-all"
+) -> Any:
+    return la.SmoothedAggregationHierarchyBuilder(
+        la.SmoothedAggregationPolicy(minimum_coarse_size=minimum_coarse_size),
+        la.JacobiPreconditionerBuilder(relaxation=2.0 / 3.0),
+        la.DenseInversePreconditionerBuilder(),
+        refresh_mode=refresh_mode,
+        properties=la.PreconditionerProperties(
+            linear=True,
+            stationary=True,
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "linear": "construction",
+                "stationary": "construction",
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+            },
+        ),
+    )
+
+
+_SMALL_DENSE = la.MaterializationPolicy(max_entries=1_000_000, max_bytes=100_000_000)
+
+
+@pytest.mark.parametrize(
+    ("dimension", "side", "complexity_limit"),
+    [(2, 32, 1.4), (3, 12, 1.65)],
+    ids=["2d-five-point", "3d-seven-point"],
+)
+def test_vanek_aggregation_bounds_operator_complexity_on_grid_laplacians(
+    dimension: int, side: int, complexity_limit: float
+) -> None:
+    operator = _sparse_map(
+        _grid_laplacian(dimension, side),
+        properties=_positive_definite_properties(),
+    )
+    hierarchy = _jacobi_smoothed_aggregation(minimum_coarse_size=16).prepare_hierarchy(
+        operator, materialization=_SMALL_DENSE
+    )
+    diagnostics = hierarchy.diagnostics
+
+    # Measured operator complexity 1.33 (2-D) and 1.56 (3-D).
+    assert diagnostics.operator_complexity is not None
+    assert diagnostics.operator_complexity < complexity_limit
+    assert diagnostics.grid_complexity < 1.25
+    assert len(diagnostics.prolongation_spectral_radii) == (
+        len(diagnostics.level_dimensions) - 1
+    )
+    # Gershgorin bounds rho(D^-1 A) by 2 on the fine grid; Ritz moduli of the
+    # similar symmetric matrix approach that radius from inside.
+    assert 1.8 < diagnostics.prolongation_spectral_radii[0] <= 2.0 + 1e-12
+
+
+def test_smoothed_aggregation_pcg_iterations_stay_flat_under_refinement() -> None:
+    def iterations(side: int) -> int:
+        operator = _sparse_map(
+            _grid_laplacian(2, side), properties=_positive_definite_properties()
+        )
+        action = _jacobi_smoothed_aggregation(minimum_coarse_size=16).prepare(
+            operator, materialization=_SMALL_DENSE
+        )
+        result = la.solve(
+            la.LinearSystem(operator),
+            jnp.sin(jnp.arange(side * side, dtype=jnp.float64)),
+            policy=la.LinearSolvePolicy(
+                la.PCG(),
+                preconditioning=la.PreconditioningPolicy(action),
+                tolerance=la.TolerancePolicy(relative=1e-8, absolute=0.0, max_steps=200),
+                differentiation=la.DifferentiationPolicy("none"),
+            ),
+        )
+        assert bool(result.successful)
+        return int(result.diagnostics.iterations)
+
+    coarse_iterations = iterations(16)
+    fine_iterations = iterations(32)
+
+    # Four times the unknowns: unpreconditioned CG would roughly double.
+    assert fine_iterations <= coarse_iterations + 2
+
+
+@pytest.mark.parametrize(
+    ("kind", "refresh_mode"),
+    [
+        ("smoothed-aggregation", "reuse-symbolic-sparse-products"),
+        ("smoothed-aggregation", "reuse-transfers"),
+        ("galerkin", "reuse-symbolic-sparse-products"),
+        ("galerkin-gauss-seidel", "reuse-symbolic-sparse-products"),
+    ],
+    ids=["sa-symbolic", "sa-transfers", "galerkin-symbolic", "galerkin-gauss-seidel"],
+)
+def test_numeric_hierarchy_refresh_runs_inside_jit(
+    kind: str, refresh_mode: la.MultigridRefreshMode
+) -> None:
+    matrix = _grid_laplacian(2, 12)
+    operator = _sparse_map(matrix, properties=_positive_definite_properties())
+    rows, columns = jnp.nonzero(matrix)
+    shift = jnp.where(rows == columns, 0.3, 0.0)
+    aggregation = _jacobi_smoothed_aggregation(
+        minimum_coarse_size=8, refresh_mode=refresh_mode
+    )
+    builder: Any = aggregation
+    if kind != "smoothed-aggregation":
+        reference = aggregation.prepare_hierarchy(operator, materialization=_SMALL_DENSE)
+        transfers = tuple(
+            (level.restriction, level.prolongation) for level in reference.levels[:-1]
+        )
+        smoother = (
+            la.GaussSeidelPreconditionerBuilder(direction="symmetric")
+            if kind == "galerkin-gauss-seidel"
+            else la.JacobiPreconditionerBuilder(relaxation=2.0 / 3.0)
+        )
+        builder = la.GalerkinHierarchyBuilder(
+            transfers,
+            (smoother,) * len(transfers),
+            la.DenseInversePreconditionerBuilder(),
+            refresh_mode=refresh_mode,
+        )
+    action = builder.prepare(operator, materialization=_SMALL_DENSE)
+    residual = jnp.cos(jnp.arange(matrix.shape[0], dtype=jnp.float64))
+
+    def refreshed(scale: Any, offset: Any, value: Any) -> Any:
+        changed = eqx.tree_at(
+            lambda current: current.coefficients,
+            operator,
+            operator.coefficients * scale + offset,
+        )
+        return builder.refresh(action, changed, materialization=_SMALL_DENSE).apply(value)
+
+    eager = refreshed(1.5, shift, residual)
+    traced = jax.jit(refreshed)(1.5, shift, residual)
+    scaled = jax.jit(refreshed)(2.0, jnp.zeros_like(shift), residual)
+
+    assert jnp.allclose(traced, eager, rtol=0.0, atol=1e-13)
+    assert not jnp.allclose(eager, action.apply(residual))
+    # Frozen transfers make the cycle homogeneous of degree -1 in the operator.
+    assert jnp.allclose(2.0 * scaled, action.apply(residual), rtol=0.0, atol=1e-12)

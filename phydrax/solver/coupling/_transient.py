@@ -39,6 +39,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._validation import canonical_identifier, positive_finite_float
@@ -885,7 +886,11 @@ class CoupledTransientSolution(StrictModule):
     ``dae`` carries every native status, step, attempt, regularity, and
     continuation record; ``certificate`` evaluates the original coupled rows at
     the samples. ``accepted`` requires native success and every certified
-    sample.
+    sample. Derivatives of the trajectory through the runtime ``parameters``
+    are the native DAE's discrete implicit derivatives on its (fixed or frozen
+    accepted) grid, ``dae.differentiation_mode``; ``derivative_valid`` admits
+    them only at an accepted solution, and derivatives of a refused solution are
+    NaN rather than a plausible sensitivity of an unaccepted trajectory.
     """
 
     dae: DifferentialAlgebraicSolution
@@ -893,6 +898,7 @@ class CoupledTransientSolution(StrictModule):
     tolerance: float = eqx.field(static=True)
     native_successful: Array
     accepted: Array
+    derivative_valid: Array
 
     @property
     def times(self) -> Array:
@@ -926,12 +932,20 @@ def solve_coupled_transient(
     dae = solve_dae(problem, time_grid, policy=policy, continuation=continuation)
     certificate = _certificate(transient, dae, parameters, tolerance_)
     native = jnp.asarray(dae.successful)
+    accepted = native & jnp.all(certificate.accepted)
     return CoupledTransientSolution(
-        dae=dae,
+        dae=guard_derivative_validity(
+            dae,
+            accepted,
+            dependencies=parameters,
+            failure="status",
+            message="Coupled transient derivatives require an accepted solution.",
+        ),
         certificate=certificate,
         tolerance=tolerance_,
         native_successful=native,
-        accepted=native & jnp.all(certificate.accepted),
+        accepted=accepted,
+        derivative_valid=accepted,
     )
 
 

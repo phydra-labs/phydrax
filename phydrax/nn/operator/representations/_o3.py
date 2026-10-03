@@ -104,6 +104,81 @@ class O3Representation(StrictModule, NonTrainableState):
             + 5 * (self.tensors + self.pseudotensors)
         )
 
+    @property
+    def channel_count(self) -> int:
+        """Number of irreducible channels, the total multiplicity."""
+        return (
+            self.scalars
+            + self.pseudoscalars
+            + self.vectors
+            + self.pseudovectors
+            + self.tensors
+            + self.pseudotensors
+        )
+
+    def _channel_blocks(self) -> tuple[tuple[int, int], ...]:
+        # Packed order and orthonormal component widths of each irrep block.
+        return (
+            (self.scalars, 1),
+            (self.pseudoscalars, 1),
+            (self.vectors, 3),
+            (self.pseudovectors, 3),
+            (self.tensors, 5),
+            (self.pseudotensors, 5),
+        )
+
+    def channel_squared_norms(self, values: Array, /) -> Array:
+        """Squared Euclidean norm of every irreducible channel.
+
+        Packed components are coordinates in orthonormal bases, so each value
+        equals the Cartesian (Frobenius) squared norm of its channel and is
+        invariant under every proper and improper orthogonal transform.
+        """
+        array = jnp.asarray(values)
+        if array.shape[-1] != self.packed_size:
+            raise ValueError(
+                f"O(3) values require packed size {self.packed_size}; got {array.shape[-1]}."
+            )
+        offset = 0
+        norms: list[Array] = []
+        for count, width in self._channel_blocks():
+            block = array[..., offset : offset + count * width]
+            offset += count * width
+            norms.append(
+                jnp.sum(
+                    jnp.square(block.reshape(array.shape[:-1] + (count, width))), axis=-1
+                )
+            )
+        return jnp.concatenate(norms, axis=-1)
+
+    def scale_channels(self, values: Array, factors: Array, /) -> Array:
+        """Multiply every irreducible channel by one factor.
+
+        The map is O(3)-equivariant whenever the factors are invariant.
+        """
+        array = jnp.asarray(values)
+        scale = jnp.asarray(factors)
+        if (
+            array.shape[-1] != self.packed_size
+            or scale.shape[-1] != self.channel_count
+            or scale.shape[:-1] != array.shape[:-1]
+        ):
+            raise ValueError(
+                "Channel scaling requires packed values and one factor per irreducible channel."
+            )
+        offset = 0
+        channel = 0
+        scaled: list[Array] = []
+        for count, width in self._channel_blocks():
+            block = array[..., offset : offset + count * width].reshape(
+                array.shape[:-1] + (count, width)
+            )
+            factor = scale[..., channel : channel + count, None]
+            scaled.append((block * factor).reshape(array.shape[:-1] + (count * width,)))
+            offset += count * width
+            channel += count
+        return jnp.concatenate(scaled, axis=-1)
+
     def split(self, values: Array, /) -> O3Features:
         array = jnp.asarray(values)
         if array.shape[-1] != self.packed_size:

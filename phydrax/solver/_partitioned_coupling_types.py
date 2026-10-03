@@ -708,7 +708,13 @@ class CouplingWindowErrorEstimate(StrictModule):
 
 
 class CouplingSubsystemResult(StrictModule):
-    """One participant candidate and endpoint outputs for a frozen window."""
+    """One participant candidate and endpoint outputs for a frozen window.
+
+    `evidence` is the participant's own array PyTree of native method evidence
+    for this evaluation (`None` when it publishes none). Its structure is fixed
+    per participant and is published whether the candidate is accepted or
+    refused; window results retain it per participant without reduction.
+    """
 
     candidate_state: Any
     outputs: tuple[Any, ...]
@@ -718,7 +724,7 @@ class CouplingSubsystemResult(StrictModule):
     iterations: Array
     error_estimate: CouplingWindowErrorEstimate
     work: Array
-    auxiliary: Any
+    evidence: Any
 
     def __init__(
         self,
@@ -732,7 +738,7 @@ class CouplingSubsystemResult(StrictModule):
         iterations: Any = 0,
         error_estimate: CouplingWindowErrorEstimate | None = None,
         work: Any = 0,
-        auxiliary: Any = None,
+        evidence: Any = None,
     ) -> None:
         self.candidate_state = _array_tree(candidate_state, "candidate_state")
         self.outputs = tuple(outputs)
@@ -748,7 +754,7 @@ class CouplingSubsystemResult(StrictModule):
         if not isinstance(self.error_estimate, CouplingWindowErrorEstimate):
             raise TypeError("error_estimate must be CouplingWindowErrorEstimate or None.")
         self.work = _scalar(work, "participant work", dtype=jnp.int32)
-        self.auxiliary = auxiliary
+        self.evidence = None if evidence is None else _array_tree(evidence, "evidence")
 
 
 class AbstractCouplingSubsystem(StrictModule):
@@ -944,7 +950,13 @@ class CouplingProvenance(StrictModule, NonTrainableState):
 
 
 class CouplingWindowResult(StrictModule):
-    """One coupling candidate, atomic accepted state, and retained evidence."""
+    """One coupling candidate, atomic accepted state, and retained evidence.
+
+    `participant_evidence` holds each participant's native method evidence from
+    the evaluation that defines the candidate, ordered and owned by the state's
+    `subsystem_ids`; heterogeneous participant structures are never merged. It is
+    retained whether the window commits or rolls back.
+    """
 
     candidate_state: CouplingState
     accepted_state: CouplingState
@@ -956,6 +968,7 @@ class CouplingWindowResult(StrictModule):
     provenance: CouplingProvenance
     proposed_exchange_budget: Array
     accepted_exchange_budget: Array
+    participant_evidence: tuple[Any, ...]
 
 
 __all__ = [

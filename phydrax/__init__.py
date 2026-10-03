@@ -118,7 +118,11 @@ from . import (
 )
 from . import artifacts, events, observation
 from . import causal
-from ._array_archive import ArrayArchiveLimits
+from ._array_archive import (
+    ArrayArchiveCorruptionError,
+    ArrayArchiveError,
+    ArrayArchiveLimits,
+)
 from ._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
@@ -272,6 +276,8 @@ __all__ = [
     "AdmissibilityHeader",
     "AdmissibilityReason",
     "AdmissibilityTransitionRequest",
+    "ArrayArchiveCorruptionError",
+    "ArrayArchiveError",
     "ArrayArchiveLimits",
     "ArrayLeafSchema",
     "ArrayPyTreeSchema",

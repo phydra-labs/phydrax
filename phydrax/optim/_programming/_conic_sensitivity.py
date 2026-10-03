@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from enum import IntEnum
 from typing import cast, Literal, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
@@ -14,8 +15,6 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
-
-import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...linalg import (
@@ -41,8 +40,15 @@ from ...sparse import SparseCoordinateOperator, SparseLinearMap
 from ...typing import checked
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 from ._lifecycle import ConvexProgramExecution, PreparedConvexProgram
-from ._policy import ConicGeneralizedDerivativePolicy
-from ._problem import _conic_bound_indices, ConicProgram
+from ._policy import ConicGeneralizedDerivativePolicy, ConvexTermination
+from ._problem import (
+    _conic_bound_indices,
+    _conic_matrix_mv,
+    _conic_matrix_transpose_mv,
+    _conic_quadratic_mv,
+    ConicProgram,
+)
+from ._quadratic import ConvexProgramResult
 
 
 if TYPE_CHECKING:
@@ -120,6 +126,75 @@ class ConicProgramData(StrictModule):
         )
 
 
+class ConicSensitivityStatus(IntEnum):
+    """Per-case derivative contract of one conic sensitivity evaluation.
+
+    ``REGULAR_FIXED_ACTIVE`` publishes the classical derivative of the locally
+    fixed-active solution map. ``AMBIGUOUS_ACTIVE_SET`` marks weak
+    complementarity or a nonsmooth cone stratum; it has no default derivative and
+    publishes only an explicitly selected ``ConicGeneralizedDerivativePolicy``
+    element. ``ACTIVE_SET_CHANGED`` marks a forward witness whose constraint roles
+    differ from the declared fixed active set. ``SINGULAR_KKT`` marks a derivative
+    system without nonsingularity or solve evidence; ``linear_status`` separates
+    rank deficiency from iterative non-convergence. ``FORWARD_FAILED`` marks an
+    unsuccessful, non-finite, or KKT-inconsistent forward witness.
+    """
+
+    REGULAR_FIXED_ACTIVE = 0
+    AMBIGUOUS_ACTIVE_SET = 1
+    ACTIVE_SET_CHANGED = 2
+    SINGULAR_KKT = 3
+    FORWARD_FAILED = 4
+
+
+class ConicConstraintRole(IntEnum):
+    """Classified role of one lowered conic or bound constraint row.
+
+    ``EQUALITY`` rows (zero cones and fixed bounds) always bind. Orthant rows are
+    ``ACTIVE`` (zero slack, positive multiplier) or ``INACTIVE`` (positive slack,
+    zero multiplier). Rows of a nonpolyhedral block share the block stratum:
+    ``INACTIVE`` (zero multiplier), ``ACTIVE`` (zero slack), or ``BOUNDARY`` (both on
+    the cone boundary). ``AMBIGUOUS`` rows violate strict complementarity.
+    """
+
+    EQUALITY = 0
+    INACTIVE = 1
+    ACTIVE = 2
+    BOUNDARY = 3
+    AMBIGUOUS = 4
+
+
+class ConicActiveSetEvidence(StrictModule):
+    """Fixed-active-set classification and original-coordinate KKT audit.
+
+    Rows follow the lowered constraint order: original cone rows, then fixed,
+    finite-lower, and finite-upper bound rows in ascending variable order. Slack
+    and multiplier witnesses come from the audited forward result; residual norms
+    are measured in original program coordinates and compared with
+    ``kkt_tolerance``. ``strict_complementarity_margin`` is the dual-projection
+    smoothness margin of ``multiplier - slack`` and must exceed
+    ``strict_complementarity_threshold``. ``status`` is the preparation-time
+    ``ConicSensitivityStatus``; derivative evaluation may refine a regular case to
+    ``SINGULAR_KKT``.
+    """
+
+    status: Array
+    roles: Array
+    active: Array
+    strict_complementarity_margin: Array
+    strict_complementarity_threshold: Array
+    primal_residual_norm: Array
+    dual_residual_norm: Array
+    complementarity_residual_norm: Array
+    projection_residual_norm: Array
+    kkt_tolerance: Array
+    structure_id: str = eqx.field(static=True)
+    num_original_constraints: int = eqx.field(static=True)
+    fixed_indices: tuple[int, ...] = eqx.field(static=True)
+    lower_indices: tuple[int, ...] = eqx.field(static=True)
+    upper_indices: tuple[int, ...] = eqx.field(static=True)
+
+
 class PreparedConicSensitivity(StrictModule):
     """Audited numerical state for reusable projection-KKT sensitivities."""
 
@@ -131,10 +206,7 @@ class PreparedConicSensitivity(StrictModule):
     state: Array
     state_jacobian: Array
     cone: AbstractConvexCone
-    forward_valid: Array
-    projection_margin: Array
-    projection_regular: Array
-    root_residual_norm: Array
+    active_set: ConicActiveSetEvidence
     lower_tangent_mask: Array
     upper_tangent_mask: Array
     linear_policy: LinearSolvePolicy
@@ -155,16 +227,18 @@ class PreparedConicSensitivity(StrictModule):
 
 
 class ConicSensitivityResult(StrictModule):
-    """First-order value with forward, projection, and linear regularity evidence."""
+    """First-order value with fixed-active-set, forward, and linear evidence.
+
+    ``value`` is published exactly where ``available`` is true and is NaN
+    elsewhere. ``status`` holds ``ConicSensitivityStatus`` codes per case.
+    """
 
     value: PyTree[Array]
-    forward_valid: Array
-    projection_margin: Array
-    projection_regular: Array
-    root_residual_norm: Array
+    status: Array
+    available: Array
+    active_set: ConicActiveSetEvidence
     linear_status: Array
     linear_diagnostics: LinearSolveDiagnostics
-    regular: Array
     numeric_version: Array
     convex_plan_id: str = eqx.field(static=True)
     linear_plan_id: str = eqx.field(static=True)
@@ -249,6 +323,285 @@ def _matrix_free_linear_policy(
 
 def _cone_blocks(cone: AbstractConvexCone, /) -> tuple[AbstractConvexCone, ...]:
     return cone.cones if isinstance(cone, ProductCone) else (cone,)
+
+
+def _lowered_cone(program: ConicProgram, /) -> ProductCone:
+    blocks = _cone_blocks(program.cone)
+    if program.fixed_bound_indices:
+        blocks = (*blocks, ZeroCone(len(program.fixed_bound_indices)))
+    if program.lower_bound_indices:
+        blocks = (*blocks, NonnegativeCone(len(program.lower_bound_indices)))
+    if program.upper_bound_indices:
+        blocks = (*blocks, NonnegativeCone(len(program.upper_bound_indices)))
+    return ProductCone(blocks)
+
+
+def _lowered_witness(
+    program: ConicProgram, result: ConvexProgramResult, /
+) -> tuple[Array, Array]:
+    """Return audited slack and multiplier witnesses in lowered row order."""
+
+    fixed = jnp.asarray(program.fixed_bound_indices, dtype=jnp.int32)
+    lower = jnp.asarray(program.lower_bound_indices, dtype=jnp.int32)
+    upper = jnp.asarray(program.upper_bound_indices, dtype=jnp.int32)
+    primal = result.primal
+    slack = jnp.concatenate(
+        (
+            result.cone_slack,
+            jnp.zeros(primal.shape[:-1] + (fixed.shape[0],), dtype=primal.dtype),
+            primal[..., lower] - program.lower_bounds[..., lower],
+            program.upper_bounds[..., upper] - primal[..., upper],
+        ),
+        axis=-1,
+    )
+    lower_dual = result.lower_bound_dual
+    upper_dual = result.upper_bound_dual
+    dual = jnp.concatenate(
+        (
+            result.cone_dual,
+            upper_dual[..., fixed] - lower_dual[..., fixed],
+            lower_dual[..., lower],
+            upper_dual[..., upper],
+        ),
+        axis=-1,
+    )
+    return slack, dual
+
+
+def _constraint_roles(
+    cone: ProductCone, slack: Array, dual: Array, threshold: Array, /
+) -> Array:
+    point = dual - slack
+    limit = threshold[..., None]
+    ambiguous = int(ConicConstraintRole.AMBIGUOUS)
+    active = int(ConicConstraintRole.ACTIVE)
+    inactive = int(ConicConstraintRole.INACTIVE)
+    pieces: list[Array] = []
+    for block, rows in zip(cone.cones, cone.slices, strict=True):
+        block_point = point[..., rows]
+        if isinstance(block, ZeroCone):
+            role = jnp.full(
+                block_point.shape, int(ConicConstraintRole.EQUALITY), dtype=jnp.int32
+            )
+        elif isinstance(block, NonnegativeCone):
+            role = jnp.where(
+                jnp.abs(block_point) <= limit,
+                ambiguous,
+                jnp.where(block_point > 0.0, active, inactive),
+            )
+        else:
+            # Strictly complementary nonpolyhedral blocks occupy one of three
+            # open strata; the whole block shares that role.
+            margin = block.dual_projection_smoothness_margin(block_point)[..., None]
+            stratum = jnp.where(
+                margin <= limit,
+                ambiguous,
+                jnp.where(
+                    _max_abs(dual[..., rows])[..., None] <= limit,
+                    inactive,
+                    jnp.where(
+                        _max_abs(slack[..., rows])[..., None] <= limit,
+                        active,
+                        int(ConicConstraintRole.BOUNDARY),
+                    ),
+                ),
+            )
+            role = jnp.broadcast_to(stratum, block_point.shape)
+        pieces.append(role.astype(jnp.int32))
+    return jnp.concatenate(pieces, axis=-1)
+
+
+def _original_kkt_residuals(
+    program: ConicProgram,
+    result: ConvexProgramResult,
+    regularization: float,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Primal, dual, and bound-complementarity residuals in original coordinates."""
+
+    primal = result.primal
+    slack = result.cone_slack
+    dual = result.cone_dual
+    lower_dual = result.lower_bound_dual
+    upper_dual = result.upper_bound_dual
+    lower_finite = jnp.isfinite(program.lower_bounds)
+    upper_finite = jnp.isfinite(program.upper_bounds)
+    bound_violation = jnp.maximum(
+        jnp.where(lower_finite, jnp.maximum(program.lower_bounds - primal, 0.0), 0.0),
+        jnp.where(upper_finite, jnp.maximum(primal - program.upper_bounds, 0.0), 0.0),
+    )
+    primal_residual = jnp.maximum(
+        _max_abs(
+            _conic_matrix_mv(program.constraint_matrix, primal)
+            + slack
+            - program.constraint_rhs
+        ),
+        jnp.maximum(
+            _max_abs(slack - program.cone.project(slack)), _max_abs(bound_violation)
+        ),
+    )
+    stationarity = (
+        _conic_quadratic_mv(program.quadratic, primal)
+        + regularization * primal
+        + program.linear
+        + _conic_matrix_transpose_mv(program.constraint_matrix, dual)
+        - lower_dual
+        + upper_dual
+    )
+    multiplier_violation = jnp.maximum(
+        jnp.where(lower_finite, jnp.maximum(-lower_dual, 0.0), jnp.abs(lower_dual)),
+        jnp.where(upper_finite, jnp.maximum(-upper_dual, 0.0), jnp.abs(upper_dual)),
+    )
+    dual_residual = jnp.maximum(
+        _max_abs(stationarity),
+        jnp.maximum(
+            _max_abs(dual - program.cone.project_dual(dual)),
+            _max_abs(multiplier_violation),
+        ),
+    )
+    cone_complementarity = (
+        program.cone.block_complementarity(slack, dual)
+        if isinstance(program.cone, ProductCone)
+        else program.cone.complementarity(slack, dual)[..., None]
+    )
+    return primal_residual, dual_residual, _max_abs(cone_complementarity)
+
+
+def _validate_fixed_active_set(
+    reference: ConicActiveSetEvidence | None, program: ConicProgram, /
+) -> ConicActiveSetEvidence | None:
+    if reference is None:
+        return None
+    if not isinstance(reference, ConicActiveSetEvidence):
+        raise TypeError("fixed_active_set must be a ConicActiveSetEvidence or None.")
+    if reference.structure_id != program.structure_id:
+        raise ValueError(
+            "fixed_active_set belongs to a different conic program structure."
+        )
+    return reference
+
+
+def _active_set_evidence(
+    program: ConicProgram,
+    result: ConvexProgramResult,
+    /,
+    *,
+    regularization: float,
+    termination: ConvexTermination,
+    tolerance: float,
+    projection_residual_norm: Array,
+    projection_finite: Array,
+    kkt_nonsingular: Array,
+    reference: ConicActiveSetEvidence | None,
+) -> ConicActiveSetEvidence:
+    """Classify one audited forward witness under the fixed-active-set contract.
+
+    Interior-point termination bounds complementarity products ``s_i z_i <= tau``,
+    which bounds the projection-KKT residual ``min(s_i, z_i)`` only by
+    ``sqrt(tau)``. The witness is therefore KKT-consistent when its projection
+    residual is at most ``sqrt(tau)``, and its classified roles are those of the
+    nearby projection-KKT root only when the strict-complementarity margin exceeds
+    twice that residual; otherwise the active set is ambiguous.
+    """
+
+    cone = _lowered_cone(program)
+    slack, dual = _lowered_witness(program, result)
+    point = dual - slack
+    margin = cone.dual_projection_smoothness_margin(point)
+    threshold = tolerance * jnp.maximum(1.0, _max_abs(point))
+    roles = _constraint_roles(cone, slack, dual, threshold)
+    primal_residual, dual_residual, cone_complementarity = _original_kkt_residuals(
+        program, result, regularization
+    )
+    rows = program.num_constraints
+    complementarity = jnp.maximum(
+        cone_complementarity, _max_abs(slack[..., rows:] * dual[..., rows:])
+    )
+    scale = jnp.maximum(
+        1.0,
+        jnp.maximum(
+            jnp.abs(result.objective),
+            jnp.maximum(_max_abs(program.linear), _max_abs(program.constraint_rhs)),
+        ),
+    )
+    kkt_tolerance = termination.absolute + termination.relative * scale
+    finite = (
+        jnp.all(jnp.isfinite(result.primal), axis=-1)
+        & jnp.all(jnp.isfinite(slack), axis=-1)
+        & jnp.all(jnp.isfinite(dual), axis=-1)
+        & jnp.isfinite(primal_residual)
+        & jnp.isfinite(dual_residual)
+        & jnp.isfinite(complementarity)
+    )
+    forward_valid = (
+        result.successful
+        & finite
+        & projection_finite
+        & (projection_residual_norm <= jnp.sqrt(kkt_tolerance))
+        & (primal_residual <= kkt_tolerance)
+        & (dual_residual <= kkt_tolerance)
+        & (complementarity <= kkt_tolerance)
+    )
+    changed = (
+        jnp.zeros(roles.shape[:-1], dtype=jnp.bool_)
+        if reference is None
+        else jnp.any(roles != reference.roles, axis=-1)
+    )
+    status = jnp.where(
+        ~forward_valid,
+        int(ConicSensitivityStatus.FORWARD_FAILED),
+        jnp.where(
+            margin <= jnp.maximum(threshold, 2.0 * projection_residual_norm),
+            int(ConicSensitivityStatus.AMBIGUOUS_ACTIVE_SET),
+            jnp.where(
+                changed,
+                int(ConicSensitivityStatus.ACTIVE_SET_CHANGED),
+                jnp.where(
+                    kkt_nonsingular,
+                    int(ConicSensitivityStatus.REGULAR_FIXED_ACTIVE),
+                    int(ConicSensitivityStatus.SINGULAR_KKT),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    active = (
+        (roles == int(ConicConstraintRole.EQUALITY))
+        | (roles == int(ConicConstraintRole.ACTIVE))
+        | (roles == int(ConicConstraintRole.BOUNDARY))
+    )
+    return ConicActiveSetEvidence(
+        status,
+        roles,
+        active,
+        margin,
+        threshold,
+        primal_residual,
+        dual_residual,
+        complementarity,
+        projection_residual_norm,
+        kkt_tolerance,
+        structure_id=program.structure_id,
+        num_original_constraints=program.num_constraints,
+        fixed_indices=program.fixed_bound_indices,
+        lower_indices=program.lower_bound_indices,
+        upper_indices=program.upper_bound_indices,
+    )
+
+
+def _resolve_status(
+    status: Array, linear_regular: Array, generalized: bool, /
+) -> tuple[Array, Array]:
+    """Refine preparation status with derivative-solve evidence."""
+
+    solvable = status == int(ConicSensitivityStatus.REGULAR_FIXED_ACTIVE)
+    if generalized:
+        solvable = solvable | (status == int(ConicSensitivityStatus.AMBIGUOUS_ACTIVE_SET))
+    resolved = jnp.where(
+        solvable & ~linear_regular,
+        int(ConicSensitivityStatus.SINGULAR_KKT),
+        status,
+    ).astype(jnp.int32)
+    return resolved, solvable & linear_regular
 
 
 def _restore_cases(value: Array, batch_shape: tuple[int, ...], /) -> Array:
@@ -384,28 +737,28 @@ def _vjp_case(
     return linear_result, gradients
 
 
-def _result_regularity(
+def _dense_resolution(
     prepared: PreparedConicSensitivity, linear_result: LinearSolveResult, /
-) -> Array:
+) -> tuple[Array, Array]:
+    """Return flattened case status and availability for one dense solve."""
+
     diagnostics = linear_result.diagnostics
     condition = diagnostics.condition_estimate
     condition_ok = jnp.isfinite(condition)
     precision = prepared.linear_policy.precision
     if precision is not None and precision.condition_limit is not None:
         condition_ok = condition_ok & (condition <= precision.condition_limit)
-    evidence_finite = (
-        jnp.all(jnp.isfinite(linear_result.value), axis=-1)
-        & ~jnp.isnan(prepared.projection_margin)
-        & jnp.isfinite(prepared.root_residual_norm)
-    )
-    return (
-        prepared.forward_valid
-        & prepared.projection_regular
-        & linear_result.successful
+    linear_regular = (
+        linear_result.successful
         & diagnostics.finite
         & diagnostics.converged
         & condition_ok
-        & evidence_finite
+        & jnp.all(jnp.isfinite(linear_result.value), axis=-1)
+    )
+    return _resolve_status(
+        prepared.active_set.status.reshape((prepared.num_cases,)),
+        linear_regular,
+        False,
     )
 
 
@@ -573,8 +926,15 @@ def prepare_conic_sensitivity(
     stability: Callable[[JacobianLinearOperator], StabilityLowerBound] | None = None,
     generalized: ConicGeneralizedDerivativePolicy | None = None,
     regularity_tolerance: float = 1e-7,
+    fixed_active_set: ConicActiveSetEvidence | None = None,
 ) -> PreparedConicSensitivity | PreparedMatrixFreeConicSensitivity:
-    """Bind an audited conic execution to a reusable projection-KKT derivative."""
+    """Bind an audited conic execution to a reusable projection-KKT derivative.
+
+    The audited slack and multiplier witnesses are classified into fixed
+    constraint roles. ``fixed_active_set`` declares the roles a consumer froze at
+    an earlier preparation of the same program structure; any differing role
+    yields ``ACTIVE_SET_CHANGED`` and no derivative.
+    """
 
     if not isinstance(prepared, PreparedConvexProgram):
         raise TypeError("prepared must be a PreparedConvexProgram.")
@@ -604,6 +964,7 @@ def prepare_conic_sensitivity(
     tolerance = float(regularity_tolerance)
     if not math.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("regularity_tolerance must be finite and positive.")
+    reference = _validate_fixed_active_set(fixed_active_set, program)
     if representation not in ("dense", "matrix-free"):
         raise ValueError("representation must be 'dense' or 'matrix-free'.")
     if representation == "matrix-free":
@@ -624,6 +985,7 @@ def prepare_conic_sensitivity(
             regularity_tolerance=tolerance,
             generalized=generalized,
             failure_mode=failure_mode,
+            fixed_active_set=reference,
         )
     linear_policy, failure_mode = _linear_policy(linear)
     constraint_matrix = program.constraint_matrix
@@ -703,27 +1065,10 @@ def prepare_conic_sensitivity(
     regularization = prepared.plan.policy.regularization
     quadratic = quadratic + regularization * jnp.eye(variables, dtype=dtype)
     primal = result.primal.reshape((count, variables))
-    original_dual = result.cone_dual.reshape((count, original_constraints))
-    lower_dual = result.lower_bound_dual.reshape((count, variables))
-    upper_dual = result.upper_bound_dual.reshape((count, variables))
-    bound_dual = jnp.concatenate(
-        (
-            upper_dual[:, fixed] - lower_dual[:, fixed],
-            lower_dual[:, lower],
-            upper_dual[:, upper],
-        ),
-        axis=1,
-    )
-    dual = jnp.concatenate((original_dual, bound_dual), axis=1)
+    _, lowered_dual = _lowered_witness(program, result)
+    dual = lowered_dual.reshape((count, lowered_dual.shape[-1]))
     state = jnp.concatenate((primal, dual), axis=1)
-    blocks = _cone_blocks(program.cone)
-    if fixed_indices:
-        blocks = (*blocks, ZeroCone(len(fixed_indices)))
-    if lower_indices:
-        blocks = (*blocks, NonnegativeCone(len(lower_indices)))
-    if upper_indices:
-        blocks = (*blocks, NonnegativeCone(len(upper_indices)))
-    cone = ProductCone(blocks)
+    cone = _lowered_cone(program)
     residual = jax.vmap(
         lambda p, q, a, b, u: _kkt_residual(
             u,
@@ -749,28 +1094,23 @@ def prepare_conic_sensitivity(
         )(u)
     )(quadratic, linear_values, matrix, rhs, state)
     root_residual_norm = _max_abs(residual)
-    data_scale = jnp.maximum(
-        1.0,
-        jnp.maximum(
-            _max_abs(linear_values),
-            jnp.maximum(_max_abs(rhs), _max_abs(state)),
-        ),
-    )
     termination = prepared.plan.policy.termination
-    root_tolerance = termination.absolute + termination.relative * data_scale
-    projection_point = dual + ein.contract("bij,bj->bi", matrix, primal) - rhs
-    projection_margin = cone.dual_projection_smoothness_margin(projection_point)
-    projection_scale = jnp.maximum(1.0, _max_abs(projection_point))
-    projection_regular = projection_margin > tolerance * projection_scale
     finite = (
         jnp.all(jnp.isfinite(state), axis=-1)
         & jnp.all(jnp.isfinite(residual), axis=-1)
         & jnp.isfinite(root_residual_norm)
     )
-    forward_valid = (
-        result.successful.reshape((count,))
-        & finite
-        & (root_residual_norm <= root_tolerance)
+    active_set = _active_set_evidence(
+        program,
+        result,
+        regularization=regularization,
+        termination=termination,
+        tolerance=tolerance,
+        projection_residual_norm=_restore_cases(root_residual_norm, program.batch_shape),
+        projection_finite=_restore_cases(finite, program.batch_shape),
+        # Dense nonsingularity is decided by the rank-revealing derivative solve.
+        kkt_nonsingular=jnp.ones(program.batch_shape, dtype=jnp.bool_),
+        reference=reference,
     )
     lower_tangent_mask = jnp.zeros((variables,), dtype=jnp.bool_)
     upper_tangent_mask = jnp.zeros((variables,), dtype=jnp.bool_)
@@ -795,10 +1135,7 @@ def prepare_conic_sensitivity(
         state,
         state_jacobian,
         cone,
-        forward_valid,
-        projection_margin,
-        projection_regular,
-        root_residual_norm,
+        active_set,
         lower_tangent_mask,
         upper_tangent_mask,
         linear_policy,
@@ -869,27 +1206,25 @@ def conic_primal_jvp(
         tangent_matrix,
         tangent_rhs,
     )
-    regular = _result_regularity(prepared, linear_result)
+    status, available = _dense_resolution(prepared, linear_result)
     primal_tangent = _mask_cases(
         linear_result.value[:, : prepared.num_variables],
-        regular,
+        available,
     )
     value = _restore_cases(primal_tangent, prepared.batch_shape)
     if prepared.failure_mode == "error":
         value = _guard_result(
             value,
-            regular,
-            "Conic primal JVP requires a successful regular projection-KKT system.",
+            available,
+            "Conic primal JVP requires a regular fixed-active projection-KKT system.",
         )
     return ConicSensitivityResult(
         value,
-        _restore_cases(prepared.forward_valid, prepared.batch_shape),
-        _restore_cases(prepared.projection_margin, prepared.batch_shape),
-        _restore_cases(prepared.projection_regular, prepared.batch_shape),
-        _restore_cases(prepared.root_residual_norm, prepared.batch_shape),
+        _restore_cases(status, prepared.batch_shape),
+        _restore_cases(available, prepared.batch_shape),
+        prepared.active_set,
         _restore_cases(linear_result.status, prepared.batch_shape),
         _restore_tree_cases(linear_result.diagnostics, prepared.batch_shape),
-        _restore_cases(regular, prepared.batch_shape),
         prepared.numeric_version,
         convex_plan_id=prepared.convex_plan_id,
         linear_plan_id=linear_result.provenance.plan_id,
@@ -950,24 +1285,22 @@ def conic_primal_vjp(
         prepared.state_jacobian,
         cotangent_,
     )
-    regular = _result_regularity(prepared, linear_result)
-    gradients = jax.tree.map(lambda value: _mask_cases(value, regular), gradients)
+    status, available = _dense_resolution(prepared, linear_result)
+    gradients = jax.tree.map(lambda value: _mask_cases(value, available), gradients)
     value = _pullback_data(prepared, *gradients)
     if prepared.failure_mode == "error":
         value = _guard_result(
             value,
-            regular,
-            "Conic primal VJP requires a successful regular projection-KKT system.",
+            available,
+            "Conic primal VJP requires a regular fixed-active projection-KKT system.",
         )
     return ConicSensitivityResult(
         value,
-        _restore_cases(prepared.forward_valid, prepared.batch_shape),
-        _restore_cases(prepared.projection_margin, prepared.batch_shape),
-        _restore_cases(prepared.projection_regular, prepared.batch_shape),
-        _restore_cases(prepared.root_residual_norm, prepared.batch_shape),
+        _restore_cases(status, prepared.batch_shape),
+        _restore_cases(available, prepared.batch_shape),
+        prepared.active_set,
         _restore_cases(linear_result.status, prepared.batch_shape),
         _restore_tree_cases(linear_result.diagnostics, prepared.batch_shape),
-        _restore_cases(regular, prepared.batch_shape),
         prepared.numeric_version,
         convex_plan_id=prepared.convex_plan_id,
         linear_plan_id=linear_result.provenance.plan_id,
@@ -976,8 +1309,11 @@ def conic_primal_vjp(
 
 
 __all__ = [
+    "ConicActiveSetEvidence",
+    "ConicConstraintRole",
     "ConicProgramData",
     "ConicSensitivityResult",
+    "ConicSensitivityStatus",
     "PreparedConicSensitivity",
     "conic_primal_jvp",
     "conic_primal_vjp",

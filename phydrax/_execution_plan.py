@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, assert_never
 
 from ._execution_resources import (
     DeterminismScope,
@@ -460,6 +460,117 @@ def _require_capabilities(
         reasons.append(f"candidate lacks required {name}: {', '.join(missing)}")
 
 
+def _known_total(values: Sequence[int | None], /) -> int | None:
+    if any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)
+
+
+def _require_certified_host_memory(
+    reasons: list[str],
+    footprint: int,
+    inventory: ResourceInventory,
+    group: ExecutionGroupSpec,
+    /,
+) -> None:
+    # Available memory is a per-host quantity; processes sharing a host share
+    # one measurement, and every host in the placement needs its own.
+    inventory_hosts = dict(inventory.process_host_ids)
+    processes_by_host: dict[str, list[int]] = {}
+    for process in group.process_indices:
+        if process in inventory_hosts:
+            host = inventory_hosts[process]
+        elif len(group.process_indices) == 1:
+            host = f"process-{process}"
+        else:
+            reasons.append("certified memory envelope lacks the process host mapping")
+            return
+        processes_by_host.setdefault(host, []).append(process)
+    samples = {sample.process_index: sample for sample in inventory.host_memory}
+    for host in sorted(processes_by_host):
+        available = tuple(
+            samples[process].host_available.value_bytes
+            for process in processes_by_host[host]
+            if process in samples
+            and samples[process].host_available.value_bytes is not None
+        )
+        if not available:
+            reasons.append(
+                f"certified memory envelope lacks measured available memory on {host}"
+            )
+        elif footprint > min(value for value in available if value is not None):
+            reasons.append(
+                f"candidate per-host memory exceeds measured available memory on {host}"
+            )
+
+
+def _require_certified_device_memory(
+    reasons: list[str],
+    footprint: int | None,
+    inventory: ResourceInventory,
+    group: ExecutionGroupSpec,
+    /,
+) -> None:
+    # Host-platform devices draw on host memory, which the host check covers.
+    samples = {sample.key: sample for sample in inventory.device_memory}
+    for device in inventory.devices:
+        if device.key not in group.device_keys or device.platform == "cpu":
+            continue
+        if footprint is None:
+            reasons.append("certified memory envelope lacks per-device memory evidence")
+            return
+        sample = samples.get(device.key)
+        headroom = None if sample is None else sample.allocator_headroom_bytes
+        if headroom is None:
+            reasons.append(
+                "certified memory envelope lacks measured allocator headroom on "
+                f"device {device.key}"
+            )
+        elif footprint > headroom:
+            reasons.append(
+                f"candidate per-device memory exceeds allocator headroom on {device.key}"
+            )
+
+
+def _require_certified_memory(
+    reasons: list[str],
+    inventory: ResourceInventory,
+    candidate: ExecutionCandidate,
+    /,
+) -> None:
+    """Admit only placements whose declared footprint fits measured capacity."""
+
+    evidence = candidate.resource_evidence
+    if evidence is None:
+        reasons.append("certified memory envelope lacks candidate resource evidence")
+        return
+    match evidence.memory_basis:
+        case "declared" | "compiler_analysis":
+            pass
+        case "sampled":
+            reasons.append(
+                "certified memory envelope cannot use a sampled peak as an upper bound"
+            )
+            return
+        case _:
+            assert_never(evidence.memory_basis)
+    host_footprint = _known_total(
+        (evidence.per_host_peak_bytes, evidence.per_host_reserve_bytes)
+    )
+    if host_footprint is None:
+        reasons.append("certified memory envelope lacks per-host memory evidence")
+    else:
+        _require_certified_host_memory(
+            reasons, host_footprint, inventory, candidate.group
+        )
+    _require_certified_device_memory(
+        reasons,
+        _known_total((evidence.per_device_peak_bytes, evidence.per_device_reserve_bytes)),
+        inventory,
+        candidate.group,
+    )
+
+
 def _require_host_count(
     reasons: list[str],
     requested: int,
@@ -805,6 +916,13 @@ def resolve_execution_plan(
                 None if evidence is None else evidence.collectives,
                 "collectives",
             )
+            match request.memory_envelope:
+                case "declared":
+                    pass
+                case "certified":
+                    _require_certified_memory(reasons, inventory, candidate)
+                case _:
+                    assert_never(request.memory_envelope)
         if reasons:
             rejected.append(f"{candidate.name}: {'; '.join(reasons)}")
         else:

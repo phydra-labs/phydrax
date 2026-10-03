@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,13 +22,11 @@ def atomic_write(
     """Write through a sibling temporary path and atomically replace the destination."""
     path = Path(destination)
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
+    # Create the temporary like an ordinary file (0o666 masked by the process
+    # umask), so the replaced artifact keeps the repository's file mode;
+    # tempfile.mkstemp would leave it owner-only (0o600).
+    temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    os.close(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
     try:
         writer(temporary)
         os.replace(temporary, path)

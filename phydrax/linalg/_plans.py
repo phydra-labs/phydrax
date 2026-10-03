@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import parse
+from ._assembly import assemble_sparse, SparseAssemblyPolicy
 from ._costs import LinearCostEstimate
 from ._operators import (
     AbstractLinearOperator,
@@ -35,6 +36,7 @@ from ._policies import (
     BlockCG,
     BlockGMRES,
     ConjugateGradient,
+    Craig,
     DenseCholesky,
     DenseLU,
     DenseQR,
@@ -55,7 +57,6 @@ from ._policies import (
 )
 from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioning import (
-    JacobiPreconditionerBuilder,
     PreconditionerPlan,
     PreconditioningPolicy,
 )
@@ -86,6 +87,8 @@ from ._structured_operators import (
     LocalBlockDiagonalLinearOperator,
     LowRankLinearOperator,
     PermutationLinearOperator,
+    RowGramLinearOperator,
+    StackedLinearOperator,
     SymmetricLowRankLinearOperator,
     TriangularLinearOperator,
     TridiagonalLinearOperator,
@@ -148,12 +151,15 @@ class LinearSolvePlan(StrictModule):
             raise ValueError(
                 "Solve and preconditioner plans must agree on preconditioning."
             )
+        preconditioned_space = (
+            problem.operator.target if method == Craig().name else problem.operator.source
+        )
         if (
             preconditioner_plan is not None
-            and preconditioner_plan.space_id != problem.operator.source.space_id
+            and preconditioner_plan.space_id != preconditioned_space.space_id
         ):
             raise ValueError(
-                "Preconditioner plan space must match the problem source space."
+                "Preconditioner plan space must match the preconditioned solve space."
             )
         if rhs_layout is not None and not isinstance(rhs_layout, RHSLayout):
             raise TypeError("rhs_layout must be an RHSLayout or None.")
@@ -318,18 +324,15 @@ def plan(
             raise ValueError(
                 "GCRO-DR recycling with a preconditioner is not yet supported."
             )
-    backend = _validate_method(problem, selected, policy_, rhs_layout)
+    preconditioned = _preconditioned_operator(problem, selected.name, policy_)
+    backend = _validate_method(problem, selected, policy_, rhs_layout, preconditioned)
     _validate_precision_policy(problem, selected, backend, policy_)
     _validate_derivative_route(problem, selected, policy_)
     if policy_.require_device_binding and backend in ("host-sparse", "lineax"):
         raise ValueError(
             f"Selected backend {backend!r} cannot bind numerical state on device."
         )
-    preconditioner_plan = _make_preconditioner_plan(
-        problem,
-        selected,
-        policy_,
-    )
+    preconditioner_plan = _make_preconditioner_plan(selected, policy_, preconditioned)
     sparse_lu_analysis = _sparse_lu_analysis(problem, selected, backend)
     selected_estimate = _selected_estimate(
         problem,
@@ -623,10 +626,55 @@ def _validate_precision_policy(
         )
 
 
-def _make_preconditioner_plan(
+def _craig_setup_operator(
+    operator: AbstractLinearOperator,
+    assembly: SparseAssemblyPolicy | None,
+    /,
+) -> AbstractLinearOperator:
+    """Preconditioner setup operator ``B B*`` of the Craig route.
+
+    Without ``assembly`` it is the matrix-free :class:`RowGramLinearOperator`
+    (exact action and diagonal). With ``assembly`` it is the exact canonical
+    sparse assembly of ``B B*`` under that policy, carrying the same
+    self-adjoint and positive-semidefinite evidence.
+    """
+    gram = RowGramLinearOperator(operator)
+    if assembly is None:
+        return gram
+    from ..sparse import SparseCoordinateOperator
+
+    assembled = assemble_sparse(gram.gram, assembly)
+    if not isinstance(assembled, SparseCoordinateOperator):
+        raise TypeError("Craig setup assembly requires a SparseCoordinateOperator.")
+    return SparseCoordinateOperator(
+        assembled.relation,
+        assembled.coefficients,
+        source=gram.source,
+        target=gram.target,
+        properties=gram.properties,
+        operator_id=f"{gram.operator_id}:assembled",
+    )
+
+
+def _preconditioned_operator(
     problem: AbstractLinearProblem,
+    method_name: str,
+    policy: LinearSolvePolicy,
+    /,
+) -> AbstractLinearOperator:
+    """Operator whose source space the solve preconditioner acts on."""
+    if method_name != Craig().name or policy.preconditioning is None:
+        return problem.operator
+    if not isinstance(problem, MinimumNormProblem):
+        raise TypeError("Craig solves a MinimumNormProblem.")
+    method = policy.method if isinstance(policy.method, Craig) else Craig()
+    return _craig_setup_operator(problem.operator, method.assembly)
+
+
+def _make_preconditioner_plan(
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
+    preconditioned: AbstractLinearOperator,
     /,
 ) -> PreconditionerPlan | None:
     preconditioning = policy.preconditioning
@@ -635,14 +683,7 @@ def _make_preconditioner_plan(
     preconditioner_dtype = (
         None if policy.precision is None else policy.precision.preconditioner_dtype
     )
-    if preconditioner_dtype is not None and not isinstance(
-        preconditioning.builder,
-        JacobiPreconditionerBuilder,
-    ):
-        raise LinearCapabilityError(
-            "Lower-precision preconditioning currently supports Jacobi builders only."
-        )
-    if isinstance(method, (PCG, ProjectedPCG, MINRES, ConjugateGradient, BlockCG)):
+    if isinstance(method, (PCG, ProjectedPCG, MINRES, ConjugateGradient, BlockCG, Craig)):
         required_side: Literal["left", "right"] = "left"
     elif isinstance(method, (GMRES, FGMRES, BiCGStab, BlockGMRES)):
         required_side = "right"
@@ -654,7 +695,7 @@ def _make_preconditioner_plan(
         )
     return PreconditionerPlan(
         preconditioning,
-        problem.operator,
+        preconditioned,
         side=required_side,
         materialization=policy.materialization,
         compute_dtype=preconditioner_dtype,
@@ -662,13 +703,13 @@ def _make_preconditioner_plan(
 
 
 def _preconditioner_properties(
-    problem: AbstractLinearProblem,
+    operator: AbstractLinearOperator,
     policy: LinearSolvePolicy,
     /,
 ) -> PreconditionerProperties | None:
     if policy.preconditioning is None:
         return None
-    return policy.preconditioning.properties_for(problem.operator)
+    return policy.preconditioning.properties_for(operator)
 
 
 def _auto_method(
@@ -680,7 +721,7 @@ def _auto_method(
     rejected: list[str] = []
     projected_rejection = _projected_pcg_rejection(problem)
     if projected_rejection is None:
-        preconditioner_properties = _preconditioner_properties(problem, policy)
+        preconditioner_properties = _preconditioner_properties(problem.operator, policy)
         if preconditioner_properties is None or (
             preconditioner_properties.certifies("positive_definite")
             and preconditioner_properties.certifies("self_adjoint")
@@ -737,7 +778,7 @@ def _auto_method(
             rejected.append(
                 f"{dense_method.name}: dense direct execution does not accept preconditioning"
             )
-        properties = _preconditioner_properties(problem, policy)
+        properties = _preconditioner_properties(problem.operator, policy)
         preconditioner_is_positive = properties is None or properties.certifies(
             "positive_definite"
         )
@@ -761,6 +802,14 @@ def _auto_method(
             )
         return GMRES(), "general square Krylov fallback", tuple(rejected)
 
+    if isinstance(problem, MinimumNormProblem) and policy.preconditioning is not None:
+        # Only the normal-equation route preserves the minimum-norm objective
+        # under preconditioning (z = B* y stays in range(B*)).
+        return (
+            Craig(),
+            "preconditioned normal-equation (Craig) minimum-norm route",
+            tuple(rejected),
+        )
     if isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
         if explicit and policy.preconditioning is None:
             fits, explanation = _dense_candidate_fits(problem, DenseSVD(), policy)
@@ -1100,6 +1149,29 @@ def _validate_lsmr(
     return "native-krylov"
 
 
+def _validate_craig(
+    problem: AbstractLinearProblem,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
+    /,
+) -> LinearBackend:
+    if not isinstance(problem, MinimumNormProblem):
+        raise TypeError("Craig solves a MinimumNormProblem.")
+    if not operator.capabilities.adjoint:
+        raise ValueError("Craig requires an explicit adjoint action.")
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("positive_definite")
+        and preconditioner_properties.certifies("self_adjoint")
+        and preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError(
+            "Craig requires a fixed, linear, self-adjoint, positive-definite "
+            "preconditioner of B B*."
+        )
+    return "native-krylov"
+
+
 def _validate_conjugate_gradient(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
@@ -1217,11 +1289,21 @@ def _validate_method(
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
     rhs_layout: RHSLayout | None,
+    preconditioned: AbstractLinearOperator,
     /,
 ) -> LinearBackend:
     operator = problem.operator
     preconditioner = policy.preconditioning
-    preconditioner_properties = _preconditioner_properties(problem, policy)
+    preconditioner_properties = _preconditioner_properties(preconditioned, policy)
+    if (
+        isinstance(problem, MinimumNormProblem)
+        and isinstance(method, (DenseSVD, LSMR, GeneralizedLSMR))
+        and method.damping > 0.0
+    ):
+        raise ValueError(
+            f"{method.name} damping is defined only for least-squares problems; it "
+            "would replace the exact constrained minimum-norm objective."
+        )
     if isinstance(method, StructuredDirect):
         return _validate_structured_direct(problem, policy, operator, preconditioner)
     if isinstance(method, (DenseLU, DenseCholesky)):
@@ -1241,6 +1323,8 @@ def _validate_method(
         return _validate_projected_pcg(problem, policy, preconditioner_properties)
     if isinstance(method, PCG):
         return _validate_pcg(problem, operator, preconditioner_properties)
+    if isinstance(method, Craig):
+        return _validate_craig(problem, operator, preconditioner_properties)
     if isinstance(method, MINRES):
         return _validate_minres(problem, operator, preconditioner_properties)
     if isinstance(method, FGMRES):
@@ -1702,6 +1786,7 @@ def _selected_estimate(
     preconditioner_cost = (
         None if preconditioner_plan is None else preconditioner_plan.cost
     )
+    forward_actions, adjoint_actions = _lsmr_action_bounds(problem, method, policy)
     return LinearCostEstimate(
         provider=backend,
         method=method.name,
@@ -1736,6 +1821,15 @@ def _selected_estimate(
         ),
         recycling_capacity=(0 if policy.recycling is None else policy.recycling.capacity),
         recycling_state_bytes=_recycling_state_bytes(problem, policy),
+        row_blocks=_row_blocks(problem),
+        forward_actions_per_rhs=forward_actions,
+        adjoint_actions_per_rhs=adjoint_actions,
+        certificate_storage_bytes=(
+            problem.rank_certificate.storage_bytes
+            if isinstance(problem, MinimumNormProblem)
+            and problem.rank_certificate is not None
+            else 0
+        ),
         operation_class=(
             "structured-direct"
             if structured_direct
@@ -1745,6 +1839,53 @@ def _selected_estimate(
         ),
         accepted=True,
         reason=reason,
+    )
+
+
+def _row_blocks(problem: AbstractLinearProblem, /) -> tuple[int, ...]:
+    operator = problem.operator
+    blocks = (
+        tuple(block.target.size for block in operator.operators)
+        if isinstance(operator, StackedLinearOperator) and operator.axis == "vertical"
+        else (operator.target.size,)
+    )
+    if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
+        blocks += (problem.regularizer.target.size,)
+    return blocks
+
+
+def _lsmr_action_bounds(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    /,
+) -> tuple[int | None, int | None]:
+    """Forward and adjoint action bounds of one rectangular Krylov right-hand side.
+
+    LSMR executes ``steps + 3`` forward and ``steps + 2`` adjoint actions plus at
+    most one true-quantity confirmation per step (``steps`` forward and
+    ``steps`` adjoint); a least-squares acceptance reference adds one adjoint
+    action. A minimum-norm LSMR solve adds its stationarity witness (``steps +
+    2`` forward, ``steps + 3`` adjoint, plus its own ``steps`` confirmations of
+    each). Craig applies ``B B*`` (one forward and one adjoint action) per step,
+    per true-residual confirmation (at most ``steps``), and for its initial and
+    final residuals, then one adjoint action for ``z = B* y``. Minimum-norm
+    solves add the residual (one forward) plus left-null witness and
+    normal-reference (two adjoint) actions of their acceptance audit.
+    """
+    operator = problem.operator
+    steps = policy.tolerance.max_steps or max(operator.source.size, operator.target.size)
+    if isinstance(method, Craig):
+        gram_actions = steps + steps + 2
+        return gram_actions + 1, gram_actions + 1 + 2
+    if not isinstance(method, (LSMR, GeneralizedLSMR)):
+        return None, None
+    forward, adjoint_ = steps + 3, steps + 2
+    if isinstance(problem, LeastSquaresProblem):
+        return forward + steps, adjoint_ + steps + 1
+    return (
+        forward + steps + steps + 2 + steps + 1,
+        adjoint_ + steps + steps + 3 + steps + 2,
     )
 
 
@@ -1791,14 +1932,19 @@ def _krylov_storage_bytes(
             + 2 * block_width * rhs_width
         )
         primal = ((total_entries + rhs_width - 1) // rhs_width) * itemsize
-    elif isinstance(method, GeneralizedLSMR):
+    elif isinstance(method, (GeneralizedLSMR, LSMR)):
         primal = (5 * columns + 2 * rows) * itemsize
-    elif isinstance(method, LSMR):
-        primal = (5 * columns + 2 * rows) * itemsize
+        if isinstance(problem, MinimumNormProblem):
+            # The adjoint stationarity witness runs after the primal and retains
+            # one multiplier per right-hand side.
+            primal = max(primal, (5 * rows + 2 * columns) * itemsize) + rows * itemsize
     elif isinstance(method, MINRES):
         primal = 10 * columns * itemsize
     elif isinstance(method, (PCG, ProjectedPCG, ConjugateGradient)):
         primal = 6 * columns * itemsize
+    elif isinstance(method, Craig):
+        # PCG vectors and the multiplier in target coordinates plus z = B* y.
+        primal = (7 * rows + columns) * itemsize
     elif isinstance(method, BiCGStab):
         primal = 10 * columns * itemsize
     else:
@@ -1807,10 +1953,26 @@ def _krylov_storage_bytes(
     recycling = _recycling_krylov_bytes(problem, method, policy, itemsize)
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
         return batch_count * max(primal, recycling)
-    derivative_steps = policy.derivative_solve.maximum_steps or columns
-    restart = _derivative_restart(method, derivative_steps, columns)
-    tangent = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
+    if isinstance(problem, MinimumNormProblem):
+        tangent = _minimum_norm_tangent_bytes(problem, itemsize)
+    else:
+        derivative_steps = policy.derivative_solve.maximum_steps or columns
+        restart = _derivative_restart(method, derivative_steps, columns)
+        tangent = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
     return batch_count * max(primal, tangent, recycling)
+
+
+def _minimum_norm_tangent_bytes(problem: MinimumNormProblem, itemsize: int, /) -> int:
+    """Per-column storage of one pseudoinverse tangent or cotangent solve.
+
+    Two sequential zero-start LSMR solves (``A`` and ``A*``) plus the augmented
+    primal/multiplier direction, its right-hand side, and the intermediate range
+    vector.
+    """
+    rows = problem.operator.target.size
+    columns = problem.operator.source.size
+    lsmr = max(5 * columns + 2 * rows, 5 * rows + 2 * columns)
+    return (lsmr + 4 * (columns + rows)) * itemsize
 
 
 def _recycling_krylov_bytes(
@@ -1871,9 +2033,11 @@ def _implicit_storage_bytes(
         problem.operator, TreeLinearOperator
     ):
         return 0
-    dimension = problem.operator.source.size
     if isinstance(problem, MinimumNormProblem):
-        dimension += problem.operator.target.size
+        return prod(problem.operator.batch_shape or (1,)) * _minimum_norm_tangent_bytes(
+            problem, itemsize
+        )
+    dimension = problem.operator.source.size
     max_steps = policy.derivative_solve.maximum_steps or dimension
     restart = _derivative_restart(policy.method, max_steps, dimension)
     per_problem = ((2 * restart + 1) * dimension + (restart + 1) * restart) * itemsize
@@ -2093,6 +2257,26 @@ def _method_configuration(
     elif isinstance(method, (LSMR, GeneralizedLSMR)):
         configuration["condition_limit"] = method.condition_limit
         configuration["damping"] = method.damping
+    elif isinstance(method, Craig):
+        assembly = method.assembly
+        configuration["assembly"] = (
+            None
+            if assembly is None
+            else {
+                "max_nnz": assembly.max_nnz,
+                "max_bytes": assembly.max_bytes,
+                "max_contributions": assembly.max_contributions,
+                "max_workspace_bytes": assembly.max_workspace_bytes,
+                "materialization": (
+                    None
+                    if assembly.materialization is None
+                    else {
+                        "max_entries": assembly.materialization.max_entries,
+                        "max_bytes": assembly.materialization.max_bytes,
+                    }
+                ),
+            }
+        )
     elif isinstance(method, (SparseQR, SparseLU, SparseCholesky, SparseLDLT)):
         configuration["provider"] = method.provider
         if isinstance(method, SparseQR):

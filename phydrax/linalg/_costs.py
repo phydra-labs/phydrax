@@ -95,7 +95,15 @@ class OperatorActionCostEstimate(StrictModule):
 
 
 class LinearCostEstimate(StrictModule):
-    """Static resource estimate and eligibility result for one solver candidate."""
+    """Static resource estimate and eligibility result for one solver candidate.
+
+    ``row_blocks`` is the executed least-squares row partition: the blocks of a
+    vertically stacked operator (or the operator rows) followed by explicit
+    regularizer rows. ``forward_actions_per_rhs`` and ``adjoint_actions_per_rhs``
+    bound the operator actions of one right-hand side, including evidence
+    witnesses, when the route declares a static bound, and are ``None``
+    otherwise. ``certificate_storage_bytes`` charges retained rank evidence.
+    """
 
     provider: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
@@ -112,6 +120,10 @@ class LinearCostEstimate(StrictModule):
     preconditioner_setup_matvec_count: int = eqx.field(static=True)
     recycling_capacity: int = eqx.field(static=True)
     recycling_state_bytes: int = eqx.field(static=True)
+    row_blocks: tuple[int, ...] = eqx.field(static=True)
+    forward_actions_per_rhs: int | None = eqx.field(static=True)
+    adjoint_actions_per_rhs: int | None = eqx.field(static=True)
+    certificate_storage_bytes: int = eqx.field(static=True)
     operation_class: str = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
     reason: str = eqx.field(static=True)
@@ -134,6 +146,10 @@ class LinearCostEstimate(StrictModule):
         recycling_capacity: int = 0,
         preconditioner_setup_matvec_count: int = 0,
         recycling_state_bytes: int = 0,
+        row_blocks: tuple[int, ...] = (),
+        forward_actions_per_rhs: int | None = None,
+        adjoint_actions_per_rhs: int | None = None,
+        certificate_storage_bytes: int = 0,
         operation_class: str,
         accepted: bool,
         reason: str,
@@ -158,6 +174,13 @@ class LinearCostEstimate(StrictModule):
                 recycling_capacity,
                 preconditioner_setup_matvec_count,
                 recycling_state_bytes,
+                certificate_storage_bytes,
+                *row_blocks,
+                *(
+                    count
+                    for count in (forward_actions_per_rhs, adjoint_actions_per_rhs)
+                    if count is not None
+                ),
             )
         )
         if any(value < 0 for value in integers):
@@ -177,7 +200,11 @@ class LinearCostEstimate(StrictModule):
             self.recycling_capacity,
             self.preconditioner_setup_matvec_count,
             self.recycling_state_bytes,
-        ) = integers
+        ) = integers[:13]
+        self.certificate_storage_bytes = certificate_storage_bytes
+        self.row_blocks = tuple(row_blocks)
+        self.forward_actions_per_rhs = forward_actions_per_rhs
+        self.adjoint_actions_per_rhs = adjoint_actions_per_rhs
         self.accepted = bool(accepted)
 
 

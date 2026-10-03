@@ -8,21 +8,22 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._io import write_json_atomic
-from benchmarks._runtime import logical_array_bytes, measure_synchronized
+from benchmarks._runtime import logical_array_bytes
 from benchmarks.meshfree_scaling import (
     add_config_arguments,
+    admitted_rows,
     apply_baseline,
     config_from_arguments,
+    configure_precision,
+    declare_reservation,
     execution_evidence,
     make_record,
-    measured_phase,
     MeshfreeConfig,
-    unavailable_phases,
+    PhaseRecorder,
 )
 
 
@@ -35,8 +36,7 @@ def measure_capacity(
     reservation = config.check_capacity(capacity)
     pair_budget = capacity * config.neighbors * 4
     symbolic_budget = config.working_set_bytes // 64
-    if pair_budget * 64 > config.working_set_bytes:
-        raise ValueError("Requested exterior edge capacity exceeds working-set budget.")
+    declare_reservation(pair_budget * 64, config, scope="exterior edge capacity")
     plan = exterior_plan(
         size=capacity,
         dimension=config.dimension,
@@ -44,28 +44,40 @@ def measure_capacity(
         maximum_pairs=pair_budget,
         maximum_symbolic_entries=symbolic_budget,
     )
-    edges, neighbor_seconds = measure_synchronized(
+    recorder = PhaseRecorder()
+    edges = recorder.run(
+        "search",
         lambda: MeshfreeEdgeRelationPlan(
             plan.points,
             plan.radius,
             pair_budget,
             active=plan.active,
             target_chunk_size=config.chunk_rows,
-        ).prepare()
+        ).prepare(),
     )
-    prepared, assembly_seconds = measure_synchronized(
-        lambda: plan.prepare(edge_relation=edges)
+    prepared = recorder.run(
+        "rank-certificate",
+        lambda: plan.prepare(edge_relation=edges),
+        scope="moment-symbolics, rank certificate, exact metric solve, cochain binding",
     )
-    if not bool(np.asarray(prepared.metric_result.accepted)):
+    for phase in ("local-fit", "conic", "ordering-fill"):
+        recorder.unavailable(
+            phase,
+            "MeshfreeExteriorCalculusPlan.prepare fuses moment, rank and metric phases",
+        )
+    result = prepared.metric_result
+    if not bool(np.asarray(result.accepted)):
         raise AssertionError(
             "Native exterior moment provider refused the benchmark metric."
         )
-    diffusion, diffusion_seconds = measure_synchronized(lambda: prepared.diffusion())
+    diffusion = recorder.run(
+        "assembly", lambda: prepared.diffusion(), scope="diffusion binding"
+    )
     if not bool(np.asarray(diffusion.admitted)):
         raise AssertionError("Native exterior diffusion admission failed.")
     values = jnp.asarray(np.cos(np.sum(np.asarray(prepared.points), axis=1)))
-    execution = execution_evidence(diffusion.mv, values, config)
-    result = np.asarray(execution.pop("result"))
+    execution = execution_evidence(diffusion.mv, values, config, recorder)
+    action = np.asarray(execution.pop("result"))
     pairs = np.asarray(prepared.pairs)
     conductance = np.asarray(diffusion.conductances)
     difference = np.asarray(values)[pairs[:, 1]] - np.asarray(values)[pairs[:, 0]]
@@ -73,53 +85,47 @@ def measure_capacity(
     np.add.at(amount_rate, pairs[:, 0], conductance * difference)
     np.add.at(amount_rate, pairs[:, 1], -conductance * difference)
     reference = amount_rate / np.asarray(prepared.node_volumes)
-    action_error = float(np.max(np.abs(result - reference)))
-    conservation = float(abs(np.dot(np.asarray(prepared.node_volumes), result)))
+    action_error = float(np.max(np.abs(action - reference)))
+    conservation = float(abs(np.dot(np.asarray(prepared.node_volumes), action)))
     tolerance = 5e-3 if config.precision == "float32" else 1e-7
     if action_error > tolerance or conservation > tolerance:
         raise AssertionError(
             "Conservative native action disagrees with independent host edge ledger."
         )
-    refreshed, refresh_seconds = measure_synchronized(
-        lambda: prepared.metric_system.solve(prior=prepared.metric_system.prior * 1.01)
+    refreshed = recorder.run(
+        "numeric-refresh",
+        lambda: prepared.metric_system.solve(prior=prepared.metric_system.prior * 1.01),
+        scope="metric numeric refresh with a changed prior",
     )
     if not bool(np.asarray(refreshed.accepted)):
         raise AssertionError("Native numeric metric refresh was refused.")
     retained = logical_array_bytes((plan, prepared, diffusion, refreshed))
-    if retained > config.working_set_bytes:
-        raise ValueError("Retained exterior arrays exceed working-set budget.")
-    phases = unavailable_phases()
-    phases.update(execution.pop("phases"))
-    phases["neighbor"] = measured_phase(neighbor_seconds)
-    phases["assembly"] = {
-        **measured_phase(assembly_seconds),
-        "scope": "moment-symbolics,metric-solve,cochain-binding",
-    }
-    phases["numeric-refresh"] = measured_phase(refresh_seconds)
-    phases["stencil"] = {
-        "status": "unavailable",
-        "reason": "Conservative edge moments do not build strong-form row stencils",
-    }
+    declare_reservation(retained, config, scope="retained exterior arrays")
     return {
         "capacity": capacity,
         "seed": seed,
         "dimension": config.dimension,
-        "phases": phases,
+        "status": "measured",
+        "phases": recorder.record(),
         **execution,
-        "diffusion_binding_seconds": diffusion_seconds,
         "retained_bytes": retained,
         "reserved_working_set_bytes": reservation,
         "edge_capacity": pair_budget,
         "active_edges": pairs.shape[0],
         "active_points": prepared.points.shape[0],
         "inactive_capacity": capacity - prepared.points.shape[0],
-        "rank": prepared.metric_result.rank,
-        "redundant_constraints": prepared.metric_result.redundant_constraints,
-        "moment_residual": float(
-            np.max(np.abs(np.asarray(prepared.metric_result.moment_residual)))
-        ),
-        "negative_weights": int(np.asarray(prepared.metric_result.negative_count)),
-        "metric_status": int(np.asarray(prepared.metric_result.status)),
+        "rank": int(np.asarray(result.rank)),
+        "rank_maximal": bool(np.asarray(result.rank_maximal)),
+        "exact": bool(np.asarray(result.exact)),
+        "moment_residual": float(np.max(np.abs(np.asarray(result.moment_residual)))),
+        "negative_weights": int(np.asarray(result.negative_count)),
+        "metric_status": int(np.asarray(result.status)),
+        "provider_status": int(np.asarray(result.provider_status)),
+        "derivative_available": bool(np.asarray(result.derivative_available)),
+        "derivative_contract": result.derivative_contract,
+        "minimum_norm_iterations": None
+        if result.linear_result is None
+        else int(np.asarray(result.linear_result.diagnostics.iterations)),
         "conservation_defect": conservation,
         "action_error": action_error,
         "domain": "explicit-union-of-Cartesian-nodal-control-volumes-with-incomplete-axial-neighborhood-Dirichlet-boundary",
@@ -128,16 +134,12 @@ def measure_capacity(
 
 
 def run(config: MeshfreeConfig = MeshfreeConfig(), /) -> dict[str, Any]:
-    jax.config.update("jax_enable_x64", config.precision == "float64")
+    configure_precision(config, supported=("float64",))
     import examples.meshfree_conservative_diffusion as consumer
 
     return make_record(
         config,
-        [
-            measure_capacity(size, seed, config)
-            for size in config.sizes
-            for seed in config.seeds
-        ],
+        admitted_rows(measure_capacity, config),
         Path(__file__),
         consumers=(Path(consumer.__file__),),
     )

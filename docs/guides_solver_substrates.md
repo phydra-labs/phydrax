@@ -303,6 +303,21 @@ the publisher, and surfaces writer/drain failures as production failures. Schedu
 outputs use deterministic run/schedule/cursor event IDs and checkpoint commits wait
 for earlier publications to drain.
 
+`ProductionRunPlan(evidence_retention="terminal")` keeps the method evidence of the
+last accepted step and of the most recent refused retry attempt, with their step and
+attempt cursors and the refused-attempt count, in `ProductionRunState.evidence`; the
+record is checkpointed with the controller state. `ProductionArchivePolicy` binds a
+participant's rolling live history: scheduled checkpoints commit the acknowledged
+state, and a checkpoint interval beyond the declared window is refused.
+`RuntimeIdentityInventory` names the source, program, method, controller, precision,
+RNG addressing, and discretization identities of a run;
+`ProductionCaseManifest.from_inventory` binds it, stores refuse a differing archived
+inventory with `StaleRuntimeCheckpointError(roles)` before reading values, and
+`RuntimeRestartRelation.from_migration` restores across one committed
+`RuntimeMigrationReceipt` (`"ownership"` or `"epoch"`). `run(...,
+memory_sampling_interval=...)` attaches `PhaseMemoryEvidence` to the result and the
+terminal record as a measurement only.
+
 ## Structured support
 
 `TensorGridPlan.prepare(bounds)` returns `PreparedTensorGrid`: axes, topology,
@@ -847,6 +862,10 @@ components. Explicit stages (zero implicit diagonal) bypass the diagonal solve a
 evaluate the implicit RHS directly. A zero step is the identity,
 reports no implicit iterations, and retains the first-order step-size derivative;
 inactive divisions are guarded before evaluation.
+`ConservationIMEXFixedStepMethod(method)` publishes one such step as an
+`AbstractFixedStepMethod`, so `FixedStepProblem`/`solve_fixed_step` rollouts
+hold the state after the first refusal and retain per-stage solve success,
+iterations, residual norms and status as outcome-independent step evidence.
 
 The lower-level `AdditiveIMEXTableau.step` requires the keyword `implicit_rhs`, since
 the RHS cannot be recovered from a zero diagonal or zero step. Its RHS callbacks use
@@ -869,3 +888,11 @@ committed components, such as held constraint values, exact.
 residuals, statuses and evidence (`None` for explicit-only stages, zero-filled when
 the diagonal step vanishes). The solvers of the surface plug-flow film are one
 consumer.
+
+`additive_imex_tableau(scheme)` returns the published tableau of one named
+`AdditiveIMEXScheme`: first-order `"forward-backward-euler"`, second-order
+`"ars-222"` (Ascher–Ruuth–Spiteri) and `"ssp2-222"` (Pareschi–Russo), and
+third-order `"ars-443"`. The forward–backward Euler and ARS schemes are stiffly
+accurate with an explicit-only first stage and share their explicit and implicit
+abscissae; `"ssp2-222"` keeps its distinct implicit abscissae and the single node
+vector used by the GRRMHD runtime.

@@ -5,28 +5,70 @@ from __future__ import annotations
 
 import argparse
 import json
+from math import comb
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.sparse import csr_matrix
-from scipy.spatial import ConvexHull
+from scipy.stats import qmc
 
 from benchmarks._io import write_json_atomic
-from benchmarks._runtime import logical_array_bytes, measure_synchronized
+from benchmarks._runtime import logical_array_bytes
 from benchmarks.meshfree_scaling import (
     add_config_arguments,
+    admitted_rows,
     apply_baseline,
     cloud_points,
     config_from_arguments,
-    execution_evidence,
+    configure_precision,
+    DeclaredCapacityRefusal,
+    failure_record,
     make_record,
-    measured_phase,
     MeshfreeConfig,
-    unavailable_phases,
+    PhaseRecorder,
 )
+
+
+# The dissipative GMLS form Dᵀ M D on stratified clouds has oscillatory
+# near-null modes (a smoothing least-squares gradient barely sees them): at
+# N=256 its smallest Dirichlet eigenvalue is ~200x below the PHS-RBF-FD one and
+# no preconditioner is h-robust. The fine system therefore uses the admitted
+# elliptic stencil of the Q2 campaign: PHS-RBF-FD degree 3 with 2x basis support.
+_STENCIL_DEGREE = 3
+
+
+def dirichlet_cube_cloud(
+    capacity: int, dimension: int, seed: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Stratified cube faces then interior; the faces are the convex hull.
+
+    Each of the ``2 d`` faces carries ``capacity^((d-1)/d)`` stratified samples
+    (quasi-uniform with the interior), so Dirichlet data holds on the whole
+    hull rather than on its few extreme vertices.
+    """
+    per_face = round(capacity ** ((dimension - 1) / dimension))
+    generator = np.random.default_rng(seed)
+    faces = []
+    for axis in range(dimension):
+        for side in (0.0, 1.0):
+            tangential = (
+                qmc.LatinHypercube(d=dimension - 1, seed=generator).random(per_face)
+                if dimension > 1
+                else np.zeros((per_face, 0))
+            )
+            faces.append(np.insert(tangential, axis, side, axis=1))
+    boundary_points = np.concatenate(faces)
+    count = boundary_points.shape[0]
+    if capacity - count < count:
+        raise ValueError(
+            f"Capacity {capacity} leaves fewer interior than boundary points."
+        )
+    points = np.concatenate(
+        (boundary_points, cloud_points(capacity - count, dimension, seed))
+    )
+    return points, np.arange(capacity) < count
 
 
 def measure_capacity(
@@ -40,11 +82,13 @@ def measure_capacity(
         MeshfreeHierarchyPlan,
     )
     from phydrax.linalg import (
+        AbstractPreconditionerBuilder,
+        ArraySpace,
         DiagonalLinearOperator,
         FailurePolicy,
+        GaussSeidelPreconditionerBuilder,
         GMRES,
         ILUPreconditionerBuilder,
-        JacobiPreconditionerBuilder,
         LinearDerivativeSolvePolicy,
         LinearSolvePolicy,
         LinearSystem,
@@ -61,24 +105,33 @@ def measure_capacity(
         TolerancePolicy,
     )
 
-    reservation = config.check_capacity(capacity)
-    points = cloud_points(capacity, config.dimension, seed)
-    hull = ConvexHull(points)
-    boundary = np.zeros(capacity, dtype=np.bool_)
-    boundary[hull.vertices] = True
+    basis = comb(config.dimension + _STENCIL_DEGREE, _STENCIL_DEGREE)
+    neighbors = min(capacity, 2 * basis)
+    reservation = config.check_capacity(
+        capacity, degree=_STENCIL_DEGREE, neighbors=neighbors
+    )
+    shared = PhaseRecorder()
+    points, boundary = dirichlet_cube_cloud(capacity, config.dimension, seed)
     normals = points - np.mean(points, axis=0)
-    cloud, stencil_seconds = measure_synchronized(
+    cloud = shared.run(
+        "local-fit",
         lambda: PointCloudPlan(
             points,
             np.full(capacity, 1 / capacity),
             boundary_mask=boundary,
             boundary_normals=normals,
-            neighbors=config.neighbors,
+            neighbors=neighbors,
             target_chunk_size=config.chunk_rows,
             stencil=LocalStencilPolicy(
-                polynomial_degree=config.degree, chunk_rows=config.chunk_rows
+                approximation="phs-rbf-fd",
+                polynomial_degree=_STENCIL_DEGREE,
+                chunk_rows=config.chunk_rows,
             ),
-        ).prepare()
+        ).prepare(),
+        scope="PointCloudPlan.prepare (neighbor search and stencil fit fused)",
+    )
+    shared.unavailable(
+        "search", "PointCloudPlan exposes combined neighborhood/stencil preparation"
     )
     diffusion = PointDiffusionOperator(cloud, 1, form="dissipative")
     stiffness = diffusion.stiffness()
@@ -90,8 +143,11 @@ def measure_capacity(
     )
     fine = free @ stiffness @ free + fixed
     assembly_policy = SparseAssemblyPolicy(max_workspace_bytes=config.working_set_bytes)
-    assembled, assembly_seconds = measure_synchronized(
-        lambda: prepare_sparse_assembly(plan_sparse_assembly(fine, assembly_policy), fine)
+    assembled = shared.run(
+        "assembly",
+        lambda: prepare_sparse_assembly(
+            plan_sparse_assembly(fine, assembly_policy), fine
+        ),
     )
     operator = assembled.operator
     storage = operator.sparse_storage()
@@ -108,16 +164,22 @@ def measure_capacity(
     )
     expected[boundary] = 0
     rhs = jnp.asarray(matrix @ expected)
-    hierarchy, hierarchy_seconds = measure_synchronized(
+    source_space = operator.source
+    if not isinstance(source_space, ArraySpace):
+        raise TypeError("Meshfree multilevel preparation requires an ArraySpace source.")
+    hierarchy = shared.run(
+        "hierarchy",
         lambda: MeshfreeHierarchyPlan(
             points,
             boundary=boundary,
+            eliminated=boundary,
             policy=MeshfreeCoarseningPolicy(
                 maximum_points=config.max_points,
                 maximum_transfer_entries=config.resource_bytes // 32,
                 chunk_rows=config.chunk_rows,
             ),
-        ).prepare(operator.source)
+        ).prepare(source_space),
+        scope="geometric-transfer-preparation",
     )
     sources = (
         ("native-ilu", ILUPreconditionerBuilder()),
@@ -127,7 +189,10 @@ def measure_capacity(
                 SmoothedAggregationPolicy(
                     maximum_level_storage_bytes=config.working_set_bytes
                 ),
-                JacobiPreconditionerBuilder(),
+                # Undamped Jacobi diverges here: rho(D^-1 A) is 3.4-5.5 on this
+                # non-M-matrix stiffness (about half its off-diagonals are
+                # positive). Symmetric Gauss-Seidel converges for any SPD level.
+                GaussSeidelPreconditionerBuilder(),
                 ILUPreconditionerBuilder(),
             ),
         ),
@@ -138,8 +203,11 @@ def measure_capacity(
             ),
         ),
     )
-    solvers: list[dict[str, Any]] = []
-    for provider, builder in sources:
+
+    def measure_provider(
+        provider: str, builder: AbstractPreconditionerBuilder
+    ) -> dict[str, Any]:
+        recorder = PhaseRecorder()
         policy = LinearSolvePolicy(
             GMRES(restart=min(40, capacity)),
             tolerance=TolerancePolicy(relative=1e-8, absolute=1e-10, max_steps=1000),
@@ -147,15 +215,21 @@ def measure_capacity(
             failure=FailurePolicy("error"),
             preconditioning=PreconditioningPolicy(builder, refresh="numeric"),
         )
-        prepared, setup_seconds = measure_synchronized(
-            lambda: prepare(LinearSystem(operator), policy)
+        prepared = recorder.run(
+            "hierarchy",
+            lambda: prepare(LinearSystem(operator), policy),
+            scope="native-solver-preconditioner-setup",
         )
-        execution = execution_evidence(
-            lambda source: solve(prepared, source).value, rhs, config
+        result, execution = recorder.compiled_action(
+            lambda source: solve(prepared, source).value,
+            rhs,
+            budget_bytes=config.resource_bytes,
+            repeats=config.repeats,
+            scope=provider,
         )
-        actual = np.asarray(execution.pop("result"))
-        full_result, diagnostic_seconds = measure_synchronized(
-            lambda: solve(prepared, rhs)
+        actual = np.asarray(result)
+        full_result = recorder.run(
+            "solve", lambda: solve(prepared, rhs), scope="diagnostic eager solve"
         )
         relative_residual = float(
             np.linalg.norm(matrix @ actual - np.asarray(rhs))
@@ -167,11 +241,14 @@ def measure_capacity(
             )
         refreshed_diffusion = PointDiffusionOperator(cloud, 1.1, form="dissipative")
         refreshed_fine = free @ refreshed_diffusion.stiffness() @ free + fixed
-        refreshed_assembly, numeric_assembly_seconds = measure_synchronized(
-            lambda: refresh_sparse_assembly(assembled, refreshed_fine)
+        refreshed_assembly = recorder.run(
+            "assembly",
+            lambda: refresh_sparse_assembly(assembled, refreshed_fine),
+            scope="numeric assembly refresh",
         )
-        updated, refresh_seconds = measure_synchronized(
-            lambda: refresh(prepared, LinearSystem(refreshed_assembly.operator))
+        updated = recorder.run(
+            "numeric-refresh",
+            lambda: refresh(prepared, LinearSystem(refreshed_assembly.operator)),
         )
         refreshed_storage = refreshed_assembly.operator.sparse_storage()
         refreshed_matrix = csr_matrix(
@@ -183,8 +260,8 @@ def measure_capacity(
             shape=(capacity, capacity),
         )
         refreshed_rhs = jnp.asarray(refreshed_matrix @ expected)
-        refreshed_result, refreshed_solve_seconds = measure_synchronized(
-            lambda: solve(updated, refreshed_rhs)
+        refreshed_result = recorder.run(
+            "solve", lambda: solve(updated, refreshed_rhs), scope="refreshed solve"
         )
         refreshed_residual = float(
             np.linalg.norm(
@@ -197,75 +274,82 @@ def measure_capacity(
             raise AssertionError(
                 f"{provider} numeric refresh failed independent fine-system residual."
             )
-        phases = unavailable_phases()
-        phases.update(execution.pop("phases"))
-        phases["hierarchy"] = {
-            **measured_phase(setup_seconds),
-            "scope": "native-solver-preconditioner-setup",
-        }
-        phases["numeric-refresh"] = {
-            **measured_phase(refresh_seconds),
-            "assembly_seconds": numeric_assembly_seconds,
-        }
         retained = logical_array_bytes((cloud, assembled, hierarchy, prepared, updated))
         if retained > min(config.working_set_bytes, config.resource_bytes):
-            raise ValueError(
+            raise DeclaredCapacityRefusal(
                 f"{provider} retained arrays exceed requested working-set/resource budget."
             )
-        solvers.append(
-            {
-                "provider": provider,
-                "status": "measured",
-                "phases": phases,
-                **execution,
-                "relative_residual": relative_residual,
-                "solution_error": float(np.max(np.abs(actual - expected))),
-                "iterations": int(np.asarray(full_result.diagnostics.iterations)),
-                "matvec_count": int(np.asarray(full_result.diagnostics.matvec_count)),
-                "independent_derivative_solve_policy": {
-                    "route": "krylov",
-                    "maximum_steps": 1000,
-                    "relative_tolerance": 1e-8,
-                    "absolute_tolerance": 1e-10,
-                },
-                "diagnostic_execution_seconds": diagnostic_seconds,
-                "retained_bytes": retained,
-                "refreshed_solve_seconds": refreshed_solve_seconds,
-                "refreshed_relative_residual": refreshed_residual,
-                "refreshed_iterations": int(
-                    np.asarray(refreshed_result.diagnostics.iterations)
-                ),
-            }
-        )
-    phases = unavailable_phases()
-    phases["stencil"] = {
-        **measured_phase(stencil_seconds),
-        "includes_neighbor_preparation": True,
-    }
-    phases["neighbor"] = {
-        "status": "unavailable",
-        "reason": "PointCloudPlan exposes combined neighborhood/stencil preparation",
-    }
-    phases["assembly"] = measured_phase(assembly_seconds)
-    phases["hierarchy"] = {
-        **measured_phase(hierarchy_seconds),
-        "scope": "geometric-transfer-preparation",
-    }
+        return {
+            "provider": provider,
+            "status": "measured",
+            "phases": recorder.record(),
+            **execution,
+            "relative_residual": relative_residual,
+            "solution_error": float(np.max(np.abs(actual - expected))),
+            "iterations": int(np.asarray(full_result.diagnostics.iterations)),
+            "matvec_count": int(np.asarray(full_result.diagnostics.matvec_count)),
+            "independent_derivative_solve_policy": {
+                "route": "krylov",
+                "maximum_steps": 1000,
+                "relative_tolerance": 1e-8,
+                "absolute_tolerance": 1e-10,
+            },
+            "retained_bytes": retained,
+            "refreshed_relative_residual": refreshed_residual,
+            "refreshed_iterations": int(
+                np.asarray(refreshed_result.diagnostics.iterations)
+            ),
+        }
+
+    solvers: list[dict[str, Any]] = []
+    for provider, builder in sources:
+        try:
+            solvers.append(measure_provider(provider, builder))
+        except DeclaredCapacityRefusal:
+            raise
+        except Exception as error:  # One provider failure is its own row evidence.
+            solvers.append(
+                {
+                    "provider": provider,
+                    "status": "failed",
+                    "failure": failure_record(error),
+                }
+            )
+    evidence = hierarchy.evidence
     return {
         "capacity": capacity,
         "seed": seed,
         "dimension": config.dimension,
         "domain": "unit-cube-convex-hull-dirichlet",
-        "phases": phases,
+        "stencil": {
+            "approximation": "phs-rbf-fd",
+            "polynomial_degree": _STENCIL_DEGREE,
+            "neighbors": neighbors,
+            "form": "dissipative",
+        },
+        "boundary_points": int(np.count_nonzero(boundary)),
+        "status": "measured",
+        "phases": shared.record(),
         "solvers": solvers,
         "fine_nnz": matrix.nnz,
-        "level_sizes": hierarchy.evidence.level_sizes,
-        "constant_reproduction_residuals": hierarchy.evidence.constant_residuals,
-        "linear_reproduction_residuals": hierarchy.evidence.linear_residuals,
-        "transfer_entries": hierarchy.evidence.transfer_entries,
-        "stopping_reason": hierarchy.evidence.stopping_reason,
+        "level_sizes": evidence.level_sizes,
+        "reproduction_degree": evidence.reproduction_degree,
+        "reproduction_residuals": evidence.reproduction_residuals,
+        "near_nullspace_defects": evidence.near_nullspace_defects,
+        "coarsening_rounds": evidence.coarsening_rounds,
+        "grid_complexity": evidence.grid_complexity,
+        "transfer_entries": evidence.transfer_entries,
+        "stopping_reason": evidence.stopping_reason,
+        "restriction_coordinates": evidence.restriction_coordinates,
         "reserved_working_set_bytes": reservation,
-        "retained_bytes": max(entry["retained_bytes"] for entry in solvers),
+        "retained_bytes": max(
+            (
+                entry["retained_bytes"]
+                for entry in solvers
+                if entry["status"] == "measured"
+            ),
+            default=None,
+        ),
         "oracle": "independent-host-SciPy sparse matrix manufactured RHS and true residual; not a continuum convergence claim",
         "optional_provider": {
             "status": "not-requested",
@@ -275,16 +359,8 @@ def measure_capacity(
 
 
 def run(config: MeshfreeConfig = MeshfreeConfig(), /) -> dict[str, Any]:
-    jax.config.update("jax_enable_x64", config.precision == "float64")
-    return make_record(
-        config,
-        [
-            measure_capacity(size, seed, config)
-            for size in config.sizes
-            for seed in config.seeds
-        ],
-        Path(__file__),
-    )
+    configure_precision(config, supported=("float64",))
+    return make_record(config, admitted_rows(measure_capacity, config), Path(__file__))
 
 
 def main() -> None:

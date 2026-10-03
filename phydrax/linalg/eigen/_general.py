@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from enum import IntEnum
 from typing import Any, assert_never, Literal, TypeAlias
 
@@ -20,6 +21,14 @@ from jaxtyping import PyTree
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...typing import parse
+from .._assembly import (
+    plan_sparse_assembly,
+    prepare_sparse_assembly,
+    PreparedSparseAssembly,
+    refresh_sparse_assembly,
+    SparseAssemblyPlan,
+    SparseAssemblyPolicy,
+)
 from .._dense_pseudoinverse import (
     factor_pseudoinverse,
     materialize_pseudoinverse,
@@ -36,13 +45,26 @@ from .._policies import (
 )
 from .._prepared import PreparedLinearSolve
 from .._problems import LinearSystem
-from .._properties import OperatorCapabilities, OperatorProperties
+from .._properties import (
+    LinearCapabilityError,
+    OperatorCapabilities,
+    OperatorProperties,
+)
 from .._runtime import (
     prepare as prepare_linear_solve,
     refresh as refresh_linear_solve,
     solve as linear_solve,
 )
-from .._spaces import _coordinate_dtype
+from .._spaces import _coordinate_dtype, _has_euclidean_pairing
+from .._sparse_contract import AbstractSparseLinearOperator
+from .._sparse_factorizations import (
+    prepare_sparse_factorization,
+    PreparedSparseFactorization,
+    refresh_sparse_factorization,
+    SparseFactorizationPlan,
+    SparseFactorizationPolicy,
+    SparseFactorizationStatus,
+)
 from ..krylov import block_arnoldi
 
 
@@ -60,6 +82,9 @@ GeneralEigenSelectionKind: TypeAlias = Literal[
     "smallest-imaginary",
 ]
 SingularMassPolicy: TypeAlias = Literal["report", "error"]
+ArnoldiRestart: TypeAlias = Literal["block-ritz", "krylov-schur"]
+GeneralEigenVectors: TypeAlias = Literal["left-right", "right"]
+GeneralEigenEnclosure: TypeAlias = Literal["bauer-fike", "estimate"]
 
 
 class GeneralEigenSolveStatus(IntEnum):
@@ -251,15 +276,33 @@ class DenseSchurQZ(StrictModule):
 
 
 class RestartedArnoldi(StrictModule):
-    """Device-native thick-restarted block Arnoldi iteration."""
+    """Device-native restarted Arnoldi iteration.
+
+    ``restart="block-ritz"`` runs block Arnoldi with one block per requested
+    mode and restarts from the selected Ritz block, so semisimple repeated
+    eigenvalues up to the block size are resolved. ``restart="krylov-schur"``
+    runs single-vector Arnoldi with Stewart's Krylov–Schur thick restart: the
+    retained Ritz eigenvector span of the projected matrix is invariant, so the
+    restarted Krylov decomposition stays exact while the subspace keeps
+    ``count + (subspace - count) // 2`` vectors. A single starting vector sees
+    one copy of a semisimple multiple eigenvalue until an exact invariant
+    subspace forces a fresh deterministic direction.
+    """
 
     subspace_dimension: int | None = eqx.field(static=True)
+    restart: ArnoldiRestart = eqx.field(static=True)
 
-    def __init__(self, *, subspace_dimension: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        subspace_dimension: int | None = None,
+        restart: ArnoldiRestart = "block-ritz",
+    ) -> None:
         dimension = None if subspace_dimension is None else int(subspace_dimension)
         if dimension is not None and dimension < 3:
             raise ValueError("subspace_dimension must be at least three or None.")
         self.subspace_dimension = dimension
+        self.restart = parse(restart, ArnoldiRestart, "restart")
 
     @property
     def name(self) -> str:
@@ -269,6 +312,8 @@ class RestartedArnoldi(StrictModule):
 GeneralEigenMethod: TypeAlias = DenseSchurQZ | RestartedArnoldi
 # Restart basis, locked vectors/values/residuals/mask, matvec count, and validity.
 _ArnoldiCycleState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# Krylov–Schur basis, projected matrix, restarts, validity, and completion.
+_KrylovSchurState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class GeneralEigenTolerancePolicy(StrictModule):
@@ -353,7 +398,17 @@ class GeneralEigenResourcePolicy(StrictModule):
 
 
 class GeneralEigenSolvePolicy(StrictModule):
-    """Method, transform, selection, resources, and singular-pencil contract."""
+    """Method, transform, selection, resources, and singular-pencil contract.
+
+    ``transform_solve`` is either a device-bound GMRES `LinearSolvePolicy` or a
+    `SparseFactorizationPolicy`. The latter factors the sparse transform
+    denominator ``A - sigma B`` once at preparation (refreshed on the same
+    pattern) and applies it by sparse triangular solves; it serves right pairs
+    (``vectors="right"``) because the prepared factor has no transposed solve,
+    and it lifts the dense ``max_dimension`` cap. ``vectors="right"`` skips the
+    adjoint iteration, so neither transpose capabilities nor biorthogonality
+    are required and the left-vector diagnostics are NaN.
+    """
 
     method: GeneralEigenMethod
     transform: GeneralEigenTransform
@@ -362,10 +417,11 @@ class GeneralEigenSolvePolicy(StrictModule):
     tolerance: GeneralEigenTolerancePolicy
     resources: GeneralEigenResourcePolicy
     materialization: MaterializationPolicy
-    transform_solve: LinearSolvePolicy
+    transform_solve: LinearSolvePolicy | SparseFactorizationPolicy
     singular_mass: SingularMassPolicy = eqx.field(static=True)
     initial_vector: Array | None
     failure: FailurePolicy
+    vectors: GeneralEigenVectors = eqx.field(static=True)
 
     def __init__(
         self,
@@ -378,10 +434,11 @@ class GeneralEigenSolvePolicy(StrictModule):
         tolerance: GeneralEigenTolerancePolicy | None = None,
         resources: GeneralEigenResourcePolicy | None = None,
         materialization: MaterializationPolicy | None = None,
-        transform_solve: LinearSolvePolicy | None = None,
+        transform_solve: LinearSolvePolicy | SparseFactorizationPolicy | None = None,
         singular_mass: SingularMassPolicy = "report",
         initial_vector: ArrayLike | None = None,
         failure: FailurePolicy | None = None,
+        vectors: GeneralEigenVectors = "left-right",
     ) -> None:
         method_ = DenseSchurQZ() if method is None else method
         transform_ = StandardTransform() if transform is None else transform
@@ -410,9 +467,12 @@ class GeneralEigenSolvePolicy(StrictModule):
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy.")
         if transform_solve is not None and not isinstance(
-            transform_solve, LinearSolvePolicy
+            transform_solve, (LinearSolvePolicy, SparseFactorizationPolicy)
         ):
-            raise TypeError("transform_solve must be a LinearSolvePolicy or None.")
+            raise TypeError(
+                "transform_solve must be a LinearSolvePolicy, SparseFactorizationPolicy, or None."
+            )
+        vectors_ = parse(vectors, GeneralEigenVectors, "vectors")
         steps = int(max_steps)
         if steps < 1:
             raise ValueError("max_steps must be positive.")
@@ -453,6 +513,7 @@ class GeneralEigenSolvePolicy(StrictModule):
         self.singular_mass = singular_mass
         self.initial_vector = initial
         self.failure = failure_
+        self.vectors = vectors_
 
 
 class GeneralEigenCapabilities(StrictModule):
@@ -484,7 +545,13 @@ class GeneralEigenCostEstimate(StrictModule):
 
 
 class GeneralEigenSolvePlan(StrictModule):
-    """Immutable symbolic plan for one standard or generalized general pencil."""
+    """Immutable symbolic plan for one standard or generalized general pencil.
+
+    A sparse-factor transform retains the symbolic assembly of ``A - sigma B``
+    and its symbolic sparse factorization; both are reused by refresh.
+    ``enclosure`` is ``"bauer-fike"`` only for a standard problem whose operator
+    is certified self-adjoint in Euclidean coordinates.
+    """
 
     policy: GeneralEigenSolvePolicy
     capabilities: GeneralEigenCapabilities = eqx.field(static=True)
@@ -493,6 +560,9 @@ class GeneralEigenSolvePlan(StrictModule):
     operator_id: str = eqx.field(static=True)
     mass_operator_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    transform_assembly: SparseAssemblyPlan | None
+    transform_factorization: SparseFactorizationPlan | None
+    enclosure: GeneralEigenEnclosure = eqx.field(static=True)
 
 
 class PreparedGeneralEigenSolve(StrictModule):
@@ -511,10 +581,23 @@ class PreparedGeneralEigenSolve(StrictModule):
     mass_operator_fingerprint: str | None = eqx.field(static=True)
     numeric_version: Array
     refresh_count: Array
+    transform_assembly: PreparedSparseAssembly | None
+    transform_factorization: PreparedSparseFactorization | None
+    norm_upper_bound: Array
 
 
 class GeneralEigenSolveDiagnostics(StrictModule):
-    """Homogeneous classification, paired residuals, and convergence evidence."""
+    """Homogeneous classification, paired residuals, and convergence evidence.
+
+    ``backward_errors[i] = ‖A x - λ B x‖ / ‖x‖`` for the right pair: ``λ`` is an
+    exact eigenvalue of the pencil ``(A + E, B)`` with ``‖E‖₂`` equal to it
+    (``E = -r xᴴ / ‖x‖²``), a rigorous pseudospectral statement. Under
+    ``enclosure="bauer-fike"`` it is also a forward radius containing an
+    eigenvalue of ``A``; under ``"estimate"`` it is not. ``norm_upper_bound`` is
+    ``sqrt(‖A‖₁ ‖A‖∞) >= ‖A‖₂`` for a sparse operator and NaN otherwise.
+    ``factorization_status`` is the sparse-factor transform status
+    (`SparseFactorizationStatus`, ``SUCCESS`` when no factor is used).
+    """
 
     right_residual_norms: Array
     left_residual_norms: Array
@@ -544,6 +627,10 @@ class GeneralEigenSolveDiagnostics(StrictModule):
     decomposition_count: Array
     preparation_bytes: int = eqx.field(static=True)
     workspace_bytes: int = eqx.field(static=True)
+    backward_errors: Array
+    norm_upper_bound: Array
+    factorization_status: Array
+    enclosure: GeneralEigenEnclosure = eqx.field(static=True)
 
 
 class GeneralEigenSolveProvenance(StrictModule):
@@ -610,7 +697,10 @@ def plan_general_eigensolve(
     if not isinstance(selected, GeneralEigenSolvePolicy):
         raise TypeError("policy must be a GeneralEigenSolvePolicy or None.")
     dimension = problem.dimension
-    if dimension > selected.resources.max_dimension:
+    factored = isinstance(selected.transform_solve, SparseFactorizationPolicy)
+    # The dense dimension cap bounds dense and matrix-free GMRES routes; a
+    # prepared sparse factor is bounded by its own fill and work limits.
+    if not factored and dimension > selected.resources.max_dimension:
         raise ValueError(
             f"General eigen dimension {dimension} exceeds limit {selected.resources.max_dimension}."
         )
@@ -625,80 +715,20 @@ def plan_general_eigensolve(
             raise ValueError(
                 "DenseSchurQZ uses the original pencil and StandardTransform."
             )
+        if selected.vectors != "left-right" or factored:
+            raise ValueError(
+                "DenseSchurQZ returns paired left/right vectors without a transform solve."
+            )
+        transform_assembly, transform_factorization = None, None
     else:
-        count = selected.selection.count
-        if count is None:
-            raise ValueError("RestartedArnoldi requires an explicit selection count.")
-        if selected.selection.kind in ("all", "finite", "infinite"):
-            raise ValueError(
-                "RestartedArnoldi requires an ordered finite-mode selection."
-            )
-        if count >= dimension - 1:
-            raise ValueError("RestartedArnoldi requires count < dimension - 1.")
-        if 2 * count > dimension:
-            raise ValueError(
-                "RestartedArnoldi requires room for at least two retained blocks (2 * count <= dimension)."
-            )
-        if selected.max_steps < 2 * count:
-            raise ValueError(
-                "RestartedArnoldi max_steps must admit at least two retained blocks."
-            )
-        if not problem.operator.capabilities.transpose or (
-            problem.mass_operator is not None
-            and not problem.mass_operator.capabilities.transpose
-        ):
-            raise ValueError("RestartedArnoldi requires operator transpose capabilities.")
-        needs_transform_solve = problem.mass_operator is not None or not isinstance(
-            selected.transform, StandardTransform
+        _validate_arnoldi_plan(problem, selected)
+        transform_assembly, transform_factorization = _plan_transform_factorization(
+            problem, selected
         )
-        if needs_transform_solve and (
-            not isinstance(selected.transform_solve.method, GMRES)
-            or not selected.transform_solve.require_device_binding
-        ):
-            raise ValueError(
-                "Matrix-free spectral transforms require a device-bound GMRES transform_solve policy."
-            )
-        if problem.mass_operator is not None:
-            properties = problem.mass_operator.properties
-            full_rank = properties.certifies("rank") and properties.rank == dimension
-            if not properties.certifies("positive_definite") and not full_rank:
-                raise ValueError(
-                    "Matrix-free generalized Arnoldi requires a certified nonsingular "
-                    "mass operator; use DenseSchurQZ to classify an uncertified or "
-                    "singular mass pencil."
-                )
-        coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
-        if (
-            not np.issubdtype(coordinate_dtype, np.complexfloating)
-            and isinstance(selected.transform, (ShiftInvertTransform, CayleyTransform))
-            and selected.transform.shift.imag != 0.0
-        ):
-            raise ValueError(
-                "A complex spectral shift requires a complex coordinate space."
-            )
-        if isinstance(selected.transform, (ShiftInvertTransform, CayleyTransform)):
-            if selected.selection.kind != "closest":
-                raise ValueError(
-                    "Shift-invert and Cayley transforms require selection kind 'closest'."
-                )
-            if abs(selected.selection.target - selected.transform.shift) > (
-                selected.tolerance.absolute
-                + selected.tolerance.relative * max(abs(selected.transform.shift), 1.0)
-            ):
-                raise ValueError(
-                    "Closest-selection target must equal the transform shift."
-                )
-        elif selected.selection.kind == "closest" and selected.selection.target != 0.0:
-            raise ValueError(
-                "A nonzero closest target requires ShiftInvertTransform or CayleyTransform."
-            )
-        subspace = _arnoldi_subspace_dimension(selected.method, count, dimension)
-        if subspace < 2 * count:
-            raise ValueError(
-                "Arnoldi subspace_dimension must admit at least two retained blocks."
-            )
-    capabilities = _capabilities(selected.method)
-    cost = _general_eigen_cost(problem, selected, capabilities.backend)
+    capabilities = _capabilities(selected.method, selected.vectors)
+    cost = _general_eigen_cost(
+        problem, selected, capabilities.backend, transform_factorization
+    )
     resources = selected.resources
     for value, limit, label in (
         (cost.preparation_bytes, resources.preparation_bytes, "preparation"),
@@ -711,6 +741,13 @@ def plan_general_eigensolve(
                 f"General eigen {label} estimate {value} exceeds budget {limit}."
             )
     mass_id = None if problem.mass_operator is None else problem.mass_operator.operator_id
+    enclosure: GeneralEigenEnclosure = (
+        "bauer-fike"
+        if problem.mass_operator is None
+        and problem.operator.properties.certifies("self_adjoint")
+        and _has_euclidean_pairing(problem.operator.source)
+        else "estimate"
+    )
     return GeneralEigenSolvePlan(
         policy=selected,
         capabilities=capabilities,
@@ -725,21 +762,192 @@ def plan_general_eigensolve(
                 "operator": problem.operator.operator_id,
                 "mass": mass_id,
                 "method": selected.method.name,
+                "restart": None
+                if isinstance(selected.method, DenseSchurQZ)
+                else selected.method.restart,
                 "transform": selected.transform.name,
                 "selection": selected.selection.selection_id,
                 "max_steps": selected.max_steps,
                 "backend": capabilities.backend,
                 "singular_mass": selected.singular_mass,
-                "transform_solve": {
-                    "method": selected.transform_solve.method.name,
-                    "relative": selected.transform_solve.tolerance.relative,
-                    "absolute": selected.transform_solve.tolerance.absolute,
-                    "max_steps": selected.transform_solve.tolerance.max_steps,
-                    "device": selected.transform_solve.require_device_binding,
-                },
+                "vectors": selected.vectors,
+                "transform_solve": _transform_solve_identity(
+                    selected.transform_solve, transform_factorization
+                ),
             }
         ),
+        transform_assembly=transform_assembly,
+        transform_factorization=transform_factorization,
+        enclosure=enclosure,
     )
+
+
+def _transform_solve_identity(
+    transform_solve: LinearSolvePolicy | SparseFactorizationPolicy,
+    factorization: SparseFactorizationPlan | None,
+    /,
+) -> dict[str, object]:
+    if isinstance(transform_solve, SparseFactorizationPolicy):
+        return {
+            "method": "sparse-factorization",
+            "factorization": None if factorization is None else factorization.plan_id,
+        }
+    return {
+        "method": transform_solve.method.name,
+        "relative": transform_solve.tolerance.relative,
+        "absolute": transform_solve.tolerance.absolute,
+        "max_steps": transform_solve.tolerance.max_steps,
+        "device": transform_solve.require_device_binding,
+    }
+
+
+def _validate_arnoldi_counts(
+    method: RestartedArnoldi, count: int, dimension: int, max_steps: int, /
+) -> None:
+    match method.restart:
+        case "block-ritz":
+            if count >= dimension - 1:
+                raise ValueError("RestartedArnoldi requires count < dimension - 1.")
+            if 2 * count > dimension:
+                raise ValueError(
+                    "RestartedArnoldi requires room for at least two retained blocks (2 * count <= dimension)."
+                )
+            if max_steps < 2 * count:
+                raise ValueError(
+                    "RestartedArnoldi max_steps must admit at least two retained blocks."
+                )
+            if _arnoldi_subspace_dimension(method, count, dimension) < 2 * count:
+                raise ValueError(
+                    "Arnoldi subspace_dimension must admit at least two retained blocks."
+                )
+        case "krylov-schur":
+            subspace = _arnoldi_subspace_dimension(method, count, dimension)
+            if count >= subspace:
+                raise ValueError(
+                    "Krylov-Schur Arnoldi requires count < min(subspace_dimension, dimension)."
+                )
+            if max_steps < subspace:
+                raise ValueError(
+                    "Krylov-Schur Arnoldi max_steps must admit one full subspace."
+                )
+        case _:
+            assert_never(method.restart)
+
+
+def _validate_arnoldi_plan(
+    problem: GeneralEigenproblem, selected: GeneralEigenSolvePolicy, /
+) -> None:
+    method = selected.method
+    if not isinstance(method, RestartedArnoldi):
+        raise RuntimeError("Internal invariant failed: Arnoldi plan without Arnoldi.")
+    dimension = problem.dimension
+    count = selected.selection.count
+    if count is None:
+        raise ValueError("RestartedArnoldi requires an explicit selection count.")
+    if selected.selection.kind in ("all", "finite", "infinite"):
+        raise ValueError("RestartedArnoldi requires an ordered finite-mode selection.")
+    _validate_arnoldi_counts(method, count, dimension, selected.max_steps)
+    if selected.vectors == "left-right" and (
+        not problem.operator.capabilities.transpose
+        or (
+            problem.mass_operator is not None
+            and not problem.mass_operator.capabilities.transpose
+        )
+    ):
+        raise ValueError("RestartedArnoldi requires operator transpose capabilities.")
+    needs_transform_solve = problem.mass_operator is not None or not isinstance(
+        selected.transform, StandardTransform
+    )
+    transform_solve = selected.transform_solve
+    if isinstance(transform_solve, SparseFactorizationPolicy):
+        if not needs_transform_solve:
+            raise ValueError(
+                "A sparse-factor transform_solve requires a spectral transform or mass operator."
+            )
+        if selected.vectors != "right":
+            raise ValueError(
+                "A sparse-factor transform_solve serves right pairs only (vectors='right')."
+            )
+        sparse = isinstance(problem.operator, AbstractSparseLinearOperator) and (
+            problem.mass_operator is None
+            or isinstance(problem.mass_operator, AbstractSparseLinearOperator)
+        )
+        if not sparse:
+            raise LinearCapabilityError(
+                "A sparse-factor transform_solve requires canonical sparse pencil operators."
+            )
+    elif needs_transform_solve and (
+        not isinstance(transform_solve.method, GMRES)
+        or not transform_solve.require_device_binding
+    ):
+        raise ValueError(
+            "Matrix-free spectral transforms require a device-bound GMRES transform_solve policy."
+        )
+    if problem.mass_operator is not None:
+        properties = problem.mass_operator.properties
+        full_rank = properties.certifies("rank") and properties.rank == dimension
+        if not properties.certifies("positive_definite") and not full_rank:
+            raise ValueError(
+                "Matrix-free generalized Arnoldi requires a certified nonsingular "
+                "mass operator; use DenseSchurQZ to classify an uncertified or "
+                "singular mass pencil."
+            )
+    _validate_transform_selection(problem, selected)
+
+
+def _validate_transform_selection(
+    problem: GeneralEigenproblem, selected: GeneralEigenSolvePolicy, /
+) -> None:
+    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
+    if (
+        not np.issubdtype(coordinate_dtype, np.complexfloating)
+        and isinstance(selected.transform, (ShiftInvertTransform, CayleyTransform))
+        and selected.transform.shift.imag != 0.0
+    ):
+        raise ValueError("A complex spectral shift requires a complex coordinate space.")
+    if isinstance(selected.transform, (ShiftInvertTransform, CayleyTransform)):
+        if selected.selection.kind != "closest":
+            raise ValueError(
+                "Shift-invert and Cayley transforms require selection kind 'closest'."
+            )
+        if abs(selected.selection.target - selected.transform.shift) > (
+            selected.tolerance.absolute
+            + selected.tolerance.relative * max(abs(selected.transform.shift), 1.0)
+        ):
+            raise ValueError("Closest-selection target must equal the transform shift.")
+    elif selected.selection.kind == "closest" and selected.selection.target != 0.0:
+        raise ValueError(
+            "A nonzero closest target requires ShiftInvertTransform or CayleyTransform."
+        )
+
+
+def _transform_assembly_policy(problem: GeneralEigenproblem, /) -> SparseAssemblyPolicy:
+    """Limits of ``A - sigma B``: at most ``nnz(A) + nnz(B or I)`` entries."""
+    floor = SparseAssemblyPolicy()
+    entries = problem.dimension
+    for operator in (problem.operator, problem.mass_operator):
+        if isinstance(operator, AbstractSparseLinearOperator):
+            entries += operator.sparse_storage().nnz
+    return SparseAssemblyPolicy(
+        max_nnz=max(floor.max_nnz, entries),
+        max_bytes=max(floor.max_bytes, 32 * entries),
+        max_contributions=max(floor.max_contributions, entries),
+        max_workspace_bytes=max(floor.max_workspace_bytes, 128 * entries),
+    )
+
+
+def _plan_transform_factorization(
+    problem: GeneralEigenproblem, selected: GeneralEigenSolvePolicy, /
+) -> tuple[SparseAssemblyPlan | None, SparseFactorizationPlan | None]:
+    """Symbolic assembly and factorization of the sparse transform denominator."""
+    if not isinstance(selected.transform_solve, SparseFactorizationPolicy):
+        return None, None
+    denominator = _transform_denominator(problem, selected.transform)
+    if denominator is None:
+        raise RuntimeError("Internal invariant failed: factor route without denominator.")
+    assembly = plan_sparse_assembly(denominator, _transform_assembly_policy(problem))
+    factored = prepare_sparse_assembly(assembly, denominator).operator
+    return assembly, prepare_sparse_factorization(factored, selected.transform_solve)
 
 
 def prepare_general_eigensolve(
@@ -761,20 +969,67 @@ def refresh_general_eigensolve(
     prepared: PreparedGeneralEigenSolve,
     problem: GeneralEigenproblem,
     /,
+    *,
+    warm_start: GeneralEigenSolveResult | None = None,
 ) -> PreparedGeneralEigenSolve:
-    """Refresh pencil values while preserving the symbolic plan and prepared ID."""
+    """Refresh pencil values while preserving the symbolic plan and prepared ID.
+
+    ``warm_start`` restarts the Arnoldi iteration from the converged right
+    eigenvectors of an earlier result (phase-normalized and summed into the
+    starting vector), so a small coefficient change reconverges in fewer
+    transformed actions. It changes only the starting vector: every pair is
+    still accepted on its residual against the refreshed pencil. A result with
+    no converged pair leaves the plan's starting vector unchanged.
+    """
     if not isinstance(prepared, PreparedGeneralEigenSolve):
         raise TypeError("prepared must be a PreparedGeneralEigenSolve.")
+    if warm_start is not None and not isinstance(warm_start, GeneralEigenSolveResult):
+        raise TypeError("warm_start must be a GeneralEigenSolveResult or None.")
     _validate_general_plan(problem, prepared.plan)
+    plan = prepared.plan
+    vector = None if warm_start is None else _warm_start_vector(warm_start, problem)
+    if vector is not None:
+        plan = eqx.tree_at(
+            lambda item: item.policy.initial_vector,
+            plan,
+            vector,
+            is_leaf=lambda value: value is None,
+        )
     return _prepare_general_numeric(
         problem,
-        prepared.plan,
+        plan,
         numeric_version=prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
         refresh_count=prepared.refresh_count + jnp.asarray(1, dtype=jnp.int32),
         prepared_id=prepared.prepared_id,
         transform_solver=prepared.transform_solver,
         left_transform_solver=prepared.left_transform_solver,
+        transform_assembly=prepared.transform_assembly,
     )
+
+
+def _warm_start_vector(
+    result: GeneralEigenSolveResult, problem: GeneralEigenproblem, /
+) -> Array | None:
+    """Unit sum of the phase-normalized converged right eigenvectors, or None."""
+    coordinates = result.right_eigenvector_coordinates
+    if coordinates.shape[0] != problem.dimension:
+        raise ValueError("warm_start eigenvectors must match the pencil dimension.")
+    converged = np.asarray(result.diagnostics.converged_mask)
+    if not np.any(converged):
+        return None
+    columns = coordinates[:, np.flatnonzero(converged)]
+    pivot = jnp.take_along_axis(
+        columns, jnp.argmax(jnp.abs(columns), axis=0)[None, :], axis=0
+    )
+    vector = jnp.sum(columns * (jnp.conj(pivot) / jnp.abs(pivot)), axis=1)
+    if not np.issubdtype(
+        np.dtype(_coordinate_dtype(problem.operator.source)), np.complexfloating
+    ):
+        vector = jnp.real(vector)
+    norm = jnp.linalg.norm(vector)
+    if not bool(jnp.isfinite(norm)) or float(norm) == 0.0:
+        return None
+    return vector / norm
 
 
 def general_eigensolve(
@@ -794,7 +1049,7 @@ def general_eigensolve(
         raise TypeError("Expected a GeneralEigenproblem or PreparedGeneralEigenSolve.")
     dense_method = isinstance(prepared.plan.policy.method, DenseSchurQZ)
     if not dense_method:
-        return _general_eigensolve_native(prepared)
+        return _compiled_general_eigensolve_native(prepared)
     matrix = np.asarray(prepared.matrix)
     mass = np.asarray(prepared.mass_matrix)
     input_finite = bool(np.all(np.isfinite(matrix)) and np.all(np.isfinite(mass)))
@@ -974,6 +1229,15 @@ def general_eigensolve(
         ),
         preparation_bytes=prepared.plan.cost.preparation_bytes,
         workspace_bytes=prepared.plan.cost.workspace_bytes,
+        backward_errors=jnp.asarray(
+            right_residual_np
+            / np.maximum(
+                np.linalg.norm(right_np, axis=0), np.finfo(right_residual_np.dtype).tiny
+            )
+        ),
+        norm_upper_bound=prepared.norm_upper_bound,
+        factorization_status=_factorization_status(prepared),
+        enclosure=prepared.plan.enclosure,
     )
     return GeneralEigenSolveResult(
         eigenvalues=jnp.asarray(eigenvalues_np, dtype=complex_dtype),
@@ -1029,11 +1293,15 @@ def _general_eigensolve_native(
         right_locked,
         right_matvecs,
         right_valid,
-    ) = _native_restarted_arnoldi_evidence(
+    ) = _arnoldi_evidence(
         prepared,
         initial,
         adjoint_action=False,
     )
+    if policy.vectors == "right":
+        return _right_native_result(
+            prepared, right_mu, right, right_locked, right_matvecs, right_valid
+        )
     (
         left_mu,
         left,
@@ -1041,7 +1309,7 @@ def _general_eigensolve_native(
         left_locked,
         left_matvecs,
         left_valid,
-    ) = _native_restarted_arnoldi_evidence(
+    ) = _arnoldi_evidence(
         prepared,
         jnp.conj(initial),
         adjoint_action=True,
@@ -1189,11 +1457,7 @@ def _general_eigensolve_native(
         / jnp.maximum(jnp.abs(pairing_diagonal), tiny)
     )
     matvecs = right_matvecs + left_matvecs
-    _, _, restart_count = _arnoldi_cycle_configuration(
-        policy,
-        prepared.problem.dimension,
-        count,
-    )
+    restart_count = _arnoldi_restart_count(policy, prepared.problem.dimension, count)
     diagnostics = GeneralEigenSolveDiagnostics(
         right_residual_norms=right_residuals,
         left_residual_norms=left_residuals,
@@ -1227,6 +1491,11 @@ def _general_eigensolve_native(
         decomposition_count=jnp.asarray(2 * restart_count, dtype=jnp.int32),
         preparation_bytes=prepared.plan.cost.preparation_bytes,
         workspace_bytes=prepared.plan.cost.workspace_bytes,
+        backward_errors=right_residuals
+        / jnp.maximum(jnp.linalg.norm(right, axis=0), tiny),
+        norm_upper_bound=prepared.norm_upper_bound,
+        factorization_status=_factorization_status(prepared),
+        enclosure=prepared.plan.enclosure,
     )
     return GeneralEigenSolveResult(
         eigenvalues=alpha,
@@ -1244,30 +1513,161 @@ def _general_eigensolve_native(
         left_eigenvector_coordinates=left,
         status=status,
         diagnostics=diagnostics,
-        provenance=GeneralEigenSolveProvenance(
-            backend=prepared.plan.capabilities.backend,
-            host_only=False,
-            host_library="none",
-            algorithm=policy.method.name,
-            transform=policy.transform.name,
-            problem_id=prepared.problem.problem_id,
-            plan_id=prepared.plan.plan_id,
-            prepared_id=prepared.prepared_id,
-            operator_id=prepared.problem.operator.operator_id,
-            mass_operator_id=(
-                None
-                if prepared.problem.mass_operator is None
-                else prepared.problem.mass_operator.operator_id
-            ),
-            source_space_id=prepared.problem.operator.source.space_id,
-            target_space_id=prepared.problem.operator.target.space_id,
-            selection_id=policy.selection.selection_id,
-            coordinate_convention=(
-                "canonical-coordinate homogeneous alpha/beta; left vectors are canonical Euclidean covectors"
-            ),
-            capabilities=prepared.plan.capabilities,
-            numeric_version=prepared.numeric_version,
+        provenance=_native_provenance(prepared),
+    )
+
+
+def _native_provenance(
+    prepared: PreparedGeneralEigenSolve, /
+) -> GeneralEigenSolveProvenance:
+    policy = prepared.plan.policy
+    return GeneralEigenSolveProvenance(
+        backend=prepared.plan.capabilities.backend,
+        host_only=False,
+        host_library="none",
+        algorithm=policy.method.name,
+        transform=policy.transform.name,
+        problem_id=prepared.problem.problem_id,
+        plan_id=prepared.plan.plan_id,
+        prepared_id=prepared.prepared_id,
+        operator_id=prepared.problem.operator.operator_id,
+        mass_operator_id=(
+            None
+            if prepared.problem.mass_operator is None
+            else prepared.problem.mass_operator.operator_id
         ),
+        source_space_id=prepared.problem.operator.source.space_id,
+        target_space_id=prepared.problem.operator.target.space_id,
+        selection_id=policy.selection.selection_id,
+        coordinate_convention=(
+            "canonical-coordinate homogeneous alpha/beta; left vectors are canonical Euclidean covectors"
+        ),
+        capabilities=prepared.plan.capabilities,
+        numeric_version=prepared.numeric_version,
+    )
+
+
+def _factorization_status(prepared: PreparedGeneralEigenSolve, /) -> Array:
+    factorization = prepared.transform_factorization
+    if factorization is None:
+        return jnp.asarray(int(SparseFactorizationStatus.SUCCESS), dtype=jnp.int32)
+    return jnp.asarray(factorization.status, dtype=jnp.int32).reshape(())
+
+
+def _right_native_result(
+    prepared: PreparedGeneralEigenSolve,
+    transformed: Array,
+    right: Array,
+    locked: Array,
+    matvecs: Array,
+    valid: Array,
+    /,
+) -> GeneralEigenSolveResult:
+    """Right-pair result: residual evidence only, left diagnostics NaN.
+
+    Status never reports biorthogonality: no left vectors are computed. A
+    failed sparse-factor transform is reported as nonfinite output with the
+    factorization status in the diagnostics.
+    """
+    policy = prepared.plan.policy
+    count = right.shape[1]
+    values = _jax_inverse_transformed_values(transformed, policy.transform, adjoint=False)
+    residuals, scales = _jax_original_pencil_residuals(
+        prepared, values, right, adjoint_action=False
+    )
+    tolerance = policy.tolerance
+    residual_ok = residuals <= tolerance.absolute + tolerance.relative * scales
+    factorization_status = _factorization_status(prepared)
+    factor_ok = factorization_status == int(SparseFactorizationStatus.SUCCESS)
+    finite_mask = (
+        jnp.isfinite(values)
+        & jnp.all(jnp.isfinite(right), axis=0)
+        & jnp.isfinite(residuals)
+    )
+    converged_mask = locked & residual_ok & finite_mask & valid & factor_ok
+    converged_count = jnp.sum(converged_mask, dtype=jnp.int32)
+    output_finite = jnp.all(finite_mask) & factor_ok
+    backend_converged = valid & (converged_count == count)
+    status = jnp.where(
+        ~output_finite,
+        int(GeneralEigenSolveStatus.NONFINITE_OUTPUT),
+        jnp.where(
+            ~backend_converged,
+            int(GeneralEigenSolveStatus.PARTIAL_CONVERGENCE),
+            jnp.where(
+                jnp.all(residual_ok),
+                int(GeneralEigenSolveStatus.SUCCESS),
+                int(GeneralEigenSolveStatus.RESIDUAL_TOLERANCE_NOT_MET),
+            ),
+        ),
+    ).astype(jnp.int32)
+    alpha = values
+    if policy.failure.mode == "error":
+        alpha = eqx.error_if(
+            alpha,
+            status != int(GeneralEigenSolveStatus.SUCCESS),
+            "General eigensolve did not satisfy its numerical contract.",
+        )
+    real_dtype = jnp.real(alpha).dtype
+    tiny = jnp.finfo(real_dtype).tiny
+    missing = jnp.full((count,), jnp.nan, dtype=real_dtype)
+    absent = jnp.full_like(right, jnp.nan)
+    pairing = jnp.full((count, count), jnp.nan, dtype=right.dtype)
+    restart_count = _arnoldi_restart_count(policy, prepared.problem.dimension, count)
+    diagnostics = GeneralEigenSolveDiagnostics(
+        right_residual_norms=residuals,
+        left_residual_norms=missing,
+        right_relative_residuals=residuals / jnp.maximum(scales, tiny),
+        left_relative_residuals=missing,
+        pairing_diagonal=jnp.diag(pairing),
+        pairing_matrix=pairing,
+        biorthogonality_error=jnp.asarray(jnp.nan, dtype=real_dtype),
+        eigenvalue_condition_estimates=missing,
+        finite_mask=finite_mask,
+        infinite_mask=jnp.zeros((count,), dtype=jnp.bool_),
+        indeterminate_mask=jnp.zeros((count,), dtype=jnp.bool_),
+        input_finite=jnp.asarray(True),
+        output_finite=output_finite,
+        converged=status == int(GeneralEigenSolveStatus.SUCCESS),
+        converged_mask=converged_mask,
+        converged_count=converged_count,
+        mass_rank=prepared.mass_rank,
+        mass_singular=jnp.asarray(False),
+        shifted_rank=prepared.shifted_rank,
+        selected_count=jnp.asarray(count, dtype=jnp.int32),
+        available_count=converged_count,
+        requested_count=count,
+        arnoldi_action_count=matvecs,
+        transform_solve_count=jnp.where(
+            (prepared.transform_solver is not None)
+            | (prepared.transform_factorization is not None),
+            matvecs,
+            0,
+        ).astype(jnp.int32),
+        backend_converged=backend_converged,
+        decomposition_count=jnp.asarray(restart_count + 1, dtype=jnp.int32),
+        preparation_bytes=prepared.plan.cost.preparation_bytes,
+        workspace_bytes=prepared.plan.cost.workspace_bytes,
+        backward_errors=residuals / jnp.maximum(jnp.linalg.norm(right, axis=0), tiny),
+        norm_upper_bound=prepared.norm_upper_bound,
+        factorization_status=factorization_status,
+        enclosure=prepared.plan.enclosure,
+    )
+    return GeneralEigenSolveResult(
+        eigenvalues=alpha,
+        alpha=alpha,
+        beta=jnp.ones_like(alpha),
+        right_eigenvectors=_unflatten_complex_columns(
+            prepared.problem.operator.source, right
+        ),
+        left_eigenvectors=_unflatten_complex_columns(
+            prepared.problem.operator.source, absent
+        ),
+        right_eigenvector_coordinates=right,
+        left_eigenvector_coordinates=absent,
+        status=status,
+        diagnostics=diagnostics,
+        provenance=_native_provenance(prepared),
     )
 
 
@@ -1297,7 +1697,9 @@ def _require_general_endomorphism(operator: object, name: str, /) -> None:
         raise TypeError(f"{name} requires real or complex inexact coordinates.")
 
 
-def _capabilities(method: GeneralEigenMethod, /) -> GeneralEigenCapabilities:
+def _capabilities(
+    method: GeneralEigenMethod, vectors: GeneralEigenVectors, /
+) -> GeneralEigenCapabilities:
     dense = isinstance(method, DenseSchurQZ)
     return GeneralEigenCapabilities(
         backend="scipy-lapack-host" if dense else "phydrax-native-restarted-arnoldi",
@@ -1305,7 +1707,7 @@ def _capabilities(method: GeneralEigenMethod, /) -> GeneralEigenCapabilities:
         supports_standard=True,
         supports_generalized=True,
         supports_singular_mass=dense,
-        returns_left_eigenvectors=True,
+        returns_left_eigenvectors=vectors == "left-right",
         returns_right_eigenvectors=True,
         transforms=("standard",) if dense else ("standard", "shift-invert", "cayley"),
     )
@@ -1353,6 +1755,7 @@ def _general_eigen_cost(
     problem: GeneralEigenproblem,
     policy: GeneralEigenSolvePolicy,
     backend: str,
+    factorization: SparseFactorizationPlan | None,
     /,
 ) -> GeneralEigenCostEstimate:
     dimension = problem.dimension
@@ -1371,13 +1774,25 @@ def _general_eigen_cost(
     else:
         input_bytes = 0
         subspace = _arnoldi_subspace_dimension(policy.method, count, dimension)
-        inner_steps = policy.transform_solve.tolerance.max_steps
-        if inner_steps is None:
-            inner_steps = max(10 * dimension, 1)
+        transform_solve = policy.transform_solve
+        # One prepared factor solve per transformed action; GMRES may take up
+        # to its step cap.
+        if isinstance(transform_solve, SparseFactorizationPolicy):
+            inner_steps = 1
+        else:
+            inner_steps = transform_solve.tolerance.max_steps
+            if inner_steps is None:
+                inner_steps = max(10 * dimension, 1)
         needs_solve = problem.mass_operator is not None or not isinstance(
             policy.transform, StandardTransform
         )
-        preparation = 2 * dimension * itemsize if needs_solve else 0
+        preparation = (
+            factorization.factor_bytes
+            if factorization is not None
+            else 2 * dimension * itemsize
+            if needs_solve
+            else 0
+        )
         workspace = (4 * dimension * subspace + 4 * subspace * subspace) * itemsize
         krylov = 2 * dimension * subspace * itemsize
         numerator_actions = (
@@ -1387,15 +1802,14 @@ def _general_eigen_cost(
             else 1
         )
         action_cost = numerator_actions + (inner_steps if needs_solve else 0)
-        _, _, restart_count = _arnoldi_cycle_configuration(
-            policy,
-            dimension,
-            count,
-        )
-        residual_actions = 2 * (restart_count + 1) * count * input_matrices
-        final_transform_solves = count * inner_steps if needs_solve else 0
+        runs = 2 if policy.vectors == "left-right" else 1
+        restart_count = _arnoldi_restart_count(policy, dimension, count)
+        residual_actions = runs * (restart_count + 1) * count * input_matrices
+        final_transform_solves = count * inner_steps if needs_solve and runs == 2 else 0
         matvecs = (
-            2 * policy.max_steps * action_cost + residual_actions + final_transform_solves
+            runs * policy.max_steps * action_cost
+            + residual_actions
+            + final_transform_solves
         )
         exact = False
     return GeneralEigenCostEstimate(
@@ -1439,6 +1853,33 @@ def _arnoldi_cycle_configuration(
     return blocks, cycle_dimension, restart_count
 
 
+def _krylov_schur_configuration(
+    method: RestartedArnoldi, max_steps: int, dimension: int, count: int, /
+) -> tuple[int, int, int]:
+    """Subspace, retained dimension, and restarts within ``max_steps`` actions."""
+    subspace = _arnoldi_subspace_dimension(method, count, dimension)
+    retained = count + (subspace - count) // 2
+    restarts = max((max_steps - subspace) // (subspace - retained), 0)
+    return subspace, retained, restarts
+
+
+def _arnoldi_restart_count(
+    policy: GeneralEigenSolvePolicy, dimension: int, count: int, /
+) -> int:
+    method = policy.method
+    if not isinstance(method, RestartedArnoldi):
+        raise RuntimeError("Internal invariant failed: restart count without Arnoldi.")
+    match method.restart:
+        case "block-ritz":
+            return _arnoldi_cycle_configuration(policy, dimension, count)[2]
+        case "krylov-schur":
+            return _krylov_schur_configuration(
+                method, policy.max_steps, dimension, count
+            )[2]
+        case _:
+            assert_never(method.restart)
+
+
 def _validate_general_plan(
     problem: GeneralEigenproblem,
     plan: GeneralEigenSolvePlan,
@@ -1466,6 +1907,7 @@ def _prepare_general_numeric(
     prepared_id: str | None = None,
     transform_solver: PreparedLinearSolve | None = None,
     left_transform_solver: PreparedLinearSolve | None = None,
+    transform_assembly: PreparedSparseAssembly | None = None,
 ) -> PreparedGeneralEigenSolve:
     dimension = problem.dimension
     coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
@@ -1501,6 +1943,8 @@ def _prepare_general_numeric(
             )
         right_solver = None
         left_solver = None
+        assembled = None
+        factorization = None
         shifted_rank = dimension
     else:
         empty_dtype = (
@@ -1513,28 +1957,42 @@ def _prepare_general_numeric(
         matrix = jnp.zeros((0, 0), dtype=empty_dtype)
         mass = jnp.zeros((0, 0), dtype=empty_dtype)
         denominator = _transform_denominator(problem, plan.policy.transform)
-        if denominator is None:
-            right_solver = None
-            left_solver = None
-        else:
+        transform_solve = plan.policy.transform_solve
+        right_solver = None
+        left_solver = None
+        assembled = None
+        factorization = None
+        if denominator is not None and plan.transform_factorization is not None:
+            if plan.transform_assembly is None:
+                raise RuntimeError("Sparse-factor transform plan lacks its assembly.")
+            assembled = (
+                prepare_sparse_assembly(plan.transform_assembly, denominator)
+                if transform_assembly is None
+                else refresh_sparse_assembly(transform_assembly, denominator)
+            )
+            factorization = refresh_sparse_factorization(
+                plan.transform_factorization, assembled.operator
+            )
+        elif denominator is not None and isinstance(transform_solve, LinearSolvePolicy):
             right_problem = LinearSystem(
                 denominator,
                 problem_id=f"{plan.plan_id}-right-transform",
             )
-            left_problem = LinearSystem(
-                _CanonicalCoordinateAdjoint(denominator),
-                problem_id=f"{plan.plan_id}-left-transform",
-            )
             right_solver = (
-                prepare_linear_solve(right_problem, plan.policy.transform_solve)
+                prepare_linear_solve(right_problem, transform_solve)
                 if transform_solver is None
                 else refresh_linear_solve(transform_solver, right_problem)
             )
-            left_solver = (
-                prepare_linear_solve(left_problem, plan.policy.transform_solve)
-                if left_transform_solver is None
-                else refresh_linear_solve(left_transform_solver, left_problem)
-            )
+            if plan.policy.vectors == "left-right":
+                left_problem = LinearSystem(
+                    _CanonicalCoordinateAdjoint(denominator),
+                    problem_id=f"{plan.plan_id}-left-transform",
+                )
+                left_solver = (
+                    prepare_linear_solve(left_problem, transform_solve)
+                    if left_transform_solver is None
+                    else refresh_linear_solve(left_transform_solver, left_problem)
+                )
         mass_rank = dimension
         shifted_rank = -1
     operator_fingerprint = canonical_fingerprint(array_tree_fingerprint(problem.operator))
@@ -1563,7 +2021,24 @@ def _prepare_general_numeric(
         mass_operator_fingerprint=mass_fingerprint,
         numeric_version=jnp.asarray(numeric_version, dtype=jnp.int32),
         refresh_count=jnp.asarray(refresh_count, dtype=jnp.int32),
+        transform_assembly=assembled,
+        transform_factorization=factorization,
+        norm_upper_bound=_sparse_norm_upper_bound(problem.operator),
     )
+
+
+def _sparse_norm_upper_bound(operator: AbstractLinearOperator, /) -> Array:
+    """``sqrt(‖A‖₁ ‖A‖∞) >= ‖A‖₂`` from canonical sparse storage; NaN otherwise."""
+    dtype = np.finfo(np.dtype(_coordinate_dtype(operator.source))).dtype
+    if not isinstance(operator, AbstractSparseLinearOperator):
+        return jnp.asarray(jnp.nan, dtype=dtype)
+    storage = operator.sparse_storage()
+    count = storage.shape[0]
+    magnitudes = jnp.abs(storage.values)
+    rows = jnp.asarray(np.repeat(np.arange(count), np.diff(np.asarray(storage.indptr))))
+    row_sums = jax.ops.segment_sum(magnitudes, rows, num_segments=count)
+    column_sums = jax.ops.segment_sum(magnitudes, storage.indices, num_segments=count)
+    return jnp.sqrt(jnp.max(row_sums) * jnp.max(column_sums)).astype(dtype)
 
 
 class _CanonicalCoordinateAdjoint(AbstractLinearOperator):
@@ -2042,6 +2517,337 @@ def _native_restarted_arnoldi_evidence(
     )
 
 
+def _arnoldi_evidence(
+    prepared: PreparedGeneralEigenSolve,
+    initial: Array,
+    /,
+    *,
+    adjoint_action: bool,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Transformed values, unit vectors, residuals, converged mask, actions, validity."""
+    method = prepared.plan.policy.method
+    if not isinstance(method, RestartedArnoldi):
+        raise RuntimeError("Internal invariant failed: Arnoldi evidence without Arnoldi.")
+    match method.restart:
+        case "block-ritz":
+            return _native_restarted_arnoldi_evidence(
+                prepared, initial, adjoint_action=adjoint_action
+            )
+        case "krylov-schur":
+            return _native_krylov_schur_evidence(
+                prepared, initial[:, 0], adjoint_action=adjoint_action
+            )
+        case _:
+            assert_never(method.restart)
+
+
+def _krylov_schur_orthogonalize(
+    basis: Array, vector: Array, mask: Array, /
+) -> tuple[Array, Array]:
+    """Twice-iterated classical Gram–Schmidt against the masked basis columns."""
+    first = jnp.where(mask, jnp.conj(basis.T) @ vector, 0)
+    vector = vector - basis @ first
+    second = jnp.where(mask, jnp.conj(basis.T) @ vector, 0)
+    return vector - basis @ second, first + second
+
+
+def _krylov_schur_expand(
+    action: Callable[[Array], Array],
+    basis: Array,
+    projected: Array,
+    valid: Array,
+    start: int,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Extend ``T V[:, :j] = V[:, :j+1] G`` from column ``start`` to full width.
+
+    An exact invariant subspace records a zero subdiagonal and continues from a
+    deterministic direction orthogonal to the basis, keeping the decomposition
+    exact; once the basis spans the space the next column is zero.
+    """
+    dimension, width = basis.shape
+    subspace = width - 1
+    epsilon = jnp.finfo(jnp.real(basis).dtype).eps
+    indices = jnp.arange(1, dimension + 1, dtype=jnp.real(basis).dtype)
+
+    def step(
+        index: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
+        basis_, projected_, valid_ = state
+        candidate = action(basis_[:, index])
+        mask = jnp.arange(width) <= index
+        residual, coefficients = _krylov_schur_orthogonalize(basis_, candidate, mask)
+        norm = jnp.linalg.norm(residual)
+        breakdown = norm <= epsilon * subspace * (jnp.linalg.norm(coefficients) + norm)
+        frequency = (index + 1).astype(indices.dtype)
+        direction = jnp.cos((frequency + math.sqrt(5.0)) * indices).astype(basis_.dtype)
+        if jnp.iscomplexobj(basis_):
+            direction = direction + 1j * jnp.sin((frequency + math.sqrt(7.0)) * indices)
+        direction, _ = _krylov_schur_orthogonalize(
+            basis_, direction / jnp.linalg.norm(direction), mask
+        )
+        direction_norm = jnp.linalg.norm(direction)
+        following = jnp.where(
+            breakdown,
+            jnp.where(
+                direction_norm > jnp.sqrt(epsilon),
+                direction / jnp.maximum(direction_norm, epsilon),
+                0,
+            ),
+            residual / jnp.where(norm > 0, norm, 1),
+        )
+        column = coefficients.at[index + 1].set(jnp.where(breakdown, 0, norm))
+        return (
+            basis_.at[:, index + 1].set(following),
+            projected_.at[:, index].set(column),
+            valid_ & jnp.all(jnp.isfinite(candidate)) & jnp.isfinite(norm),
+        )
+
+    return jax.lax.fori_loop(start, subspace, step, (basis, projected, valid))
+
+
+def _krylov_schur_ritz(
+    prepared: PreparedGeneralEigenSolve,
+    projected: Array,
+    subspace: int,
+    /,
+    *,
+    adjoint_action: bool,
+) -> tuple[Array, Array, Array, Array]:
+    """Transformed and original Ritz values, projected eigenvectors, target order."""
+    policy = prepared.plan.policy
+    transformed, vectors = jnp.linalg.eig(projected[:subspace, :subspace])
+    original = _jax_inverse_transformed_values(
+        transformed, policy.transform, adjoint=adjoint_action
+    )
+    scoring = jnp.conj(original) if adjoint_action else original
+    scores = _jax_selection_scores(scoring, policy.selection)
+    order = jnp.argsort(jnp.where(jnp.isfinite(scores), scores, jnp.inf))
+    return transformed, original, vectors, order
+
+
+def _krylov_schur_pairs(
+    prepared: PreparedGeneralEigenSolve,
+    basis: Array,
+    projected: Array,
+    subspace: int,
+    count: int,
+    /,
+    *,
+    adjoint_action: bool,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    """Selected transformed values, unit Ritz vectors, residuals, mask, order,
+    projected eigenvectors, and all transformed Ritz values (ordered as the vectors)."""
+    tolerance = prepared.plan.policy.tolerance
+    transformed, original, vectors, order = _krylov_schur_ritz(
+        prepared, projected, subspace, adjoint_action=adjoint_action
+    )
+    selected = order[:count]
+    ritz = basis[:, :subspace] @ vectors[:, selected]
+    norms = jnp.linalg.norm(ritz, axis=0)
+    ritz = ritz / jnp.where(norms > 0, norms, 1)[None, :]
+    pencil_vectors = ritz
+    left_transform_solver = prepared.left_transform_solver
+    if adjoint_action and left_transform_solver is not None:
+        pencil_vectors = jax.vmap(
+            lambda vector: _solve_complexified_coordinates(left_transform_solver, vector),
+            in_axes=1,
+            out_axes=1,
+        )(ritz)
+    residuals, scales = _jax_original_pencil_residuals(
+        prepared, original[selected], pencil_vectors, adjoint_action=adjoint_action
+    )
+    converged = (
+        jnp.isfinite(original[selected])
+        & (norms > 0)
+        & jnp.isfinite(residuals)
+        & (residuals <= tolerance.absolute + tolerance.relative * scales)
+    )
+    return transformed[selected], ritz, residuals, converged, order, vectors, transformed
+
+
+def _krylov_schur_real_span(
+    vectors: Array, transformed: Array, order: Array, retained: int, /
+) -> Array:
+    """Orthonormal real basis of the retained real-invariant Ritz span of real ``H``.
+
+    A real ``H`` has real eigenvectors and conjugate pairs ``v, v̄`` whose real
+    span ``{Re v, Im v}`` is invariant. A pair split by the retention boundary
+    is dropped, so at most ``retained`` independent columns remain; unused
+    trailing columns are zero and pair with zero rows of the compressed matrix,
+    whose Ritz values are infinite after the inverse transform and never selected.
+    """
+    subspace = vectors.shape[0]
+    selected = order[:retained]
+    values = transformed[selected]
+    chosen = vectors[:, selected]
+    epsilon = jnp.finfo(jnp.real(values).dtype).eps
+    scale = jnp.maximum(jnp.abs(values), 1.0)
+    paired = jnp.imag(values) != 0
+    conjugate = (
+        jnp.abs(values[:, None] - jnp.conj(values)[None, :])
+        <= 100 * epsilon * scale[:, None]
+    ) & ~jnp.eye(retained, dtype=jnp.bool_)
+    keep = ~paired | jnp.any(conjugate, axis=1)
+    pivot = chosen[jnp.argmax(jnp.abs(chosen), axis=0), jnp.arange(retained)]
+    phase = pivot / jnp.where(jnp.abs(pivot) > 0, jnp.abs(pivot), 1)
+    real_part = jnp.where(paired[None, :], jnp.real(chosen), jnp.real(chosen / phase))
+    first = jnp.where((keep & (~paired | (jnp.imag(values) > 0)))[None, :], real_part, 0)
+    second = jnp.where(
+        (keep & paired & (jnp.imag(values) > 0))[None, :], jnp.imag(chosen), 0
+    )
+    candidates = jnp.stack((first, second), axis=2).reshape((subspace, 2 * retained))
+
+    def append(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
+        basis, count = state
+        candidate = candidates[:, index]
+        reference = jnp.linalg.norm(candidate)
+        mask = jnp.arange(retained) < count
+        vector, _ = _krylov_schur_orthogonalize(basis, candidate, mask)
+        norm = jnp.linalg.norm(vector)
+        accept = (norm > jnp.sqrt(epsilon) * reference) & (count < retained)
+        slot = jax.nn.one_hot(count, retained, dtype=basis.dtype)
+        basis = basis + jnp.where(accept, 1.0, 0.0) * (
+            (vector / jnp.where(norm > 0, norm, 1))[:, None] * slot[None, :]
+        )
+        return basis, count + accept.astype(count.dtype)
+
+    basis, _ = jax.lax.fori_loop(
+        0,
+        2 * retained,
+        append,
+        (
+            jnp.zeros((subspace, retained), dtype=jnp.real(vectors).dtype),
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
+    )
+    return basis
+
+
+def _krylov_schur_restart(
+    action: Callable[[Array], Array],
+    basis: Array,
+    projected: Array,
+    valid: Array,
+    order: Array,
+    vectors: Array,
+    transformed: Array,
+    retained: int,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Thick restart onto the retained Ritz eigenvector span of ``H``.
+
+    That span is ``H``-invariant, so with ``Q`` an orthonormal basis of it
+    ``T V Q = V Q (Qᴴ H Q) + v_{m+1} (gᵀ Q)`` is again a Krylov decomposition.
+    A real decomposition keeps a real ``Q`` (`_krylov_schur_real_span`).
+    """
+    subspace = projected.shape[1]
+    if jnp.iscomplexobj(basis):
+        basis_q, _ = jnp.linalg.qr(vectors[:, order[:retained]])
+    else:
+        basis_q = _krylov_schur_real_span(vectors, transformed, order, retained)
+    compressed = jnp.conj(basis_q.T) @ projected[:subspace, :subspace] @ basis_q
+    new_basis = (
+        jnp.zeros_like(basis)
+        .at[:, :retained]
+        .set(basis[:, :subspace] @ basis_q)
+        .at[:, retained]
+        .set(basis[:, subspace])
+    )
+    new_projected = (
+        jnp.zeros_like(projected)
+        .at[:retained, :retained]
+        .set(compressed)
+        .at[retained, :retained]
+        .set(projected[subspace, :] @ basis_q)
+    )
+    return _krylov_schur_expand(action, new_basis, new_projected, valid, retained)
+
+
+def _native_krylov_schur_evidence(
+    prepared: PreparedGeneralEigenSolve,
+    initial: Array,
+    /,
+    *,
+    adjoint_action: bool,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Single-vector Krylov–Schur Arnoldi within ``max_steps`` transformed actions."""
+    policy = prepared.plan.policy
+    method = policy.method
+    count = policy.selection.count
+    if not isinstance(method, RestartedArnoldi) or count is None:
+        raise RuntimeError("Internal invariant failed: Krylov-Schur without a count.")
+    subspace, retained, max_restarts = _krylov_schur_configuration(
+        method, policy.max_steps, prepared.problem.dimension, count
+    )
+
+    def action(vector: Array) -> Array:
+        return _transformed_coordinate_action(
+            prepared, vector, adjoint_action=adjoint_action
+        )
+
+    # A real pencil with a real spectral shift keeps a real Krylov basis: every
+    # transformed action is then one real solve instead of two.
+    start = initial
+    if _real_krylov(prepared):
+        start = jnp.real(initial)
+    basis = (
+        jnp.zeros((start.shape[0], subspace + 1), dtype=start.dtype)
+        .at[:, 0]
+        .set(start / jnp.linalg.norm(start))
+    )
+    projected = jnp.zeros((subspace + 1, subspace), dtype=start.dtype)
+    basis, projected, valid = _krylov_schur_expand(
+        action, basis, projected, jnp.asarray(True), 0
+    )
+
+    def proceed(state: _KrylovSchurState) -> Array:
+        _, _, restarts, valid_, done = state
+        return (~done) & valid_ & (restarts < max_restarts)
+
+    def cycle(state: _KrylovSchurState) -> _KrylovSchurState:
+        basis_, projected_, restarts, valid_, _ = state
+        *_, converged, order, vectors, transformed = _krylov_schur_pairs(
+            prepared, basis_, projected_, subspace, count, adjoint_action=adjoint_action
+        )
+        done = jnp.all(converged)
+        basis_, projected_, valid_ = jax.lax.cond(
+            done,
+            lambda operand: operand,
+            lambda operand: _krylov_schur_restart(
+                action,
+                operand[0],
+                operand[1],
+                operand[2],
+                order,
+                vectors,
+                transformed,
+                retained,
+            ),
+            (basis_, projected_, valid_),
+        )
+        return basis_, projected_, restarts + jnp.where(done, 0, 1), valid_, done
+
+    basis, projected, restarts, valid, _ = jax.lax.while_loop(
+        proceed,
+        cycle,
+        (basis, projected, jnp.asarray(0, dtype=jnp.int32), valid, jnp.asarray(False)),
+    )
+    transformed, ritz, residuals, converged, *_ = _krylov_schur_pairs(
+        prepared, basis, projected, subspace, count, adjoint_action=adjoint_action
+    )
+    actions = (subspace + restarts * (subspace - retained)).astype(jnp.int32)
+    return transformed, ritz, residuals, converged & valid, actions, valid
+
+
+def _real_krylov(prepared: PreparedGeneralEigenSolve, /) -> bool:
+    """Whether the transformed operator maps real coordinates to real coordinates."""
+    transform = prepared.plan.policy.transform
+    coordinate = np.dtype(_coordinate_dtype(prepared.problem.operator.source))
+    shift_real = isinstance(transform, StandardTransform) or transform.shift.imag == 0.0
+    return not np.issubdtype(coordinate, np.complexfloating) and shift_real
+
+
 def _jax_original_pencil_residuals(
     prepared: PreparedGeneralEigenSolve,
     values: Array,
@@ -2124,14 +2930,38 @@ def _transformed_coordinate_action(
                 adjoint_action=adjoint_action,
             )
         )
+        shift_value = np.conj(transform.shift) if adjoint_action else transform.shift
         shift = jnp.asarray(
-            np.conj(transform.shift) if adjoint_action else transform.shift,
+            shift_value if jnp.iscomplexobj(vector) else shift_value.real,
             dtype=vector.dtype,
         )
         numerator = matrix_action + shift * mass_action
+    factorization = prepared.transform_factorization
+    if not adjoint_action and factorization is not None:
+        return _solve_factored_coordinates(factorization, numerator)
     if adjoint_action or solver is None:
         return numerator
     return _solve_complexified_coordinates(solver, numerator)
+
+
+def _solve_factored_coordinates(
+    factorization: PreparedSparseFactorization,
+    right_hand_side: Array,
+    /,
+) -> Array:
+    """Apply a prepared sparse factor; failed solves return NaN, never values."""
+    complex_factor = jnp.issubdtype(
+        factorization.factor_values.dtype, jnp.complexfloating
+    )
+    if complex_factor or not jnp.iscomplexobj(right_hand_side):
+        result = factorization.solve(right_hand_side[:, None])
+        value = result.value[:, 0]
+    else:
+        result = factorization.solve(
+            jnp.stack((jnp.real(right_hand_side), jnp.imag(right_hand_side)), axis=1)
+        )
+        value = result.value[:, 0] + 1j * result.value[:, 1]
+    return jnp.where(result.success, value.astype(right_hand_side.dtype), jnp.nan)
 
 
 def _operator_coordinate_action(
@@ -2152,7 +2982,7 @@ def _operator_coordinate_action(
 
     if adjoint_action and np.issubdtype(dtype, np.complexfloating):
         return jnp.conj(apply_component(jnp.conj(vector)))
-    if np.issubdtype(dtype, np.complexfloating):
+    if np.issubdtype(dtype, np.complexfloating) or not jnp.iscomplexobj(vector):
         return apply_component(vector)
     return apply_component(jnp.real(vector)) + 1j * apply_component(jnp.imag(vector))
 
@@ -2171,7 +3001,7 @@ def _solve_complexified_coordinates(
         coordinates = prepared.problem.operator.source.flatten(result.value)
         return jnp.where(result.successful, coordinates, jnp.nan)
 
-    if np.issubdtype(dtype, np.complexfloating):
+    if np.issubdtype(dtype, np.complexfloating) or not jnp.iscomplexobj(right_hand_side):
         return solve_component(right_hand_side)
     return solve_component(jnp.real(right_hand_side)) + 1j * solve_component(
         jnp.imag(right_hand_side)
@@ -2562,12 +3392,19 @@ def _unflatten_complex_columns(space: Any, coordinates: Array, /) -> PyTree[Arra
     )
 
 
+# One stable compiled entry for the device-staged Arnoldi route, so repeated
+# solves and refreshes of one prepared shape reuse the compiled loops.
+_compiled_general_eigensolve_native = eqx.filter_jit(_general_eigensolve_native)
+
+
 __all__ = [
+    "ArnoldiRestart",
     "CayleyTransform",
     "DenseSchurQZ",
     "GeneralEigenCapabilities",
     "GeneralEigenCostEstimate",
     "GeneralEigenMethod",
+    "GeneralEigenEnclosure",
     "GeneralEigenproblem",
     "GeneralEigenproblemKind",
     "GeneralEigenResourcePolicy",
@@ -2581,6 +3418,7 @@ __all__ = [
     "GeneralEigenSolveStatus",
     "GeneralEigenTolerancePolicy",
     "GeneralEigenTransform",
+    "GeneralEigenVectors",
     "PreparedGeneralEigenSolve",
     "RestartedArnoldi",
     "ShiftInvertTransform",

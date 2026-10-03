@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from jax import Array
 
-from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._array_archive import ArrayArchiveLimits, read_array_archive
 from phydrax.lifecycle import open as open_lifecycle, query, ResultRevision
 from phydrax.solver import (
     analyze_projector_monte_carlo,
@@ -34,6 +34,8 @@ from phydrax.solver import (
     write_projector_monte_carlo_result,
 )
 from phydrax.solver._projector_monte_carlo_contracts import SpawnPolicy
+from phydrax.solver._projector_monte_carlo_lifecycle import _state_payload
+from phydrax.solver._runtime_lifecycle import RuntimeCheckpointEncodingPlan
 from phydrax.typing import PRNGKey
 from phydrax.units import derived_unit, HARTREE
 from phydrax.uq import CorrelatedRatioPolicy
@@ -179,6 +181,37 @@ def test_resource_enlargement_replays_last_committed_step_without_lost_history(
     )
     assert int(resumed.status) == 0
     _assert_state_values(resumed.state, uninterrupted.state)
+
+
+def test_resource_restore_tracks_transformed_source_template_precision(
+    tmp_path: Path,
+) -> None:
+    source = _prepared(history=8)
+    state = initialize_projector_monte_carlo(source, jax.random.key(64))
+    path = write_projector_monte_carlo_checkpoint(tmp_path / "source.phx", source, state)
+    target = _prepared(support=5, groups=12, events=4, history=24)
+    transferred, relation = transport_projector_monte_carlo_resources(
+        source, target, state
+    )
+    manifest, arrays = read_array_archive(path)
+    destination = _state_payload(transferred)
+    restored = relation.restore_state(
+        arrays, manifest["state"], destination, RuntimeCheckpointEncodingPlan()
+    )
+    jax.tree.map(np.testing.assert_array_equal, restored, destination)
+
+    def lower_precision(value: object) -> object:
+        if isinstance(value, Array) and value.dtype == np.dtype(np.float64):
+            return value.astype(np.float32)
+        return value
+
+    # A tree-level precision change must reach the bound source template rather
+    # than silently retaining the original numerical arrays in a callback.
+    changed = jax.tree.map(lower_precision, relation)
+    with pytest.raises(ValueError, match="shape or dtype changed"):
+        changed.restore_state(
+            arrays, manifest["state"], destination, RuntimeCheckpointEncodingPlan()
+        )
 
 
 def test_resource_transport_preserves_existing_samples_and_cursor() -> None:

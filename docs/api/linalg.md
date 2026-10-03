@@ -169,8 +169,11 @@ Choose the problem before choosing the algorithm:
 - `LinearSystem(A)` means solve the exact square system `A x = b`;
 - `LeastSquaresProblem(A, weights=..., regularizer=...)` means minimize a
   weighted residual with an optional zero-target regularizer;
-- `MinimumNormProblem(A)` means satisfy an underdetermined exact system while
-  minimizing the source-space norm.
+- `MinimumNormProblem(A)` means satisfy every equation of a consistent exact
+  system while minimizing the source-space norm. Source and target sizes are
+  unrestricted, so redundant rows (including more rows than source coordinates)
+  are admitted; solver damping is refused because it would replace the exact
+  constrained objective.
 
 Square direct methods may solve an equal-dimensional map between distinct
 source and target spaces. Krylov recurrences repeatedly reapply the operator,
@@ -182,6 +185,129 @@ Known left and right nullspaces are represented by `LinearSubspace` and
 behavior (`minimum-norm` or `project`) are explicit. The diagnostics report the
 removed incompatible component, the remaining projected residual, and the
 final gauge residual separately.
+
+### Minimum-norm evidence
+
+Every `MinimumNormProblem` solve returns `result.minimum_norm`, a
+`MinimumNormEvidence` with the true constraint residual `||b - A x||`, the
+normal residual `||A*(b - A x)||`, and a left-null witness `z = r / ||r||` with
+`left_null_residual = ||A* z||` and `incompatibility_margin = |<z, b>|`. Every
+source vector `x'` satisfies `||b - A x'|| >= margin - left_null_residual ||x'||`;
+`incompatibility_radius` is the norm below which no vector meets the constraint
+tolerance. This is a bounded-ball exclusion, not a proof that the right-hand side
+is outside the complete operator range. `LinearSolveStatus.INCOMPATIBLE_RHS`
+requires an exact null action or independently certified retained-range
+separation; a matched full-row-rank certificate rules out that classification.
+Unresolved ill-conditioned directions retain nonconvergence/refusal evidence.
+Planning refusals raise before execution.
+
+Zero-start `LSMR`/`GeneralizedLSMR` additionally runs an adjoint witness solve
+`min ||A* y - x||` with native actions: `stationarity_residual = ||x - A* y||`
+bounds the null-space component of `x` (the norm excess over the minimum-norm
+solution). A converged constraint with an unverified stationarity witness is
+`LinearSolveStatus.STATIONARITY_RESIDUAL_TOO_LARGE`. Dense routes report the
+stationarity witness as unavailable (NaN).
+
+Rectangular rank certificates retain the complete certified operator and numeric
+pairing PyTree as `revision_operator`; exact leaf equality binds a certificate
+to its numeric revision. A single probe image is not a revision certificate.
+Minimum-norm derivative columns require the true constraint residual or an
+independent retained-spectrum bound resolving the out-of-range action. Finite
+stagnation alone is not derivative acceptance. Native DenseSVD factors can supply
+that spectrum without a second decomposition.
+
+Dense-SVD least-squares solution derivatives apply economy factors directly.
+The fixed-rank JVP retains range and nullspace terms without materializing a
+pseudoinverse merely to apply it or constructing square source complements.
+
+Minimum-norm LSMR stops only on true quantities: when its recurrence estimates
+suggest convergence it spends one forward and one adjoint action to compute the
+true residual and normal residual, and stops on a true residual within
+`absolute + relative ||b||` or on a confirmed least-squares stationary point
+`||A* r|| <= max(relative, eps) ||A|| ||r||` (reported as `STAGNATION`, then
+classified by the incompatibility audit). An absolute tolerance never stops on
+the normal residual. These confirmation actions are counted in the diagnostics
+and in the plan's action bounds.
+
+Least-squares `LSMR`/`GeneralizedLSMR` uses the same criterion for stopping and
+for its status: the true stationarity residual `||A*(b - A x) - d^2 x||` must
+reach `absolute + relative ||A* b||`, confirmed with true actions before the
+iteration stops. When `||A* b||` is so small that this target lies below the
+evaluation roundoff of `A* r`, the point is accepted at the floor
+`4 sqrt(max(m, n)) eps ||A|| ||r||` (`||A||` the recurrence Frobenius
+estimate) rather than reported as `MAXIMUM_STEPS_REACHED`.
+
+`Craig(assembly=None)` is the preconditioned normal-equation route for
+`MinimumNormProblem`: it solves `B B* y = b` for the multiplier `y` with
+preconditioned MINRES from zero and returns `z = B* y`, which lies in
+`range(B*)` exactly, so the stationarity residual is zero and acceptance rests
+on the true constraint residual. `RowGramLinearOperator(B)` is the matrix-free
+`B B*` (self-adjoint and positive semidefinite by construction; positive
+definite only when `B` certifies full row rank) with an exact diagonal from
+dense, sparse and diagonally scaled entries, so `JacobiPreconditionerBuilder`
+works without assembly. `Craig(assembly=SparseAssemblyPolicy(...))` assembles
+`B B*` exactly under those explicit limits for setup-heavy preconditioners such
+as `SmoothedAggregationHierarchyBuilder` (which must be given
+positive-definite `properties`); the assembly policy is part of the plan id.
+Craig requires a linear, stationary, self-adjoint positive-definite
+preconditioner in the target pairing. Planning selects Craig automatically for
+`MinimumNormProblem` when preconditioning is configured; unpreconditioned
+problems keep LSMR. On an inconsistent right-hand side MINRES approaches the
+preconditioned least-squares point and stops there once
+`||B* M r|| <= max(relative, sqrt(4 sqrt(m) eps)) ||M^1/2 B|| ||r||_M` is
+confirmed with true actions (the floor is the square root of LSMR's roundoff
+floor, because Craig reaches `B` only through `B B*`); the iteration never
+continues into the roundoff growth along `null(B*)`. The preconditioned
+residual `M r` is then a candidate left-null witness. Global incompatibility
+still requires the independent range evidence described above; an approximate
+stationary iterate or finite exclusion radius cannot classify an invertible
+problem as incompatible. Its value is the `M`-weighted least-squares point,
+which equals the minimum-norm least-squares solution only without preconditioning.
+
+Every native Krylov primal loop (PCG, MINRES, LSMR, FGMRES and the witness
+solves) is a `lax.while_loop` bounded by `max_steps` that exits on the first
+step where every right-hand-side column has stopped, so execution cost follows
+the steps taken rather than `max_steps`.
+
+Rank is separate evidence owned by the native SVD lifecycle.
+`certify_rectangular_rank(A, svd.SVDSolvePolicy(...), key=...)` runs one native
+SVD solve in the operator's declared pairings and returns a scoped
+`RectangularRankCertificate` carrying that solve's `SVDRankEvidence`, or an
+explicit `route="unavailable"` refusal (with the refused `SVDCostEstimate`) when
+the SVD exceeds its materialization or resource budgets. `RandomizedSVD` policies
+keep their rank bounds and `failure_probability` label. `fixed_rank` holds only
+for deterministic exact evidence (`DenseSVD`, or `RandomizedSVD` with full
+coverage of a resident dense operator) whose retained and discarded singular-value
+bounds clear the cutoff interval by more than the SVD backward-error bound, and
+`matches(A)` rebinds the certificate to the certified numeric revision on device.
+`svd.DenseSVD(algorithm=...)` declares the dense driver: `"divide-and-conquer"`
+(the default, fastest) or `"qr"` (robust on exactly clustered spectra, where
+divide and conquer can fail to converge); `certify_rectangular_rank` defaults to
+`"qr"`. A driver that does not converge reports its `SVDSolveStatus` in the
+certificate's `svd_status`, with `rank == -1`, NaN singular-value bounds, and
+`converged=False`.
+The `"mathematical"` derivative of a minimum-norm solve is
+admitted only with fixed-rank evidence: the factorization of a `DenseSVD` route,
+or a matching `MinimumNormProblem(A, rank_certificate=...)` on iterative routes.
+Otherwise `result.derivative_regular` and `derivative_valid` are false and the
+operator derivative is refused (NaN, or an error under `FailurePolicy("error")`).
+The right-hand-side derivative (`"rhs-only"`) needs no rank evidence. Implicit
+tangents and cotangents apply the pseudoinverse through zero-start LSMR, never a
+KKT matrix or global nullspace. Undamped `DenseSVD` solves of a
+`LeastSquaresProblem` follow the same rule: their `"mathematical"` derivative is
+the exact fixed-rank tangent of the weighted pseudoinverse, including its
+nullspace term, and is refused unless the factorization's singular-value gap
+certifies a locally constant rank.
+
+The metric transform `B = A S` of a weighted objective is
+`A @ DiagonalLinearOperator(s)`, and the relaxed objective
+`0.5 ||z||^2 + rho/2 ||D^-1 (B z - b)||^2` is
+`LeastSquaresProblem(StackedLinearOperator((DiagonalLinearOperator(sqrt(rho) / d) @ B,
+IdentityLinearOperator(B.source))))` with right-hand side
+`(sqrt(rho) b / d, 0)`. A stacked block certified full rank (the identity
+block) certifies the stack's rank, and plan cost estimates report the executed
+`row_blocks`, per-right-hand-side forward/adjoint action bounds, and
+certificate storage.
 
 ## Policies and deterministic planning
 
@@ -673,7 +799,16 @@ prepared action remains reusable, but provenance exposes that reuse.
 Sparse triangular and factorization lifecycles consume canonical
 `AbstractSparseLinearOperator` storage. `analyze_sparse_triangular` builds a fixed
 level schedule from the sparsity pattern; `solve_sparse_triangular` changes only
-numeric values and right-hand sides. The solve is JAX-native and returns explicit
+numeric values and right-hand sides. The schedule orders each orientation's rows
+by dependency level, then row index. It packs rows that share a level into
+fixed-width blocks, and the solve substitutes one block per sequential step, so
+the step count follows the level count rather than the row count. The analysis
+picks the block width from the host level histogram with a static cost model.
+One block's gather is capped at 65,536 entries per right-hand side, and the
+padded schedule is capped at twice the row count. Single-row blocks always
+satisfy both caps; a chain with one row per level executes row by row. Each row
+still reduces its stored entries in CSR column order, so the primal solution
+does not depend on the block width. The solve is JAX-native and returns explicit
 status evidence: any nonfinite stored value, pivot, right-hand side, or resulting
 solution is `NONFINITE`, while a finite pivot whose magnitude is at or below the
 declared tolerance is `ZERO_PIVOT`. Prepared factor solves preserve that
@@ -704,6 +839,30 @@ window. Plan and prepared bytes therefore scale with `nnz(L + U)`, not with the
 number of elimination updates, and `SparseFactorizationPreconditionerBuilder`
 charges exactly those bytes. Every pivot's targets are unique, so the scatter is
 deterministic.
+
+`SparseFactorizationPolicy.ordering` selects one symmetric ordering of the graph
+of `A + Aᵀ`: `"natural"` (identity, no graph work), `"reverse-cuthill-mckee"`,
+`"approximate-minimum-degree"`, or `"nested-dissection"`. Approximate minimum
+degree shares the quotient-graph engine (approximate external degrees, element
+absorption, supervariables, dense rows postponed) that `analyze_sparse_lu` uses
+for the columns of `AᵀA`. Nested dissection removes a minimum vertex cover of the
+cut between BFS levels rooted at a pseudo-peripheral vertex, or, when
+`prepare_sparse_ordering(..., coordinates=points)` receives finite `(n, d)`
+coordinates, of the median cut along the widest axis; parts at or below
+`SparseOrderingPolicy.leaf_capacity` are ordered by minimum degree, and a
+separator above `separator_capacity` refuses. `NestedDissectionEvidence` reports
+the separator and leaf sizes, so an indivisible part larger than the leaf
+capacity remains visible. Ties break by the smallest original index, so a
+`PreparedSparseOrdering` (validated `permutation`/`inverse_permutation`, pattern
+identity, `ordering_id`, and metered `work`) is a pure function of the pattern,
+policy, and coordinates. Standalone preparation refuses above
+`max_ordering_work`. `prepare_sparse_factorization(operator, policy,
+ordering=prepared)` reuses a prepared ordering of the same pattern and method
+without recomputing it; either way the ordering work is charged to
+`max_symbolic_work` before any factor entry is reserved, and the plan records
+`ordering_id` and `ordering_work`. Numeric refresh never reorders. Ordering
+changes fill, not admissibility: the factor caps still refuse an unaffordable
+factor.
 
 `ILUPreconditionerBuilder`, `ILUTPreconditionerBuilder`, and
 `IncompleteCholeskyPreconditionerBuilder` expose these factors through the ordinary
@@ -740,8 +899,11 @@ preconditioner source. `AdditiveSubspaceCorrectionBuilder` covers block Jacobi,
 overlapping Schwarz, patch correction, and explicit coarse correction through
 one sum of local actions. `MultiplicativeSubspaceCorrectionBuilder` executes a
 forward, backward, or symmetric defect-correction sweep. Local setup operators
-are derived as `R A P`; no local dense matrix is materialized unless its own
-builder and materialization policy permit it.
+are derived as `R A E`, where `E` is the prolongation unless the term declares a
+separate `local_extension`; restricted and partition-of-unity Schwarz solve the
+unweighted block `R A Rᵀ` but correct with the weighted `Rᵀ D`. No local dense
+matrix is materialized unless its own builder and materialization policy permit
+it.
 
 Neural-operator data never enters `phydrax.linalg` directly. The higher-level
 `phydrax.nn.operator.prepare_operator_subspace_correction` bridge lowers
@@ -872,26 +1034,50 @@ level source. An explicit whole-cycle certificate cannot override an
 incompatible variable or nonlinear level contract.
 
 `GalerkinHierarchyBuilder` derives coarse operators as `R A P` around the same
-immutable V-cycle. It plans canonical sparse products once, retains each
-`PreparedSparseAssembly` in the hierarchy, and refreshes coarse coefficients
-through those symbolic routes. Dense construction is an explicit bounded
-fallback; a matrix-free route remains matrix-free at downstream levels.
-`SmoothedAggregationHierarchyBuilder` constructs deterministic aggregates,
-candidate-aware tentative interpolation, damped Jacobi smoothing,
-pairing-aware restrictions, and the same planned sparse Galerkin products for
-explicit dense or canonical sparse inputs. `MultigridSetupDiagnostics` reports
+immutable V-cycle. Each product is one symbolic row-merge sparse product,
+planned once; the numeric phase is a device gather, product, and sorted
+scatter in a fixed ascending inner-index order. With
+`refresh_mode="reuse-symbolic-sparse-products"` the hierarchy retains each
+`PreparedSparseAssembly` and refreshes coarse coefficients through those
+routes. Dense construction is an explicit bounded fallback; a matrix-free route
+remains matrix-free at downstream levels.
+
+`SmoothedAggregationHierarchyBuilder` implements Vaněk–Mandel–Brezina smoothed
+aggregation for explicit dense or canonical sparse inputs. A connection is
+strong when `|a_ij| >= theta_l sqrt(|a_ii a_jj|)`, symmetrized, with
+`theta_l = strength_threshold * 2**-l` (default `0.08` on the finest level).
+Aggregation makes three deterministic passes in index order: free
+neighbourhood roots, attachment to the most strongly connected first-pass
+aggregate, and new aggregates from the rest. Nodes with no strong connection,
+such as decoupled Dirichlet rows, stay unaggregated (`-1` in
+`aggregate_assignments`) and are left to the smoother. Candidate-aware
+tentative interpolation is smoothed by
+`P = (I - omega / rho D^-1 A) T`, where `omega = prolongation_damping`
+(default `4/3`) and `rho` is a deterministic Arnoldi estimate reported in
+`MultigridSetupDiagnostics.prolongation_spectral_radii`. Restrictions are
+pairing-aware, and coarse operators use the same planned sparse Galerkin
+products. `MultigridSetupDiagnostics` reports
 level dimensions, known nonzero counts, grid/operator complexity, prepared
 bytes, peak setup workspace, construction mode, transfer identities, retained
-aggregate assignments, the builder-dependency fingerprint, and every reuse
-decision.
+aggregate assignments, spectral-radius estimates, the builder-dependency
+fingerprint, and every reuse decision.
+
+A solve plan costs a builder through `plan_setup`, which returns a
+`PlannedPreconditionerSetup` carried by the `PreconditionerPlan`; preparation
+calls `prepare_planned` and reuses that construction when the setup operator
+has the planned exact content. Neither hierarchy builder repeats its
+construction between costing and preparation.
 
 Hierarchy refresh distinguishes full rebuild, aggregate reuse, transfer reuse,
 and symbolic sparse-product reuse. Every numeric refresh recomputes
-fine-dependent coarse coefficients. Pattern or builder-dependency changes
-invalidate structural reuse. A Galerkin route rejected by cumulative
-materialization limits remains permanently matrix-free, so a downstream level
-builder cannot rematerialize it. Symbolic sparse-product reuse requires the
-retained route map; a mode name never licenses stale coarse values.
+fine-dependent coarse coefficients. Transfer and symbolic-product reuse read no
+host values: static patterns keep the accepted level costs. The refresh, with
+Jacobi, dense-inverse, or Gauss–Seidel level actions, therefore runs inside
+`jax.jit`. Pattern or builder-dependency changes invalidate structural reuse.
+A Galerkin route rejected by cumulative materialization limits remains
+permanently matrix-free, so a downstream level builder cannot rematerialize
+it. Symbolic sparse-product reuse requires the retained route map; a mode name
+never licenses stale coarse values.
 
 
 `multigrid_hierarchy_from_pyamg` is an optional host-only converter. It consumes
@@ -1022,6 +1208,16 @@ unbatched; shared-pattern sparse LDLT values may carry explicit batch axes.
 All iterative methods use fixed-capacity states with dynamic iteration counts
 and breakdown status, so compiled shapes do not depend on convergence.
 Diagnostic history and residual-check frequency are explicit policy costs.
+
+An eager `solve` with a native Krylov or block-Krylov provider executes
+everything after preparation (provider loops, residual and minimum-norm audits,
+and the implicit-derivative rule) through one stable module-level compiled
+entry. Prepared arrays, right-hand sides, and guesses are dynamic arguments, so
+repeated solves, `refresh`/`bind_numeric` numeric updates with unchanged
+operator identity and shapes, and repeated `jax.grad`/`jax.jvp` evaluations
+reuse one compiled program instead of re-tracing the loops on every call.
+Changing static structure (plan, operator or problem identity, policy, shapes,
+RHS layout) compiles a new program for that structure.
 
 `LinearSolveDiagnostics.matvec_count` and `adjoint_matvec_count` report the
 provider algorithm's actual top-level forward and adjoint operator applications,
@@ -1446,6 +1642,53 @@ projector-condition evidence. A Riesz projector for a nonnormal operator is not
 generally orthogonal. `spectral_projector_derivative` solves the differentiated
 Sylvester equations and returns commutator and projector-tangent residuals.
 Refresh preserves the selected dimension and rejects eigenvalue crossings.
+
+### Restarted Arnoldi: Krylov–Schur, sparse-factor shift-invert, right pairs
+
+`general_eigensolve` with `RestartedArnoldi` is the one owner of matrix-free
+nonsymmetric eigenvalue estimates. `RestartedArnoldi(restart=...)` selects the
+restart strategy (`ArnoldiRestart`): `"block-ritz"` (default) runs block Arnoldi
+with one block per requested mode and resolves semisimple repeated eigenvalues up
+to the block size; `"krylov-schur"` runs single-vector Arnoldi with Stewart's
+Krylov–Schur thick restart, keeping `count + (subspace - count) // 2` vectors of
+the retained Ritz eigenvector span (invariant under the projected matrix, so the
+restarted Krylov decomposition stays exact) and spending at most `max_steps`
+transformed actions.
+
+`transform_solve` is either the device-bound GMRES `LinearSolvePolicy` or a
+`SparseFactorizationPolicy`. The sparse-factor route assembles `A - sigma B` once,
+plans its symbolic factorization in `plan_general_eigensolve`, factors it in
+`prepare_general_eigensolve`, and refreshes the values on the same pattern in
+`refresh_general_eigensolve`; each shift-invert action is one pair of sparse
+triangular solves. It requires canonical sparse pencil operators and
+`vectors="right"`, and it is bounded by its own fill/work limits instead of the
+dense `max_dimension` cap. `GeneralEigenSolvePolicy(vectors="right")`
+(`GeneralEigenVectors`) skips the adjoint iteration: no transpose capability or
+biorthogonality is required, the left-vector diagnostics are NaN, and
+`capabilities.returns_left_eigenvectors` is false.
+
+Every result carries residual evidence on the original pencil:
+`diagnostics.backward_errors[i] = ‖A x - λ B x‖ / ‖x‖` makes `λ` an exact eigenvalue
+of `(A + E, B)` with `‖E‖₂` equal to it. `diagnostics.enclosure`
+(`GeneralEigenEnclosure`) is `"bauer-fike"` only for a standard problem whose
+operator is certified self-adjoint in Euclidean coordinates, where the same number
+is a forward radius containing an eigenvalue of `A`; otherwise it is `"estimate"`.
+`diagnostics.norm_upper_bound = sqrt(‖A‖₁ ‖A‖∞) >= ‖A‖₂` comes from sparse storage
+(NaN for matrix-free operators) and `diagnostics.factorization_status` reports the
+sparse-factor transform (`SparseFactorizationStatus`).
+
+```python
+policy = la.eigen.GeneralEigenSolvePolicy(
+    la.eigen.RestartedArnoldi(restart="krylov-schur"),
+    transform=la.eigen.ShiftInvertTransform(0.0),
+    selection=la.eigen.GeneralEigenSelection.closest(0.0, 16),
+    transform_solve=la.SparseFactorizationPolicy("lu", ordering="approximate-minimum-degree"),
+    vectors="right",
+    failure=la.FailurePolicy("status"),
+)
+result = la.eigen.general_eigensolve(la.eigen.GeneralEigenproblem(A_sparse), policy=policy)
+unstable = result.diagnostics.converged_mask & (result.eigenvalues.real <= 0)
+```
 
 ### Cross-resolution spectra, resolvents, and operator polynomials
 
@@ -1913,6 +2156,13 @@ contract. COO-like relations are canonicalized to coalesced CSR storage for
 providers. Provider preparation validates finite coefficients, pointer
 monotonicity, bounds, ordering, and duplicate freedom, including under JAX
 tracing. Invalid storage never reaches a factorization.
+Sparse operators count their coalesced canonical entries once from the concrete
+host relation at construction and keep that count as static structure, so
+planning and resource estimation never read topology from device data and work
+unchanged when a host-prepared operator is passed through `jax.jit`. An
+operator built from a traced relation needs an explicit `operator_id`, and
+cost estimation and canonical storage refuse it with a `ValueError` unless it
+carries a storage plan prepared from concrete topology.
 `plan_sparse_assembly` recognizes sparse leaves and exact algebraic recipes for
 supported identity, diagonal, permutation, banded, local-block, scaled, summed,
 composed, transpose, and adjoint operators. `SparseAssemblyPolicy` independently
@@ -2339,6 +2589,18 @@ runtime.
 
 ---
 
+::: phydrax.linalg.MinimumNormEvidence
+
+---
+
+::: phydrax.linalg.RectangularRankCertificate
+
+---
+
+::: phydrax.linalg.certify_rectangular_rank
+
+---
+
 ::: phydrax.linalg.LinearSubspace
 
 ---
@@ -2602,6 +2864,22 @@ runtime.
 ---
 
 ::: phydrax.linalg.prepare_sparse_factorization
+
+---
+
+::: phydrax.linalg.SparseOrderingPolicy
+
+---
+
+::: phydrax.linalg.PreparedSparseOrdering
+
+---
+
+::: phydrax.linalg.NestedDissectionEvidence
+
+---
+
+::: phydrax.linalg.prepare_sparse_ordering
 
 ---
 
