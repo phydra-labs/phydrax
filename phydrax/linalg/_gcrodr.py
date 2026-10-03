@@ -322,6 +322,7 @@ def _build_result(
             execution_problem,
             rhs[:, None],
             initial[:, None],
+            None,
         )[:, 0]
     elif mode == "none":
         execution_problem = problem

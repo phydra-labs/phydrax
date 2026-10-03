@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ._costs import _array_tree_storage_bytes
 from ._operators import AbstractLinearOperator
 
 
@@ -91,6 +92,14 @@ class AbstractSparseLinearOperator(AbstractLinearOperator):
     @abc.abstractmethod
     def sparse_storage(self, /) -> SparseStorage:
         raise NotImplementedError
+
+    def _resident_storage_bytes(self, /) -> int:
+        """Distinct bytes of this operator together with its canonical storage.
+
+        Implementations with host-prepared topology override this with static
+        metadata so cost estimation never reads traced topology.
+        """
+        return _array_tree_storage_bytes((self, self.sparse_storage()))
 
     @abc.abstractmethod
     def _assemble_diagonal(self, /) -> Array:

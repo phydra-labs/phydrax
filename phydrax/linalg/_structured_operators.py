@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,7 +21,7 @@ import phydrax.ein as ein
 
 from .._dtype_names import inexact_result_type
 from .._trainable import fixed_field
-from ..typing import checked
+from ..typing import checked, parse
 from ._operators import (
     _array_value,
     _assemble_operator_diagonal,
@@ -30,13 +30,21 @@ from ._operators import (
     _validate_action_dtype,
     _validate_properties,
     AbstractLinearOperator,
+    adjoint,
     AdjointLinearOperator,
+    ComposedLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
     IdentityLinearOperator,
+    ScaledLinearOperator,
 )
 from ._preconditioners import AbstractPreconditioner
-from ._properties import OperatorCapabilities, OperatorProperties, PropertyEvidence
+from ._properties import (
+    LinearCapabilityError,
+    OperatorCapabilities,
+    OperatorProperties,
+    PropertyEvidence,
+)
 from ._space_extensions import TensorProductSpace
 from ._spaces import (
     _coordinate_dtype,
@@ -47,6 +55,7 @@ from ._spaces import (
     ArraySpace,
     BlockSpace,
 )
+from ._sparse_contract import AbstractSparseLinearOperator
 from ._tree import TreeLinearOperator
 
 
@@ -1688,40 +1697,264 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
         return result.reshape((-1,))
 
 
+def _diagonal_factor(operator: AbstractLinearOperator, /) -> Array | None:
+    """Coordinate diagonal of a diagonal-structured factor, or ``None``."""
+    if isinstance(operator, DiagonalLinearOperator) and not operator.batch_shape:
+        return operator.diagonal.reshape((-1,))
+    if isinstance(operator, IdentityLinearOperator):
+        return jnp.ones((operator.source.size,), dtype=_coordinate_dtype(operator.source))
+    if isinstance(operator, ScaledLinearOperator) and not operator.batch_shape:
+        inner = _diagonal_factor(operator.operator)
+        return None if inner is None else operator.scalar * inner
+    return None
+
+
+def _weighted_row_squares(
+    operator: AbstractLinearOperator, column_weights: Array, /
+) -> Array | None:
+    """``r_i = sum_j |a_ij|^2 w_j`` from exact entries, or ``None`` when unknown.
+
+    Explicit dense and native sparse operators supply their entries directly;
+    diagonal factors of compositions and scalings rescale rows or columns.
+    Nothing is materialized and no product operator is formed.
+    """
+    if operator.batch_shape:
+        return None
+    diagonal = _diagonal_factor(operator)
+    if diagonal is not None:
+        return jnp.abs(diagonal) ** 2 * column_weights
+    if isinstance(operator, DenseLinearOperator):
+        return (jnp.abs(operator.matrix) ** 2) @ column_weights
+    if isinstance(operator, AbstractSparseLinearOperator):
+        storage = operator.sparse_storage()
+        rows = storage.shape[0]
+        row_ids = (
+            jnp.searchsorted(
+                storage.indptr,
+                jnp.arange(storage.nnz, dtype=storage.indptr.dtype),
+                side="right",
+            )
+            - 1
+        )
+        return jax.ops.segment_sum(
+            jnp.abs(storage.values) ** 2 * column_weights[storage.indices],
+            row_ids,
+            num_segments=rows,
+        )
+    if isinstance(operator, ScaledLinearOperator):
+        inner = _weighted_row_squares(operator.operator, column_weights)
+        return None if inner is None else jnp.abs(operator.scalar) ** 2 * inner
+    if isinstance(operator, TwoSidedScaledLinearOperator):
+        inner = _weighted_row_squares(
+            operator.operator, jnp.abs(operator.right_scale) ** 2 * column_weights
+        )
+        return None if inner is None else jnp.abs(operator.left_scale) ** 2 * inner
+    if isinstance(operator, ComposedLinearOperator):
+        left = _diagonal_factor(operator.left)
+        if left is not None:
+            inner = _weighted_row_squares(operator.right, column_weights)
+            return None if inner is None else jnp.abs(left) ** 2 * inner
+        right = _diagonal_factor(operator.right)
+        if right is not None:
+            return _weighted_row_squares(
+                operator.left, jnp.abs(right) ** 2 * column_weights
+            )
+    return None
+
+
+def _row_squares_supported(operator: AbstractLinearOperator, /) -> bool:
+    """Static structure check of :func:`_weighted_row_squares` (no evaluation)."""
+    if operator.batch_shape:
+        return False
+    if isinstance(
+        operator,
+        (
+            DiagonalLinearOperator,
+            IdentityLinearOperator,
+            DenseLinearOperator,
+            AbstractSparseLinearOperator,
+        ),
+    ):
+        return True
+    if isinstance(operator, (ScaledLinearOperator, TwoSidedScaledLinearOperator)):
+        return _row_squares_supported(operator.operator)
+    if isinstance(operator, ComposedLinearOperator):
+        if _diagonal_structured(operator.left):
+            return _row_squares_supported(operator.right)
+        if _diagonal_structured(operator.right):
+            return _row_squares_supported(operator.left)
+    return False
+
+
+def _diagonal_structured(operator: AbstractLinearOperator, /) -> bool:
+    if operator.batch_shape:
+        return False
+    if isinstance(operator, (DiagonalLinearOperator, IdentityLinearOperator)):
+        return True
+    return isinstance(operator, ScaledLinearOperator) and _diagonal_structured(
+        operator.operator
+    )
+
+
+def _row_gram_properties(operator: AbstractLinearOperator, /) -> OperatorProperties:
+    """Self-adjoint positive-semidefinite evidence of ``B B*`` in the target pairing.
+
+    ``B B*`` is positive definite exactly when ``B`` has full row rank, which is
+    claimed only from certified rank evidence of ``B``.
+    """
+    full_row_rank = (
+        operator.properties.certifies("rank")
+        and operator.properties.rank == operator.target.size
+    )
+    return OperatorProperties(
+        self_adjoint=True,
+        positive_semidefinite=True,
+        positive_definite=full_row_rank,
+        rank=operator.target.size if full_row_rank else None,
+        evidence={
+            "self_adjoint": "construction",
+            "positive_semidefinite": "construction",
+            **(
+                {"positive_definite": "transformed", "rank": "transformed"}
+                if full_row_rank
+                else {}
+            ),
+        },
+    )
+
+
+class RowGramLinearOperator(AbstractLinearOperator):
+    """Matrix-free row Gram endomorphism ``B B*`` of a rectangular operator.
+
+    It acts on ``B.target`` with that space's pairing, in which ``B B*`` is
+    self-adjoint and positive semidefinite by construction. The action is one
+    adjoint and one forward action of ``B``; ``B B*`` is never formed. Its exact
+    coordinate diagonal ``N_i sum_j |b_ij|^2 / M_j`` (source and target diagonal
+    pairings ``M``, ``N``) is assembled from the entries of explicit, sparse, and
+    diagonally scaled ``B`` without any product.
+    """
+
+    operator: AbstractLinearOperator
+    gram: ComposedLinearOperator
+
+    def __init__(
+        self, operator: AbstractLinearOperator, /, *, operator_id: str | None = None
+    ) -> None:
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be an AbstractLinearOperator.")
+        if operator.batch_shape:
+            raise ValueError("A row Gram operator requires an unbatched operator.")
+        if not operator.capabilities.adjoint:
+            raise ValueError("A row Gram operator requires an explicit adjoint action.")
+        gram = ComposedLinearOperator(operator, adjoint(operator))
+        self.operator = operator
+        self.gram = gram
+        self.source = operator.target
+        self.target = operator.target
+        self.properties = _row_gram_properties(operator)
+        self.capabilities = OperatorCapabilities(
+            transpose=gram.capabilities.transpose,
+            adjoint=True,
+            materialize=gram.capabilities.materialize,
+            diagonal_assembly=(
+                _has_diagonal_pairing(operator.source)
+                and _has_diagonal_pairing(operator.target)
+                and _row_squares_supported(operator)
+            ),
+        )
+        self.batch_shape = ()
+        self.operator_id = _id(
+            operator_id, {"kind": "row-gram", "operator": operator.operator_id}
+        )
+
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return self.gram.mv(vector)
+
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return self.gram.transpose_mv(vector)
+
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        # Self-adjoint in the target pairing: (B B*)* = B B*.
+        return self.gram.mv(vector)
+
+    def _materialize(self, /) -> Array:
+        return self.gram._materialize()
+
+    def _assemble_diagonal(self, /) -> Array:
+        source_weights = jnp.real(_coordinate_pairing_weights(self.operator.source))
+        target_weights = jnp.real(_coordinate_pairing_weights(self.operator.target))
+        squares = _weighted_row_squares(self.operator, 1.0 / source_weights)
+        if squares is None:
+            raise LinearCapabilityError(
+                "Row Gram diagonal assembly needs explicit or diagonally scaled entries."
+            )
+        dtype = _coordinate_dtype(self.source)
+        return (target_weights * squares).astype(dtype)
+
+
+StackAxis: TypeAlias = Literal["vertical", "horizontal"]
+
+
 class StackedLinearOperator(AbstractLinearOperator):
-    """Vertical or horizontal stack retaining explicit block-vector structure."""
+    """Vertical or horizontal stack retaining explicit block-vector structure.
+
+    A vertical stack ``[B_1; ...; B_k]`` represents stacked least-squares rows,
+    e.g. the relaxed objective ``[sqrt(rho) D^-1 A S; I]``; its target is the
+    ``BlockSpace`` of the block targets with their own pairings. A block whose rank
+    certifies full column rank (vertical) or full row rank (horizontal) certifies
+    the same full rank for the stack.
+    """
 
     operators: tuple[AbstractLinearOperator, ...]
-    axis: Literal["vertical", "horizontal"]
+    axis: StackAxis = eqx.field(static=True)
 
     def __init__(
         self,
         operators: Sequence[AbstractLinearOperator],
         /,
         *,
-        axis: Literal["vertical", "horizontal"] = "vertical",
+        axis: StackAxis = "vertical",
         operator_id: str | None = None,
     ) -> None:
         operators_ = tuple(operators)
         if not operators_ or any(operator.batch_shape for operator in operators_):
             raise ValueError("Stacked operators must be nonempty and unbatched.")
-        if axis not in ("vertical", "horizontal"):
-            raise ValueError("axis must be 'vertical' or 'horizontal'.")
-        if axis == "vertical":
-            source = operators_[0].source
-            if any(not source.compatible(operator.source) for operator in operators_):
-                raise ValueError("Vertical stack operators must share a source space.")
-            target = BlockSpace(tuple(operator.target for operator in operators_))
-        else:
-            target = operators_[0].target
-            if any(not target.compatible(operator.target) for operator in operators_):
-                raise ValueError("Horizontal stack operators must share a target space.")
-            source = BlockSpace(tuple(operator.source for operator in operators_))
+        axis_ = parse(axis, StackAxis, "axis")
+        match axis_:
+            case "vertical":
+                source = operators_[0].source
+                if any(not source.compatible(operator.source) for operator in operators_):
+                    raise ValueError(
+                        "Vertical stack operators must share a source space."
+                    )
+                target = BlockSpace(tuple(operator.target for operator in operators_))
+                full_rank = source.size
+            case "horizontal":
+                target = operators_[0].target
+                if any(not target.compatible(operator.target) for operator in operators_):
+                    raise ValueError(
+                        "Horizontal stack operators must share a target space."
+                    )
+                source = BlockSpace(tuple(operator.source for operator in operators_))
+                full_rank = target.size
+            case _:
+                assert_never(axis_)
+        # Every vertical block shares the stack source (every horizontal block the
+        # stack target), so one full-rank block bounds the stack rank from below.
+        full_rank_certified = any(
+            operator.properties.certifies("rank")
+            and operator.properties.rank == full_rank
+            for operator in operators_
+        )
         self.operators = operators_
-        self.axis = axis
+        self.axis = axis_
         self.source = source
         self.target = target
-        self.properties = OperatorProperties()
+        self.properties = (
+            OperatorProperties(rank=full_rank, evidence={"rank": "transformed"})
+            if full_rank_certified
+            else OperatorProperties()
+        )
         self.capabilities = OperatorCapabilities(
             transpose=all(operator.capabilities.transpose for operator in operators_),
             adjoint=all(operator.capabilities.adjoint for operator in operators_),
@@ -1732,7 +1965,7 @@ class StackedLinearOperator(AbstractLinearOperator):
             operator_id,
             {
                 "kind": "stacked",
-                "axis": axis,
+                "axis": axis_,
                 "operators": [o.operator_id for o in operators_],
             },
         )
@@ -1916,7 +2149,9 @@ __all__ = [
     "LowRankLinearOperator",
     "LocalBlockDiagonalLinearOperator",
     "PermutationLinearOperator",
+    "RowGramLinearOperator",
     "SchurComplementLinearOperator",
+    "StackAxis",
     "StackedLinearOperator",
     "SymmetricLowRankLinearOperator",
     "TriangularLinearOperator",

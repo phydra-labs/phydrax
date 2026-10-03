@@ -501,7 +501,20 @@ resolved by index-ordered symbolic perturbation. `VoronoiDiagram` and
 `PowerDiagram` clip each generator's bisector halfspaces to a box and optional
 convex domain with exactly classified clipping and store the cells as
 `DiagramCells` CSR with measures and centroids. Each result carries
-`TriangulationEvidence` (route, native status, library identity, counts).
+`TriangulationEvidence` (route, provider, status, provider identity, counts).
+`DelaunayTriangulation(points, provider="qhull")` selects SciPy's Qhull with
+recorded options instead (predicate mode `filtered`: deterministic, not
+certified, no optional provider required) for auxiliary constructions such as
+meshfree auxiliary-space preconditioning.
+
+`SimplexQualitySubcomplex(points, simplices, minimum_quality=q)` screens a
+triangulation by normalized volume-length ratio `|T| / v_d(l_rms)` (1 for the
+regular simplex): flat simplices are never kept, simplices below `q` (3-D
+slivers) are excluded, and excluded simplices are restored best-first only
+where a vertex would be uncovered or the facet-connected component count would
+grow. `SimplexQualityEvidence` records the threshold, degenerate, excluded and
+restored counts, the excluded measure fraction, and the minimum retained
+quality.
 
 ## Common refinement (supermesh)
 

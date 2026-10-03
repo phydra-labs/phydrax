@@ -16,8 +16,16 @@ an all-pairs search.
 
 Coverage is `partial`: points with too few neighbors are `OUTSIDE_SUPPORT`,
 rank-deficient or ill-conditioned local fits are `ILL_CONDITIONED`, and an
-exceeded candidate capacity is `LOCATION_FAILED`. Views therefore answer
-`.query(...)` with evidence and refuse `as_domain_function()`.
+exceeded candidate capacity or coordinate envelope is `LOCATION_FAILED`.
+Views therefore answer `.query(...)` with evidence and refuse
+`as_domain_function()`.
+
+The candidates are frozen at preparation from the anchored cloud, widened by
+a declared `coordinate_envelope`. While every cloud point stays within that
+envelope of its anchor, every point inside the radius is a candidate and the
+Wendland weight vanishes through third order at the radius, so the
+reconstructed values are continuously differentiable in the cloud
+coordinates (`point_cloud_reconstruction_sensitivity`).
 """
 
 from __future__ import annotations
@@ -27,10 +35,13 @@ from numbers import Integral
 from typing import Any, final, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
+from .._admissibility import guard_derivative_validity
 from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
 from .._differentiation import DerivativeRegularity
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -38,9 +49,13 @@ from .._interpolation import GatherStencil
 from .._model._ports import ValuePort
 from .._polynomial._total_degree import TotalDegreePolynomialFeatures
 from .._trainable import NonTrainableState
+from ..linalg import prepare_linearization
 from ..sparse import linear_apply, linear_transpose_apply
 from ..typing import parse
-from ._point_cloud import PreparedPointCloudDiscretization
+from ._point_cloud import (
+    PointCloudCoordinateSensitivity,
+    PreparedPointCloudDiscretization,
+)
 from ._views import (
     AbstractFieldReconstructionKernel,
     FieldQueryEvidence,
@@ -50,7 +65,13 @@ from ._views import (
     FieldTraceSide,
     PreparedFieldReconstruction,
 )
-from .meshfree._stencils import weighted_svd_factors
+from .meshfree._neighbors import _integer
+from .meshfree._stencils import (
+    LocalStencilRefreshStatus,
+    map_row_chunks,
+    polynomial_design,
+    root_weighted_svd_factors,
+)
 
 
 # Leaf granularity of the prepared point hierarchy; the candidate capacity
@@ -61,8 +82,15 @@ _RANK_CUTOFF = 1.0e-12
 PointCloudReconstruction: TypeAlias = Literal["polynomial", "shepard"]
 
 
-def _wendland_c2(ratio: Array, /) -> Array:
-    return (1.0 - ratio) ** 4 * (4.0 * ratio + 1.0)
+def _wendland_c2_root(squared: Array, inside: Array, /) -> Array:
+    """Square root `(1 - r)^2 sqrt(4 r + 1)` of the Wendland weight, zero outside.
+
+    `r` is evaluated through a zero-safe square root: the root is even through
+    first order at `r = 0`, where a coincident query and cloud point meet.
+    """
+    positive = inside & (squared > 0.0)
+    ratio = jnp.where(positive, jnp.sqrt(jnp.where(positive, squared, 1.0)), 0.0)
+    return jnp.where(inside, (1.0 - ratio) ** 2 * jnp.sqrt(4.0 * ratio + 1.0), 0.0)
 
 
 @final
@@ -72,12 +100,16 @@ class PointCloudFieldReconstructionKernel(
     """Moving least-squares evaluation over bounded point-cloud neighborhoods."""
 
     points: Array
+    anchor_points: Array
     bvh: PackedBVH
-    exponents: Array
+    degree: int = eqx.field(static=True)
+    feature_total: int = eqx.field(static=True)
     radius: float = eqx.field(static=True)
+    coordinate_envelope: float = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
     minimum_neighbors: int = eqx.field(static=True)
     condition_limit: float = eqx.field(static=True)
+    chunk_rows: int = eqx.field(static=True)
     reconstruction: PointCloudReconstruction = eqx.field(static=True)
     source_owner_id: str = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
@@ -92,9 +124,11 @@ class PointCloudFieldReconstructionKernel(
         capacity: int,
         minimum_neighbors: int,
         condition_limit: float,
+        chunk_rows: int,
         field_space_id: str,
         source_owner_id: str,
         reconstruction: PointCloudReconstruction = "polynomial",
+        coordinate_envelope: float = 0.0,
     ) -> None:
         cloud = np.asarray(points, dtype=np.float64)
         if cloud.ndim != 2 or cloud.shape[0] == 0 or not np.all(np.isfinite(cloud)):
@@ -120,6 +154,9 @@ class PointCloudFieldReconstructionKernel(
             raise ValueError(
                 "Reconstruction radius and condition limit must be admissible."
             )
+        envelope = float(coordinate_envelope)
+        if not isfinite(envelope) or envelope < 0.0:
+            raise ValueError("coordinate_envelope must be finite and non-negative.")
         if (
             not features.feature_count + 1
             <= minimum_neighbors
@@ -141,6 +178,7 @@ class PointCloudFieldReconstructionKernel(
                 "weight": "wendland-c2",
                 "reconstruction": reconstruction_,
                 "radius": radius,
+                "coordinate_envelope": envelope,
                 "capacity": capacity,
                 "minimum_neighbors": minimum_neighbors,
                 "condition_limit": condition_limit,
@@ -150,12 +188,16 @@ class PointCloudFieldReconstructionKernel(
             }
         )
         self.points = jnp.asarray(cloud)
+        self.anchor_points = jnp.asarray(cloud)
         self.bvh = bvh
-        self.exponents = features.exponents
+        self.degree = features.degree
+        self.feature_total = features.feature_count + 1
         self.radius = radius
+        self.coordinate_envelope = envelope
         self.capacity = capacity
         self.minimum_neighbors = minimum_neighbors
         self.condition_limit = condition_limit
+        self.chunk_rows = _integer(chunk_rows, "chunk_rows")
         self.reconstruction = reconstruction_
         self.source_owner_id = source_owner_id
         self._kernel_id = kernel_id
@@ -175,7 +217,18 @@ class PointCloudFieldReconstructionKernel(
     @property
     def feature_count(self) -> int:
         """Polynomial features including the constant."""
-        return self.exponents.shape[0] + 1
+        return self.feature_total
+
+    def displacement(self) -> Array:
+        """Largest motion of the bound cloud from its anchor.
+
+        A discrete admission quantity, not differentiated data: the bound cloud
+        is admitted up to and including ``coordinate_envelope``, and its
+        coordinate derivative strictly inside it.
+        """
+        return jax.lax.stop_gradient(
+            jnp.max(jnp.linalg.norm(self.points - self.anchor_points, axis=-1))
+        )
 
     def locate(
         self,
@@ -188,15 +241,23 @@ class PointCloudFieldReconstructionKernel(
         if any(derivative):
             raise ValueError("Moving least-squares views evaluate values only.")
         finite = jnp.all(jnp.isfinite(points), axis=1)
-        query = jnp.where(finite[:, None], points, self.points[0].astype(points.dtype))
-        candidates, candidate_valid, complete = point_select_leaf_items(
-            query, bvh=self.bvh, maximum_candidates=self.capacity, tolerance=self.radius
+        query = jnp.where(
+            finite[:, None], points, self.anchor_points[0].astype(points.dtype)
         )
+        # Candidates of the anchored cloud within the radius widened by the
+        # envelope contain every bound point inside the radius.
+        candidates, candidate_valid, complete = point_select_leaf_items(
+            query,
+            bvh=self.bvh,
+            maximum_candidates=self.capacity,
+            tolerance=self.radius + self.coordinate_envelope,
+        )
+        complete = complete & (self.displacement() <= self.coordinate_envelope)
         offsets = (self.points[candidates] - query[:, None, :]) / self.radius
-        ratio = jnp.sqrt(jnp.sum(offsets * offsets, axis=-1))
-        inside = candidate_valid & (ratio < 1.0)
+        squared = jnp.sum(offsets * offsets, axis=-1)
+        inside = candidate_valid & (squared < 1.0)
         count = jnp.sum(inside, axis=1, dtype=jnp.int32)
-        root = jnp.where(inside, jnp.sqrt(_wendland_c2(jnp.minimum(ratio, 1.0))), 0.0)
+        root = _wendland_c2_root(squared, inside)
         if self.reconstruction == "shepard":
             positive = root * root
             total = jnp.sum(positive, axis=1)
@@ -204,15 +265,16 @@ class PointCloudFieldReconstructionKernel(
             full_rank = total > 0
             conditioning = jnp.where(full_rank, 1.0, jnp.inf).astype(points.dtype)
         else:
-            design = jnp.concatenate(
-                (
-                    jnp.ones(offsets.shape[:2] + (1,), dtype=offsets.dtype),
-                    jnp.prod(offsets[..., None, :] ** self.exponents, axis=-1),
-                ),
-                axis=-1,
-            )
-            factors, rank, conditioning, _ = weighted_svd_factors(
-                design, root * root, inside
+            # The shared local fit: one total-degree design and weighted SVD
+            # kernel, mapped over padded fixed-size query chunks.
+            def fit(batch: tuple[Array, ...]) -> tuple[Array, Array, Array, Array]:
+                chunk_offsets, chunk_root = batch
+                return root_weighted_svd_factors(
+                    polynomial_design(chunk_offsets, self.degree), chunk_root
+                )
+
+            factors, rank, conditioning, _ = map_row_chunks(
+                fit, (offsets, root), self.chunk_rows
             )
             full_rank = rank == self.feature_count
             conditioning = jnp.where(full_rank, conditioning, jnp.inf).astype(
@@ -277,6 +339,7 @@ def prepare_point_cloud_field_reconstruction(
     value_port: ValuePort | None = None,
     support_tolerance: float = 1.0e-9,
     reconstruction: PointCloudReconstruction = "polynomial",
+    coordinate_envelope: float = 0.0,
 ) -> PreparedFieldReconstruction:
     """Prepare an evidenced moving least-squares reconstruction of point values.
 
@@ -293,6 +356,13 @@ def prepare_point_cloud_field_reconstruction(
     normalized Wendland weights. It reproduces constants, not the cloud's
     polynomial degree, and permits minimum_neighbors=1 without downgrading a
     polynomial fit after failure. The selector is part of kernel provenance.
+    The kernel anchors the discretization's current coordinates and gathers
+    candidates within `radius + coordinate_envelope` of each query, so
+    `point_cloud_reconstruction_sensitivity` differentiates the values in
+    cloud coordinates moved by at most `coordinate_envelope` (default zero:
+    the anchor only). Motion beyond the envelope is `LOCATION_FAILED`; prepare
+    the reconstruction again from the refreshed discretization (a new kernel
+    identity).
     """
     from ..geometry import CompiledGeometry, GeometryKind
 
@@ -358,9 +428,11 @@ def prepare_point_cloud_field_reconstruction(
         capacity=int(capacity),
         minimum_neighbors=int(minimum),
         condition_limit=discretization.plan.stencil.condition_limit,
+        chunk_rows=discretization.plan.stencil.chunk_rows,
         field_space_id=field_space_id,
         source_owner_id=discretization.prepared_id,
         reconstruction=reconstruction_,
+        coordinate_envelope=coordinate_envelope,
     )
     port = (
         ValuePort(
@@ -394,7 +466,81 @@ def prepare_point_cloud_field_reconstruction(
     )
 
 
+def point_cloud_reconstruction_sensitivity(
+    reconstruction: PreparedFieldReconstruction,
+    coefficients: ArrayLike,
+    query_points: ArrayLike,
+    points: ArrayLike,
+    /,
+) -> PointCloudCoordinateSensitivity:
+    """Fixed-support coordinate linearization of reconstructed point values.
+
+    The published map sends cloud coordinates ``points`` to the reconstructed
+    values of fixed ``coefficients`` at fixed ``query_points`` on the
+    candidates frozen at preparation. Its JVP/VJP are genuine derivatives of
+    that map, including cloud points entering or leaving a query radius,
+    while every point stays within the kernel's ``coordinate_envelope``.
+    ``status`` uses ``LocalStencilRefreshStatus`` (``SUPPORT_EXCEEDED`` beyond
+    the envelope, ``ROW_REFUSED`` when any query is invalid) and ``evidence``
+    is the per-query status/conditioning evidence; a refused map is NaN with
+    NaN tangents and cotangents.
+    """
+    if not isinstance(reconstruction, PreparedFieldReconstruction):
+        raise TypeError("reconstruction must be a PreparedFieldReconstruction.")
+    kernel = reconstruction.kernel
+    if not isinstance(kernel, PointCloudFieldReconstructionKernel):
+        raise TypeError("reconstruction must be a prepared point-cloud reconstruction.")
+    coordinates = jnp.asarray(points, dtype=kernel.anchor_points.dtype)
+    if coordinates.shape != kernel.anchor_points.shape:
+        raise ValueError("Cloud coordinates must match the anchored point cloud.")
+    values = reconstruction.validate_coefficients(coefficients)
+    queries = jnp.asarray(query_points, dtype=kernel.anchor_points.dtype)
+
+    def evaluate(moved: Array) -> tuple[Array, tuple[Array, Array, FieldQueryEvidence]]:
+        rebound_kernel = eqx.tree_at(lambda item: item.points, kernel, moved)
+        result = eqx.tree_at(
+            lambda item: item.kernel, reconstruction, rebound_kernel
+        ).evaluate(values, queries)
+        displacement = rebound_kernel.displacement()
+        status = jnp.where(
+            ~jnp.all(jnp.isfinite(moved)),
+            int(LocalStencilRefreshStatus.INVALID_COORDINATES),
+            jnp.where(
+                ~(displacement <= rebound_kernel.coordinate_envelope),
+                int(LocalStencilRefreshStatus.SUPPORT_EXCEEDED),
+                jnp.where(
+                    jnp.all(result.evidence.valid),
+                    int(LocalStencilRefreshStatus.ACCEPTED),
+                    int(LocalStencilRefreshStatus.ROW_REFUSED),
+                ),
+            ),
+        ).astype(jnp.int32)
+        accepted = status == int(LocalStencilRefreshStatus.ACCEPTED)
+        # Multiplicative NaN: tangents and cotangents of a refused map are NaN.
+        published = result.values * jnp.where(accepted, 1.0, jnp.nan).astype(
+            result.values.dtype
+        )
+        # On the envelope boundary (and for the default zero envelope) no open
+        # coordinate neighborhood keeps the frozen candidates: NaN derivative.
+        published = guard_derivative_validity(
+            published,
+            displacement < rebound_kernel.coordinate_envelope,
+            dependencies=(moved,),
+        )
+        return published, (status, accepted, result.evidence)
+
+    linearization = prepare_linearization(evaluate, coordinates, has_aux=True)
+    status, accepted, evidence = linearization.auxiliary
+    return PointCloudCoordinateSensitivity(
+        linearization=linearization,
+        status=status,
+        accepted=accepted,
+        evidence=evidence,
+    )
+
+
 __all__ = [
+    "point_cloud_reconstruction_sensitivity",
     "PointCloudFieldReconstructionKernel",
     "PointCloudReconstruction",
     "prepare_point_cloud_field_reconstruction",

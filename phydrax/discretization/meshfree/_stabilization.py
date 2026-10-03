@@ -22,12 +22,27 @@ from .._point_cloud_pde import PointDiffusionOperator
 
 @final
 class HyperviscosityEvidence(StrictModule, NonTrainableState):
+    """Power-iteration Rayleigh estimates of ``-L`` and of the hyperviscosity.
+
+    ``dissipative`` reports a nonnegative measured Rayleigh quotient; the raw
+    quotient is retained, never clipped. Estimated radii are not rigorous CFL
+    bounds: ``explicit_step`` divides a declared real stability interval by the
+    estimate and is an estimate as well.
+    """
+
     spectral_radius_estimate: Array
     hyperviscosity_radius_estimate: Array
+    dissipative: Array
     power_iterations: int = eqx.field(static=True)
     scope: Literal["power-iteration-estimate"] = eqx.field(
         static=True, default="power-iteration-estimate"
     )
+
+    def explicit_step(self, stability_interval: float, /) -> Array:
+        interval = float(stability_interval)
+        if not np.isfinite(interval) or interval <= 0:
+            raise ValueError("stability_interval must be finite and positive.")
+        return interval / self.hyperviscosity_radius_estimate
 
 
 @final
@@ -36,6 +51,9 @@ class HyperviscosityPlan(StrictModule):
 
     No time integrator is selected: semidiscrete dissipation does not certify
     unconditional stability, and the power estimate is not a spectral bound.
+    The term enters a semidiscrete residual only where a consumer declares it
+    (``MeshfreeEvolutionPlan(hyperviscosity=...)``); it is never switched on
+    in response to a failed step.
     """
 
     coefficient: float = eqx.field(static=True)
@@ -95,9 +113,12 @@ class PreparedHyperviscosity(StrictModule, NonTrainableState):
 
         vector = jax.lax.fori_loop(0, plan.power_iterations, step, normalize(vector))
         image = -diffusion.mv(vector)
-        radius = jnp.maximum(jnp.sum(mass * vector * image), 0.0)
+        radius = jnp.sum(mass * vector * image)
         evidence = HyperviscosityEvidence(
-            radius, plan.coefficient * radius**plan.order, plan.power_iterations
+            radius,
+            plan.coefficient * radius**plan.order,
+            radius >= 0,
+            plan.power_iterations,
         )
         self.plan = plan
         self.diffusion = diffusion

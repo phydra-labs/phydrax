@@ -117,6 +117,12 @@ differentiation contracts.
 
 ::: phydrax.solver.coupling.CouplingWindowResult
 
+Every window result carries `participant_evidence`, one entry per participant in
+`subsystem_ids` order: each participant's own native evidence from the evaluation
+that defines the candidate (`None` for participants that publish none). It is kept
+for committed and rolled-back windows alike, and heterogeneous participant
+structures are never merged into a scalar.
+
 ---
 
 ::: phydrax.solver.coupling.CouplingStatus
@@ -136,6 +142,10 @@ differentiation contracts.
 ---
 
 ::: phydrax.solver.coupling.CouplingRolloutPlan
+
+`evidence_retention` bounds the participant evidence a rollout keeps:
+`"terminal"` (default) keeps the last committed and the refusing window as separate
+records, `"steps"` additionally stacks every window, and `"none"` keeps nothing.
 
 ---
 
@@ -224,6 +234,10 @@ declaration lowered onto `CouplingProblem`. See the
 ---
 
 ::: phydrax.solver.coupling.FixedStepCouplingParticipant
+
+---
+
+::: phydrax.solver.coupling.FixedStepParticipantEvidence
 
 ---
 
@@ -587,6 +601,78 @@ See
 
 ::: phydrax.solver.coupling.FieldTransferEvidence
 
+### Overlapping Dirichlet (Schwarz) coupling
+
+`OverlapDirichletLaw` couples a point-cloud `MeshfreeComponent` and a
+`FiniteVolumeComponent` that discretize the same original elliptic problem on
+overlapping subdomains. The cloud's artificial rows are ordinary zero-data
+Dirichlet (identity) rows of its native equations, and the grid's artificial
+faces are native zero-data Dirichlet faces. The law adds `-(T_c v)_i` to each
+artificial cloud row and `-V D(0; alpha T_p u)` to the cell balances. `T_c` are
+native value stencils from cell centers to the artificial nodes, `T_p` are
+native value stencils from the cloud to the face centers, and `D` is the
+grid's diffusion action, which is affine in its boundary data.
+`PreparedOverlapTransfers` prepares both transfers, and a third one to the
+declared overlap cells, from the owners' own geometry, never from coincident
+shapes. It refuses failed stencil rows, constant or linear reproduction
+defects above the policy tolerance, artificial nodes outside the cell-center
+hull, and touching artificial boundaries.
+
+Preparation measures that the declared cloud rows are identity rows with zero
+data and that the declared faces are zero-data Dirichlet faces. The law claims
+both row sets as `LawImposition`s. Its certificate gates the
+artificial-node transfer relation. It reports the owners' mismatch on the
+overlap cells (`overlap-mismatch-max`, `overlap-mismatch-l2`) as evidence
+only, because it is a discretization error.
+
+`prepare_overlap_schwarz` builds one `SubspaceCorrectionTerm` per subdomain.
+The restriction selects the subdomain's solve block, and the local solver is
+the native sparse factorization of exactly that block of the coupled
+operator. That block is assembled by the native sparse Jacobian with the
+owner's declared pattern and verified by probes. Pass the terms to
+`AdditiveSubspaceCorrectionBuilder` (parallel Schwarz) or
+`MultiplicativeSubspaceCorrectionBuilder` (alternating Schwarz) inside a
+Krylov `LinearSolvePolicy`. See
+[Hybrid overlap coupling](../../guides_meshfree.md#hybrid-overlap).
+
+::: phydrax.solver.coupling.OverlapDirichletLaw
+
+---
+
+::: phydrax.solver.coupling.PreparedOverlapTransfers
+
+---
+
+::: phydrax.solver.coupling.OverlapTransferPolicy
+
+---
+
+::: phydrax.solver.coupling.OverlapTransferEvidence
+
+---
+
+::: phydrax.solver.coupling.OverlapTransferRoute
+
+---
+
+::: phydrax.solver.coupling.OverlapFaceSide
+
+---
+
+::: phydrax.solver.coupling.OverlapDirichletEvidence
+
+---
+
+::: phydrax.solver.coupling.prepare_overlap_schwarz
+
+---
+
+::: phydrax.solver.coupling.OverlapSchwarz
+
+---
+
+::: phydrax.solver.coupling.OverlapSubdomainEvidence
+
 ### Boundary-integral transmission
 
 `BoundaryIntegralTransmissionLaw` couples a volume trace component to a
@@ -927,8 +1013,97 @@ and explicitly positive native deposition have distinct contracts. See
 
 ---
 
+::: phydrax.solver.coupling.SurfaceDeposition
+
+---
+
+::: phydrax.solver.coupling.SurfaceEpochRelocation
+
+---
+
 ::: phydrax.solver.coupling.LangmuirAdsorptionFlux
 
 ---
 
 ::: phydrax.solver.coupling.MeshfreeBulkSurfaceMethod
+
+---
+
+::: phydrax.solver.coupling.MeshfreeBulkSurfaceEvidence
+
+## Chart-authorized meshfree traces and mixed-method laws
+
+`MeshfreeTraceComponent` publishes a prepared `PreparedPointCloudPoisson` or
+`PreparedPointBlockSystem` whose coupling boundaries are authorized by
+`PointBoundaryCharts`: each `MeshfreeBoundaryTrace` names a homogeneous
+`neumann` condition whose rows, outward normals, and lumped measure must agree
+with the oriented charts, so no facet is inferred from point coordinates.
+Dirichlet rows become a row-selection constraint with the owner's boundary data
+as lift; coupling rows are scaled by their physical boundary measure, so the
+owner's residual reaction is the canonical conormal flux. Value traces are the
+charts' nodal interpolants. Exact pointwise fluxes and trace-inverse stability
+are refused: a collocated point owner certifies no facet energy bound, so it
+joins mortar and conservative-flux laws, and Nitsche only with zero flux
+weight. `MeshfreeComponent` additionally publishes block fields and a
+nonlinear `MeshfreeReaction`, which the coupled solve linearizes natively.
+
+Both scalar and block ghost owners publish `<field>-ghost` fields alongside
+their cloud fields. Prepare the block ghost layer explicitly with
+`PointGhostLayerPlan(boundary).prepare(cloud)` and supply it to
+`PointBlockSystemPlan(..., ghosts=layer)`. Traction rows exchange with their
+cloud PDE rows and are scaled by boundary measure times ghost offset, retaining
+all extended equations and cross-component couplings. Supply the complete
+`dict(solution.fields)` to certificate reactions and `resultants`. Independent
+strain/energy calculations must apply the prepared ghost derivative family to
+the concatenated cloud and ghost values, retaining only the cloud output rows.
+
+`FiniteVolumeComponent` publishes cell-centered `PreparedConservativeDiffusion`
+with cell-average or face-state traces on its homogeneous Neumann faces; its
+capacity is the cell-volume diagonal (`FiniteVolumeCapacity`).
+
+`VectorTransmissionLaw` imposes continuity of a vector field and balance of its
+traction with one mortar per Cartesian component (`VectorTransmissionSide`
+lists each side's component fields). `VectorTransmissionCertificate` gates weak
+continuity, traction balance of each owner's complete coupled reaction, and
+interface power loss; `resultants` returns the integrated force and the two
+sides' powers as dual pairings of the traction covector with each trace
+(`VectorInterfaceResultants`). See `examples/meshfree_mixed_method_coupling.py`
+and `examples/meshfree_fluid_structure.py`.
+
+::: phydrax.solver.coupling.MeshfreeTraceComponent
+
+---
+
+::: phydrax.solver.coupling.MeshfreeBoundaryTrace
+
+---
+
+::: phydrax.solver.coupling.MeshfreeReaction
+
+---
+
+::: phydrax.solver.coupling.FiniteVolumeComponent
+
+---
+
+::: phydrax.solver.coupling.FiniteVolumeCapacity
+
+---
+
+::: phydrax.solver.coupling.VectorTransmissionLaw
+
+---
+
+::: phydrax.solver.coupling.VectorTransmissionSide
+
+---
+
+::: phydrax.solver.coupling.VectorTransmissionCertificate
+
+---
+
+::: phydrax.solver.coupling.VectorTransmissionEvidence
+
+---
+
+::: phydrax.solver.coupling.VectorInterfaceResultants

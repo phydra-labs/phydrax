@@ -20,6 +20,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from ..typing import parse, PRNGKey
 from ._assembly import assemble_diagonal, assemble_sparse, SparseAssemblyPolicy
+from ._incomplete_factorizations import SparseFactorizationPreconditionerBuilder
 from ._named_blocks import assemble_block_operator
 from ._operator_pairing import OperatorPairing
 from ._operators import (
@@ -37,7 +38,7 @@ from ._preconditioners import DiagonalPreconditioner
 from ._preconditioning import PreconditioningPolicy
 from ._prepared import PreparedLinearSolve
 from ._problems import LinearSystem
-from ._properties import OperatorCapabilities, OperatorProperties
+from ._properties import LinearCapabilityError, OperatorCapabilities, OperatorProperties
 from ._runtime import prepare, solve
 from ._spaces import (
     _coordinate_dtype,
@@ -47,6 +48,7 @@ from ._spaces import (
     DualSpace,
     PyTreeSpace,
 )
+from ._sparse_factorizations import SparseFactorizationPolicy
 from .eigen._policies import DenseEigh, EigenSolvePolicy, EigenTolerancePolicy, LOBPCG
 from .eigen._problems import GeneralizedEigenproblem
 from .eigen._results import EigenSolveResult
@@ -652,10 +654,59 @@ def _admit_harmonic_dimension(
         raise ValueError("Traced harmonic solves require an explicit expected_dimension.")
 
 
+# The default large-space route preconditions LOBPCG with an exact sparse
+# factor of ``A + s M``. ``s`` is this fraction of the mean diagonal ratio
+# ``diag(A) / diag(M)``: the factor then acts like shift-invert about ``-s``, so
+# kernel (near-zero) modes contract by about ``s / (gap + s)`` per iteration,
+# while ``A + s M`` stays definite and conditioned near ``1 / fraction``.
+_KERNEL_PRECONDITIONER_SHIFT = 1e-6
+
+
+def _kernel_preconditioning(
+    operator: AbstractLinearOperator, mass: AbstractLinearOperator, /
+) -> PreconditioningPolicy | None:
+    """Exact sparse-factor preconditioner of the definite shifted pencil.
+
+    ``A`` is a certified positive-semidefinite form and ``M`` a certified SPD
+    mass, so ``A + s M`` is positive definite for ``s > 0``; its certification
+    is that proof. Returns None when the pencil has no canonical sparse
+    assembly; the unpreconditioned LOBPCG route still reports its own residual
+    and convergence status.
+    """
+    try:
+        sparse_operator = assemble_sparse(operator)
+        sparse_mass = assemble_sparse(mass)
+    except LinearCapabilityError:
+        return None
+    shift = (
+        _KERNEL_PRECONDITIONER_SHIFT
+        * jnp.mean(assemble_diagonal(sparse_operator))
+        / jnp.mean(assemble_diagonal(sparse_mass))
+    )
+    setup = assemble_sparse(
+        _CoordinateFormOperator(
+            sparse_operator + shift * sparse_mass,
+            operator_id=f"{operator.operator_id}:kernel-shift",
+            definite=True,
+        )
+    )
+    return PreconditioningPolicy(
+        SparseFactorizationPreconditionerBuilder(
+            SparseFactorizationPolicy("cholesky", ordering="approximate-minimum-degree")
+        ),
+        setup_operator=setup,
+    )
+
+
+_ITERATIVE_TOLERANCE_MARGIN = 1e-2
+
+
 def _harmonic_eigen_policy(
     size: int,
     expected: int | None,
     policy: HarmonicSubspacePolicy,
+    operator: AbstractLinearOperator,
+    mass: AbstractLinearOperator,
     /,
 ) -> EigenSolvePolicy:
     if policy.eigen_policy is not None:
@@ -669,18 +720,26 @@ def _harmonic_eigen_policy(
             )
         return selected
     count = size if expected is None else min(size, expected + policy.oversampling)
-    method = (
-        DenseEigh() if size <= policy.dense_dimension else LOBPCG(block_dimension=count)
+    dense = size <= policy.dense_dimension
+    # The iterative route stops on its own pencil residual; downstream
+    # certificates (HarmonicSubspace.valid, validate_harmonic_cohomology) measure
+    # different norms of the same kernel at ``policy.tolerance``. Solving to a
+    # strictly tighter tolerance keeps a margin between the stop and the
+    # certificate (measured: a stop at 1e-7 certified at 1.27e-7). The admission
+    # tolerance itself is unchanged.
+    solver_tolerance = (
+        policy.tolerance if dense else policy.tolerance * _ITERATIVE_TOLERANCE_MARGIN
     )
     return EigenSolvePolicy(
-        method,
+        DenseEigh() if dense else LOBPCG(block_dimension=count),
         count=count,
         key=jax.random.key(0),
         tolerance=EigenTolerancePolicy(
-            relative=policy.tolerance,
-            absolute=policy.tolerance,
-            orthogonality=policy.tolerance,
+            relative=solver_tolerance,
+            absolute=solver_tolerance,
+            orthogonality=solver_tolerance,
         ),
+        preconditioning=None if dense else _kernel_preconditioning(operator, mass),
     )
 
 
@@ -767,7 +826,9 @@ def harmonic_subspace(
             jnp.asarray(True),
         )
     operator, mass = _harmonic_pencil(complex, degree), mass_form(complex, degree)
-    eigen_policy = _harmonic_eigen_policy(space.size, expected_dimension, policy_)
+    eigen_policy = _harmonic_eigen_policy(
+        space.size, expected_dimension, policy_, operator, mass
+    )
     result = eigensolve(
         GeneralizedEigenproblem(
             operator, mass, problem_id=f"{complex.complex_id}:harmonic:{degree}"

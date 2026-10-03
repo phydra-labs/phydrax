@@ -261,6 +261,60 @@ def test_tiny_candidate_capacity_reports_overflow_per_row() -> None:
     np.testing.assert_array_equal(relation.relation.valid, False)
 
 
+def test_derived_default_capacity_refuses_overflow_instead_of_growing() -> None:
+    # A dense cluster beside sparse samples violates the declared quasi-uniform
+    # density ratio: sparse rows whose Morton stencil reaches the cluster are
+    # refused at the derived capacity, while every other row stays exact.
+    rng = np.random.default_rng(11)
+    cluster = 0.5 + 0.004 * rng.standard_normal((1500, 2))
+    background = rng.uniform(0.0, 1.0, (100, 2))
+    points = np.concatenate((cluster, background))
+    k = 8
+    plan = MortonNeighborQueryPlan(_address(), 1600, 1600, k)
+    declared = MortonNeighborQueryPlan(
+        _address(), 1600, 1600, k, maximum_candidates=plan.maximum_candidates
+    )
+    # The derivation, not only the resulting width, is part of the identity.
+    assert plan.plan_id != declared.plan_id
+
+    result = plan.query(jnp.asarray(points), jnp.asarray(points))
+    status = np.asarray(result.status)
+    overflow = status == MortonNeighborQueryStatus.CANDIDATE_OVERFLOW
+    assert overflow.any() and not bool(result.evidence.successful)
+    assert int(result.evidence.candidate_capacity) == plan.maximum_candidates
+    assert int(result.evidence.required_candidates) > plan.maximum_candidates
+    assert not np.asarray(result.valid)[overflow].any()
+    complete = status == MortonNeighborQueryStatus.COMPLETE
+    assert complete.sum() + overflow.sum() == points.shape[0]
+    distances = _squared_distances(points, points, periodic=False)
+    expected = np.sort(distances, axis=1)[:, :k]
+    found = np.take_along_axis(distances, np.asarray(result.source_indices), axis=1)
+    np.testing.assert_allclose(found[complete], expected[complete], rtol=0, atol=0)
+
+
+def test_target_radii_keep_exactly_the_nearest_sources_within_each_radius() -> None:
+    rng = np.random.default_rng(3)
+    source = rng.uniform(size=(200, 2))
+    target = rng.uniform(size=(20, 2))
+    radii = rng.uniform(0.02, 0.12, 20)
+    radii[0] = np.inf
+    k = 6
+    result = MortonNeighborQueryPlan(_address(), 200, 20, k).query(
+        jnp.asarray(source), jnp.asarray(target), target_radii=jnp.asarray(radii)
+    )
+    assert bool(result.evidence.successful)
+    distances = _squared_distances(target, source, periodic=False)
+    for row in range(20):
+        nearest = np.argsort(distances[row], kind="stable")[:k]
+        inside = nearest[distances[row, nearest] <= radii[row] ** 2]
+        assert int(result.counts[row]) == inside.size
+        np.testing.assert_array_equal(
+            np.asarray(result.source_indices[row, : inside.size]), inside
+        )
+    assert int(result.counts[0]) == k
+    assert int(result.counts.min()) < k
+
+
 def test_out_of_domain_targets_and_sources_fail_closed() -> None:
     source = jnp.asarray([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]])
     target = jnp.asarray([[0.15, 0.15], [1.5, 0.5]])

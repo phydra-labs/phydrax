@@ -373,10 +373,22 @@ def run_workflow(
         if coverage is None or solution.coverage is None:
             raise RuntimeError("This workflow requires actual fitted coverage evidence.")
         outside = coverage.assess(jnp.asarray([[2.0]]))
+        metric = recovery.prepared.problem.exterior.metric_result
+        if metric.linear_result is None:
+            raise RuntimeError("The signed exact metric must retain its native solve.")
         metrics: dict[str, WorkflowMetric] = {
             "dimension": dimension,
             "node_count": size,
             "equation_count": int(recovery.prepared.residual.free_indices.size),
+            "metric_status": int(metric.status),
+            "metric_provider_status": int(metric.provider_status),
+            "metric_rank_route": metric.rank_certificate.route,
+            "metric_constraint_iterations": int(
+                metric.linear_result.diagnostics.iterations
+            ),
+            "metric_max_normalized_residual": float(
+                jnp.max(jnp.abs(metric.normalized_residual))
+            ),
             "learned_coefficient": scale,
             "truth_coefficient": recovery.truth_scale,
             "parameter_error": abs(scale - recovery.truth_scale),

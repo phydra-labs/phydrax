@@ -30,6 +30,7 @@ from ._holomorphic import HolomorphicMLP
 from ._input_convex import (
     InputConvexCertificate,
     InputConvexNetwork,
+    InputMonotonicity,
     PartiallyInputConvexNetwork,
 )
 from ._kan import KAN, KANEdgeBlock
@@ -151,6 +152,7 @@ __all__ = [
     "IdentityCoefficientTransition",
     "InputConvexCertificate",
     "InputConvexNetwork",
+    "InputMonotonicity",
     "KAN",
     "HolomorphicMLP",
     "ImplicitModalField",

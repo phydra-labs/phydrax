@@ -191,9 +191,10 @@ def prepare_workflow(
         ContributionEndpoint("bulk", "concentration"),
         ContributionEndpoint("surface", "concentration"),
         query,
-        surface.measures,
+        surface_component,
         surface.normals,
         LangmuirAdsorptionFlux(kinetics),
+        deposition="positive",
     )
     initial = (jnp.asarray(volumes), 0.1 * surface.measures)
     total = volume + 0.1 * 4 * np.pi
@@ -299,8 +300,6 @@ def run_workflow(
     moved_components = {"bulk": prepared.bulk, "surface": moved_component}
     refreshed = prepared.law.refresh_at_window(
         moved_components,
-        moved_surface.points,
-        moved_surface.measures,
         moved_surface.normals,
         window_start=400.0,
         geometry_time=399.95,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, assert_never, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,6 +30,7 @@ ConvexActivation: TypeAlias = Literal["softplus", "relu", "squared_relu"]
 InputConvexConstruction: TypeAlias = Literal[
     "input-convex-network", "partially-input-convex-network"
 ]
+InputMonotonicity: TypeAlias = Literal["unconstrained", "nondecreasing"]
 _CanonicalSize: TypeAlias = int | tuple[int, ...] | Literal["scalar"]
 _CONVEX_ACTIVATIONS = {
     "softplus": jax.nn.softplus,
@@ -76,6 +77,14 @@ class InputConvexCertificate(AbstractConstructionCertificate):
     convex and nondecreasing. `context_size` is `None` for a potential that is
     jointly convex in its whole input; otherwise the potential is convex in its
     second argument for every fixed context of that size.
+
+    `input_monotonicity="nondecreasing"` additionally certifies that the
+    potential is nondecreasing in every convex-input coordinate: each convex
+    input weight is positive-transformed as well. Such a potential composed with
+    convex input features (for example squared norms) is convex in the
+    underlying variable; an unconstrained potential composed with nonlinear
+    features is not. An affine feature with arbitrary sign enters as the pair
+    ``(l, -l)``, so no expressiveness is lost for affine features.
     """
 
     capability_id: ClassVar[str] = "input-convex"
@@ -85,6 +94,7 @@ class InputConvexCertificate(AbstractConstructionCertificate):
     activation: ConvexActivation = eqx.field(static=True)
     depth: int = eqx.field(static=True)
     width_size: int = eqx.field(static=True)
+    input_monotonicity: InputMonotonicity = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
     def __init__(
@@ -96,6 +106,7 @@ class InputConvexCertificate(AbstractConstructionCertificate):
         activation: ConvexActivation,
         depth: int,
         width_size: int,
+        input_monotonicity: InputMonotonicity,
     ) -> None:
         construction = parse(construction, InputConvexConstruction, "construction")
         if (context_size is None) != (construction == "input-convex-network"):
@@ -103,6 +114,7 @@ class InputConvexCertificate(AbstractConstructionCertificate):
                 "Only partially input-convex constructions declare a context size."
             )
         activation = parse(activation, ConvexActivation, "activation")
+        monotonicity = parse(input_monotonicity, InputMonotonicity, "input_monotonicity")
         depth_ = int(depth)
         width = int(width_size)
         if depth_ <= 0 or width <= 0:
@@ -115,6 +127,7 @@ class InputConvexCertificate(AbstractConstructionCertificate):
         self.activation = activation
         self.depth = depth_
         self.width_size = width
+        self.input_monotonicity = monotonicity
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "input-convex-certificate",
@@ -125,6 +138,7 @@ class InputConvexCertificate(AbstractConstructionCertificate):
                 "depth": depth_,
                 "width_size": width,
                 "hidden_coupling": "positive-transform",
+                "input_monotonicity": monotonicity,
             }
         )
 
@@ -138,6 +152,51 @@ def _require_positive_couplings(layers: tuple[Linear, ...], /) -> None:
         raise ValueError(
             "Input-convex certificates require positive hidden-state couplings."
         )
+
+
+def _require_nondecreasing_inputs(
+    monotonicity: InputMonotonicity, layers: tuple[Linear, ...], /
+) -> None:
+    match monotonicity:
+        case "unconstrained":
+            return
+        case "nondecreasing":
+            if any(
+                not isinstance(layer.weight_transform, PositiveTransform)
+                or layer.weight_transform.minimum < 0.0
+                for layer in layers
+            ):
+                raise ValueError(
+                    "Nondecreasing input-convex certificates require positive convex-input weights."
+                )
+        case _:
+            assert_never(monotonicity)
+
+
+def _convex_input_linear(
+    *,
+    in_size: SizeLike,
+    out_size: SizeLike,
+    use_bias: bool,
+    monotonicity: InputMonotonicity,
+    key: PRNGKey,
+) -> Linear:
+    match monotonicity:
+        case "unconstrained":
+            transform = None
+        case "nondecreasing":
+            transform = PositiveTransform()
+        case _:
+            assert_never(monotonicity)
+    return Linear(
+        in_size=in_size,
+        out_size=out_size,
+        activation=None,
+        rwf=False,
+        use_bias=use_bias,
+        weight_transform=transform,
+        key=key,
+    )
 
 
 def _positive_linear(
@@ -158,7 +217,12 @@ def _positive_linear(
 
 
 class InputConvexNetwork(_AbstractBaseModel):
-    r"""Scalar input-convex potential with positive hidden-state couplings."""
+    r"""Scalar input-convex potential with positive hidden-state couplings.
+
+    ``input_monotonicity="nondecreasing"`` also positive-transforms every
+    convex-input weight, so the potential is nondecreasing in each input
+    coordinate and remains convex after composition with convex features.
+    """
 
     input_layers: tuple[Linear, ...]
     state_layers: tuple[Linear, ...]
@@ -166,6 +230,7 @@ class InputConvexNetwork(_AbstractBaseModel):
     out_size: Literal["scalar"]
     width_size: int
     activation: ConvexActivation
+    input_monotonicity: InputMonotonicity
 
     def __init__(
         self,
@@ -175,6 +240,7 @@ class InputConvexNetwork(_AbstractBaseModel):
         depth: int = 3,
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
+        input_monotonicity: InputMonotonicity = "unconstrained",
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_c = _canonical_size(in_size)
@@ -183,14 +249,14 @@ class InputConvexNetwork(_AbstractBaseModel):
         if width <= 0 or hidden_depth <= 0:
             raise ValueError("width_size and depth must be positive.")
         _convex_activation(activation, jnp.asarray(0.0))
+        monotonicity = parse(input_monotonicity, InputMonotonicity, "input_monotonicity")
         keys = jr.split(key, 2 * hidden_depth + 1)
         self.input_layers = tuple(
-            Linear(
+            _convex_input_linear(
                 in_size=in_size_c,
                 out_size=width if index < hidden_depth else "scalar",
-                activation=None,
-                rwf=False,
                 use_bias=use_bias,
+                monotonicity=monotonicity,
                 key=keys[index],
             )
             for index in range(hidden_depth + 1)
@@ -207,6 +273,7 @@ class InputConvexNetwork(_AbstractBaseModel):
         self.out_size = "scalar"
         self.width_size = width
         self.activation = activation
+        self.input_monotonicity = monotonicity
 
     def __call__(
         self,
@@ -244,6 +311,7 @@ class InputConvexNetwork(_AbstractBaseModel):
     def input_convex_certificate(self) -> InputConvexCertificate:
         """Return the construction certificate of joint input convexity."""
         _require_positive_couplings(self.state_layers)
+        _require_nondecreasing_inputs(self.input_monotonicity, self.input_layers)
         return InputConvexCertificate(
             construction="input-convex-network",
             convex_input_size=self.in_size,
@@ -251,6 +319,7 @@ class InputConvexNetwork(_AbstractBaseModel):
             activation=self.activation,
             depth=len(self.state_layers),
             width_size=self.width_size,
+            input_monotonicity=self.input_monotonicity,
         )
 
     def model_metadata(self) -> Mapping[str, Any]:
@@ -268,6 +337,8 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
     unconstrained nonlinear feature map and additive affine terms; all recurrent
     hidden-state weights remain positive. Therefore context dependence is
     unrestricted while convexity in the designated second input is structural.
+    ``input_monotonicity="nondecreasing"`` also makes the potential
+    nondecreasing in every convex-input coordinate for each fixed context.
     """
 
     context_lift: Linear
@@ -278,6 +349,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
     out_size: Literal["scalar"]
     width_size: int
     activation: ConvexActivation
+    input_monotonicity: InputMonotonicity
 
     def __init__(
         self,
@@ -288,6 +360,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
         depth: int = 3,
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
+        input_monotonicity: InputMonotonicity = "unconstrained",
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         context_size_c = _canonical_size(context_size)
@@ -297,6 +370,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
         if width <= 0 or hidden_depth <= 0:
             raise ValueError("width_size and depth must be positive.")
         _convex_activation(activation, jnp.asarray(0.0))
+        monotonicity = parse(input_monotonicity, InputMonotonicity, "input_monotonicity")
         keys = jr.split(key, 3 * hidden_depth + 3)
         self.context_lift = Linear(
             in_size=context_size_c,
@@ -307,12 +381,11 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
             key=keys[0],
         )
         self.convex_input_layers = tuple(
-            Linear(
+            _convex_input_linear(
                 in_size=convex_size_c,
                 out_size=width if index < hidden_depth else "scalar",
-                activation=None,
-                rwf=False,
                 use_bias=use_bias,
+                monotonicity=monotonicity,
                 key=keys[1 + index],
             )
             for index in range(hidden_depth + 1)
@@ -342,6 +415,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
         self.out_size = "scalar"
         self.width_size = width
         self.activation = activation
+        self.input_monotonicity = monotonicity
 
     def __call__(
         self,
@@ -399,6 +473,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
     def input_convex_certificate(self) -> InputConvexCertificate:
         """Return the construction certificate of convexity in the second input."""
         _require_positive_couplings(self.state_layers)
+        _require_nondecreasing_inputs(self.input_monotonicity, self.convex_input_layers)
         context_size, convex_size = self.in_size
         return InputConvexCertificate(
             construction="partially-input-convex-network",
@@ -407,6 +482,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
             activation=self.activation,
             depth=len(self.state_layers),
             width_size=self.width_size,
+            input_monotonicity=self.input_monotonicity,
         )
 
     def model_metadata(self) -> Mapping[str, Any]:
@@ -424,5 +500,6 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
 __all__ = [
     "InputConvexCertificate",
     "InputConvexNetwork",
+    "InputMonotonicity",
     "PartiallyInputConvexNetwork",
 ]

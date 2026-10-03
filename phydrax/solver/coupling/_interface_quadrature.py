@@ -22,7 +22,7 @@ scatter-add transpose; no coefficient-by-point matrix is formed.
 
 from __future__ import annotations
 
-from typing import final
+from typing import assert_never, final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -307,7 +307,14 @@ class InterfaceQuadrature(StrictModule, NonTrainableState):
 
 
 def _gll_nodes(trace: PreparedTraceAction, role: str, /) -> np.ndarray:
-    """Facet parameters of the trace sites, refusing non-GLL or non-exact traces."""
+    """Facet parameters of the trace sites, refusing non-GLL or non-exact traces.
+
+    Pointwise quadrature-value traces are admitted with their published degree.
+    A degree-0 finite-volume face state (a cell average or a reconstructed
+    state constant along the facet) repeats one value at every site, so the
+    facet-local Lagrange interpolation reproduces it exactly at every common
+    point; every other face state is refused.
+    """
     descriptor = trace.descriptor
     sites_per_facet = trace.output_shape[1]
     if sites_per_facet < 2:
@@ -318,11 +325,16 @@ def _gll_nodes(trace: PreparedTraceAction, role: str, /) -> np.ndarray:
             f"The {role} trace must be prepared on a Gauss-Lobatto-Legendre facet "
             "rule, whose end points locate the facet exactly."
         )
-    if (
-        descriptor.quantity != "value"
-        or descriptor.representation != "quadrature-values"
-        or trace.sites.shape[-1] != 2
-    ):
+    match descriptor.representation:
+        case "quadrature-values":
+            admitted = True
+        case "cell-average" | "face-state":
+            admitted = descriptor.trace_degree == 0
+        case "residual-reaction":
+            admitted = False
+        case _:
+            assert_never(descriptor.representation)
+    if descriptor.quantity != "value" or not admitted or trace.sites.shape[-1] != 2:
         raise ValueError(
             f"The {role} trace must be a pointwise scalar value trace on a 2-D curve."
         )

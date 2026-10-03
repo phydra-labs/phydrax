@@ -511,6 +511,10 @@ axis = periodic_x.axis_domain()  # matching periodic AxisDomain
 projects points onto it. Field relations across the seam are declared with
 `phydrax.conditions.Periodic`; see
 [Conditions → Periodic seams](guides_conditions.md#periodic-seams).
+Meshfree point clouds derive their periodic numerical address from the same
+identifications with `MortonAddressPlan.from_periodic_identifications`, and
+closed-box periodic point rows bind the identification itself; see
+[Meshfree solvers](guides_meshfree.md).
 
 ### Filtering with `where` and `where_all`
 

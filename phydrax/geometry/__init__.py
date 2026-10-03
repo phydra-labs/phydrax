@@ -193,7 +193,10 @@ from ._triangulation import (
     DelaunayTriangulation,
     DiagramCells,
     PowerDiagram,
+    SimplexQualityEvidence,
+    SimplexQualitySubcomplex,
     TriangulationEvidence,
+    TriangulationProvider,
     VoronoiDiagram,
 )
 from ._validity import (
@@ -638,6 +641,8 @@ __all__ = [
     "SharpGeometryStatus",
     "SharpMeasureFidelity",
     "SignReliability",
+    "SimplexQualityEvidence",
+    "SimplexQualitySubcomplex",
     "SimplicialSurfelPlan",
     "Sketch",
     "SketchSolution",
@@ -670,6 +675,7 @@ __all__ = [
     "TriangleSurface",
     "TriangleTopology",
     "TriangulationEvidence",
+    "TriangulationProvider",
     "TrimDomain",
     "Union",
     "Vertical",

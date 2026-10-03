@@ -1,0 +1,1687 @@
+{
+  "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+  "campaigns": [
+    {
+      "aggregate_gates": [],
+      "campaign_id": "Q6",
+      "config": {
+        "candidates": null,
+        "chunk_rows": 32,
+        "degree": 2,
+        "dimension": 3,
+        "max_points": 4096,
+        "neighbors": 24,
+        "precision": "float64",
+        "repeats": 3,
+        "resource_bytes": 1073741824,
+        "seeds": [
+          0
+        ],
+        "sizes": [
+          48,
+          64
+        ],
+        "steps": 80,
+        "working_set_bytes": 268435456
+      },
+      "evidence": {
+        "coverage": {
+          "evaluated_at": 1791013828736931001,
+          "failed_predicate_ids": [],
+          "gaps": [],
+          "inconclusive_predicate_ids": [],
+          "kind": "qualification-coverage-report",
+          "matched_evidence_ids": [
+            "544cf3d5417a985c3869e23cf07e77283576e12c88bf72247f3ccce22c517248",
+            "a6534f2004517e418ca00e3aa8a3a75ea826696ab939f82b3506cb0cddc17882",
+            "a8afd9ff98b38fe9a64febcb6b92dd4e551940413d0a872900a37d749b8a837e",
+            "bcc14cccbfe0982f44e51af617e3b1a2b2dd8a20b61794ea964aea8c6f20defc",
+            "c47835c6c09bb2f346dad335a54bdf47dde44f5e4dccf5c806925572cdc17c9e",
+            "d692e6330ae0e7e677af2835c5fe4882dea87d59c3f1ae7922fef4d435c13a0a",
+            "f3776860e7f778ecc7fe96ca02a13250f3392e502be2d555d628a3604c95f832"
+          ],
+          "matrix_id": "c4d440a339623d885475e0d1e7387d1ed4e7937a5138ecacd520eed08ba496fa",
+          "outcome": "passed",
+          "passed_predicate_ids": [
+            "Q6:5319a24f3f9faba2:conservation",
+            "Q6:5319a24f3f9faba2:dilution",
+            "Q6:5319a24f3f9faba2:epoch-remap",
+            "Q6:5319a24f3f9faba2:repeated-remap",
+            "Q6:5319a24f3f9faba2:repeated-shift",
+            "Q6:5319a24f3f9faba2:rollback",
+            "Q6:5319a24f3f9faba2:step-status"
+          ],
+          "report_id": "93fda9131db454a6465b706fc369586e2ecd89c0f509e1edd6c8e7253deb8e63"
+        },
+        "matrix": {
+          "kind": "qualification-matrix",
+          "matrix_id": "c4d440a339623d885475e0d1e7387d1ed4e7937a5138ecacd520eed08ba496fa",
+          "predicates": {
+            "Q6:5319a24f3f9faba2:conservation": {
+              "criterion_id": "119b1224b50fb6102ac155515b78be2c2a11870eec0c3c6363c51cf4b139d4ad",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "Q6:5319a24f3f9faba2:dilution": {
+              "criterion_id": "dfaebac2bf55bac000a96c4d13d9b41465b96fb7989fba40dff414920bb9f35c",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "Q6:5319a24f3f9faba2:epoch-remap": {
+              "criterion_id": "72895965d7a28efd8f026b7842e5a63ed1ac3fbdc3883e04653e517073f461a1",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "Q6:5319a24f3f9faba2:repeated-remap": {
+              "criterion_id": "24e230d883f9e6d2b800c858563cc5136f7599c051ae8e4ce2f8a9286678b810",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "Q6:5319a24f3f9faba2:repeated-shift": {
+              "criterion_id": "a1e17dead6371e21c532cf40e6b2fd787f3240b43b7e10ab012465cb6e7ff6aa",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "Q6:5319a24f3f9faba2:rollback": {
+              "criterion_id": "2b79584c82fe0ca60ac0ef93449df9d17ef987c98a78420eedd126ab787c79fb",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "Q6:5319a24f3f9faba2:step-status": {
+              "criterion_id": "0251150d0cacdef0005808b9e29d1c3eb013e5f82098845a660d73ce7e3430f7",
+              "evidence_kind": "scientific",
+              "subject_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            }
+          }
+        },
+        "records": [
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "119b1224b50fb6102ac155515b78be2c2a11870eec0c3c6363c51cf4b139d4ad",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "4b0f86631b91db7aadd7a078fa929093f1454e8318fa4ed3ce652ce1a165bd7f",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "cc4b44d0c3ec9fe35157e795ac77486286fc648bbd928f1966d8d1d4865dea14"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "a2f1a64c55bb6c8bcf1771fa5402a3639101776f920b1082fa77bbfbbae3f7a1",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "119b1224b50fb6102ac155515b78be2c2a11870eec0c3c6363c51cf4b139d4ad",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "a2f1a64c55bb6c8bcf1771fa5402a3639101776f920b1082fa77bbfbbae3f7a1",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:conservation",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "119b1224b50fb6102ac155515b78be2c2a11870eec0c3c6363c51cf4b139d4ad",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "conservation_residual",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 1e-06,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "4b0f86631b91db7aadd7a078fa929093f1454e8318fa4ed3ce652ce1a165bd7f"
+              ],
+              "campaign_start_record_ids": [
+                "a2f1a64c55bb6c8bcf1771fa5402a3639101776f920b1082fa77bbfbbae3f7a1"
+              ],
+              "criteria_ids": [
+                "119b1224b50fb6102ac155515b78be2c2a11870eec0c3c6363c51cf4b139d4ad"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "544cf3d5417a985c3869e23cf07e77283576e12c88bf72247f3ccce22c517248",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "cc4b44d0c3ec9fe35157e795ac77486286fc648bbd928f1966d8d1d4865dea14"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "conservation",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "conservation",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": 2.025983547593313e-14,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": 3.982057739104761e-14,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "cc4b44d0c3ec9fe35157e795ac77486286fc648bbd928f1966d8d1d4865dea14"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "dfaebac2bf55bac000a96c4d13d9b41465b96fb7989fba40dff414920bb9f35c",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "269aa0d31a0fad9bb3faa0b6511b91e391f5b162ab2a1af9f90d89d76f5c0f29",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "47a4c6fd30a1eea0f3707a71cc2c6836cefff27d74af91dd3259fb294bc61ae1"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "8dd79ba60f1184f7098d8f4e7f3fb9cffd4bf9fbc00817fcbe38f8cb97c44c98",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "dfaebac2bf55bac000a96c4d13d9b41465b96fb7989fba40dff414920bb9f35c",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "8dd79ba60f1184f7098d8f4e7f3fb9cffd4bf9fbc00817fcbe38f8cb97c44c98",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:dilution",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "dfaebac2bf55bac000a96c4d13d9b41465b96fb7989fba40dff414920bb9f35c",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "concentration_error",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 0.005,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "269aa0d31a0fad9bb3faa0b6511b91e391f5b162ab2a1af9f90d89d76f5c0f29"
+              ],
+              "campaign_start_record_ids": [
+                "8dd79ba60f1184f7098d8f4e7f3fb9cffd4bf9fbc00817fcbe38f8cb97c44c98"
+              ],
+              "criteria_ids": [
+                "dfaebac2bf55bac000a96c4d13d9b41465b96fb7989fba40dff414920bb9f35c"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "a6534f2004517e418ca00e3aa8a3a75ea826696ab939f82b3506cb0cddc17882",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "47a4c6fd30a1eea0f3707a71cc2c6836cefff27d74af91dd3259fb294bc61ae1"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "dilution",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "dilution",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": 1.2823389017313502e-09,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": 1.2823385686644428e-09,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "47a4c6fd30a1eea0f3707a71cc2c6836cefff27d74af91dd3259fb294bc61ae1"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "72895965d7a28efd8f026b7842e5a63ed1ac3fbdc3883e04653e517073f461a1",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "884a55d10c807e2ddc3e3af674e0f0a4c443cf5fe5c3c3510853b4cac2485e1f",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "3bf5c17bec0fb2341e9c90690ed66b220107865de6b6e12c0c3b7a5276bcb43c"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "4c1a49bb18e448a46f8faa3695708fdd57d079836660c08f4251b47d45d9a648",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "72895965d7a28efd8f026b7842e5a63ed1ac3fbdc3883e04653e517073f461a1",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "4c1a49bb18e448a46f8faa3695708fdd57d079836660c08f4251b47d45d9a648",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:epoch-remap",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "72895965d7a28efd8f026b7842e5a63ed1ac3fbdc3883e04653e517073f461a1",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "epoch_conservation_residual",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 1e-06,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "884a55d10c807e2ddc3e3af674e0f0a4c443cf5fe5c3c3510853b4cac2485e1f"
+              ],
+              "campaign_start_record_ids": [
+                "4c1a49bb18e448a46f8faa3695708fdd57d079836660c08f4251b47d45d9a648"
+              ],
+              "criteria_ids": [
+                "72895965d7a28efd8f026b7842e5a63ed1ac3fbdc3883e04653e517073f461a1"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "bcc14cccbfe0982f44e51af617e3b1a2b2dd8a20b61794ea964aea8c6f20defc",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "3bf5c17bec0fb2341e9c90690ed66b220107865de6b6e12c0c3b7a5276bcb43c"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "epoch-remap",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "epoch-remap",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": 5.329070518200751e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": 7.105427357601002e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "3bf5c17bec0fb2341e9c90690ed66b220107865de6b6e12c0c3b7a5276bcb43c"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "24e230d883f9e6d2b800c858563cc5136f7599c051ae8e4ce2f8a9286678b810",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "cf8108529d37595d2b9eb01db1178216c1b9869a7a8bdc60d7da9dcc3d91d45c",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "6d71d66554069c9db1ffeb390b6abf1376a9d6239b35c5672805904bef85a007"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "37bb11bfb6ca391b6e7468f3d9c54f44aa892932557a305ebf30008c4602218b",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "24e230d883f9e6d2b800c858563cc5136f7599c051ae8e4ce2f8a9286678b810",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "37bb11bfb6ca391b6e7468f3d9c54f44aa892932557a305ebf30008c4602218b",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:repeated-remap",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "24e230d883f9e6d2b800c858563cc5136f7599c051ae8e4ce2f8a9286678b810",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "repeated_cycle_conservation_residual",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 1e-06,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "cf8108529d37595d2b9eb01db1178216c1b9869a7a8bdc60d7da9dcc3d91d45c"
+              ],
+              "campaign_start_record_ids": [
+                "37bb11bfb6ca391b6e7468f3d9c54f44aa892932557a305ebf30008c4602218b"
+              ],
+              "criteria_ids": [
+                "24e230d883f9e6d2b800c858563cc5136f7599c051ae8e4ce2f8a9286678b810"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "c47835c6c09bb2f346dad335a54bdf47dde44f5e4dccf5c806925572cdc17c9e",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "6d71d66554069c9db1ffeb390b6abf1376a9d6239b35c5672805904bef85a007"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "repeated-remap",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "repeated-remap",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": 2.0816681711721685e-14,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": 4.578282197797989e-14,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "6d71d66554069c9db1ffeb390b6abf1376a9d6239b35c5672805904bef85a007"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "a1e17dead6371e21c532cf40e6b2fd787f3240b43b7e10ab012465cb6e7ff6aa",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "7bd67d5549c7cdf136ce099b05e5ef70a392db8666b16d6770a8d2f62f910075",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "5e2755fcc4d7869fcea114ec86d953f60ce87e44e58838614248928e45e8cfb6"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "5bf2dd27f38ee7c9c1cd09a961443045a48c98af5155416d01ce540eba595168",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "a1e17dead6371e21c532cf40e6b2fd787f3240b43b7e10ab012465cb6e7ff6aa",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "5bf2dd27f38ee7c9c1cd09a961443045a48c98af5155416d01ce540eba595168",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:repeated-shift",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "a1e17dead6371e21c532cf40e6b2fd787f3240b43b7e10ab012465cb6e7ff6aa",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "shift_conservation_residual",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 1e-06,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "7bd67d5549c7cdf136ce099b05e5ef70a392db8666b16d6770a8d2f62f910075"
+              ],
+              "campaign_start_record_ids": [
+                "5bf2dd27f38ee7c9c1cd09a961443045a48c98af5155416d01ce540eba595168"
+              ],
+              "criteria_ids": [
+                "a1e17dead6371e21c532cf40e6b2fd787f3240b43b7e10ab012465cb6e7ff6aa"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "a8afd9ff98b38fe9a64febcb6b92dd4e551940413d0a872900a37d749b8a837e",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "5e2755fcc4d7869fcea114ec86d953f60ce87e44e58838614248928e45e8cfb6"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "repeated-shift",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "repeated-shift",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": 6.543376951384516e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": 8.276365703885347e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "5e2755fcc4d7869fcea114ec86d953f60ce87e44e58838614248928e45e8cfb6"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "2b79584c82fe0ca60ac0ef93449df9d17ef987c98a78420eedd126ab787c79fb",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "787c1f9bc0a04372dcfb659f9c67b17afecbe9837b4b769fc2bdd0ba27b6b233",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "1c6534253eca6c1c3d73953244233c80b1ba22ed28d759da7c1dd7319ad1cda0"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "080b87feaf30421ec7b6b82b5d1dedcb8e8b60c1d9d1ccd57abf12db09baf886",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "2b79584c82fe0ca60ac0ef93449df9d17ef987c98a78420eedd126ab787c79fb",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "080b87feaf30421ec7b6b82b5d1dedcb8e8b60c1d9d1ccd57abf12db09baf886",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:rollback",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "2b79584c82fe0ca60ac0ef93449df9d17ef987c98a78420eedd126ab787c79fb",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "rollback_error",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 1e-08,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "787c1f9bc0a04372dcfb659f9c67b17afecbe9837b4b769fc2bdd0ba27b6b233"
+              ],
+              "campaign_start_record_ids": [
+                "080b87feaf30421ec7b6b82b5d1dedcb8e8b60c1d9d1ccd57abf12db09baf886"
+              ],
+              "criteria_ids": [
+                "2b79584c82fe0ca60ac0ef93449df9d17ef987c98a78420eedd126ab787c79fb"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "d692e6330ae0e7e677af2835c5fe4882dea87d59c3f1ae7922fef4d435c13a0a",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "1c6534253eca6c1c3d73953244233c80b1ba22ed28d759da7c1dd7319ad1cda0"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "rollback",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "rollback",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": 0.0,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": 0.0,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "1c6534253eca6c1c3d73953244233c80b1ba22ed28d759da7c1dd7319ad1cda0"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "0251150d0cacdef0005808b9e29d1c3eb013e5f82098845a660d73ce7e3430f7",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "b1125dbe52075ee539f655c3b09a540b6c48177b49279817525e9c2742322191",
+              "observed_at": 1791013828736931000,
+              "raw_artifact_ids": [
+                "dd7928f29b3e85854d0e8cad60fcc2003044f877f2ae0c995285836de12f03f6"
+              ],
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "77c462d568cf27d90bdd8618c4713217f2102f047087c9bb21e690f92c90e455",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "c2ccee0034a36fab26dba69680c94b8179c91c1ce344cf67083fa7120b860038",
+              "criterion_id": "0251150d0cacdef0005808b9e29d1c3eb013e5f82098845a660d73ce7e3430f7",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "start_record_id": "77c462d568cf27d90bdd8618c4713217f2102f047087c9bb21e690f92c90e455",
+              "started_at": 1791010778680889000,
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q6:step-status",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "equal",
+              "criterion_id": "0251150d0cacdef0005808b9e29d1c3eb013e5f82098845a660d73ce7e3430f7",
+              "issued_at": 1791010777223541000,
+              "kind": "qualification-criterion",
+              "metric": "successful",
+              "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+              "target": 1.0,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587",
+              "campaign_observation_record_ids": [
+                "b1125dbe52075ee539f655c3b09a540b6c48177b49279817525e9c2742322191"
+              ],
+              "campaign_start_record_ids": [
+                "77c462d568cf27d90bdd8618c4713217f2102f047087c9bb21e690f92c90e455"
+              ],
+              "criteria_ids": [
+                "0251150d0cacdef0005808b9e29d1c3eb013e5f82098845a660d73ce7e3430f7"
+              ],
+              "environment_id": "ee16c54513767e954ca3b1c48528fbae6272b1407d6422dec232bb909c6b8ec2",
+              "evidence_id": "f3776860e7f778ecc7fe96ca02a13250f3392e502be2d555d628a3604c95f832",
+              "evidence_kind": "scientific",
+              "expires_at": 1793605828736931001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1791013828736931001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "dd7928f29b3e85854d0e8cad60fcc2003044f877f2ae0c995285836de12f03f6"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "step-status",
+            "raw_observation": {
+              "campaign": "Q6",
+              "gate": "step-status",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 48,
+                  "label": "expanding-sphere",
+                  "observed": true,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 64,
+                  "label": "expanding-sphere",
+                  "observed": true,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "dd7928f29b3e85854d0e8cad60fcc2003044f877f2ae0c995285836de12f03f6"
+            },
+            "status": "passed",
+            "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5"
+          }
+        ]
+      },
+      "name": "expanding-surface-and-repeated-remap",
+      "release_gates": [
+        {
+          "comparison": "equal",
+          "evidence_kind": "scientific",
+          "gate": "independent-reference",
+          "metric": "independent-physical-reference",
+          "observed": null,
+          "reason": "blocked: manufactured/analytic oracles prove numerical behavior only; an independent physical reference with provenance, tolerances and rights is an external prerequisite",
+          "status": "blocked",
+          "target": 1.0,
+          "unit": "1"
+        },
+        {
+          "comparison": "equal",
+          "evidence_kind": "operational",
+          "gate": "independent-review",
+          "metric": "independent-reviewer-decision",
+          "observed": null,
+          "reason": "blocked: producer evidence is unreviewed; release needs an independent reviewer, trust record and promotion decision",
+          "status": "blocked",
+          "target": 1.0,
+          "unit": "1"
+        },
+        {
+          "comparison": "equal",
+          "evidence_kind": "performance",
+          "gate": "resource-envelope",
+          "metric": "approved-resource-envelope",
+          "observed": null,
+          "reason": "Sampled phase peaks are not certified upper bounds; no approved resource envelope exists for Q6",
+          "status": "unexecuted",
+          "target": 1.0,
+          "unit": "1"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capability": "meshfree.moving-surface",
+          "capacity": 48,
+          "consumer": "examples.meshfree_moving_surface_reaction_diffusion.run_workflow",
+          "consumer_source_fingerprint": "b91e11d0bc076856ce21b1b3bca02467b7aa6ce97760cdd02f12ab0e2f1fa44f",
+          "cpu_seconds": 1684.949939,
+          "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+          "gates": [
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "dilution",
+              "metric": "concentration_error",
+              "observed": 1.2823389017313502e-09,
+              "reason": null,
+              "status": "passed",
+              "target": 0.005,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "conservation",
+              "metric": "conservation_residual",
+              "observed": 2.025983547593313e-14,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "repeated-shift",
+              "metric": "shift_conservation_residual",
+              "observed": 6.543376951384516e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "epoch-remap",
+              "metric": "epoch_conservation_residual",
+              "observed": 5.329070518200751e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "repeated-remap",
+              "metric": "repeated_cycle_conservation_residual",
+              "observed": 2.0816681711721685e-14,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "rollback",
+              "metric": "rollback_error",
+              "observed": 0.0,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-08,
+              "unit": "1"
+            },
+            {
+              "comparison": "equal",
+              "evidence_kind": "scientific",
+              "gate": "step-status",
+              "metric": "successful",
+              "observed": true,
+              "reason": null,
+              "status": "passed",
+              "target": 1.0,
+              "unit": "1"
+            }
+          ],
+          "label": "expanding-sphere",
+          "metrics": {
+            "accepted_steps": 18,
+            "active_capacity": 38,
+            "concentration_error": 1.2823389017313502e-09,
+            "conservation_residual": 2.025983547593313e-14,
+            "dimension": 3,
+            "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+            "epoch": 2,
+            "epoch_conservation_residual": 5.329070518200751e-15,
+            "gcl_defect": 6.235770378322748e-14,
+            "history_count": 12,
+            "measure_rate_residual": 1.3962634017828865e-06,
+            "method": "ars-222",
+            "minimum_concentration": 0.744330917002094,
+            "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+            "repeated_cycle_conservation_residual": 2.0816681711721685e-14,
+            "retained_bytes": null,
+            "rollback_error": 0.0,
+            "seed": 0,
+            "shift_conservation_residual": 6.543376951384516e-15,
+            "shift_gcl_defect": 0.0,
+            "shift_geometric_drift": 0.000319483135364161,
+            "shift_minimum_concentration": 0.8337541871632049,
+            "shift_transport_cfl": 0.0002684995458389069,
+            "size": 48,
+            "successful": true
+          },
+          "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+          "phases": {
+            "assembly": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "communication-migration": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "compilation": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "conic": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "end-to-end": {
+              "compile_count": 3451,
+              "compile_seconds": 114.50205516815186,
+              "cpu_seconds": 1684.946933,
+              "memory": {
+                "evidence": {
+                  "baseline": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 50946736128
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 1337475072
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 1336426496
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1791010778685064000
+                  },
+                  "devices": [],
+                  "duration_seconds": 1511.5456693340093,
+                  "final": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 40760770560
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 7053000704
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 7052951552
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1791012290275686000
+                  },
+                  "interval_peak_resident": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": 1,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 7053000704
+                  },
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 8.566796500002965,
+                  "phase": "end-to-end",
+                  "sample_count": 18315,
+                  "sampled_peak_resident": {
+                    "method": "interval_sampling",
+                    "resolution_bytes": 16384,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 7052967936
+                  }
+                },
+                "sampled_peak_increase_bytes": 5716541440
+              },
+              "occurrences": [
+                {
+                  "compile_count": 3451,
+                  "compile_seconds": 114.50205516815186,
+                  "cpu_seconds": 1684.946933,
+                  "sampled_peak_increase_bytes": 5716541440,
+                  "scope": "meshfree_moving_surface_reaction_diffusion.run_workflow",
+                  "wall_seconds": 1511.545362583
+                }
+              ],
+              "status": "measured",
+              "wall_seconds": 1511.545362583
+            },
+            "epoch-commit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "first": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "geometry": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "hierarchy": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "jvp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "local-fit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "lowering": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "numeric-refresh": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "ordering-fill": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "output": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "rank-certificate": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "restart": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "search": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "solve": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "transfer": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "vjp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "warm": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            }
+          },
+          "seed": 0,
+          "status": "passed",
+          "support": {
+            "boundary": "closed-surface",
+            "capacity": 4096,
+            "derivative-class": "none",
+            "device": "cpu",
+            "dimension": 3,
+            "geometry-authority": "prescribed-expanding-sphere",
+            "method": "surface-material-ale-reaction-diffusion",
+            "precision": "float64",
+            "provider": "phydrax-native",
+            "reproducibility": "deterministic-seeded",
+            "temporal-method": "additive-imex"
+          },
+          "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+          "wall_seconds": 1511.5515684160637
+        },
+        {
+          "capability": "meshfree.moving-surface",
+          "capacity": 64,
+          "consumer": "examples.meshfree_moving_surface_reaction_diffusion.run_workflow",
+          "consumer_source_fingerprint": "b91e11d0bc076856ce21b1b3bca02467b7aa6ce97760cdd02f12ab0e2f1fa44f",
+          "cpu_seconds": 1733.6858570000002,
+          "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+          "gates": [
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "dilution",
+              "metric": "concentration_error",
+              "observed": 1.2823385686644428e-09,
+              "reason": null,
+              "status": "passed",
+              "target": 0.005,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "conservation",
+              "metric": "conservation_residual",
+              "observed": 3.982057739104761e-14,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "repeated-shift",
+              "metric": "shift_conservation_residual",
+              "observed": 8.276365703885347e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "epoch-remap",
+              "metric": "epoch_conservation_residual",
+              "observed": 7.105427357601002e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "repeated-remap",
+              "metric": "repeated_cycle_conservation_residual",
+              "observed": 4.578282197797989e-14,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "rollback",
+              "metric": "rollback_error",
+              "observed": 0.0,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-08,
+              "unit": "1"
+            },
+            {
+              "comparison": "equal",
+              "evidence_kind": "scientific",
+              "gate": "step-status",
+              "metric": "successful",
+              "observed": true,
+              "reason": null,
+              "status": "passed",
+              "target": 1.0,
+              "unit": "1"
+            }
+          ],
+          "label": "expanding-sphere",
+          "metrics": {
+            "accepted_steps": 18,
+            "active_capacity": 50,
+            "concentration_error": 1.2823385686644428e-09,
+            "conservation_residual": 3.982057739104761e-14,
+            "dimension": 3,
+            "domain": "growing sphere R(t)=1+0.2t in ambient R^3",
+            "epoch": 2,
+            "epoch_conservation_residual": 7.105427357601002e-15,
+            "gcl_defect": 1.4724556468842164e-13,
+            "history_count": 12,
+            "measure_rate_residual": 1.0471975515414286e-06,
+            "method": "ars-222",
+            "minimum_concentration": 0.7100482674023653,
+            "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+            "repeated_cycle_conservation_residual": 4.578282197797989e-14,
+            "retained_bytes": null,
+            "rollback_error": 0.0,
+            "seed": 0,
+            "shift_conservation_residual": 8.276365703885347e-15,
+            "shift_gcl_defect": 0.0,
+            "shift_geometric_drift": 0.000265322814705166,
+            "shift_minimum_concentration": 0.8105333062333758,
+            "shift_transport_cfl": 0.0002564317868876649,
+            "size": 64,
+            "successful": true
+          },
+          "oracle_provenance": "analytical uniform exp(-0.1t)/R(t)^2 before remap; extensive source ledger during repeated epochs",
+          "phases": {
+            "assembly": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "communication-migration": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "compilation": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "conic": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "end-to-end": {
+              "compile_count": 3333,
+              "compile_seconds": 119.40122270584106,
+              "cpu_seconds": 1733.685169,
+              "memory": {
+                "evidence": {
+                  "baseline": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 40760836096
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 7053000704
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 7053000704
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1791012290276874000
+                  },
+                  "devices": [],
+                  "duration_seconds": 1538.4879275419516,
+                  "final": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 41963814912
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 10121756672
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 10111254528
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1791013828735358000
+                  },
+                  "interval_peak_resident": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": 1,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 10121756672
+                  },
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 10.5204974579392,
+                  "phase": "end-to-end",
+                  "sample_count": 18414,
+                  "sampled_peak_resident": {
+                    "method": "interval_sampling",
+                    "resolution_bytes": 16384,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 10121723904
+                  }
+                },
+                "sampled_peak_increase_bytes": 3068723200
+              },
+              "occurrences": [
+                {
+                  "compile_count": 3333,
+                  "compile_seconds": 119.40122270584106,
+                  "cpu_seconds": 1733.685169,
+                  "sampled_peak_increase_bytes": 3068723200,
+                  "scope": "meshfree_moving_surface_reaction_diffusion.run_workflow",
+                  "wall_seconds": 1538.487704291
+                }
+              ],
+              "status": "measured",
+              "wall_seconds": 1538.487704291
+            },
+            "epoch-commit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "first": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "geometry": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "hierarchy": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "jvp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "local-fit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "lowering": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "numeric-refresh": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "ordering-fill": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "output": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "rank-certificate": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "restart": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "search": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "solve": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "transfer": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "vjp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "warm": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            }
+          },
+          "seed": 0,
+          "status": "passed",
+          "support": {
+            "boundary": "closed-surface",
+            "capacity": 4096,
+            "derivative-class": "none",
+            "device": "cpu",
+            "dimension": 3,
+            "geometry-authority": "prescribed-expanding-sphere",
+            "method": "surface-material-ale-reaction-diffusion",
+            "precision": "float64",
+            "provider": "phydrax-native",
+            "reproducibility": "deterministic-seeded",
+            "temporal-method": "additive-imex"
+          },
+          "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+          "wall_seconds": 1538.4898456250085
+        }
+      ],
+      "scenario": "accepted",
+      "status": "passed"
+    }
+  ],
+  "config": {
+    "candidates": null,
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 2,
+    "max_points": 4096,
+    "neighbors": 24,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      64
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "bc490e2bb16db18d95f88630c0fe50e804447eae16b090237e44ca301e3ee14b",
+    "evidence_schema": {
+      "fields": [
+        "campaigns",
+        "config",
+        "environment",
+        "identity",
+        "released",
+        "summary"
+      ],
+      "signature": "f63410dac7fdf4d0d6cfa5dd690f293955462c00f01fd0fa3bcb1fa1aedbab68"
+    },
+    "fingerprint": "532393be73fb23315efdc9a697185267642b045fbd5247d4529826d095b795e0",
+    "source_build_fingerprint": "8e1d1de93601644c5654cbb1661bc2438316b98b6b0453b482ac509d55558587"
+  },
+  "kind": "meshfree-qualification-campaign",
+  "promotion": {
+    "reason": "Unreviewed producer evidence cannot advance a promotion channel",
+    "status": "not-requested"
+  },
+  "released": false,
+  "reviewer_id": "unreviewed-automated-producer",
+  "run_spec_id": "15c2bbaf7c8977dbdbd015071f605e7618c976b7c7334ec25d7565a447161038",
+  "selected_campaigns": [
+    "Q6"
+  ],
+  "summary": [
+    {
+      "boundary": "closed-surface",
+      "campaign": "Q6",
+      "capability": "meshfree.moving-surface",
+      "capacities": [
+        48,
+        64
+      ],
+      "compile_count": 6784,
+      "cpu_seconds": 3418.6357960000005,
+      "device": "cpu",
+      "dimension": 3,
+      "gates": {
+        "conservation": "passed",
+        "dilution": "passed",
+        "epoch-remap": "passed",
+        "repeated-remap": "passed",
+        "repeated-shift": "passed",
+        "rollback": "passed",
+        "step-status": "passed"
+      },
+      "geometry_authority": "prescribed-expanding-sphere",
+      "method": "surface-material-ale-reaction-diffusion",
+      "precision": "float64",
+      "scenario": "accepted",
+      "status": "passed",
+      "support_tuple_id": "5319a24f3f9faba25beb720a8bc283ff6f51b0e8481ebf053a0a51e999b0d5a5",
+      "wall_seconds": 3050.041414041072
+    }
+  ],
+  "unexecuted_campaigns": [
+    "Q1",
+    "Q1-refusal",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q4-refusal",
+    "Q5",
+    "Q7",
+    "Q8",
+    "Q8-refusal",
+    "Q12",
+    "Q12-refusal",
+    "Q14",
+    "Q14-refusal",
+    "Q10",
+    "Q10-refusal",
+    "Q11",
+    "Q11-refusal",
+    "Q11-surface",
+    "Q11-surface-refusal",
+    "Q9",
+    "Q9-refusal",
+    "Q13",
+    "Q13-joint-signed",
+    "Q13-refusal",
+    "Q16",
+    "Q16-refusal",
+    "Q15",
+    "Q15-refusal",
+    "Q17",
+    "Q17-refusal",
+    "Q11-elasticity-order"
+  ]
+}

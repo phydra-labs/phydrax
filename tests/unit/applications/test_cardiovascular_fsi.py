@@ -232,8 +232,9 @@ def test_lbm_participant_gates_actual_post_advance_no_slip() -> None:
         (position, jnp.asarray([[0.08, -0.03]])),
         None,
     )
-    direct = result.auxiliary[1]
-    post_lbm = result.auxiliary[2]
+    assert result.evidence is not None
+    direct = result.evidence[1]
+    post_lbm = result.evidence[2]
 
     assert direct.evidence.successful
     assert not result.successful

@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import checked
 from ._operators import AbstractLinearOperator
+from ._rectangular_rank import RectangularRankCertificate, require_certificate_scope
 from ._subspaces import NullspacePolicy
 
 
@@ -134,9 +135,21 @@ class LeastSquaresProblem(AbstractLinearProblem):
 
 
 class MinimumNormProblem(AbstractLinearProblem):
-    """Minimum source-norm solution subject to ``A x = b``."""
+    """Minimum source-norm solution subject to every equation of ``A x = b``.
+
+    The source and target sizes are unrestricted: redundant rows, including more
+    rows than source coordinates, are admitted when the right-hand side is
+    consistent. The objective is the exact constrained one, so solver damping is
+    refused and an inconsistent right-hand side is reported as incompatible rather
+    than replaced by an unconstrained least-squares answer.
+
+    ``rank_certificate`` is the scoped rank evidence that admits the implicit
+    operator derivative of iterative routes; without it a ``"mathematical"``
+    derivative is refused. Its operator identity and dimensions must match.
+    """
 
     nullspace_policy: NullspacePolicy | None
+    rank_certificate: RectangularRankCertificate | None
 
     @checked
     def __init__(
@@ -146,14 +159,14 @@ class MinimumNormProblem(AbstractLinearProblem):
         *,
         problem_id: str | None = None,
         nullspace_policy: NullspacePolicy | None = None,
+        rank_certificate: RectangularRankCertificate | None = None,
     ) -> None:
-        if operator.source.size < operator.target.size:
-            raise ValueError(
-                "MinimumNormProblem requires source dimension at least target dimension."
-            )
+        if rank_certificate is not None:
+            require_certificate_scope(rank_certificate, operator)
         _validate_nullspace(nullspace_policy, operator)
         self.operator = operator
         self.nullspace_policy = nullspace_policy
+        self.rank_certificate = rank_certificate
         self.problem_id = _problem_id(
             problem_id,
             self.kind,

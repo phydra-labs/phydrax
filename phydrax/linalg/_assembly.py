@@ -50,6 +50,7 @@ from ._structured_operators import (
 
 
 if TYPE_CHECKING:
+    from ..sparse import EdgeRelation
     from ..sparse._linear import _SparseStoragePlan
 
 
@@ -295,15 +296,18 @@ class _SparseAssemblyRecipe(StrictModule):
         symbolic_workspace_bytes: int,
         numeric_workspace_bytes: int,
     ) -> None:
-        self.rows = jnp.asarray(rows, dtype=jnp.int32)
-        self.columns = jnp.asarray(columns, dtype=jnp.int32)
+        # Host patterns stay concrete when planned under a trace, so numeric
+        # refresh inside a compiled region reads them while values are traced.
+        with jax.ensure_compile_time_eval():
+            self.rows = jnp.asarray(rows, dtype=jnp.int32)
+            self.columns = jnp.asarray(columns, dtype=jnp.int32)
+            self.input_indices = tuple(
+                jnp.asarray(indices, dtype=jnp.int32) for indices in input_indices
+            )
+            self.output_indices = tuple(
+                jnp.asarray(indices, dtype=jnp.int32) for indices in output_indices
+            )
         self.children = children
-        self.input_indices = tuple(
-            jnp.asarray(indices, dtype=jnp.int32) for indices in input_indices
-        )
-        self.output_indices = tuple(
-            jnp.asarray(indices, dtype=jnp.int32) for indices in output_indices
-        )
         self.storage_plan = storage_plan
         self.kind = kind
         self.operator_type = type(operator)
@@ -317,7 +321,13 @@ class _SparseAssemblyRecipe(StrictModule):
 
 
 class SparseAssemblyPlan(StrictModule):
-    """Immutable symbolic sparse pattern and numerical assembly recipe."""
+    """Immutable symbolic sparse pattern and numerical assembly recipe.
+
+    The canonical output relation and its storage route are built once at
+    planning as concrete host-readable topology, so every numeric preparation
+    or refresh, including one inside a compiled region, binds possibly traced
+    values to that fixed pattern.
+    """
 
     policy: SparseAssemblyPolicy
     source: AbstractVectorSpace
@@ -325,6 +335,8 @@ class SparseAssemblyPlan(StrictModule):
     properties: OperatorProperties
     cost: SparseAssemblyCostEstimate
     _recipe: _SparseAssemblyRecipe
+    _relation: EdgeRelation
+    _storage_plan: _SparseStoragePlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -337,12 +349,25 @@ class SparseAssemblyPlan(StrictModule):
         *,
         plan_id: str,
     ) -> None:
+        from ..sparse import EdgeRelation
+        from ..sparse._linear import _SparseStoragePlan
+
+        with jax.ensure_compile_time_eval():
+            relation = EdgeRelation(
+                recipe.columns,
+                recipe.rows,
+                source_size=operator.source.size,
+                target_size=operator.target.size,
+            )
+            storage_plan = _SparseStoragePlan(relation)
         self.policy = policy
         self.source = operator.source
         self.target = operator.target
         self.properties = operator.properties
         self.cost = cost
         self._recipe = recipe
+        self._relation = relation
+        self._storage_plan = storage_plan
         self.plan_id = str(plan_id)
 
     @property
@@ -506,7 +531,7 @@ def _prepare_sparse_assembly(
     *,
     numeric_version: Any,
 ) -> PreparedSparseAssembly:
-    from ..sparse import EdgeRelation, SparseCoordinateOperator
+    from ..sparse import SparseCoordinateOperator
 
     values = _evaluate_sparse_recipe(
         plan._recipe,
@@ -517,19 +542,14 @@ def _prepare_sparse_assembly(
         raise ValueError(
             f"Sparse assembly recipe returned shape {values.shape}; expected {(plan.nnz,)}."
         )
-    relation = EdgeRelation(
-        plan.column_indices,
-        plan.row_indices,
-        source_size=plan.source.size,
-        target_size=plan.target.size,
-    )
     assembled = SparseCoordinateOperator(
-        relation,
+        plan._relation,
         values,
         source=plan.source,
         target=plan.target,
         properties=operator.properties,
         operator_id=f"{plan.plan_id}:operator",
+        storage_plan=plan._storage_plan,
     )
     return PreparedSparseAssembly(
         plan,
@@ -759,6 +779,22 @@ def _canonical_pattern(
     policy: SparseAssemblyPolicy,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    result_rows, result_columns, order, groups = _canonical_order(
+        rows, columns, shape, policy
+    )
+    mapping = np.empty(order.size, dtype=np.int64)
+    mapping[order] = groups
+    return result_rows, result_columns, mapping
+
+
+def _canonical_order(
+    rows: np.ndarray,
+    columns: np.ndarray,
+    shape: tuple[int, int],
+    policy: SparseAssemblyPolicy,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Canonical pattern, contribution sort order, and sorted output groups."""
     rows_ = np.asarray(rows, dtype=np.int64).reshape((-1,))
     columns_ = np.asarray(columns, dtype=np.int64).reshape((-1,))
     if rows_.shape != columns_.shape:
@@ -766,7 +802,7 @@ def _canonical_pattern(
     _check_contribution_budget(policy, rows_.size, arrays=8)
     if rows_.size == 0:
         empty = np.zeros((0,), dtype=np.int64)
-        return empty, empty, empty
+        return empty, empty, empty, empty
     if (
         np.any(rows_ < 0)
         or np.any(rows_ >= shape[0])
@@ -774,20 +810,20 @@ def _canonical_pattern(
         or np.any(columns_ >= shape[1])
     ):
         raise ValueError("Sparse contributions contain an out-of-bounds route.")
-    order = np.lexsort((columns_, rows_))
-    sorted_rows = rows_[order]
-    sorted_columns = columns_[order]
-    starts = np.concatenate(
-        (
-            np.asarray([True]),
-            (sorted_rows[1:] != sorted_rows[:-1])
-            | (sorted_columns[1:] != sorted_columns[:-1]),
-        )
-    )
+    # One row-major key: a stable sort of it equals the (row, column) lexsort,
+    # so duplicate contributions keep their declared accumulation order.
+    keys = rows_ * shape[1] + columns_
+    if np.all(keys[1:] > keys[:-1]):
+        identity = np.arange(rows_.size, dtype=np.int64)
+        return rows_, columns_, identity, identity
+    order = np.argsort(keys, kind="stable")
+    sorted_keys = keys[order]
+    starts = np.empty(sorted_keys.size, dtype=np.bool_)
+    starts[0] = True
+    np.not_equal(sorted_keys[1:], sorted_keys[:-1], out=starts[1:])
     groups = np.cumsum(starts, dtype=np.int64) - 1
-    mapping = np.empty(rows_.size, dtype=np.int64)
-    mapping[order] = groups
-    return sorted_rows[starts], sorted_columns[starts], mapping
+    unique = sorted_keys[starts]
+    return unique // shape[1], unique % shape[1], order, groups
 
 
 def _check_contribution_budget(
@@ -821,33 +857,36 @@ def _plan_sparse_composition(
     policy: SparseAssemblyPolicy,
     /,
 ) -> _SparseAssemblyRecipe:
+    """Symbolic row-merge product with contributions grouped by output entry.
+
+    Every left entry ``(i, k)`` expands against inner row ``k`` of the right
+    factor in one vectorized pass. One stable sort of the row-major output key
+    then groups contributions by output entry while keeping, inside each
+    entry, the ascending inner-index accumulation order of a sequential
+    product; the numeric phase is one gather, product, and sorted scatter.
+    """
     left = _plan_sparse_recipe(operator.left, policy)
     right = _plan_sparse_recipe(operator.right, policy)
+    left_rows = np.asarray(left.rows, dtype=np.int64)
     left_columns = np.asarray(left.columns, dtype=np.int64)
     right_rows = np.asarray(right.rows, dtype=np.int64)
     inner_size = operator.left.source.size
-    left_counts = np.bincount(left_columns, minlength=inner_size)
     right_counts = np.bincount(right_rows, minlength=inner_size)
-    contributions = int(np.dot(left_counts, right_counts))
+    counts = right_counts[left_columns]
+    contributions = int(np.sum(counts, dtype=np.int64))
     _check_contribution_budget(policy, contributions, arrays=10)
 
-    left_order = np.argsort(left_columns, kind="stable")
     right_order = np.argsort(right_rows, kind="stable")
-    left_offsets = np.concatenate(([0], np.cumsum(left_counts)))
     right_offsets = np.concatenate(([0], np.cumsum(right_counts)))
-    left_parts = []
-    right_parts = []
-    for inner in range(inner_size):
-        left_indices = left_order[left_offsets[inner] : left_offsets[inner + 1]]
-        right_indices = right_order[right_offsets[inner] : right_offsets[inner + 1]]
-        if left_indices.size and right_indices.size:
-            left_parts.append(np.repeat(left_indices, right_indices.size))
-            right_parts.append(np.tile(right_indices, left_indices.size))
-    left_indices = _concatenate_indices(left_parts)
-    right_indices = _concatenate_indices(right_parts)
-    rows = np.asarray(left.rows, dtype=np.int64)[left_indices]
+    left_indices = np.repeat(np.arange(left_rows.size, dtype=np.int64), counts)
+    run_starts = np.cumsum(counts) - counts
+    right_indices = right_order[
+        np.arange(contributions, dtype=np.int64)
+        + np.repeat(right_offsets[left_columns] - run_starts, counts)
+    ]
+    rows = left_rows[left_indices]
     columns = np.asarray(right.columns, dtype=np.int64)[right_indices]
-    result_rows, result_columns, mapping = _canonical_pattern(
+    result_rows, result_columns, order, groups = _canonical_order(
         rows,
         columns,
         (operator.target.size, operator.source.size),
@@ -860,8 +899,8 @@ def _plan_sparse_composition(
         result_columns,
         policy,
         children=(left, right),
-        input_indices=(left_indices, right_indices),
-        output_indices=(mapping,),
+        input_indices=(left_indices[order], right_indices[order]),
+        output_indices=(groups,),
         contribution_count=contributions,
     )
 
@@ -1202,8 +1241,14 @@ def _scatter_recipe_values(
     output_indices: Array,
     size: int,
     /,
+    *,
+    indices_are_sorted: bool = False,
 ) -> Array:
-    return jnp.zeros((size,), dtype=values.dtype).at[output_indices].add(values)
+    return (
+        jnp.zeros((size,), dtype=values.dtype)
+        .at[output_indices]
+        .add(values, indices_are_sorted=indices_are_sorted)
+    )
 
 
 def _validate_recipe_operator(
@@ -1375,8 +1420,12 @@ def _evaluate_sparse_algebra(
             contributions = left_values[recipe.input_indices[0]].astype(
                 dtype
             ) * right_values[recipe.input_indices[1]].astype(dtype)
+            # Product contributions are planned in output-entry order.
             return _scatter_recipe_values(
-                contributions, recipe.output_indices[0], rows.size
+                contributions,
+                recipe.output_indices[0],
+                rows.size,
+                indices_are_sorted=True,
             )
         case "transpose":
             transposed = cast(TransposeLinearOperator, operator)
@@ -1556,7 +1605,12 @@ def _evaluate_sparse_storage(
     operator: AbstractLinearOperator,
     /,
 ) -> Array:
-    """Refresh routed coefficients without changing the admitted canonical layout."""
+    """Refresh routed coefficients over the planned routes; route identity is fixed.
+
+    The planned relation is part of the prepared assembly identity, so a
+    refresh that changes valid routes is refused eagerly and under a trace
+    alike, even when the changed routes coalesce to the same canonical pattern.
+    """
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise ValueError("Sparse assembly refresh changed sparse leaf structure.")
     if recipe.storage_plan is not None:

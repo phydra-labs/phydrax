@@ -415,7 +415,9 @@ def _factors(prepared: PreparedSVDSolve, /) -> _Factors:
             state.qr_minimum_margin,
             state.qr_full_rank,
         )
-    left, values, right = _stop_arrays(thin_decomposition(matrix, available))
+    method = plan.policy.method
+    algorithm = method.algorithm if isinstance(method, DenseSVD) else "divide-and-conquer"
+    left, values, right = _stop_arrays(thin_decomposition(matrix, available, algorithm))
     left, values, right = canonicalize_singular_triplets(left, values, right)
     order = (
         jnp.arange(values.shape[0])

@@ -198,6 +198,11 @@ from ._laws import (
     ScalarTransmissionLaw,
     TransmissionImposition,
     TransmissionSide,
+    VectorInterfaceResultants,
+    VectorTransmissionCertificate,
+    VectorTransmissionEvidence,
+    VectorTransmissionLaw,
+    VectorTransmissionSide,
 )
 from ._learned_flux import MonotoneInterfaceConductance
 from ._lower_partitioned import (
@@ -209,6 +214,7 @@ from ._method_participants import (
     DAECouplingParticipant,
     DAEParticipantNative,
     FixedStepCouplingParticipant,
+    FixedStepParticipantEvidence,
     MethodParticipantRandomness,
     MethodParticipantState,
     MethodWindowBinding,
@@ -269,22 +275,62 @@ from ._transition import (
 
 
 _FACADE_EXPORT_MODULES: dict[str, str] = {
+    "FiniteVolumeCapacity": "._finite_volume_components",
+    "FiniteVolumeComponent": "._finite_volume_components",
+    "MeshfreeBoundaryTrace": "._meshfree_components",
     "MeshfreeCapacity": "._meshfree_components",
     "MeshfreeComponent": "._meshfree_components",
+    "MeshfreeReaction": "._meshfree_components",
+    "MeshfreeTraceComponent": "._meshfree_components",
     "LangmuirAdsorptionFlux": "._surface_exchange",
+    "SurfaceDeposition": "._surface_exchange",
+    "SurfaceEpochRelocation": "._surface_exchange",
     "SurfaceExchangeEvidence": "._surface_exchange",
     "SurfaceExchangeLaw": "._surface_exchange",
     "MeshfreeBulkSurfaceMethod": "._surface_exchange",
+    "MeshfreeBulkSurfaceEvidence": "._surface_exchange",
+    "OverlapDirichletEvidence": "._overlap",
+    "OverlapDirichletLaw": "._overlap",
+    "OverlapFaceSide": "._overlap",
+    "OverlapSchwarz": "._overlap",
+    "OverlapSubdomainEvidence": "._overlap",
+    "OverlapTransferEvidence": "._overlap",
+    "OverlapTransferPolicy": "._overlap",
+    "OverlapTransferRoute": "._overlap",
+    "PreparedOverlapTransfers": "._overlap",
+    "prepare_overlap_schwarz": "._overlap",
 }
 
 if TYPE_CHECKING:
+    from ._finite_volume_components import (
+        FiniteVolumeCapacity as FiniteVolumeCapacity,
+        FiniteVolumeComponent as FiniteVolumeComponent,
+    )
     from ._meshfree_components import (
+        MeshfreeBoundaryTrace as MeshfreeBoundaryTrace,
         MeshfreeCapacity as MeshfreeCapacity,
         MeshfreeComponent as MeshfreeComponent,
+        MeshfreeReaction as MeshfreeReaction,
+        MeshfreeTraceComponent as MeshfreeTraceComponent,
+    )
+    from ._overlap import (
+        OverlapDirichletEvidence as OverlapDirichletEvidence,
+        OverlapDirichletLaw as OverlapDirichletLaw,
+        OverlapFaceSide as OverlapFaceSide,
+        OverlapSchwarz as OverlapSchwarz,
+        OverlapSubdomainEvidence as OverlapSubdomainEvidence,
+        OverlapTransferEvidence as OverlapTransferEvidence,
+        OverlapTransferPolicy as OverlapTransferPolicy,
+        OverlapTransferRoute as OverlapTransferRoute,
+        prepare_overlap_schwarz as prepare_overlap_schwarz,
+        PreparedOverlapTransfers as PreparedOverlapTransfers,
     )
     from ._surface_exchange import (
         LangmuirAdsorptionFlux as LangmuirAdsorptionFlux,
+        MeshfreeBulkSurfaceEvidence as MeshfreeBulkSurfaceEvidence,
         MeshfreeBulkSurfaceMethod as MeshfreeBulkSurfaceMethod,
+        SurfaceDeposition as SurfaceDeposition,
+        SurfaceEpochRelocation as SurfaceEpochRelocation,
         SurfaceExchangeEvidence as SurfaceExchangeEvidence,
         SurfaceExchangeLaw as SurfaceExchangeLaw,
     )
@@ -304,12 +350,30 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "FiniteVolumeCapacity",
+    "FiniteVolumeComponent",
+    "MeshfreeBoundaryTrace",
     "MeshfreeCapacity",
     "MeshfreeComponent",
+    "MeshfreeReaction",
+    "MeshfreeTraceComponent",
     "LangmuirAdsorptionFlux",
+    "SurfaceDeposition",
+    "SurfaceEpochRelocation",
     "SurfaceExchangeEvidence",
     "SurfaceExchangeLaw",
     "MeshfreeBulkSurfaceMethod",
+    "MeshfreeBulkSurfaceEvidence",
+    "OverlapDirichletEvidence",
+    "OverlapDirichletLaw",
+    "OverlapFaceSide",
+    "OverlapSchwarz",
+    "OverlapSubdomainEvidence",
+    "OverlapTransferEvidence",
+    "OverlapTransferPolicy",
+    "OverlapTransferRoute",
+    "PreparedOverlapTransfers",
+    "prepare_overlap_schwarz",
     "AbstractContribution",
     "AbstractContributionResidual",
     "AbstractCouplingLaw",
@@ -403,6 +467,11 @@ __all__ = [
     "RuntimeInput",
     "TransmissionImposition",
     "TransmissionSide",
+    "VectorInterfaceResultants",
+    "VectorTransmissionCertificate",
+    "VectorTransmissionEvidence",
+    "VectorTransmissionLaw",
+    "VectorTransmissionSide",
     "VariationalCapacity",
     "VariationalComponent",
     "CoupledTransientSolution",
@@ -490,6 +559,7 @@ __all__ = [
     "ExplicitCouplingPolicy",
     "FixedGridSubcyclingSubsystem",
     "FixedStepCouplingParticipant",
+    "FixedStepParticipantEvidence",
     "HostCouplingSolution",
     "HostCouplingWindowResult",
     "HostParticipantState",

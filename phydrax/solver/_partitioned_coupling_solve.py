@@ -18,7 +18,15 @@ from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked, parse
-from ._fixed_step import FixedStepReplayPolicy
+from ._fixed_step import (
+    _evidence_record,
+    _record_evidence,
+    _retained_evidence,
+    _zeros_from_structure,
+    FixedStepEvidence,
+    FixedStepEvidenceRetention,
+    FixedStepReplayPolicy,
+)
 from ._partitioned_coupling_graph import (
     CouplingGraph,
     CouplingResourcePolicy,
@@ -34,15 +42,34 @@ from ._partitioned_coupling_types import (
 
 
 CouplingRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
-# Accepted state, still-active flag, and terminal status.
-_WindowCarry: TypeAlias = tuple[CouplingState, Array, Array]
-# Success, status, convergence, residuals, participant statuses/evaluations, iterations.
-_WindowPayload: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# Accepted state, still-active flag, terminal status, and retained evidence.
+_WindowCarry: TypeAlias = tuple[CouplingState, Array, Array, FixedStepEvidence | None]
+# Success, status, convergence, residuals, participant statuses/evaluations,
+# iterations, and per-window participant evidence under "steps" retention.
+_WindowPayload: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, tuple[Any, ...] | None
+]
 _WindowOutcome: TypeAlias = tuple[
-    CouplingState, Array, Array, Array, Array, Array, Array, Array
+    CouplingState,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    tuple[Any, ...] | None,
 ]
 _TrajectoryPayload: TypeAlias = tuple[
-    CouplingState, Array, Array, Array, Array, Array, Array, Array
+    CouplingState,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    tuple[Any, ...] | None,
 ]
 # Participant buffers, exchange buffers, validity buffer, and write cursor.
 _CheckpointBuffers: TypeAlias = tuple[tuple[Any, ...], tuple[Any, ...], Array, Array]
@@ -161,7 +188,14 @@ class CouplingProblem(StrictModule, NonTrainableState):
 
 
 class CouplingSolution(StrictModule):
-    """Accepted coupled trajectory and per-window physical evidence."""
+    """Accepted coupled trajectory and per-window physical evidence.
+
+    `participant_evidence` retains each participant's native method evidence
+    (ordered by `final_state.subsystem_ids`) under the rollout plan's
+    `evidence_retention`: the last committed window and the refusing window as
+    separate records, plus every window under `"steps"`. It is `None` when no
+    participant publishes evidence or retention is `"none"`.
+    """
 
     final_state: CouplingState
     successful: Array
@@ -175,6 +209,7 @@ class CouplingSolution(StrictModule):
     participant_statuses: Array
     participant_evaluations: Array
     coupling_iterations: Array
+    participant_evidence: FixedStepEvidence | None
     problem_id: str = eqx.field(static=True)
     graph_id: str = eqx.field(static=True)
     coupling_plan_id: str = eqx.field(static=True)
@@ -182,10 +217,11 @@ class CouplingSolution(StrictModule):
 
 
 class CouplingRolloutPlan(StrictModule, NonTrainableState):
-    """State retention and deterministic replay across fixed coupling windows."""
+    """State retention, evidence retention, and deterministic replay across windows."""
 
     retention: CouplingRetentionPolicy = eqx.field(static=True)
     checkpoint_stride: int = eqx.field(static=True)
+    evidence_retention: FixedStepEvidenceRetention = eqx.field(static=True)
     replay: FixedStepReplayPolicy
     plan_id: str = eqx.field(static=True)
 
@@ -196,8 +232,12 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         retention: CouplingRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
+        evidence_retention: FixedStepEvidenceRetention = "terminal",
     ) -> None:
         retention = parse(retention, CouplingRetentionPolicy, "retention")
+        evidence_retention = parse(
+            evidence_retention, FixedStepEvidenceRetention, "evidence_retention"
+        )
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")
@@ -210,12 +250,14 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
             raise TypeError("replay must be FixedStepReplayPolicy or None.")
         self.retention = retention
         self.checkpoint_stride = stride
+        self.evidence_retention = evidence_retention
         self.replay = replay_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "coupling-rollout-plan",
                 "retention": retention,
                 "checkpoint_stride": stride,
+                "evidence_retention": evidence_retention,
                 "replay": replay_.policy_id,
             }
         )
@@ -237,11 +279,17 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         exchange_count = len(prepared.exchanges)
         participant_count = len(prepared.subsystems)
         residual_dtype = prepared.reference_state.time.dtype
+        retention = self.evidence_retention
+        structure = eqx.filter_eval_shape(
+            advance_coupling_window, prepared, prepared.reference_state, size, args
+        ).participant_evidence
+        initial_record = _evidence_record(structure, retention)
+        stacked = initial_record is not None and retention == "steps"
 
         def step(
             carry: _WindowCarry, window_index: Array
         ) -> tuple[_WindowCarry, _WindowPayload]:
-            state, active, terminal_status = carry
+            state, active, terminal_status, record = carry
 
             def execute(_: None) -> _WindowOutcome:
                 result = advance_coupling_window(prepared, state, size, args)
@@ -254,6 +302,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                     result.diagnostics.participant_statuses,
                     result.diagnostics.participant_evaluations,
                     result.diagnostics.coupling_iterations,
+                    None if initial_record is None else result.participant_evidence,
                 )
 
             def skip(_: None) -> _WindowOutcome:
@@ -266,6 +315,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                     jnp.full((participant_count,), -1, dtype=jnp.int32),
                     jnp.zeros((participant_count,), dtype=jnp.int32),
                     jnp.asarray(0, dtype=jnp.int32),
+                    None if initial_record is None else _zeros_from_structure(structure),
                 )
 
             (
@@ -277,10 +327,14 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 participant_statuses,
                 participant_evaluations,
                 iterations,
+                evidence,
             ) = jax.lax.cond(active, execute, skip, operand=None)
             next_active = active & successful
             next_status = jnp.where(active, status, terminal_status)
-            next_carry = (accepted, next_active, next_status)
+            next_record = _record_evidence(
+                record, active, successful, evidence, window_index
+            )
+            next_carry = (accepted, next_active, next_status, next_record)
             payload = (
                 successful,
                 status,
@@ -289,6 +343,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 participant_statuses,
                 participant_evaluations,
                 iterations,
+                evidence if stacked else None,
             )
             return next_carry, payload
 
@@ -297,6 +352,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
             prepared.reference_state,
             jnp.asarray(True),
             jnp.asarray(0, dtype=jnp.int32),
+            initial_record,
         )
 
         if self.retention == "trajectory":
@@ -307,7 +363,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 next_carry, payload = step(carry, window_index)
                 return next_carry, (next_carry[0], *payload)
 
-            (final_state, final_success, _), payload = checkpointed_scan(
+            (final_state, final_success, _, final_record), payload = checkpointed_scan(
                 trajectory_step,
                 initial_carry,
                 indices,
@@ -324,6 +380,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 participant_statuses,
                 participant_evaluations,
                 iterations,
+                window_evidence,
             ) = payload
             retained_participant_states = tuple(
                 _prepend(initial, values)
@@ -346,7 +403,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 prepared.reference_state.time, dtype=size.dtype
             ) + size * jnp.arange(count + 1)
         elif self.retention == "final":
-            (final_state, final_success, _), payload = checkpointed_scan(
+            (final_state, final_success, _, final_record), payload = checkpointed_scan(
                 step,
                 initial_carry,
                 indices,
@@ -362,6 +419,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 participant_statuses,
                 participant_evaluations,
                 iterations,
+                window_evidence,
             ) = payload
             retained_participant_states = tuple(
                 _singleton(value) for value in final_state.participant_states
@@ -410,7 +468,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
             ) -> tuple[_CheckpointCarry, _WindowPayload]:
                 base_carry, participants, exchanges, valid_buffer, cursor = carry
                 next_carry, payload = step(base_carry, window_index)
-                accepted, successful, _ = next_carry
+                accepted, successful, _, _ = next_carry
 
                 def store(values: _CheckpointBuffers) -> _CheckpointBuffers:
                     participant_values, exchange_values, validity, current = values
@@ -471,7 +529,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 block_size=self.replay.block_size,
             )
             (
-                (final_state, final_success, _),
+                (final_state, final_success, _, final_record),
                 retained_participant_states,
                 retained_exchange_values,
                 retained_valid,
@@ -485,6 +543,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 participant_statuses,
                 participant_evaluations,
                 iterations,
+                window_evidence,
             ) = payload
             retained_times = jnp.asarray(
                 prepared.reference_state.time, dtype=size.dtype
@@ -503,6 +562,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
             participant_statuses=participant_statuses,
             participant_evaluations=participant_evaluations,
             coupling_iterations=iterations,
+            participant_evidence=_retained_evidence(final_record, window_evidence, valid),
             problem_id=prepared.problem_id,
             graph_id=prepared.graph_id,
             coupling_plan_id=prepared.plan_id,

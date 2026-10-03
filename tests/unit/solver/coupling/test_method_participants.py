@@ -826,3 +826,93 @@ def test_adaptive_rollout_refuses_a_window_without_a_reliable_error_estimate() -
     assert int(solution.attempted_windows) == 1
     assert int(solution.rejected_attempts) == 1
     assert bool(eqx.tree_equal(solution.final_state, prepared.reference_state))
+
+
+def _refusing_counter(refused_index: int, /) -> phx.solver.CallableFixedStepMethod:
+    """Unit counter that refuses one native step index and reports that index."""
+
+    def step(index: Array, time: Array, state: Array, size: Array, args: None) -> Any:
+        del time, size, args
+        successful = index != refused_index
+        advanced = state + 1.0
+        return phx.solver.FixedStepResult(
+            advanced,
+            jnp.where(successful, advanced, state),
+            successful,
+            jnp.zeros((), dtype=state.dtype),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.zeros((), dtype=state.dtype),
+            evidence=jnp.asarray(index, dtype=jnp.int32),
+        )
+
+    return phx.solver.CallableFixedStepMethod(step, f"refusing-counter-{refused_index}")
+
+
+def test_participant_evidence_survives_substeps_rollback_and_window_rollout() -> None:
+    space = _space("evidence-counter")
+    participant = cpl.FixedStepCouplingParticipant(
+        _refusing_counter(4),
+        lambda window, views, model, key, args: cpl.MethodWindowBinding(None, model),
+        lambda state, args: (state,),
+        subsystem_id="counter",
+        substeps=3,
+        output_ports=(_port("counter/out", "output", space),),
+    )
+    accepted = participant.initial_state(jnp.zeros(1))
+    first = participant.advance_window(
+        cpl.CouplingWindow(0, 0.0, 1.0), accepted, (), None
+    )
+    evidence = first.evidence
+    assert isinstance(evidence, cpl.FixedStepParticipantEvidence)
+    np.testing.assert_array_equal(evidence.executed, [True, True, True])
+    np.testing.assert_array_equal(evidence.successful, [True, True, True])
+    # An owner without a declared reduction keeps the bounded substep stack.
+    np.testing.assert_array_equal(evidence.method, [0, 1, 2])
+
+    second = participant.advance_window(
+        cpl.CouplingWindow(1, 1.0, 2.0), first.candidate_state, (), None
+    )
+    assert not bool(second.successful)
+    # The refusing substep's evidence survives; no owner work follows it.
+    np.testing.assert_array_equal(second.evidence.executed, [True, True, False])
+    np.testing.assert_array_equal(second.evidence.successful, [True, False, False])
+    np.testing.assert_array_equal(second.evidence.method[:2], [3, 4])
+
+    monitor = cpl.CallableCouplingSubsystem(
+        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
+            state, (), successful=True, status=0
+        ),
+        subsystem_id="monitor",
+        input_ports=(_port("monitor/in", "input", space),),
+        capabilities=cpl.CouplingSubsystemCapabilities(
+            jit=True, differentiable=True, deterministic_replay=True, fixed_topology=True
+        ),
+    )
+    graph = cpl.CouplingGraph(
+        (participant, monitor),
+        (cpl.CouplingExchange("observe", "counter/out", "monitor/in"),),
+    )
+    prepared = cpl.prepare_coupling(
+        graph, (accepted, jnp.zeros(1)), (jnp.zeros(1),), policy=_explicit()
+    )
+    index = prepared.reference_state.subsystem_ids.index("counter")
+    window = cpl.advance_coupling_window(prepared, prepared.reference_state, 1.0)
+    assert window.participant_evidence[1 - index] is None
+    np.testing.assert_array_equal(window.participant_evidence[index].method, [0, 1, 2])
+
+    solution = cpl.CouplingRolloutPlan().rollout(
+        prepared, window_count=3, window_size=1.0
+    )
+    assert not bool(solution.successful)
+    record = solution.participant_evidence
+    assert record is not None
+    assert int(record.accepted_step) == 0
+    assert int(record.refused_step) == 1
+    np.testing.assert_array_equal(record.accepted[index].method, [0, 1, 2])
+    np.testing.assert_array_equal(record.refused[index].successful, [True, False, False])
+    # The refused window rolled back: the checkpoint still resumes at step 3.
+    final = solution.final_state.participant_states[index]
+    np.testing.assert_array_equal(final.native, [3.0])
+    assert int(final.native_steps) == 3

@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `e2c92c63b301abe5b4084228768ab2d64f5f8295eec3ad7b97f1aa2541684856`
+Catalog ID: `798533040bc4bb3307072f7d199cd4d714db46ea91039e1b9aa2b2f15ecbaee8`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 281 |
+| candidate | 300 |
 | research | 171 |
 | internal | 5 |
 | retired | 0 |
@@ -254,14 +254,33 @@ Catalog ID: `e2c92c63b301abe5b4084228768ab2d64f5f8295eec3ad7b97f1aa2541684856`
 | `manufacturing.scheduled-spatial-runtime` | `phydrax.manufacturing` | candidate | implementation-qualified-candidate | 1 |
 | `materials.spatial-icme` | `phydrax.materials` | candidate | implementation-qualified-candidate | 1 |
 | `membranes.segmented-crossflow` | `phydrax.membranes` | candidate | implementation-qualified-candidate | 1 |
+| `meshfree.abstract-clique-forms` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.adaptive-refinement` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.bulk-evolution` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.bulk-surface-exchange` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.bulk-transport` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.calibrated-prediction` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.conservative-exterior` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.distributed` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.elasticity` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.elliptic-solve` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.fluid-structure` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.higher-forms` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.hybrid-schwarz` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.incompressible-flow` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.joint-transfer` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.lagrangian-flow` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.learned-constitutive-flux` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.learned-correction` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.learned-coupled-law` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.moving-surface` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.multilevel` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.physical-topology` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.runtime-restart` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.sensitivities` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.strong-form` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.surface-operators` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshfree.surface-stokes` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `multiregion-surface.geometry` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.label-field-extraction` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.remeshing` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |

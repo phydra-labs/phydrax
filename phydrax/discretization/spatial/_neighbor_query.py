@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum
 from itertools import product
-from math import ceil
+from math import ceil, gamma
 from typing import Any, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
@@ -36,6 +36,10 @@ _UINT64_MAX = np.iinfo(np.uint64).max
 _CHUNK_SLOT_BUDGET = 1 << 18
 _MINIMUM_DEFAULT_CANDIDATES = 64
 _DEFAULT_CANDIDATES_PER_RESULT = 32
+# Declared local sample-density ratio (densest over sparsest neighborhood at
+# the k-nearest scale) of the quasi-uniform clouds the default kNN candidate
+# capacity admits; graded or clustered clouds declare ``maximum_candidates``.
+_QUASI_UNIFORM_DENSITY_RATIO = 2.0
 # Cell faces and point cells are computed in floating point; certification
 # subtracts a conservative multiple of the coordinate rounding scale.
 _ROUNDING_FACTOR = 16.0
@@ -121,6 +125,9 @@ class _TargetRows(NamedTuple):
     integer_coordinates: jax.Array
     stable_ids: jax.Array
     valid: jax.Array
+    # Per-row kNN search radius (``+inf`` when unbounded); radius relations
+    # and shell witnesses carry their own static radius instead.
+    prune: jax.Array
 
 
 class _NearestRows(NamedTuple):
@@ -182,6 +189,13 @@ def _validated_capacities(
 ) -> tuple[int, int]:
     if not isinstance(address_plan, MortonAddressPlan):
         raise TypeError("address_plan must be a MortonAddressPlan.")
+    # Morton codes, sort keys and stable identities are 64-bit; without x64
+    # JAX silently narrows them to 32 bits, which is not a supported address.
+    if not jax.config.read("jax_enable_x64"):
+        raise ValueError(
+            "Morton spatial queries require jax_enable_x64 for 64-bit Morton codes; "
+            "float32 coordinates are supported with x64 enabled (dtype=float32)."
+        )
     sources = int(source_capacity)
     targets = int(target_capacity)
     if sources < 1 or targets < 1:
@@ -404,7 +418,7 @@ def _finest_populated_level(
     requested: jax.Array,
     prune: jax.Array,
     margin: float,
-    minimum_level: int,
+    minimum_level: jax.Array,
 ) -> jax.Array:
     """Binary-search the finest level whose visited stencil holds ``requested``."""
     depth = address_plan.maximum_depth
@@ -418,11 +432,11 @@ def _finest_populated_level(
         return jnp.where(enough, middle, low), jnp.where(enough, high, middle - 1)
 
     bounds = (
-        jnp.full((batch,), minimum_level, dtype=jnp.int32),
+        jnp.broadcast_to(minimum_level, (batch,)).astype(jnp.int32),
         jnp.full((batch,), depth, dtype=jnp.int32),
     )
-    iterations = (depth - minimum_level).bit_length()
-    low, _ = jax.lax.fori_loop(0, iterations, refine, bounds)
+    # Per-row lower levels share one static iteration count covering [0, depth].
+    low, _ = jax.lax.fori_loop(0, depth.bit_length(), refine, bounds)
     return low
 
 
@@ -491,6 +505,7 @@ def _prepare_query(
         integer_coordinates=encoding.integer_coordinates,
         stable_ids=target_ids,
         valid=target_active & encoding.in_domain,
+        prune=jnp.full((target_capacity,), jnp.inf, dtype=dtype),
     )
     return _QueryInputs(
         sources=prepared._replace(
@@ -557,6 +572,24 @@ def _row_outcomes(
     }
 
 
+def _derived_candidate_capacity(neighbors: int, dimension: int) -> int:
+    """Default kNN candidate buffer of the Morton stencil for quasi-uniform clouds.
+
+    The widest visit is the coarse retry: the 3^d stencil of cells at most
+    twice the k-th distance ``r`` wide, a cube of side ``6 r``, while the k-th
+    neighbor ball of volume ``V_d r^d`` holds the requested sources. With local
+    density varying by at most the declared ratio, the stencil holds at most
+    ``ratio * 6^d / V_d`` times the requested count (``k + 1`` covers an
+    excluded self). Rows exceeding it are refused as ``CANDIDATE_OVERFLOW``.
+    """
+    ball = np.pi ** (dimension / 2) / gamma(dimension / 2 + 1)
+    occupancy = 6.0**dimension / ball
+    return max(
+        _MINIMUM_DEFAULT_CANDIDATES,
+        ceil(_QUASI_UNIFORM_DENSITY_RATIO * occupancy * (neighbors + 1)),
+    )
+
+
 class MortonNeighborQueryPlan(StrictModule):
     """Exact low-dimensional k-nearest-neighbor query over coarse Morton cells.
 
@@ -566,7 +599,10 @@ class MortonNeighborQueryPlan(StrictModule):
     selection when the k-th distance is strictly inside the visited region.
     Uncertified rows retry once at the coarser level implied by that distance;
     rows that still cannot be certified or that overflow the buffer are
-    reported through ``status`` and never return neighbors.
+    reported through ``status`` and never return neighbors. Without a declared
+    ``maximum_candidates`` the buffer is derived from the neighbor count and
+    dimension for quasi-uniform clouds (local density ratio at most two); the
+    derivation is part of ``plan_id`` and overflow is refused, never regrown.
     """
 
     address_plan: MortonAddressPlan
@@ -602,13 +638,7 @@ class MortonNeighborQueryPlan(StrictModule):
         if neighbors < 1 or neighbors > sources:
             raise ValueError("maximum_neighbors must lie in [1, source_capacity].")
         candidates = (
-            min(
-                sources,
-                max(
-                    _MINIMUM_DEFAULT_CANDIDATES,
-                    _DEFAULT_CANDIDATES_PER_RESULT * neighbors,
-                ),
-            )
+            min(sources, _derived_candidate_capacity(neighbors, address_plan.dimension))
             if maximum_candidates is None
             else int(maximum_candidates)
         )
@@ -634,6 +664,16 @@ class MortonNeighborQueryPlan(StrictModule):
                 "target_capacity": targets,
                 "maximum_neighbors": neighbors,
                 "maximum_candidates": candidates,
+                "candidate_basis": (
+                    {"declared": candidates}
+                    if maximum_candidates is not None
+                    else {
+                        "derived": "quasi-uniform-morton-stencil",
+                        "neighbors": neighbors,
+                        "dimension": address_plan.dimension,
+                        "density_ratio": _QUASI_UNIFORM_DENSITY_RATIO,
+                    }
+                ),
                 "target_chunk_size": chunk,
                 "distance_backend": distance_backend,
                 "pallas_interpret": bool(pallas_interpret),
@@ -648,7 +688,6 @@ class MortonNeighborQueryPlan(StrictModule):
         prune: jax.Array,
         *,
         exclude_self: bool,
-        radius: float | None,
     ) -> _NearestRows:
         sources = inputs.sources
         starts, counts, certified_radius = _stencil_spans(
@@ -669,8 +708,7 @@ class MortonNeighborQueryPlan(StrictModule):
         source_ids = sources.order.sorted_stable_ids[storage]
         if exclude_self:
             candidate_valid = candidate_valid & (source_ids != rows.stable_ids[:, None])
-        if radius is not None:
-            candidate_valid = candidate_valid & (distance_squared <= radius**2)
+        candidate_valid = candidate_valid & (distance_squared <= rows.prune[:, None] ** 2)
 
         maximum_id = jnp.asarray(jnp.iinfo(source_ids.dtype).max, dtype=source_ids.dtype)
         infinity = jnp.asarray(jnp.inf, dtype=distance_squared.dtype)
@@ -687,8 +725,7 @@ class MortonNeighborQueryPlan(StrictModule):
         k = self.maximum_neighbors
         found = jnp.sum(candidate_valid, axis=1)
         bound = jnp.where(found >= k, jnp.sqrt(ordered_distance[:, k - 1]), infinity)
-        if radius is not None:
-            bound = jnp.minimum(bound, radius)
+        bound = jnp.minimum(bound, rows.prune)
         return _NearestRows(
             storage=ordered_storage[:, :k],
             valid=ordered_valid[:, :k],
@@ -705,34 +742,24 @@ class MortonNeighborQueryPlan(StrictModule):
         requested: jax.Array,
         *,
         exclude_self: bool,
-        radius: float | None,
     ) -> _NearestRows:
-        dtype = rows.coordinates.dtype
-        batch = rows.valid.shape[0]
-        if radius is None:
-            initial_prune = jnp.full((batch,), jnp.inf, dtype=dtype)
-            minimum_level = 0
-        else:
-            initial_prune = jnp.full((batch,), radius, dtype=dtype)
-            minimum_level = _static_level_wider_than(
-                self.address_plan, radius, inputs.margin
-            )
+        # A finite row radius starts at the finest level whose cells exceed it,
+        # so the visited stencil already covers every source within it.
         level = _finest_populated_level(
             self.address_plan,
             inputs.sources,
             rows,
             requested,
-            initial_prune,
+            rows.prune,
             inputs.margin,
-            minimum_level,
+            _dynamic_level_wider_than(self.address_plan, rows.prune, inputs.margin),
         )
         first = self._nearest_attempt(
             inputs,
             rows,
             level,
-            initial_prune,
+            rows.prune,
             exclude_self=exclude_self,
-            radius=radius,
         )
         retry = rows.valid & ~first.overflow & ~first.certified
 
@@ -747,7 +774,6 @@ class MortonNeighborQueryPlan(StrictModule):
                 coarse_level.astype(jnp.int32),
                 first.bound,
                 exclude_self=exclude_self,
-                radius=radius,
             )
 
         second = jax.lax.cond(jnp.any(retry), coarser, lambda _: first, None)
@@ -772,12 +798,25 @@ class MortonNeighborQueryPlan(StrictModule):
         target_stable_ids: jax.Array | None = None,
         exclude_self: bool = False,
         radius: float | None = None,
+        target_radii: jax.Array | None = None,
     ) -> MortonNeighborQueryResult:
+        """Exact kNN rows, optionally limited to sources within a radius.
+
+        ``radius`` is one static bound; ``target_radii`` is a dynamic
+        nonnegative per-target bound (``+inf`` unbounded). A row keeps only
+        sources within the smaller of the two, so it may hold fewer than
+        ``maximum_neighbors`` sources, and its candidate buffer only has to hold
+        the sources of the stencil cells within that radius.
+        """
         radius_value = None if radius is None else float(radius)
         if radius_value is not None and (
             not np.isfinite(radius_value) or radius_value <= 0
         ):
             raise ValueError("radius must be finite and positive when supplied.")
+        if target_radii is not None and jnp.shape(target_radii) != (
+            self.target_capacity,
+        ):
+            raise ValueError("target_radii must hold one radius per target slot.")
         if (
             exclude_self
             and target_stable_ids is None
@@ -786,61 +825,94 @@ class MortonNeighborQueryPlan(StrictModule):
             raise ValueError(
                 "exclude_self with unequal capacities requires target_stable_ids."
             )
-        inputs = _prepare_query(
-            self.address_plan,
+        return _compiled_nearest_query(
+            self,
             source_points,
             target_points,
-            source_capacity=self.source_capacity,
-            target_capacity=self.target_capacity,
-            source_mask=source_mask,
-            target_mask=target_mask,
-            source_stable_ids=source_stable_ids,
-            target_stable_ids=target_stable_ids,
+            source_mask,
+            target_mask,
+            source_stable_ids,
+            target_stable_ids,
+            target_radii,
+            bool(exclude_self),
+            radius_value,
         )
-        requested = jnp.minimum(
-            self.maximum_neighbors + int(bool(exclude_self)),
-            inputs.sources.order.active_count,
+
+
+def _nearest_query(
+    plan: MortonNeighborQueryPlan,
+    source_points: jax.Array,
+    target_points: jax.Array,
+    source_mask: jax.Array | None,
+    target_mask: jax.Array | None,
+    source_stable_ids: jax.Array | None,
+    target_stable_ids: jax.Array | None,
+    target_radii: jax.Array | None,
+    exclude_self: bool,
+    radius: float | None,
+) -> MortonNeighborQueryResult:
+    inputs = _prepare_query(
+        plan.address_plan,
+        source_points,
+        target_points,
+        source_capacity=plan.source_capacity,
+        target_capacity=plan.target_capacity,
+        source_mask=source_mask,
+        target_mask=target_mask,
+        source_stable_ids=source_stable_ids,
+        target_stable_ids=target_stable_ids,
+    )
+    prune = inputs.rows.prune
+    if radius is not None:
+        prune = jnp.minimum(prune, jnp.asarray(radius, dtype=prune.dtype))
+    if target_radii is not None:
+        prune = jnp.minimum(
+            prune, jax.lax.stop_gradient(target_radii).astype(prune.dtype)
         )
-        nearest = _map_target_chunks(
-            lambda rows: self._nearest_chunk(
+    rows = inputs.rows._replace(prune=prune)
+    requested = jnp.minimum(
+        plan.maximum_neighbors + int(exclude_self),
+        inputs.sources.order.active_count,
+    )
+    nearest = _NearestRows(
+        *_map_target_chunks(
+            lambda chunk: plan._nearest_chunk(
                 inputs,
-                rows,
+                chunk,
                 requested,
-                exclude_self=bool(exclude_self),
-                radius=radius_value,
+                exclude_self=exclude_self,
             ),
-            inputs.rows,
-            self.target_chunk_size,
+            rows,
+            plan.target_chunk_size,
         )
-        status, evidence = _row_outcomes(
-            inputs,
-            # ty: ignore[unresolved-attribute]
-            nearest.overflow,
-            # ty: ignore[unresolved-attribute]
-            nearest.certified,
-            # ty: ignore[unresolved-attribute]
-            nearest.required,
-        )
-        # ty: ignore[unresolved-attribute]
-        valid = nearest.valid & (status == MortonNeighborQueryStatus.COMPLETE)[:, None]
-        # ty: ignore[unresolved-attribute]
-        logical = inputs.sources.order.storage_to_logical[nearest.storage]
-        successful = (
-            evidence["complete"]
-            & evidence["sources_valid"]
-            & (evidence["invalid_targets"] == 0)
-        )
-        return MortonNeighborQueryResult(
-            source_indices=jnp.where(valid, logical, 0).astype(jnp.int32),
-            valid=valid,
-            counts=jnp.sum(valid, axis=1, dtype=jnp.int32),
-            status=status,
-            evidence=MortonNeighborQueryEvidence(
-                successful=successful,
-                candidate_capacity=jnp.asarray(self.maximum_candidates, dtype=jnp.int32),
-                **evidence,
-            ),
-        )
+    )
+    status, evidence = _row_outcomes(
+        inputs, nearest.overflow, nearest.certified, nearest.required
+    )
+    valid = nearest.valid & (status == MortonNeighborQueryStatus.COMPLETE)[:, None]
+    logical = inputs.sources.order.storage_to_logical[nearest.storage]
+    successful = (
+        evidence["complete"]
+        & evidence["sources_valid"]
+        & (evidence["invalid_targets"] == 0)
+    )
+    return MortonNeighborQueryResult(
+        source_indices=jnp.where(valid, logical, 0).astype(jnp.int32),
+        valid=valid,
+        counts=jnp.sum(valid, axis=1, dtype=jnp.int32),
+        status=status,
+        evidence=MortonNeighborQueryEvidence(
+            successful=successful,
+            candidate_capacity=jnp.asarray(plan.maximum_candidates, dtype=jnp.int32),
+            **evidence,
+        ),
+    )
+
+
+# Stable module-level compiled entry point: the plan (capacities, address,
+# backend) and the Boolean/radius selectors are static; coordinates, masks and
+# identities are dynamic. Callers reuse executables by reusing capacities.
+_compiled_nearest_query = eqx.filter_jit(_nearest_query)
 
 
 def _cell_table(
@@ -1148,6 +1220,278 @@ class MortonRadiusRelationPlan(StrictModule):
         )
 
 
+class MortonRadiusShellEvidence(NonTrainableState, StrictModule):
+    """Completeness, refusal and work evidence for one radius-shell witness.
+
+    ``certified`` holds only when every active row is complete and no
+    source-target incidence lies in the closed shell ``|d - radius| <=
+    half_width``. ``certified_gap`` is a lower bound on ``|d - radius|`` over
+    every admitted incidence, capped at ``half_width``; it is zero whenever the
+    witness is unsuccessful, so a capacity-truncated query never reports a gap.
+    ``candidate_evaluations`` charges the distance work of the query itself.
+    """
+
+    successful: jax.Array
+    certified: jax.Array
+    complete: jax.Array
+    finite: jax.Array
+    sources_valid: jax.Array
+    invalid_sources: jax.Array
+    invalid_targets: jax.Array
+    required_candidates: jax.Array
+    candidate_capacity: jax.Array
+    overflow_rows: jax.Array
+    uncertified_rows: jax.Array
+    shell_incidences: jax.Array
+    certified_gap: jax.Array
+    candidate_evaluations: jax.Array
+
+
+class MortonRadiusShellResult(NonTrainableState, StrictModule):
+    """Per-target shell outcomes in target-logical order."""
+
+    status: jax.Array
+    row_gap: jax.Array
+    row_shell_incidences: jax.Array
+    evidence: MortonRadiusShellEvidence
+
+
+class _ShellRows(NamedTuple):
+    gap: jax.Array
+    shell: jax.Array
+    certified: jax.Array
+    overflow: jax.Array
+    required: jax.Array
+
+
+class MortonRadiusShellWitnessPlan(StrictModule):
+    """Bounded inclusion/exclusion witness around one radius threshold.
+
+    Every source within ``radius + half_width`` of each target is enumerated
+    over a fixed candidate buffer (periodic images by minimum image). An
+    incidence is certified included when ``d < radius - half_width`` and
+    certified excluded when ``d > radius + half_width``; anything in the closed
+    shell, including exact threshold ties, refuses certification. With
+    ``half_width = 2 delta`` the witness certifies that a radius relation is
+    unchanged by any per-point displacement strictly below ``delta``. A missing
+    owner (invalid target or source), an uncertified stencil or a candidate
+    overflow makes the witness unsuccessful rather than reporting no shell.
+    """
+
+    address_plan: MortonAddressPlan
+    source_capacity: int = eqx.field(static=True)
+    target_capacity: int = eqx.field(static=True)
+    maximum_candidates: int = eqx.field(static=True)
+    target_chunk_size: int = eqx.field(static=True)
+    distance_backend: SpatialDistanceBackend = eqx.field(static=True)
+    pallas_interpret: bool = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        address_plan: MortonAddressPlan,
+        source_capacity: int,
+        target_capacity: int,
+        *,
+        maximum_candidates: int | None = None,
+        target_chunk_size: int | None = None,
+        distance_backend: SpatialDistanceBackend = "jax",
+        pallas_interpret: bool = False,
+    ) -> None:
+        sources, targets = _validated_capacities(
+            address_plan,
+            source_capacity,
+            target_capacity,
+            target_chunk_size,
+            distance_backend,
+        )
+        candidates = (
+            min(sources, _MINIMUM_DEFAULT_CANDIDATES)
+            if maximum_candidates is None
+            else int(maximum_candidates)
+        )
+        if candidates < 1 or candidates > sources:
+            raise ValueError("maximum_candidates must lie in [1, source_capacity].")
+        chunk = _resolved_chunk_size(target_chunk_size, targets, candidates)
+        self.address_plan = address_plan
+        self.source_capacity = sources
+        self.target_capacity = targets
+        self.maximum_candidates = candidates
+        self.target_chunk_size = chunk
+        self.distance_backend = distance_backend
+        self.pallas_interpret = bool(pallas_interpret)
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "morton-radius-shell-witness-plan",
+                "address_plan_id": address_plan.plan_id,
+                "source_capacity": sources,
+                "target_capacity": targets,
+                "maximum_candidates": candidates,
+                "target_chunk_size": chunk,
+                "distance_backend": distance_backend,
+                "pallas_interpret": bool(pallas_interpret),
+            }
+        )
+
+    def _shell_chunk(
+        self,
+        inputs: _QueryInputs,
+        rows: _TargetRows,
+        level: int,
+        radius: float,
+        half_width: float,
+        *,
+        exclude_self: bool,
+    ) -> _ShellRows:
+        sources = inputs.sources
+        batch = rows.valid.shape[0]
+        dtype = rows.coordinates.dtype
+        # Rounded distances may sit up to the coordinate rounding margin away
+        # from exact ones; the enumerated band and the shell absorb it.
+        outer = radius + half_width + inputs.margin
+        starts, counts, certified_radius = _stencil_spans(
+            self.address_plan,
+            sources,
+            rows,
+            jnp.full((batch,), level, dtype=jnp.int32),
+            jnp.full((batch,), outer, dtype=dtype),
+            inputs.margin,
+        )
+        storage, candidate_valid, required = _gather_slots(
+            starts, counts, self.maximum_candidates
+        )
+        relative = _minimum_image(
+            rows.coordinates[:, None, :] - sources.coordinates[storage],
+            self.address_plan,
+        )
+        distance_squared = _squared_norm(
+            relative,
+            backend=self.distance_backend,
+            pallas_interpret=self.pallas_interpret,
+        )
+        inside = candidate_valid & (distance_squared <= outer**2)
+        if exclude_self:
+            source_ids = sources.order.sorted_stable_ids[storage]
+            inside = inside & (source_ids != rows.stable_ids[:, None])
+        deviation = jnp.abs(jnp.sqrt(distance_squared) - radius)
+        infinity = jnp.asarray(jnp.inf, dtype=dtype)
+        return _ShellRows(
+            gap=jnp.min(jnp.where(inside, deviation, infinity), axis=1),
+            shell=jnp.sum(
+                inside & (deviation <= half_width + inputs.margin),
+                axis=1,
+                dtype=jnp.int32,
+            ),
+            certified=(outer < certified_radius) | jnp.isposinf(certified_radius),
+            overflow=required > self.maximum_candidates,
+            required=required,
+        )
+
+    def certify(
+        self,
+        source_points: jax.Array,
+        target_points: jax.Array,
+        radius: float,
+        half_width: float,
+        *,
+        source_mask: jax.Array | None = None,
+        target_mask: jax.Array | None = None,
+        source_stable_ids: jax.Array | None = None,
+        target_stable_ids: jax.Array | None = None,
+        exclude_self: bool = False,
+    ) -> MortonRadiusShellResult:
+        radius_value = float(radius)
+        width = float(half_width)
+        if not np.isfinite(radius_value) or radius_value <= 0:
+            raise ValueError("radius must be finite and positive.")
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("half_width must be finite and positive.")
+        if exclude_self and (source_stable_ids is None) != (target_stable_ids is None):
+            raise ValueError(
+                "exclude_self compares stable identities; supply both or neither."
+            )
+        if (
+            exclude_self
+            and target_stable_ids is None
+            and self.source_capacity != self.target_capacity
+        ):
+            raise ValueError(
+                "exclude_self with unequal capacities requires stable identities."
+            )
+        inputs = _prepare_query(
+            self.address_plan,
+            source_points,
+            target_points,
+            source_capacity=self.source_capacity,
+            target_capacity=self.target_capacity,
+            source_mask=source_mask,
+            target_mask=target_mask,
+            source_stable_ids=source_stable_ids,
+            target_stable_ids=target_stable_ids,
+        )
+        level = _static_level_wider_than(
+            self.address_plan, radius_value + width + inputs.margin, inputs.margin
+        )
+        rows = _ShellRows(
+            *_map_target_chunks(
+                lambda chunk: self._shell_chunk(
+                    inputs,
+                    chunk,
+                    level,
+                    radius_value,
+                    width,
+                    exclude_self=bool(exclude_self),
+                ),
+                inputs.rows,
+                self.target_chunk_size,
+            )
+        )
+        status, evidence = _row_outcomes(
+            inputs, rows.overflow, rows.certified, rows.required
+        )
+        complete_row = status == MortonNeighborQueryStatus.COMPLETE
+        dtype = rows.gap.dtype
+        row_gap = jnp.where(
+            complete_row,
+            jnp.maximum(
+                jnp.minimum(rows.gap, width + inputs.margin) - inputs.margin, 0.0
+            ),
+            jnp.asarray(0.0, dtype=dtype),
+        )
+        row_shell = jnp.where(complete_row, rows.shell, 0)
+        successful = (
+            evidence["complete"]
+            & evidence["sources_valid"]
+            & (evidence["invalid_targets"] == 0)
+        )
+        shell_incidences = jnp.sum(row_shell, dtype=jnp.int32)
+        gap = jnp.min(
+            jnp.where(complete_row, row_gap, jnp.asarray(width, dtype=dtype)),
+            initial=width,
+        )
+        return MortonRadiusShellResult(
+            status=status,
+            row_gap=row_gap,
+            row_shell_incidences=row_shell,
+            evidence=MortonRadiusShellEvidence(
+                successful=successful,
+                certified=successful & (shell_incidences == 0),
+                candidate_capacity=jnp.asarray(self.maximum_candidates, dtype=jnp.int32),
+                shell_incidences=shell_incidences,
+                certified_gap=jnp.where(successful, gap, jnp.asarray(0.0, dtype=dtype)),
+                candidate_evaluations=jnp.sum(
+                    jnp.where(
+                        inputs.rows.valid,
+                        jnp.minimum(rows.required, self.maximum_candidates),
+                        0,
+                    ),
+                    dtype=jnp.int64,
+                ),
+                **evidence,
+            ),
+        )
+
+
 __all__ = [
     "MortonNeighborQueryEvidence",
     "MortonNeighborQueryPlan",
@@ -1156,5 +1500,8 @@ __all__ = [
     "MortonRadiusRelationEvidence",
     "MortonRadiusRelationPlan",
     "MortonRadiusRelationResult",
+    "MortonRadiusShellEvidence",
+    "MortonRadiusShellResult",
+    "MortonRadiusShellWitnessPlan",
     "SpatialDistanceBackend",
 ]

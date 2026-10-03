@@ -1,12 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Conservative point-query exchange, native Langmuir transport, host refresh."""
+"""Conservative point-query exchange, native Langmuir transport, host relocation."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import final, TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,16 +14,28 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation._stencil import GatherStencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier, positive_finite_float, positive_integer
-from ...discretization import PreparedFieldQuery
+from ...discretization import (
+    PreparedFieldQuery,
+    PreparedFieldReconstruction,
+    TopologyEpochTransition,
+)
+from ...discretization.meshfree._epochs import (
+    commit_meshfree_epoch,
+    MeshfreeEpochChange,
+    MeshfreeEpochReceipt,
+    stage_meshfree_epoch,
+)
+from ...discretization.meshfree._exterior import PreparedMeshfreeExteriorCalculus
 from ...interfacial_transport._core import AdsorptionKinetics
 from ...interfacial_transport._coupled import CoupledBulkSurfaceTransport
+from ...lifecycle import Composition, CompositionEntry
 from ...linalg import ArraySpace
-from ...typing import Dim, Float
+from ...typing import Bool, checked, Dim, Float, Int32, parse, Scalar
 from .._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from .._partitioned_coupling_types import CouplingPort
 from ._components import AbstractReconstructionComponent, AbstractSpatialComponent
@@ -46,8 +58,7 @@ from ._method_participants import FixedStepCouplingParticipant, MethodWindowBind
 from ._parameters import RuntimeInput
 
 
-if TYPE_CHECKING:
-    from ...discretization.meshfree._exterior import PreparedMeshfreeExteriorCalculus
+SurfaceDeposition: TypeAlias = Literal["signed", "positive"]
 
 
 class _BulkPointDim(Dim):
@@ -72,9 +83,8 @@ class LangmuirAdsorptionFlux(AbstractInterfaceFlux):
 
     kinetics: AdsorptionKinetics
 
+    @checked
     def __init__(self, kinetics: AdsorptionKinetics, /) -> None:
-        if not isinstance(kinetics, AdsorptionKinetics):
-            raise TypeError("kinetics must be AdsorptionKinetics.")
         self.kinetics = kinetics
 
     @property
@@ -94,14 +104,49 @@ class LangmuirAdsorptionFlux(AbstractInterfaceFlux):
 
 @final
 class SurfaceExchangeEvidence(StrictModule, NonTrainableState):
+    """Host preparation evidence of one exchange-law revision.
+
+    ``surface_id`` is the exact native surface source (owner revision, point
+    enumeration, and capacity) the law was prepared on. ``deposition`` is the
+    declared amount partition and ``minimum_query_weight`` the smallest valid
+    nonzero weight of a bounded gather route, or ``None`` for an owner route
+    (for example a finite-element cell route) that publishes no gather
+    partition. ``displacement`` and ``lag`` are the host relocation motion and
+    geometry lag of a fixed-topology window refresh; an epoch relocation has no
+    point correspondence and reports its transfer ledger instead.
+    """
+
     query_id: str = eqx.field(static=True)
+    surface_id: str = eqx.field(static=True)
+    deposition: SurfaceDeposition = eqx.field(static=True)
     complete: bool = eqx.field(static=True)
     constant_reproduction_error: float = eqx.field(static=True)
+    minimum_query_weight: float | None = eqx.field(static=True)
     geometry_epoch: int = eqx.field(static=True)
     refresh_time: float = eqx.field(static=True)
     displacement: float = eqx.field(static=True)
     lag: float = eqx.field(static=True)
     geometry_differentiated_within_window: bool = eqx.field(static=True, default=False)
+
+
+@final
+class SurfaceEpochRelocation(StrictModule):
+    """Atomic epoch relocation of one surface exchange.
+
+    ``published`` holds only when every surface state route conserved its
+    content and the host boundary was accepted. Otherwise ``law``, ``surface``,
+    and ``surface_states`` are the unchanged source objects. Residuals and
+    tolerances follow the input state order; ``epoch`` is the complete native
+    epoch account.
+    """
+
+    law: SurfaceExchangeLaw
+    surface: MeshfreeComponent
+    surface_states: tuple[Array, ...]
+    conservation_residuals: Array
+    content_tolerances: Array
+    epoch: MeshfreeEpochReceipt
+    published: bool = eqx.field(static=True)
 
 
 def _admit_query(query: PreparedFieldQuery, tolerance: float) -> float:
@@ -120,6 +165,57 @@ def _admit_query(query: PreparedFieldQuery, tolerance: float) -> float:
             "Bulk query does not reproduce constants; transpose exchange is not conservative."
         )
     return error
+
+
+def _carrying(route: GatherStencil, /) -> np.ndarray:
+    """Route entries that carry amount: valid and nonzero."""
+    return np.asarray(route.valid) & (np.asarray(route.weights) != 0.0)
+
+
+def _positive_partition(query: PreparedFieldQuery, /) -> tuple[GatherStencil, np.ndarray]:
+    """The owning gather route of a nonnegative amount partition and its carriers."""
+    route = query.route
+    if not isinstance(route, GatherStencil):
+        raise ValueError(
+            "A positive amount partition requires an owning bounded GatherStencil query."
+        )
+    carrying = _carrying(route)
+    if np.any(np.asarray(route.weights)[carrying] < 0):
+        raise ValueError(
+            "Signed query weights cannot define a positive amount partition."
+        )
+    return route, carrying
+
+
+def _minimum_query_weight(query: PreparedFieldQuery, /) -> float | None:
+    route = query.route
+    if not isinstance(route, GatherStencil):
+        return None
+    return float(np.min(np.asarray(route.weights)[_carrying(route)]))
+
+
+def _surface_source_id(surface: MeshfreeComponent, field: str, /) -> str:
+    """Exact identity of a native surface source; never inferred from shapes."""
+    surface.field(field)
+    owner = surface.owner
+    # The exterior owner carries no prepared revision: its complete numeric
+    # content (points, graph, metric, and measures) is its revision.
+    revision = (
+        array_tree_fingerprint(owner)
+        if isinstance(owner, PreparedMeshfreeExteriorCalculus)
+        else owner.prepared_id
+    )
+    return canonical_fingerprint(
+        {
+            "kind": "surface-exchange-source",
+            "owner_id": surface.owner_id,
+            "owner_revision": revision,
+            "reconstruction": surface.reconstruction.reconstruction_id,
+            "field": field,
+            "points": np.asarray(owner.points),
+            "capacity": np.asarray(surface.mass_diagonal),
+        }
+    )
 
 
 @final
@@ -154,6 +250,7 @@ class _ExchangeCertificate(AbstractLawCertificate):
     bulk: ContributionEndpoint
     surface: ContributionEndpoint
     residual: _ExchangeResidual
+    deposition: SurfaceDeposition = eqx.field(static=True)
 
     def defects(
         self,
@@ -176,23 +273,101 @@ class _ExchangeCertificate(AbstractLawCertificate):
             physical = physical & jnp.all(
                 surface <= flux.kinetics.maximum_surface_concentration_mol_m2
             )
+        names: tuple[str, ...] = ("amount_balance", "admissibility")
+        values = [balance, jnp.where(physical, 0.0, 1.0)]
+        scales = [scale, jnp.asarray(1.0)]
+        match self.deposition:
+            case "signed":
+                pass
+            case "positive":
+                names = (*names, "deposition_sign")
+                values.append(self._deposition_sign(surface_rows))
+                scales.append(scale)
+            case unknown:
+                assert_never(unknown)
         return InterfaceDefectReport(
             self.law_id,
-            ("amount_balance", "admissibility"),
-            (True, True),
-            jnp.stack((balance, jnp.where(physical, 0.0, 1.0))),
-            jnp.stack((scale, jnp.asarray(1.0))),
+            names,
+            (True,) * len(names),
+            jnp.stack(values),
+            jnp.stack(scales),
         )
+
+    def _deposition_sign(self, surface_rows: Array, /) -> Array:
+        """Amount gained by any bulk node through the one-signed deposit parts.
+
+        The surface gains ``d = -surface_rows`` and bulk node ``b`` loses
+        ``(Q^T d)_b``. A nonnegative partition keeps the withdrawal driven by
+        adsorbing points, ``Q^T max(d, 0)``, nonnegative at every node and the
+        release driven by desorbing points, ``Q^T min(d, 0)``, nonpositive: no
+        bulk node gains amount while the surface adsorbs.
+        """
+        deposit = -surface_rows
+        query = self.residual.query
+        adsorbed = query.transpose(jnp.maximum(deposit, 0.0))
+        released = query.transpose(jnp.minimum(deposit, 0.0))
+        return jnp.sum(jnp.maximum(-adsorbed, 0.0) + jnp.maximum(released, 0.0))
+
+
+_EPOCH_ENTRY = "surface/epoch"
+_SOURCE_ENTRY = "surface/source"
+_LAW_ENTRY = "surface/exchange"
+
+
+def _state_entry(slot: int, /) -> str:
+    return f"surface/state/{slot}"
+
+
+def _exchange_entries(
+    law: SurfaceExchangeLaw, surface: MeshfreeComponent, epoch: CompositionEntry, /
+) -> tuple[CompositionEntry, CompositionEntry]:
+    """The surface source and exchange law prepared against one surface epoch."""
+    identity = law.evidence.surface_id
+    source = CompositionEntry(
+        surface,
+        entry_id=_SOURCE_ENTRY,
+        role="discretization",
+        owner_id=law.law_id,
+        structure_id=identity,
+        revision_id=identity,
+        semantics_id="surface-exchange-source",
+        dependencies=(epoch.binding("structure"),),
+    )
+    exchange = CompositionEntry(
+        law,
+        entry_id=_LAW_ENTRY,
+        role="interface-route",
+        owner_id=law.law_id,
+        structure_id=law.evidence.query_id,
+        revision_id=law.evidence.query_id,
+        semantics_id="surface-exchange-law",
+        dependencies=(source.binding("revision"),),
+    )
+    return source, exchange
 
 
 @final
 class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
-    """Non-facet exchange between declared full bulk and nodal surface fields.
+    """Non-facet exchange between a reconstructing bulk and a meshfree surface.
+
+    The bulk endpoint is any reconstruction-capable component (meshfree,
+    finite-element, ...) whose complete scalar value query reproduces
+    constants, so the exact coordinate transpose pairs bulk loss with surface
+    gain. The surface endpoint is a native ``MeshfreeComponent`` whose owner
+    revision, point enumeration, and capacity diagonal are recorded at
+    construction and verified by ``prepare``; a same-shaped source of another
+    revision is refused.
+
+    ``deposition="signed"`` admits any constant-reproducing route.
+    ``"positive"`` additionally requires a nonnegative bounded gather
+    partition and certifies at every solution that no bulk node gains amount
+    while the surface adsorbs.
 
     Queries are frozen inside numerical windows. ``refresh_at_window`` is a
-    host preparation boundary and returns a new law with explicit displacement
-    and geometry-lag evidence; it does not pretend to differentiate relocation.
-    Positive pairings and row-constant reproduction are mandatory.
+    host preparation boundary for fixed-topology motion with explicit
+    displacement and geometry-lag evidence; ``relocate_at_epoch`` rebinds the
+    law, its surface, and the surface state history atomically across a
+    meshfree topology epoch. Neither differentiates relocation.
     """
 
     __strict_contract__ = True
@@ -203,19 +378,22 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
     measures: Float[_SurfacePointDim]
     normals: Float[_SurfacePointDim, _SurfaceCoordinateDim]
     flux: AbstractInterfaceFlux
+    deposition: SurfaceDeposition = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     evidence: SurfaceExchangeEvidence
 
+    @checked
     def __init__(
         self,
         bulk: ContributionEndpoint,
         surface: ContributionEndpoint,
         query: PreparedFieldQuery,
-        surface_measures: ArrayLike,
+        surface_component: MeshfreeComponent,
         normals: ArrayLike,
         flux: AbstractInterfaceFlux,
         /,
         *,
+        deposition: SurfaceDeposition = "signed",
         law_id: str = "surface_exchange",
         constant_tolerance: float = 1e-10,
         geometry_epoch: int = 0,
@@ -223,24 +401,33 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
         displacement: float = 0.0,
         lag: float = 0.0,
     ) -> None:
-        if not isinstance(bulk, ContributionEndpoint) or not isinstance(
-            surface, ContributionEndpoint
-        ):
-            raise TypeError("Exchange endpoints must be ContributionEndpoint values.")
         if bulk.space != "full" or surface.space != "full" or bulk.owner == surface.owner:
             raise ValueError(
                 "Exchange endpoints must name full fields of distinct components."
             )
-        if not isinstance(flux, AbstractInterfaceFlux):
-            raise TypeError("flux must be a native AbstractInterfaceFlux.")
+        if surface_component.name != surface.owner:
+            raise ValueError("surface_component must own the declared surface endpoint.")
+        deposition_ = parse(deposition, SurfaceDeposition, "deposition")
         tolerance = positive_finite_float(constant_tolerance, "constant_tolerance")
         error = _admit_query(query, tolerance)
-        measures = np.asarray(surface_measures, dtype=np.float64)
-        normal = np.asarray(normals, dtype=np.float64)
-        if measures.shape != query.output_shape or not np.all(
-            np.isfinite(measures) & (measures > 0)
+        match deposition_:
+            case "signed":
+                pass
+            case "positive":
+                _positive_partition(query)
+            case unknown:
+                assert_never(unknown)
+        if surface_component.field(surface.block).full_space.shape != query.output_shape:
+            raise ValueError(
+                "Surface field coordinates do not match the exchange quadrature."
+            )
+        if not np.array_equal(
+            np.asarray(surface_component.owner.points), np.asarray(query.points)
         ):
-            raise ValueError("Exchange needs positive measures at every surface point.")
+            raise ValueError(
+                "Surface endpoint must own the actual query point enumeration."
+            )
+        normal = np.asarray(normals, dtype=np.float64)
         if normal.shape != query.points.shape or not np.all(np.isfinite(normal)):
             raise ValueError("Normals must match the finite surface query points.")
         if not np.allclose(np.linalg.norm(normal, axis=1), 1.0, atol=1e-8, rtol=0.0):
@@ -263,16 +450,18 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
             )
         self.law_id = canonical_identifier(law_id, "law_id")
         self.bulk, self.surface, self.query = bulk, surface, query
-        self.measures, self.normals, self.flux = (
-            jnp.asarray(measures),
-            jnp.asarray(normal),
-            flux,
-        )
+        # Exchange measures are the surface owner's native capacity diagonal.
+        self.measures = jnp.asarray(surface_component.mass_diagonal, dtype=jnp.float64)
+        self.normals, self.flux = jnp.asarray(normal), flux
+        self.deposition = deposition_
         self.tolerance = tolerance
         self.evidence = SurfaceExchangeEvidence(
             query.query_id,
+            _surface_source_id(surface_component, surface.block),
+            deposition_,
             query.complete,
             error,
+            _minimum_query_weight(query),
             geometry_epoch,
             float(refresh_time),
             float(displacement),
@@ -287,6 +476,32 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
     def runtime_inputs(self) -> tuple[RuntimeInput, ...]:
         return self.flux.runtime_inputs
 
+    def _bulk_reconstruction(
+        self, components: Mapping[str, AbstractSpatialComponent], /
+    ) -> PreparedFieldReconstruction:
+        bulk = components[self.bulk.owner]
+        if not isinstance(bulk, AbstractReconstructionComponent):
+            raise TypeError("Bulk exchange requires the owning field reconstruction.")
+        if bulk.field(self.bulk.block).full_space.shape != self.query.coefficient_shape:
+            raise ValueError("Query coefficients do not match the declared bulk field.")
+        return bulk.prepare_field_reconstruction(self.bulk.block)
+
+    def _current_surface(
+        self, components: Mapping[str, AbstractSpatialComponent], /
+    ) -> MeshfreeComponent:
+        surface = components[self.surface.owner]
+        if not isinstance(surface, MeshfreeComponent):
+            raise TypeError(
+                "Surface exchange requires a native nodal MeshfreeComponent endpoint."
+            )
+        if _surface_source_id(surface, self.surface.block) != self.evidence.surface_id:
+            raise ValueError(
+                "Surface endpoint is not the exact native source (owner revision, "
+                "point enumeration, capacity) this exchange was prepared on; "
+                "refresh or relocate the exchange instead of reusing it."
+            )
+        return surface
+
     def prepare(
         self,
         components: Mapping[str, AbstractSpatialComponent],
@@ -294,34 +509,8 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
         /,
     ) -> PreparedLaw:
         del interface_owners
-        bulk, surface = components[self.bulk.owner], components[self.surface.owner]
-        if not isinstance(bulk, AbstractReconstructionComponent):
-            raise TypeError("Bulk exchange requires the owning field reconstruction.")
-        self.query.require_reconstruction(
-            bulk.prepare_field_reconstruction(self.bulk.block)
-        )
-        if bulk.field(self.bulk.block).full_space.shape != self.query.coefficient_shape:
-            raise ValueError("Query coefficients do not match the declared bulk field.")
-        if not isinstance(surface, MeshfreeComponent):
-            raise TypeError(
-                "Surface exchange requires a native nodal MeshfreeComponent endpoint."
-            )
-        if not np.array_equal(
-            np.asarray(surface.owner.points), np.asarray(self.query.points)
-        ):
-            raise ValueError(
-                "Surface endpoint must own the actual query point enumeration."
-            )
-        if not np.array_equal(
-            np.asarray(surface.mass_diagonal), np.asarray(self.measures)
-        ):
-            raise ValueError(
-                "Exchange measures must be the surface endpoint's native capacity diagonal."
-            )
-        if surface.field(self.surface.block).full_space.shape != self.measures.shape:
-            raise ValueError(
-                "Surface field coordinates do not match the exchange quadrature."
-            )
+        self.query.require_reconstruction(self._bulk_reconstruction(components))
+        self._current_surface(components)
         residual = _ExchangeResidual(self.query, self.measures, self.normals, self.flux)
         contribution = ResidualContribution(
             (self.bulk, self.surface),
@@ -340,7 +529,7 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
             contributions=(contribution,),
             impositions=(),
             certificate=_ExchangeCertificate(
-                self.law_id, self.bulk, self.surface, residual
+                self.law_id, self.bulk, self.surface, residual, self.deposition
             ),
             evidence=self.evidence,
         )
@@ -348,8 +537,6 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
     def refresh_at_window(
         self,
         components: Mapping[str, AbstractSpatialComponent],
-        points: ArrayLike,
-        measures: ArrayLike,
         normals: ArrayLike,
         /,
         *,
@@ -359,7 +546,13 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
         maximum_displacement: float,
         maximum_lag: float,
     ) -> SurfaceExchangeLaw:
-        """Relocate at a host window boundary, refusing stale or excessive motion."""
+        """Relocate fixed-topology sites at a host window boundary.
+
+        The moved surface is the actual surface endpoint in ``components``; its
+        points, capacity, and owner revision become the refreshed identity.
+        Stale epochs, excess motion or lag, and changed point counts (an epoch
+        relocation) are refused.
+        """
         if geometry_epoch <= self.evidence.geometry_epoch:
             raise ValueError("Moving query refresh requires a newer geometry epoch.")
         if (
@@ -370,11 +563,17 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
             raise ValueError(
                 "Moving exchange refresh requires a finite nondecreasing host window boundary."
             )
-        values = np.asarray(points, dtype=np.float64)
+        surface = components[self.surface.owner]
+        if not isinstance(surface, MeshfreeComponent):
+            raise TypeError(
+                "Surface exchange requires a native nodal MeshfreeComponent endpoint."
+            )
+        values = np.asarray(surface.owner.points, dtype=np.float64)
         if values.shape != self.query.points.shape:
-            raise ValueError("Moving exchange refresh preserves surface topology.")
-        if not np.all(np.isfinite(values)):
-            raise ValueError("Moving exchange points must be finite.")
+            raise ValueError(
+                "Moving exchange refresh preserves surface topology; a changed point "
+                "set is an epoch relocation."
+            )
         displacement = float(
             np.max(np.linalg.norm(values - np.asarray(self.query.points), axis=1))
         )
@@ -390,19 +589,17 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
             raise ValueError(
                 "Moving exchange exceeds its displacement or geometry-lag admission."
             )
-        bulk = components[self.bulk.owner]
-        if not isinstance(bulk, AbstractReconstructionComponent):
-            raise TypeError("Bulk exchange requires reconstruction capability.")
-        query = bulk.prepare_field_reconstruction(self.bulk.block).prepare_query(
+        query = self._bulk_reconstruction(components).prepare_query(
             values, coverage="complete"
         )
         return SurfaceExchangeLaw(
             self.bulk,
             self.surface,
             query,
-            measures,
+            surface,
             normals,
             self.flux,
+            deposition=self.deposition,
             law_id=self.law_id,
             constant_tolerance=self.tolerance,
             geometry_epoch=geometry_epoch,
@@ -410,6 +607,201 @@ class SurfaceExchangeLaw(AbstractCouplingLaw, NonTrainableState):
             displacement=displacement,
             lag=lag,
         )
+
+    def _epoch_routes(
+        self,
+        surface: MeshfreeComponent,
+        surface_states: Sequence[ArrayLike],
+        transitions: Sequence[TopologyEpochTransition],
+        /,
+    ) -> tuple[tuple[Array, ...], tuple[TopologyEpochTransition, ...]]:
+        """One conservative capacity-to-capacity route per surface state."""
+        states = tuple(jnp.asarray(value, dtype=jnp.float64) for value in surface_states)
+        routes = tuple(transitions)
+        if not states or len(states) != len(routes):
+            raise ValueError(
+                "Every surface state (current first, then live histories) needs "
+                "exactly one epoch route."
+            )
+        if any(not isinstance(route, TopologyEpochTransition) for route in routes):
+            raise TypeError(
+                "Surface state routes must be TopologyEpochTransition values."
+            )
+        if any(state.shape != self.measures.shape for state in states):
+            raise ValueError("Surface states must use the exchange surface coordinates.")
+        source, target = np.asarray(self.measures), np.asarray(surface.mass_diagonal)
+        if any(
+            not np.array_equal(np.asarray(route.source_measures), source)
+            or not np.array_equal(np.asarray(route.target_measures), target)
+            for route in routes
+        ):
+            raise ValueError(
+                "Surface state routes must conserve content between the exchange "
+                "capacity and the target surface capacity."
+            )
+        return states, routes
+
+    def relocate_at_epoch(
+        self,
+        components: Mapping[str, AbstractSpatialComponent],
+        surface: MeshfreeComponent,
+        normals: ArrayLike,
+        surface_states: Sequence[ArrayLike],
+        transitions: Sequence[TopologyEpochTransition],
+        change: MeshfreeEpochChange,
+        /,
+        *,
+        window_start: float,
+        accepted_boundary: bool,
+    ) -> SurfaceEpochRelocation:
+        """Rebind exchange, surface, and surface states across one topology epoch.
+
+        ``components`` hold the bulk and the current surface (verified against
+        this law's identity); ``surface`` is the target-epoch surface endpoint,
+        whose point count may differ. The re-prepared query is a derived
+        artifact of the target surface; every surface state (current field
+        first, then live histories) crosses through its own conservative
+        ``transitions`` route of ``change``. Inadmissible target preparation
+        raises before anything is staged; a failed state route or an
+        unaccepted boundary publishes nothing and returns the source law,
+        surface, and states.
+        """
+        if not isinstance(change, MeshfreeEpochChange):
+            raise TypeError("change must be a MeshfreeEpochChange.")
+        if not isinstance(accepted_boundary, bool):
+            raise TypeError("accepted_boundary must be a bool.")
+        if change.target.index <= self.evidence.geometry_epoch:
+            raise ValueError("Epoch relocation requires a newer geometry epoch.")
+        if not np.isfinite(window_start) or window_start < self.evidence.refresh_time:
+            raise ValueError(
+                "Epoch relocation requires a finite nondecreasing host window boundary."
+            )
+        current = self._current_surface(components)
+        if not isinstance(surface, MeshfreeComponent):
+            raise TypeError("The target surface must be a native MeshfreeComponent.")
+        states, routes = self._epoch_routes(surface, surface_states, transitions)
+        query = self._bulk_reconstruction(components).prepare_query(
+            surface.owner.points, coverage="complete"
+        )
+        target_law = SurfaceExchangeLaw(
+            self.bulk,
+            self.surface,
+            query,
+            surface,
+            normals,
+            self.flux,
+            deposition=self.deposition,
+            law_id=self.law_id,
+            constant_tolerance=self.tolerance,
+            geometry_epoch=change.target.index,
+            refresh_time=window_start,
+        )
+        epoch = CompositionEntry(
+            change.source,
+            entry_id=_EPOCH_ENTRY,
+            role="topology",
+            owner_id=self.law_id,
+            structure_id=change.source.epoch_id,
+            revision_id=change.source.epoch_id,
+            semantics_id="surface-topology",
+        )
+        semantics = f"{self.surface.owner}/{self.surface.block}"
+        state_entries = tuple(
+            CompositionEntry(
+                value,
+                entry_id=_state_entry(slot),
+                role="physical-state" if slot == 0 else "history",
+                owner_id=self.law_id,
+                structure_id=change.source.epoch_id,
+                revision_id=f"{self.evidence.query_id}/state/{slot}",
+                semantics_id=semantics,
+                dependencies=(epoch.binding("structure"),),
+            )
+            for slot, value in enumerate(states)
+        )
+        # The staged epoch entry binds the target structure; derived artifacts
+        # of the target surface are prepared against exactly that identity.
+        target_epoch = CompositionEntry(
+            change.target,
+            entry_id=_EPOCH_ENTRY,
+            role="topology",
+            owner_id=self.law_id,
+            structure_id=change.target.epoch_id,
+            revision_id=change.change_id,
+            semantics_id="surface-topology",
+        )
+        candidate = stage_meshfree_epoch(
+            Composition(
+                (epoch, *_exchange_entries(self, current, epoch), *state_entries),
+                boundary_id=canonical_fingerprint(
+                    {
+                        "kind": "surface-exchange-boundary",
+                        "query": self.evidence.query_id,
+                        "window": float(window_start),
+                    }
+                ),
+            ),
+            change,
+            epoch_entry=_EPOCH_ENTRY,
+            remap={_state_entry(slot): route for slot, route in enumerate(routes)},
+            reprepare=_exchange_entries(target_law, surface, target_epoch),
+        )
+        receipt = commit_meshfree_epoch(candidate, accepted_boundary=accepted_boundary)
+        published = receipt.composition
+        law, component = published.value(_LAW_ENTRY), published.value(_SOURCE_ENTRY)
+        if not isinstance(law, SurfaceExchangeLaw) or not isinstance(
+            component, MeshfreeComponent
+        ):
+            raise RuntimeError("The epoch transaction lost its exchange artifacts.")
+        slots = range(len(states))
+        order = jnp.asarray(
+            [receipt.remapped.index(_state_entry(slot)) for slot in slots]
+        )
+        return SurfaceEpochRelocation(
+            law,
+            component,
+            tuple(jnp.asarray(published.value(_state_entry(slot))) for slot in slots),
+            receipt.conservation_residuals[order],
+            receipt.content_tolerances[order],
+            receipt,
+            receipt.published,
+        )
+
+
+@final
+class MeshfreeBulkSurfaceEvidence(StrictModule):
+    """Native evidence of Langmuir bulk-surface transport over one step or window.
+
+    `status` and `nonlinear_status` are the native film and nonlinear statuses,
+    with `nonlinear_iterations` and `nonlinear_residual_norm` the solve work and
+    final residual. `maximum_coverage` is the largest fractional Langmuir surface
+    coverage and `minimum_amount_mol` the smallest amount of the candidate.
+    `transferred_to_surface_mol` is the amount actually adsorbed per surface cell,
+    spent only by accepted steps, while `candidate_transferred_to_surface_mol`
+    keeps the raw candidate transfer, refused or not.
+    `total_amount_residual_mol` is the candidate's closed-system amount defect.
+    `query_complete` reports complete bulk-query coverage of every surface point
+    and `metric_exact` whether the surface metric was admitted by its exact rather
+    than relaxed moment equations.
+
+    Over a window `MeshfreeBulkSurfaceMethod.reduce_evidence` reports the status of
+    the refusing substep (else the accepted status), summed work and transfers,
+    extremal coverage, amount, and residual norm, and the signed amount defect of
+    largest magnitude.
+    """
+
+    __strict_contract__ = True
+    status: Int32[Scalar]
+    nonlinear_status: Int32[Scalar]
+    nonlinear_iterations: Int32[Scalar]
+    nonlinear_residual_norm: Float[Scalar]
+    maximum_coverage: Float[Scalar]
+    minimum_amount_mol: Float[Scalar]
+    transferred_to_surface_mol: Float[_SurfacePointDim]
+    candidate_transferred_to_surface_mol: Float[_SurfacePointDim]
+    total_amount_residual_mol: Float[Scalar]
+    query_complete: Bool[Scalar]
+    metric_exact: Bool[Scalar]
 
 
 @final
@@ -427,6 +819,7 @@ class MeshfreeBulkSurfaceMethod(AbstractFixedStepMethod, NonTrainableState):
     bulk_volumes: Float[_BulkPointDim]
     surface_measures: Float[_SurfacePointDim]
     surface_conductances: Float[_SurfaceEdgeDim]
+    metric_exact: Bool[Scalar]
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -441,8 +834,6 @@ class MeshfreeBulkSurfaceMethod(AbstractFixedStepMethod, NonTrainableState):
         tolerance: float = 1e-12,
         maximum_iterations: int = 30,
     ) -> None:
-        from ...discretization.meshfree._exterior import PreparedMeshfreeExteriorCalculus
-
         _admit_query(query, tolerance)
         if not isinstance(surface_graph, PreparedMeshfreeExteriorCalculus):
             raise TypeError(
@@ -465,22 +856,13 @@ class MeshfreeBulkSurfaceMethod(AbstractFixedStepMethod, NonTrainableState):
         diffusivity = float(surface_diffusivity)
         if not np.isfinite(diffusivity) or diffusivity < 0:
             raise ValueError("surface_diffusivity must be finite and nonnegative.")
-        route = query.route
-        if not isinstance(route, GatherStencil):
-            raise ValueError(
-                "Fixed-topology amount transport requires an owning bounded GatherStencil query."
-            )
+        route, carrying = _positive_partition(query)
         weights = np.asarray(route.weights)
-        valid = np.asarray(route.valid) & (weights != 0.0)
-        if np.any(weights[valid] < 0):
-            raise ValueError(
-                "Signed query weights cannot define a positive amount partition."
-            )
         surface_indices = np.broadcast_to(
             np.arange(query.admitted_count)[:, None], weights.shape
-        )[valid]
-        bulk_indices = np.asarray(route.indices)[valid]
-        values = weights[valid]
+        )[carrying]
+        bulk_indices = np.asarray(route.indices)[carrying]
+        values = weights[carrying]
         area = np.asarray(surface_graph.node_volumes)
         conductances = (
             jnp.zeros_like(surface_graph.metric_result.weights)
@@ -502,21 +884,13 @@ class MeshfreeBulkSurfaceMethod(AbstractFixedStepMethod, NonTrainableState):
         self.bulk_volumes = jnp.asarray(volume)
         self.surface_measures = jnp.asarray(area)
         self.surface_conductances = conductances
+        self.metric_exact = jnp.asarray(metric.exact, dtype=jnp.bool_)
         self.method_id = canonical_fingerprint(
             {
                 "kind": "meshfree-bulk-surface-method",
                 "transport": self.transport.transport_id,
                 "query": query.query_id,
             }
-        )
-
-    @property
-    def evidence_template(self) -> tuple[Array, Array, Array, Array]:
-        return (
-            jnp.zeros((), dtype=self.surface_measures.dtype),
-            jnp.zeros((), dtype=self.surface_measures.dtype),
-            jnp.zeros_like(self.surface_measures),
-            jnp.zeros((), dtype=jnp.int32),
         )
 
     def step(
@@ -550,12 +924,78 @@ class MeshfreeBulkSurfaceMethod(AbstractFixedStepMethod, NonTrainableState):
             work=result.nonlinear_iterations,
             transform_applied=jnp.asarray(False),
             transform_correction_norm=jnp.asarray(0.0),
-            evidence=(
-                result.total_amount_residual_mol,
-                result.maximum_coverage,
-                result.transferred_to_surface_mol,
-                result.status,
+            evidence=MeshfreeBulkSurfaceEvidence(
+                status=result.status,
+                nonlinear_status=result.nonlinear_status,
+                nonlinear_iterations=result.nonlinear_iterations,
+                nonlinear_residual_norm=result.nonlinear_residual_norm,
+                maximum_coverage=result.maximum_coverage,
+                minimum_amount_mol=result.minimum_amount_mol,
+                # A refused candidate spends no amount; its transfer stays a
+                # candidate diagnostic.
+                transferred_to_surface_mol=jnp.where(
+                    result.successful, result.transferred_to_surface_mol, 0.0
+                ),
+                candidate_transferred_to_surface_mol=result.transferred_to_surface_mol,
+                total_amount_residual_mol=result.total_amount_residual_mol,
+                query_complete=jnp.asarray(self.query.complete, dtype=jnp.bool_),
+                metric_exact=self.metric_exact,
             ),
+        )
+
+    def reduce_evidence(
+        self,
+        evidence: object,
+        executed: Array,
+        successful: Array,
+        /,
+    ) -> MeshfreeBulkSurfaceEvidence:
+        """Window evidence of consecutive substeps with physical reduction semantics.
+
+        Spent transfers and nonlinear work are additive; coverage, minimum amount,
+        and residual norm are extremal over executed substeps; the status is that of
+        the refusing substep, or the accepted status when every executed substep
+        was accepted; the amount defect keeps the sign of its largest magnitude.
+        """
+        if not isinstance(evidence, MeshfreeBulkSurfaceEvidence):
+            raise TypeError("Bulk-surface evidence must be MeshfreeBulkSurfaceEvidence.")
+        refused = executed & ~successful
+        # The first substep always runs, so index 0 is the accepted status when no
+        # executed substep was refused.
+        terminal = jnp.where(jnp.any(refused), jnp.argmax(refused), 0)
+        committed = (executed & successful)[:, None]
+        worst = jnp.argmax(
+            jnp.where(executed, jnp.abs(evidence.total_amount_residual_mol), -1.0)
+        )
+        return MeshfreeBulkSurfaceEvidence(
+            status=evidence.status[terminal],
+            nonlinear_status=evidence.nonlinear_status[terminal],
+            nonlinear_iterations=jnp.sum(
+                jnp.where(executed, evidence.nonlinear_iterations, 0)
+            ).astype(jnp.int32),
+            nonlinear_residual_norm=jnp.max(
+                jnp.where(executed, evidence.nonlinear_residual_norm, 0.0)
+            ),
+            maximum_coverage=jnp.max(
+                jnp.where(executed, evidence.maximum_coverage, -jnp.inf)
+            ),
+            minimum_amount_mol=jnp.min(
+                jnp.where(executed, evidence.minimum_amount_mol, jnp.inf)
+            ),
+            transferred_to_surface_mol=jnp.sum(
+                jnp.where(committed, evidence.transferred_to_surface_mol, 0.0), axis=0
+            ),
+            candidate_transferred_to_surface_mol=jnp.sum(
+                jnp.where(
+                    executed[:, None],
+                    evidence.candidate_transferred_to_surface_mol,
+                    0.0,
+                ),
+                axis=0,
+            ),
+            total_amount_residual_mol=evidence.total_amount_residual_mol[worst],
+            query_complete=jnp.all(evidence.query_complete),
+            metric_exact=jnp.all(evidence.metric_exact),
         )
 
     def participant(
@@ -603,6 +1043,8 @@ class MeshfreeBulkSurfaceMethod(AbstractFixedStepMethod, NonTrainableState):
 
 __all__ = [
     "LangmuirAdsorptionFlux",
+    "SurfaceDeposition",
+    "SurfaceEpochRelocation",
     "SurfaceExchangeEvidence",
     "SurfaceExchangeLaw",
     "MeshfreeBulkSurfaceMethod",

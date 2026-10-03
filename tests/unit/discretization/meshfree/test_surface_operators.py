@@ -10,10 +10,20 @@ import numpy as np
 import pytest
 from jax import Array
 
+from examples.meshfree_open_surface_diffusion import (
+    chart_patch,
+    LATLONG_CHART,
+    PATCH_LOWER,
+    PATCH_UPPER,
+    run_open_patch,
+)
 from examples.meshfree_surface_laplace_beltrami import run_workflow, surface_plan
 from phydrax.discretization.meshfree._stencils import LocalStencilPolicy
 from phydrax.discretization.meshfree._surface import SurfacePointCloudPlan
+from phydrax.discretization.meshfree._surface_geometry import ImplicitSurfaceGeometry
+from phydrax.discretization.meshfree._surface_quadrature import SurfaceQuadraturePolicy
 from phydrax.geometry.analytic import Sphere
+from phydrax.metrix._ambient import RegularLevelSetManifold
 
 
 def _numeric_metric(metrics: Mapping[str, object], name: str) -> float:
@@ -173,3 +183,72 @@ def test_expanding_sphere_reference_area_ratio_without_refresh_drift(
     np.testing.assert_allclose(
         repeated.measures, expanded.measures, rtol=1e-12, atol=1e-12
     )
+
+
+def test_open_patch_green_identity_closes_with_declared_boundary_quadrature() -> None:
+    patch = chart_patch(LATLONG_CHART, PATCH_LOWER, PATCH_UPPER, count=13)
+    boundary = patch.boundary
+    assert boundary is not None
+    x = patch.points
+    scalar = x[:, 0] * x[:, 1]
+    # x y is a degree-2 spherical harmonic: Lap_S(x y) = -6 x y.
+    laplace = patch.laplace_beltrami.mv(scalar)
+    assert (
+        float(jnp.linalg.norm(laplace + 6 * scalar) / jnp.linalg.norm(6 * scalar)) < 2e-2
+    )
+    vector = jnp.stack((x[:, 2], jnp.sin(x[:, 0]), x[:, 1]), axis=-1)
+    tangent = vector - jnp.sum(vector * patch.normals, -1, keepdims=True) * patch.normals
+    left = jnp.sum(patch.measures * scalar * patch.surface_divergence.mv(tangent))
+    flux = jnp.sum(
+        scalar[boundary.nodes]
+        * jnp.sum(boundary.weighted_conormals * tangent[boundary.nodes], axis=-1)
+    )
+    right = -jnp.sum(
+        patch.measures[:, None] * patch.surface_gradient.mv(scalar) * tangent
+    )
+    np.testing.assert_allclose(left, right + flux, atol=1e-12)
+    # The pointwise divergence obeys the continuous divergence theorem.
+    gradient_z = jnp.asarray([0.0, 0.0, 1.0]) - x[:, 2:3] * x
+    np.testing.assert_allclose(
+        jnp.sum(patch.measures * patch.strong_surface_divergence.mv(gradient_z)),
+        jnp.sum(jnp.sum(boundary.weighted_conormals * gradient_z[boundary.nodes], -1)),
+        atol=1e-5,
+    )
+    with pytest.raises(ValueError, match="no conormal"):
+        _ = surface_plan(size=64, neighbors=12).prepare().conormal_derivative
+
+
+def test_open_patch_transient_diffusion_matches_spherical_harmonic_decay() -> None:
+    result = run_open_patch(count=11, steps=10)
+    assert result["solver_successful"]
+    assert float(result["final_relative_error"]) < 2e-2
+    assert float(result["perimeter_error"]) < 1e-12
+    assert float(result["maximum_balance_defect"]) < 0.1
+
+
+def test_circle_curve_operators_eigenfunction_length_and_refresh() -> None:
+    circle = RegularLevelSetManifold(
+        lambda point: jnp.asarray([point @ point - 1]),
+        ambient_dimension=2,
+        codimension=1,
+        manifold_id="unit-circle",
+    )
+    angle = np.sort(np.random.default_rng(2).uniform(0, 2 * np.pi, 64))
+    points = jnp.asarray(np.column_stack((np.cos(angle), np.sin(angle))))
+    prepared = SurfacePointCloudPlan(
+        points,
+        ImplicitSurfaceGeometry(circle, geometry_id="unit-circle"),
+        8,
+        quadrature=SurfaceQuadraturePolicy(),
+        stencil_policy=LocalStencilPolicy(polynomial_degree=4, chunk_rows=32),
+    ).prepare()
+    x = prepared.points[:, 0]
+    assert (
+        float(jnp.linalg.norm(prepared.laplace_beltrami.mv(x) + x) / jnp.linalg.norm(x))
+        < 1e-2
+    )
+    np.testing.assert_allclose(prepared.geometry.mean_curvature, 1, atol=1e-12)
+    assert abs(float(prepared.quadrature_evidence.total_area) - 2 * np.pi) < 0.1
+    refreshed = prepared.refresh(prepared.points)
+    assert bool(refreshed.accepted)
+    np.testing.assert_allclose(refreshed.measures, prepared.measures, atol=1e-12)

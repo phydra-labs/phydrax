@@ -22,6 +22,7 @@ from ..exterior._complex import ComplexBoundary
 from ..exterior._form_type import FormTwist
 from ..linalg import (
     AbstractLinearOperator,
+    apply_real_map_componentwise,
     ArraySpace,
     HilbertComplex,
     HodgeLaplacianPart,
@@ -639,7 +640,10 @@ class StructuredCochainBridge(AbstractCellDeRhamComplex, NonTrainableState):
             0,
         )
         operator = self.directional_differentials[degree_][axis_]
-        output = operator.mv(source)
+        # Real incidence on real cochain spaces; complex cochains (frequency-
+        # domain fields) apply it to real and imaginary parts, as the cochain
+        # owner does for the complete exterior derivative.
+        output = apply_real_map_componentwise(operator.mv, source)
         return jnp.where(
             self.cochain.active_mask(degree_ + 1, boundary),
             output,
@@ -696,7 +700,7 @@ class StructuredCochainBridge(AbstractCellDeRhamComplex, NonTrainableState):
         operator = self.directional_differentials[degree_ - 1][axis_]
         output = self.cochain.inverse_hodge_star(
             degree_ - 1,
-            operator.transpose_mv(weighted),
+            apply_real_map_componentwise(operator.transpose_mv, weighted),
         )
         return jnp.where(
             self.cochain.active_mask(degree_ - 1, boundary),

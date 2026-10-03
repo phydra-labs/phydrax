@@ -895,7 +895,7 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
         error_reference = jnp.asarray(1.0, dtype=window.start.dtype)
         error_order = jnp.asarray(1, dtype=jnp.int32)
         error_reliable = jnp.asarray(True)
-        auxiliary: list[Any] = []
+        substep_statuses: list[Array] = []
         for step_index in range(grid.num_steps):
             subinputs = tuple(
                 waveform.sample(step_index, port.space)
@@ -925,9 +925,9 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
                     raise ValueError(
                         "Subcycling advance_substep returned the wrong output count."
                     )
-                if result.auxiliary is not None:
+                if result.evidence is not None:
                     raise ValueError(
-                        "Fixed-grid subcycling requires auxiliary=None from each substep."
+                        "Fixed-grid subcycling requires evidence=None from each substep."
                     )
                 validated_outputs = tuple(
                     port.space.validate(value)
@@ -991,7 +991,7 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
             error_reference = jnp.maximum(error_reference, step_reference)
             error_order = jnp.minimum(error_order, step_order)
             error_reliable = error_reliable & step_reliable
-            auxiliary.append(step_status)
+            substep_statuses.append(step_status)
             for samples, value in zip(output_samples, step_outputs, strict=True):
                 samples.append(value)
         output_waveforms: list[CouplingWaveform] = []
@@ -1019,7 +1019,7 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
                 error_norm, error_reference, error_order, error_reliable
             ),
             work=work,
-            auxiliary=tuple(auxiliary),
+            evidence=jnp.stack(substep_statuses),
         )
 
 

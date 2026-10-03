@@ -99,6 +99,48 @@ def test_conservative_fd_scenario_1() -> None:
     assert operator.stability_report.passed is None
 
 
+def test_anisotropic_tensor_diffusion_is_linear_with_an_exact_transpose() -> None:
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(12),
+            phx.discretization.UniformCellAxisSpec(10),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    x = grid.axes[0].nodes[:, None]
+    y = grid.axes[1].nodes[None, :]
+    cross = 0.4 * jnp.sin(jnp.pi * x) * jnp.cos(jnp.pi * y)
+    tensor = jnp.stack(
+        (
+            jnp.stack((2.0 + x + 0.0 * y, cross), axis=-1),
+            jnp.stack((cross, 3.0 + y + 0.0 * x), axis=-1),
+        ),
+        axis=-2,
+    )
+    # The default harmonic coefficient interpolation must not leak into the
+    # tangential cell gradients of the cross terms.
+    operator = phx.discretization.ConservativeDiffusionPlan(
+        grid, boundaries={"x": ("dirichlet", "neumann"), "y": ("neumann", "dirichlet")}
+    ).prepare(tensor)
+    first = jnp.sin(2.0 * jnp.pi * x) * jnp.exp(y)
+    second = (x - 0.3) * (y + 0.2) ** 2
+    combined = operator.mv(first) - 2.5 * operator.mv(second)
+    scale = float(
+        jnp.max(jnp.abs(operator.mv(first))) + 2.5 * jnp.max(jnp.abs(operator.mv(second)))
+    )
+    np.testing.assert_allclose(
+        operator.mv(first - 2.5 * second), combined, rtol=0.0, atol=1e-13 * scale
+    )
+    probe = jnp.cos(3.0 * x) + y**2
+    pairing = float(jnp.sum(jnp.abs(probe * operator.mv(first))))
+    np.testing.assert_allclose(
+        jnp.sum(probe * operator.mv(first)),
+        jnp.sum(operator.transpose_mv(probe) * first),
+        rtol=0.0,
+        atol=1e-13 * pairing,
+    )
+
+
 def test_conservative_fd_scenario_2() -> None:
     grid = _cell_grid(96, periodic=True)
     velocity = (jnp.ones(grid.faces("x").shape),)

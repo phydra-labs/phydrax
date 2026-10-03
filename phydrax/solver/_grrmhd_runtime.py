@@ -21,7 +21,7 @@ from ..metrix._adm_exchange import (
     StressEnergyProjection,
 )
 from ..typing import checked
-from ._balance_law_composition import AdditiveIMEXTableau
+from ._balance_law_composition import additive_imex_tableau, AdditiveIMEXTableau
 from ._gr_m1_finite_volume import (
     FixedGridGRM1SSPRK3Plan,
     GRM1SpatialRate,
@@ -175,13 +175,7 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
         tolerance = float(balance_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("GRRMHD balance_tolerance must be finite and positive.")
-        gamma = 1.0 - 1.0 / np.sqrt(2.0)
-        tableau = AdditiveIMEXTableau(
-            np.asarray(((0.0, 0.0), (1.0, 0.0))),
-            np.asarray(((gamma, 0.0), (1.0 - 2.0 * gamma, gamma))),
-            np.asarray((0.5, 0.5)),
-            np.asarray((gamma, 1.0)),
-        )
+        tableau = additive_imex_tableau("ssp2-222")
         self.material_transport = material_transport
         self.radiation_transport = radiation_transport
         self.source = source

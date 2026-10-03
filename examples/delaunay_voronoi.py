@@ -191,7 +191,7 @@ if not (certified.audit.passed and bool(jnp.all(solved.successful)) and error < 
 print(
     json.dumps(
         {
-            "meshcore": cdt.evidence.meshcore_identity,
+            "meshcore": cdt.evidence.provider_identity,
             "delaunay": delaunay,
             "diagrams": diagrams,
             "constrained_delaunay": {

@@ -69,17 +69,33 @@ def run_workflow(
         jnp.full((size,), np.pi / size),
         boundary_mask=boundary,
         boundary_normals=normals,
-        neighbors=min(size, 24),
-        stencil=phx.discretization.meshfree.LocalStencilPolicy(polynomial_degree=2),
+        neighbors=min(size, 30),
+        stencil=phx.discretization.meshfree.LocalStencilPolicy(
+            approximation="phs-rbf-fd", polynomial_degree=3
+        ),
     ).prepare()
     exact = 1.0 - jnp.sum(points * points, axis=1)
     diffusivity = 2.0 + 0.1 * jnp.sum(points, axis=1)
     source = 2.0 * dimension * diffusivity + 0.2 * jnp.sum(points, axis=1)
+    boundary_plan = phx.discretization.PointBoundaryPlan(
+        (
+            phx.discretization.PointBoundaryCondition(
+                "dirichlet",
+                np.arange(boundary_count),
+                exact[:boundary_count],
+                label="ring",
+            ),
+        ),
+        row_count=size,
+    )
+    plan = phx.discretization.PointCloudPoissonPlan(
+        cloud, boundary_plan, form="collocated"
+    )
+    # The prepared hierarchy eliminates Dirichlet identity rows from coarsening;
+    # the plan then selects GMRES with the native meshfree multigrid cycle.
+    hierarchy = plan.hierarchy_plan().prepare(plan.solve_space)
     poisson = phx.discretization.PointCloudPoissonPlan(
-        cloud,
-        phx.discretization.PointBoundaryPlan("dirichlet", exact),
-        form="collocated",
-        preconditioner="multilevel",
+        cloud, boundary_plan, form="collocated", hierarchy=hierarchy
     ).prepare(diffusivity)
     result = poisson.solve(source)
     if poisson.hierarchy is None:
@@ -101,8 +117,12 @@ def run_workflow(
         "linear_status": int(result.status),
         "linear_iterations": int(result.diagnostics.iterations),
         "level_sizes": evidence.level_sizes,
-        "constant_reproduction_error": max(evidence.constant_residuals, default=0.0),
-        "linear_reproduction_error": max(evidence.linear_residuals, default=0.0),
+        "constant_reproduction_error": max(
+            (level[0] for level in evidence.reproduction_residuals), default=0.0
+        ),
+        "linear_reproduction_error": max(
+            (level[1] for level in evidence.reproduction_residuals), default=0.0
+        ),
         "transfer_entries": evidence.transfer_entries,
         "stopping_reason": evidence.stopping_reason,
         "domain": "unit disk in R^2; ring boundary and seeded interior points",

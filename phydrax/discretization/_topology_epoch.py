@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import AbstractLinearOperator
 from ..typing import checked
 from ._transfer import FieldTransfer
 
@@ -102,7 +103,11 @@ class TopologyEpochTransitionResult(StrictModule):
 
     ``content_tolerance`` is the admissible ``|conservation_residual|``: the
     roundoff of both content sums plus the transfer's certified measure defect
-    acting on this field.
+    acting on this field. ``differentiation_available`` refers to the epoch
+    selection (geometry and topology), which is never differentiable;
+    ``value_derivative_available`` states that the values map through the
+    frozen linear transfer, whose JVP is the primal action and whose VJP is the
+    coordinate dual pullback.
     """
 
     values: Array
@@ -112,6 +117,7 @@ class TopologyEpochTransitionResult(StrictModule):
     content_tolerance: Array
     successful: Array
     differentiation_available: Array
+    value_derivative_available: Array
 
 
 class TopologyEpochTransition(StrictModule, NonTrainableState):
@@ -122,6 +128,11 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
     transfer ``P``; the content of a field ``v`` then changes by at most
     ``sum(bound * |v|)`` beyond roundoff. ``None`` certifies exact conservation
     (only roundoff remains), as for nested or exactly normalized transfers.
+
+    Values remain differentiable across the frozen transfer: ``pullback`` is
+    the coordinate dual ``P^T`` (the VJP of ``apply``) and ``adjoint`` the
+    Hilbert adjoint in the source/target field-space pairings. Selection of
+    the epoch itself has no derivative.
     """
 
     source: TopologyEpoch
@@ -236,18 +247,26 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
             tolerance,
             successful,
             jnp.asarray(False),
+            jnp.asarray(True),
         )
 
-    def transpose(self, target_cotangent: ArrayLike, /) -> Array:
-        flat = jnp.asarray(target_cotangent).reshape(-1)
-        adjoint = self.transfer.hilbert_adjoint_operator
-        if adjoint is None:
-            raise RuntimeError("Topology transition lost its required Hilbert adjoint.")
-        target_space = adjoint.source
-        source_space = adjoint.target
-        if flat.shape != (target_space.size,):
+    def _reverse(
+        self, operator: AbstractLinearOperator | None, value: ArrayLike
+    ) -> Array:
+        if operator is None:
+            raise RuntimeError("Topology transition lost a required reverse operator.")
+        flat = jnp.asarray(value).reshape(-1)
+        if flat.shape != (operator.source.size,):
             raise ValueError("Topology transition cotangent does not match target space.")
-        return source_space.flatten(adjoint.mv(target_space.unflatten(flat)))
+        return operator.target.flatten(operator.mv(operator.source.unflatten(flat)))
+
+    def pullback(self, target_cotangent: ArrayLike, /) -> Array:
+        """Coordinate dual ``P^T w``: the VJP of ``apply`` for a target covector."""
+        return self._reverse(self.transfer.dual_pullback_operator, target_cotangent)
+
+    def adjoint(self, target_value: ArrayLike, /) -> Array:
+        """Hilbert adjoint ``P^*`` in the field-space pairings of both epochs."""
+        return self._reverse(self.transfer.hilbert_adjoint_operator, target_value)
 
     def require_differentiable_topology(self) -> None:
         raise ValueError(

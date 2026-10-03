@@ -1,5 +1,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Explicit host topology repair with bounded preparation and honest convergence."""
+"""Bounded deterministic sample-repair proposals with honest convergence.
+
+Repair inserts probe samples, removes close samples, projects and relaxes the
+cloud of one unchanged surface. It is a sampling proposal with explicit sample
+lineage, never a physical topology event: split, merge and pinch changes belong
+to the committed multiregion surface authority.
+"""
 
 from __future__ import annotations
 
@@ -12,8 +18,9 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ...typing import Float64
+from ...typing import Float64, Int32
 from ._capacity import ActivePointDim, MeshfreeCapacityMap, MeshfreeCapacityPolicy
 from ._neighbors import MeshfreeNeighborhoodPlan
 from ._shifting import ShiftAmbientDim
@@ -32,17 +39,27 @@ class SurfaceQualityEvidence(StrictModule):
 
 @final
 class SurfaceResamplingResult(StrictModule):
+    """One sample-repair proposal of a fixed surface.
+
+    ``source_indices[k]`` is the input sample a proposed sample descends from,
+    or ``-1`` for an inserted probe; ``inserted_probes`` and ``removed_sources``
+    list the probe and input indices in application order. The proposal is
+    committed only by an owner that prepares a conservative epoch transfer.
+    """
+
     __strict_contract__ = True
     points: Float64[ActivePointDim, ShiftAmbientDim]
+    source_indices: Int32[ActivePointDim]
     capacity: MeshfreeCapacityMap
     before: SurfaceQualityEvidence
     after: SurfaceQualityEvidence
     converged: bool = eqx.field(static=True)
     iterations: int = eqx.field(static=True)
-    inserted: int = eqx.field(static=True)
-    removed: int = eqx.field(static=True)
+    inserted_probes: tuple[int, ...] = eqx.field(static=True)
+    removed_sources: tuple[int, ...] = eqx.field(static=True)
     projection_residual: float = eqx.field(static=True)
     capacity_refused: bool = eqx.field(static=True)
+    proposal_id: str = eqx.field(static=True)
 
 
 @final
@@ -151,54 +168,35 @@ class SurfaceResamplingPolicy(StrictModule):
     ) -> SurfaceResamplingResult:
         """Lexicographic probe insertion and higher-index close-point removal.
 
-        Stencil defects that geometric repair cannot resolve remain explicit
-        nonconvergence. Topology changes are proposals; an owner must prepare a
-        conservative epoch transition before committing any fields.
+        Each iteration applies at most one insertion, one removal or one
+        relaxation, so work is bounded by ``maximum_iterations``. Stencil
+        defects that geometric repair cannot resolve remain explicit
+        nonconvergence. The result is a sample proposal; an owner must prepare
+        a conservative epoch transition before committing any fields.
         """
         x, probe = (
             np.asarray(points, dtype=np.float64),
             np.asarray(probes, dtype=np.float64),
         )
         before = self.assess(x, probe, stencil_quality)
-        inserted = removed = iterations = 0
+        # Lineage of every current sample: input index, or -1 with its probe.
+        inputs = x.shape[0]
+        source = np.arange(inputs, dtype=np.int64)
+        origin = np.full(x.shape[0], -1, dtype=np.int64)
+        iterations = 0
         refused = False
         residual = float(np.max(np.abs(np.asarray(surface_residual(jnp.asarray(x))))))
         evidence = before
         for iteration in range(self.maximum_iterations):
             if not evidence.triggered and residual <= self.projection_tolerance:
                 break
-            proposed = x
-            insertion = removal = 0
-            if evidence.separation < self.minimum_separation and x.shape[0] > 2:
-                _unique, first = np.unique(x, axis=0, return_index=True)
-                duplicate = np.setdiff1d(np.arange(x.shape[0]), first)
-                if duplicate.size:
-                    remove_index = int(duplicate[-1])
-                else:
-                    neighborhood = MeshfreeNeighborhoodPlan(x, 2).prepare()
-                    distances = np.asarray(neighborhood.distances)[:, 1]
-                    row = int(np.argmin(distances))
-                    other = int(np.asarray(neighborhood.relation.source_indices)[row, 1])
-                    remove_index = max(row, other)
-                proposed = np.delete(x, remove_index, axis=0)
-                removal = 1
-            elif evidence.fill_distance > self.maximum_fill:
-                query = MeshfreeNeighborhoodPlan(
-                    np.unique(x, axis=0), 1, targets=probe
-                ).prepare()
-                gap = np.asarray(query.distances)[:, 0]
-                index = int(np.argmax(gap))
-                if x.shape[0] >= capacity_policy.buckets[-1]:
-                    refused = True
-                    break
-                proposed = np.concatenate((x, probe[index : index + 1]), axis=0)
-                insertion = 1
-            elif relax is not None:
-                proposed = np.asarray(relax(jnp.asarray(x)), dtype=np.float64)
-                if proposed.shape != x.shape:
-                    raise ValueError("Relaxation must preserve compact geometry shape.")
-            else:
+            step = self._step(x, probe, evidence, capacity_policy, relax)
+            if step is None:
+                refused = x.shape[0] >= capacity_policy.buckets[-1] and (
+                    evidence.fill_distance > self.maximum_fill
+                )
                 break
+            proposed, keep, inserted = step
             projected = np.asarray(project(jnp.asarray(proposed)), dtype=np.float64)
             residual = float(
                 np.max(np.abs(np.asarray(surface_residual(jnp.asarray(projected)))))
@@ -210,8 +208,10 @@ class SurfaceResamplingPolicy(StrictModule):
                 or residual > self.projection_tolerance
             ):
                 break
-            inserted += insertion
-            removed += removal
+            source, origin = source[keep], origin[keep]
+            if inserted is not None:
+                source = np.append(source, -1)
+                origin = np.append(origin, inserted)
             x = projected
             evidence = self.assess(x, probe, stencil_quality)
         capacity = capacity_policy.allocate(x.shape[0])
@@ -220,18 +220,72 @@ class SurfaceResamplingPolicy(StrictModule):
             and residual <= self.projection_tolerance
             and not refused
         )
+        removed = np.setdiff1d(np.arange(inputs), source)
+        identifier = canonical_fingerprint(
+            {
+                "kind": "surface-sample-repair",
+                "points": x,
+                "source_indices": source,
+                "probes": probe,
+                "input_count": inputs,
+            }
+        )
         return SurfaceResamplingResult(
             jnp.asarray(x),
+            jnp.asarray(source, dtype=jnp.int32),
             capacity,
             before,
             evidence,
             converged,
             iterations,
-            inserted,
-            removed,
+            tuple(int(item) for item in origin[source < 0]),
+            tuple(int(item) for item in removed),
             residual,
             refused,
+            identifier,
         )
+
+    def _step(
+        self,
+        x: np.ndarray,
+        probe: np.ndarray,
+        evidence: SurfaceQualityEvidence,
+        capacity_policy: MeshfreeCapacityPolicy,
+        relax: Callable[[Array], Array] | None,
+    ) -> tuple[np.ndarray, np.ndarray, int | None] | None:
+        """One bounded proposal: points, kept rows, and an inserted probe index."""
+        rows = np.arange(x.shape[0])
+        if evidence.separation < self.minimum_separation and x.shape[0] > 2:
+            _unique, first = np.unique(x, axis=0, return_index=True)
+            duplicate = np.setdiff1d(rows, first)
+            if duplicate.size:
+                remove_index = int(duplicate[-1])
+            else:
+                neighborhood = MeshfreeNeighborhoodPlan(x, 2).prepare()
+                distances = np.asarray(neighborhood.distances)[:, 1]
+                row = int(np.argmin(distances))
+                other = int(np.asarray(neighborhood.relation.source_indices)[row, 1])
+                remove_index = max(row, other)
+            keep = rows != remove_index
+            return x[keep], keep, None
+        if evidence.fill_distance > self.maximum_fill:
+            if x.shape[0] >= capacity_policy.buckets[-1]:
+                return None
+            query = MeshfreeNeighborhoodPlan(
+                np.unique(x, axis=0), 1, targets=probe
+            ).prepare()
+            index = int(np.argmax(np.asarray(query.distances)[:, 0]))
+            return (
+                np.concatenate((x, probe[index : index + 1]), axis=0),
+                np.ones(x.shape[0], dtype=bool),
+                index,
+            )
+        if relax is None:
+            return None
+        proposed = np.asarray(relax(jnp.asarray(x)), dtype=np.float64)
+        if proposed.shape != x.shape:
+            raise ValueError("Relaxation must preserve compact geometry shape.")
+        return proposed, np.ones(x.shape[0], dtype=bool), None
 
 
 __all__ = ["SurfaceQualityEvidence", "SurfaceResamplingPolicy", "SurfaceResamplingResult"]

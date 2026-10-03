@@ -696,6 +696,7 @@ from ._sph_density import (
     ContinuityDensityPlan,
     SummationDensityPlan,
 )
+from ._sph_operators import sph_continuity_density_rate, sph_summation_density
 from ._sph_source import (
     emit_sph_particles,
     SPHDensityInitialization,
@@ -964,9 +965,11 @@ __all__ = [
     "multiphase_interface_interaction",
     "shepard_renormalized_density",
     "sph_artificial_viscosity_force",
+    "sph_continuity_density_rate",
     "sph_density_diffusion_rate",
     "sph_first_order_correction",
     "sph_kernel_normalization",
+    "sph_summation_density",
     "variable_h_density",
     "variable_h_pressure_gradient",
     "AbstractSPHDensityPlan",

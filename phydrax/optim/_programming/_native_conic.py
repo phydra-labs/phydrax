@@ -17,6 +17,7 @@ from ._barrier import cone_barrier_oracle, ConeBarrierOracle
 from ._clarabel import _audit_result
 from ._cones import NonnegativeCone, ProductCone, ZeroCone
 from ._native_hsd import solve_homogeneous_conic
+from ._native_hsd_factorized import FactorizedNewtonPlan, prepare_factorized_newton
 from ._policy import ConvexSolvePolicy, NativeHomogeneousConic
 from ._problem import (
     _conic_matrix_mv,
@@ -25,7 +26,7 @@ from ._problem import (
     ConicProgram,
 )
 from ._quadratic import ConvexProgramResult
-from ._types import ConvexWarmStart
+from ._types import ConvexProgramStatus, ConvexWarmStart
 
 
 class _NativeConicState(StrictModule):
@@ -118,37 +119,85 @@ def _augment_dense_bounds(
     return augmented, fixed, lower, upper
 
 
-@eqx.filter_jit
-def solve_native_conic_program(
-    program: ConicProgram,
-    policy: ConvexSolvePolicy,
-    /,
-    *,
-    barrier: ConeBarrierOracle | None = None,
-    warm_start: ConvexWarmStart | None = None,
-) -> ConvexProgramResult:
-    """Execute a fixed-capacity JAX-native primal-dual conic iteration.
+class PreparedNativeConic(StrictModule):
+    """Coefficient-independent native conic state for one program structure.
 
-    The independent original-coordinate audit remains authoritative for every
-    optimality or ray status; iteration residuals are never trusted as certificates.
+    ``newton`` is the reduced-KKT symbolic plan, present exactly when the
+    homogeneous embedding runs on a sparse program with the factorized route.
+    """
+
+    barrier: ConeBarrierOracle
+    newton: FactorizedNewtonPlan | None
+
+
+def _uses_homogeneous_embedding(program: ConicProgram, /) -> bool:
+    has_bounds = bool(
+        program.fixed_bound_indices
+        or program.lower_bound_indices
+        or program.upper_bound_indices
+    )
+    return not program.batch_shape and (
+        not program.constraint_is_sparse or not has_bounds
+    )
+
+
+def prepare_native_conic(
+    program: ConicProgram, policy: ConvexSolvePolicy, /
+) -> PreparedNativeConic:
+    """Prepare the barrier oracle and, when selected, the reduced-KKT analysis.
+
+    Host-only symbolic preparation over concrete topology, reused by every
+    numeric binding of the same program structure. A reduced pattern exceeding
+    the declared factorization budget refuses here.
     """
     if not isinstance(program, ConicProgram):
         raise TypeError("program must be a ConicProgram.")
     method = policy.method
     if not isinstance(method, NativeHomogeneousConic):
         raise TypeError("policy method must be NativeHomogeneousConic.")
-    barrier_ = cone_barrier_oracle(program.cone) if barrier is None else barrier
-    if (
-        not isinstance(barrier_, ConeBarrierOracle)
-        or barrier_.cone.cone_id != program.cone.cone_id
-    ):
+    sparse = program.constraint_is_sparse or program.quadratic_is_sparse
+    newton = (
+        prepare_factorized_newton(program, method.factorization)
+        if sparse
+        and method.newton == "factorized"
+        and _uses_homogeneous_embedding(program)
+        else None
+    )
+    return PreparedNativeConic(cone_barrier_oracle(program.cone), newton)
+
+
+@eqx.filter_jit
+def solve_native_conic_program(
+    program: ConicProgram,
+    policy: ConvexSolvePolicy,
+    /,
+    *,
+    prepared: PreparedNativeConic | None = None,
+    warm_start: ConvexWarmStart | None = None,
+) -> ConvexProgramResult:
+    """Execute a fixed-capacity JAX-native primal-dual conic iteration.
+
+    The independent original-coordinate audit remains authoritative for every
+    optimality or ray status; iteration residuals are never trusted as certificates.
+    Sparse factorized execution requires ``prepared`` from `prepare_native_conic`,
+    because its symbolic analysis reads concrete topology outside tracing.
+    """
+    if not isinstance(program, ConicProgram):
+        raise TypeError("program must be a ConicProgram.")
+    method = policy.method
+    if not isinstance(method, NativeHomogeneousConic):
+        raise TypeError("policy method must be NativeHomogeneousConic.")
+    if prepared is not None and not isinstance(prepared, PreparedNativeConic):
+        raise TypeError("prepared must be a PreparedNativeConic or None.")
+    barrier_ = cone_barrier_oracle(program.cone) if prepared is None else prepared.barrier
+    if barrier_.cone.cone_id != program.cone.cone_id:
         raise ValueError("Prepared barrier oracle does not match the program cone.")
     has_bounds = bool(
         program.fixed_bound_indices
         or program.lower_bound_indices
         or program.upper_bound_indices
     )
-    if not program.batch_shape and (not program.constraint_is_sparse or not has_bounds):
+    if _uses_homogeneous_embedding(program):
         if has_bounds:
             embedded, fixed, lower, upper = _augment_dense_bounds(program)
             embedded_barrier = cone_barrier_oracle(embedded.cone)
@@ -166,6 +215,7 @@ def solve_native_conic_program(
             maximum_steps=policy.termination.maximum_steps,
             tolerance=policy.termination.absolute,
             policy=policy,
+            newton=None if prepared is None else prepared.newton,
         )
         original = program.num_constraints
         cone_dual = homogeneous.dual[:original]
@@ -187,7 +237,7 @@ def solve_native_conic_program(
             upper_dual = upper_dual.at[jnp.asarray(upper)].set(
                 homogeneous.dual[cursor : cursor + upper.size]
             )
-        return _audit_result(
+        audited = _audit_result(
             program,
             homogeneous.primal,
             cone_slack,
@@ -199,6 +249,19 @@ def solve_native_conic_program(
             policy,
             "native-jax-hsd",
             backend="phydrax",
+        )
+        # An uncertified stop after a failed Newton direction is a stalled
+        # method, not an exhausted budget; certificates and optimality keep
+        # their audited status.
+        stalled = homogeneous.direction_failed & (
+            audited.status == int(ConvexProgramStatus.ITERATION_LIMIT)
+        )
+        return eqx.tree_at(
+            lambda value: value.status,
+            audited,
+            jnp.where(
+                stalled, int(ConvexProgramStatus.NUMERICAL_FAILURE), audited.status
+            ).astype(jnp.int32),
         )
     primal = _initial_primal(program, warm_start)
     dual = _initial_dual(program, warm_start)
@@ -328,4 +391,8 @@ def solve_native_conic_program(
     )
 
 
-__all__ = ["solve_native_conic_program"]
+__all__ = [
+    "PreparedNativeConic",
+    "prepare_native_conic",
+    "solve_native_conic_program",
+]

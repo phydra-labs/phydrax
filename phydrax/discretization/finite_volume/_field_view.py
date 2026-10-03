@@ -36,7 +36,7 @@ from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import linear_apply, linear_transpose_apply
-from ...typing import checked
+from ...typing import checked, parse
 from .._simplicial_locator import (
     AbstractCellLocator,
     CellLocationStatus,
@@ -65,6 +65,8 @@ from ._reconstruction import (
 )
 from ._side_trace import (
     finite_volume_field_space_id,
+    finite_volume_scalar_space,
+    FiniteVolumeCoefficientLayout,
     mesh_cell_dimension,
     structured_axis_edges,
 )
@@ -909,6 +911,7 @@ def prepare_finite_volume_field_reconstruction(
     support_geometry: Any = None,
     value_port: ValuePort | None = None,
     support_tolerance: float = 1.0e-9,
+    layout: FiniteVolumeCoefficientLayout = "state",
 ) -> PreparedFieldReconstruction:
     """Prepare an evidenced coordinate reconstruction of one finite-volume field.
 
@@ -931,7 +934,9 @@ def prepare_finite_volume_field_reconstruction(
     `PreparedSimplicialCellLocator` from `location_policy`; other meshes need an
     explicit `locator` over the same topology and vertices. The support is the
     mesh region (an explicit geometry must be covered by the mesh). Coefficients
-    are cell averages with the discretization's `state_shape`.
+    are cell averages with the discretization's `state_shape`; `layout="scalar"`
+    reconstructs a one-component structured field from its cell coordinates
+    (`finite_volume_scalar_space`) as a scalar-valued field.
     """
     from ...geometry import CompiledGeometry
 
@@ -948,6 +953,7 @@ def prepare_finite_volume_field_reconstruction(
             "UnstructuredFiniteVolumeDiscretization, or a "
             "TriangleFiniteVolumeDiscretization."
         )
+    layout_ = parse(layout, FiniteVolumeCoefficientLayout, "layout")
     regularity, maximum_order, linear = _cell_reconstruction(
         reconstruction, discretization
     )
@@ -1028,7 +1034,20 @@ def prepare_finite_volume_field_reconstruction(
                 "discretization must be a FiniteVolumeDiscretization or an "
                 "UnstructuredFiniteVolumeDiscretization."
             )
-    components = (discretization.component_count,)
+    match layout_:
+        case "state":
+            components: tuple[int, ...] = (discretization.component_count,)
+            coefficient_shape = discretization.state_shape
+        case "scalar":
+            if not isinstance(discretization, FiniteVolumeDiscretization):
+                raise ValueError(
+                    "Scalar cell layouts are published by structured finite-volume "
+                    "grids; mesh owners reconstruct the cell-average state layout."
+                )
+            components = ()
+            coefficient_shape = finite_volume_scalar_space(discretization).shape
+        case _:
+            assert_never(layout_)
     port = (
         ValuePort(
             discretization.cell_space.name,
@@ -1052,7 +1071,7 @@ def prepare_finite_volume_field_reconstruction(
         value_port=port,
         regularity=regularity,
         trace_policy=FieldTracePolicy("cell-sided"),
-        coefficient_shape=discretization.state_shape,
+        coefficient_shape=coefficient_shape,
         physical_dimension=dimension,
         maximum_derivative_order=maximum_order,
         field_space_id=field_space_id,

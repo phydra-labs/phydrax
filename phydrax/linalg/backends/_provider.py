@@ -61,6 +61,9 @@ class AbstractLinearProvider(abc.ABC):
     backends: tuple[LinearBackend, ...]
     accepts_initial_guess: bool = False
     supports_implicit_differentiation: bool = False
+    # Solve is a pure device program over prepared state: the runtime executes
+    # it through its stable compiled entry so loops are traced once per structure.
+    compiled_execution: bool = False
     iteration_capabilities = IterationCapabilities.terminal_only()
 
     def accepts(self, backend: LinearBackend, /) -> bool:
@@ -333,6 +336,7 @@ class _NativeBlockKrylovProvider(AbstractLinearProvider):
     backends = ("native-block-krylov",)
     accepts_initial_guess = True
     supports_implicit_differentiation = True
+    compiled_execution = True
     iteration_capabilities = IterationCapabilities(
         ("terminal", "inner-iteration"),
         device_stop=True,
@@ -381,6 +385,7 @@ class _NativeKrylovProvider(AbstractLinearProvider):
     backends = ("native-krylov",)
     accepts_initial_guess = True
     supports_implicit_differentiation = True
+    compiled_execution = True
     iteration_capabilities = IterationCapabilities(
         ("terminal", "inner-iteration"),
         device_stop=True,

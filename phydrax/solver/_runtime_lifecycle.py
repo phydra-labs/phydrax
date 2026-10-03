@@ -12,7 +12,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from pathlib import Path
 from types import MappingProxyType, TracebackType
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, final, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -31,6 +31,8 @@ from .._array_archive import (
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._typing_plan import validate_tree
+from .._validation import canonical_identifier
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..lifecycle import CompositionRebindReceipt
 from ..linalg._real_coordinates import RealCoordinateEvidence
@@ -43,6 +45,244 @@ ReplayClassification: TypeAlias = Literal["bitwise", "tolerance", "unsupported"]
 
 class UnsupportedReplayError(ValueError):
     """Raised when an explicitly bound restart relation forbids replay."""
+
+
+RuntimeIdentityRole: TypeAlias = Literal[
+    "source",
+    "program",
+    "method",
+    "controller",
+    "precision",
+    "rng",
+    "cloud",
+    "geometry",
+    "topology",
+    "partition",
+    "point-ids",
+    "lineage",
+    "measure",
+    "support",
+    "stencil",
+    "metric",
+    "hierarchy",
+    "boundary",
+    "interface",
+    "query",
+    "capacity",
+]
+"""Identity a restored runtime must match before any checkpoint value is used.
+
+``source`` is the build/source identity, ``program`` the prepared runtime
+program, then the temporal method, controller, precision and RNG addressing;
+the discretization roles name the cloud, geometry, support topology, owner
+partition, stable point IDs and lineage, measure realization,
+support/stencil/metric/hierarchy revisions, boundary/interface/query sources
+and the storage capacity bucket.
+"""
+
+RuntimeIdentityClass: TypeAlias = Literal["runtime", "topology", "geometry"]
+RuntimeMigrationKind: TypeAlias = Literal["ownership", "epoch"]
+
+
+def _identity_class(role: RuntimeIdentityRole, /) -> RuntimeIdentityClass:
+    match role:
+        case "source" | "program" | "method" | "controller" | "precision" | "rng":
+            return "runtime"
+        case (
+            "cloud"
+            | "topology"
+            | "partition"
+            | "point-ids"
+            | "lineage"
+            | "support"
+            | "stencil"
+            | "hierarchy"
+            | "capacity"
+        ):
+            return "topology"
+        case "geometry" | "measure" | "metric" | "boundary" | "interface" | "query":
+            return "geometry"
+        case unknown:
+            assert_never(unknown)
+
+
+def _migratable(kind: RuntimeMigrationKind, role: RuntimeIdentityRole, /) -> bool:
+    match kind:
+        case "ownership":
+            # Owner transport moves rows between devices: values, stable IDs,
+            # geometry and supports are unchanged; only placement and its
+            # program/capacity bucket move.
+            return role == "partition" or role == "program" or role == "capacity"
+        case "epoch":
+            # A support epoch rebuilds topology/geometry-bound artifacts on the
+            # same owners; build, method, controller, precision and RNG stay.
+            return role == "program" or (
+                _identity_class(role) != "runtime" and role != "partition"
+            )
+        case unknown:
+            assert_never(unknown)
+
+
+class StaleRuntimeCheckpointError(ValueError):
+    """A checkpoint's identity inventory differs from the restoring runtime."""
+
+    def __init__(self, roles: Sequence[str], /) -> None:
+        self.roles = tuple(roles)
+        super().__init__(
+            "Runtime checkpoint identities are stale or foreign: "
+            + ", ".join(self.roles)
+            + "."
+        )
+
+
+@final
+class RuntimeIdentityInventory(StrictModule, NonTrainableState):
+    """Canonical role-to-identity inventory of one restartable runtime.
+
+    Roles absent from the inventory do not participate in that runtime; a
+    restore whose roles or identities differ in any role is refused before a
+    checkpoint value is used. ``topology_id`` and ``geometry_layout_id`` are
+    the canonical digests of the topology- and geometry-class roles.
+    """
+
+    roles: tuple[RuntimeIdentityRole, ...] = eqx.field(static=True)
+    identities: tuple[str, ...] = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    geometry_layout_id: str = eqx.field(static=True)
+    inventory_id: str = eqx.field(static=True)
+
+    def __init__(self, identities: Mapping[str, str], /) -> None:
+        if not isinstance(identities, Mapping):
+            raise TypeError("Runtime identities must be a role mapping.")
+        parsed: dict[RuntimeIdentityRole, str] = {}
+        for role, identity in identities.items():
+            parsed[parse(role, RuntimeIdentityRole, "role")] = canonical_identifier(
+                identity, f"identity of role {role!r}"
+            )
+        missing = tuple(
+            role
+            for role in ("source", "program", "method", "precision")
+            if role not in parsed
+        )
+        if missing:
+            raise ValueError(f"Runtime identity inventory requires roles {missing}.")
+        order = tuple(role for role in get_args(RuntimeIdentityRole) if role in parsed)
+        self.roles = order
+        self.identities = tuple(parsed[role] for role in order)
+        self.topology_id = canonical_fingerprint(
+            {
+                "kind": "runtime-topology-identity",
+                **{
+                    role: parsed[role]
+                    for role in order
+                    if _identity_class(role) == "topology"
+                },
+            }
+        )
+        self.geometry_layout_id = canonical_fingerprint(
+            {
+                "kind": "runtime-geometry-identity",
+                **{
+                    role: parsed[role]
+                    for role in order
+                    if _identity_class(role) == "geometry"
+                },
+            }
+        )
+        self.inventory_id = canonical_fingerprint(
+            {"kind": "runtime-identity-inventory", **self.record()}
+        )
+
+    def identity(self, role: RuntimeIdentityRole, /) -> str | None:
+        selected = parse(role, RuntimeIdentityRole, "role")
+        for name, value in zip(self.roles, self.identities, strict=True):
+            if name == selected:
+                return value
+        return None
+
+    def record(self, /) -> dict[str, str]:
+        return dict(zip(self.roles, self.identities, strict=True))
+
+    @classmethod
+    def from_record(cls, record: Any, /) -> RuntimeIdentityInventory:
+        """Rebuild an archived inventory, refusing a non-canonical record."""
+        if not isinstance(record, Mapping) or any(
+            not isinstance(value, str) for value in record.values()
+        ):
+            raise ValueError("Archived runtime identity inventory is malformed.")
+        restored = cls(record)
+        if restored.record() != dict(record):
+            raise ValueError("Archived runtime identity inventory is not canonical.")
+        return restored
+
+    @checked
+    def changed_roles(
+        self, other: RuntimeIdentityInventory, /
+    ) -> tuple[RuntimeIdentityRole, ...]:
+        """Roles whose presence or identity differs, in canonical role order."""
+        left, right = self.record(), other.record()
+        return tuple(
+            role
+            for role in get_args(RuntimeIdentityRole)
+            if left.get(role) != right.get(role)
+        )
+
+
+@final
+class RuntimeMigrationReceipt(StrictModule, NonTrainableState):
+    """Committed native owner transport between two runtime inventories.
+
+    Built only after the owning substrate committed the transport
+    (``transport_id`` names that native evidence: ownership packets of a
+    distributed migration or the rebuild of a support epoch).
+    ``migrated_roles`` are exactly the identities that differ; a migration
+    kind admits only the roles its transport can change, so ownership never
+    moves geometry and an epoch never moves ownership, build or precision.
+    """
+
+    source: RuntimeIdentityInventory
+    target: RuntimeIdentityInventory
+    kind: RuntimeMigrationKind = eqx.field(static=True)
+    migrated_roles: tuple[RuntimeIdentityRole, ...] = eqx.field(static=True)
+    transport_id: str = eqx.field(static=True)
+    receipt_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        kind: RuntimeMigrationKind,
+        source: RuntimeIdentityInventory,
+        target: RuntimeIdentityInventory,
+        /,
+        *,
+        transport_id: str,
+    ) -> None:
+        selected = parse(kind, RuntimeMigrationKind, "kind")
+        transport = canonical_identifier(transport_id, "transport_id")
+        changed = source.changed_roles(target)
+        if not changed:
+            raise ValueError(
+                "The transport changed no runtime identity; restart through the "
+                "identity relation."
+            )
+        refused = tuple(role for role in changed if not _migratable(selected, role))
+        if refused:
+            raise ValueError(f"An {selected} migration cannot change roles {refused}.")
+        self.source = source
+        self.target = target
+        self.kind = selected
+        self.migrated_roles = changed
+        self.transport_id = transport
+        self.receipt_id = canonical_fingerprint(
+            {
+                "kind": "runtime-migration-receipt",
+                "migration": selected,
+                "source": source.inventory_id,
+                "target": target.inventory_id,
+                "roles": changed,
+                "transport": transport,
+            }
+        )
 
 
 def _read_only_c_array(value: Any, role: str, /) -> np.ndarray:
@@ -141,15 +381,49 @@ class RuntimeCheckpointEncodingPlan(StrictModule, NonTrainableState):
         return None
 
 
+@final
+class _MigrationRestorer(StrictModule, NonTrainableState):
+    """Source-layout reconstruction and replay with visible numerical leaves."""
+
+    transport: Callable[[Any], Any]
+    source_template: Any
+
+    def __call__(
+        self,
+        arrays: Mapping[str, Any],
+        specification: Mapping[str, Any],
+        template: Any,
+        encoding: RuntimeCheckpointEncodingPlan,
+        /,
+    ) -> Any:
+        del template
+        source = _unpack_state_tree(specification, arrays, self.source_template, encoding)
+        validate_tree(source)
+        return self.transport(source)
+
+
 class RuntimeRestartRelation(StrictModule, NonTrainableState):
-    """Explicit admitted source-to-destination topology restore relation."""
+    """Explicit admitted source-to-destination topology restore relation.
+
+    The identity relation restores a checkpoint only into the same identity
+    inventory. A migration relation carries the committed
+    ``RuntimeMigrationReceipt`` of its owner transport and restores only a
+    checkpoint of the receipt's source inventory into its target inventory.
+    """
 
     source_topology_id: str = eqx.field(static=True)
     target_topology_id: str = eqx.field(static=True)
     classification: ReplayClassification = eqx.field(static=True)
     tolerance: float | None = eqx.field(static=True)
     support_tuple_ids: tuple[str, ...] = eqx.field(static=True)
-    restorer: Callable | None = eqx.field(static=True, repr=False)
+    migration: RuntimeMigrationReceipt | None
+    restorer: (
+        Callable[
+            [Mapping[str, Any], Mapping[str, Any], Any, RuntimeCheckpointEncodingPlan],
+            Any,
+        ]
+        | None
+    ) = eqx.field(repr=False)
     relation_id: str = eqx.field(static=True)
 
     def __init__(
@@ -162,7 +436,12 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         relation_id: str | None = None,
         tolerance: float | None = None,
         support_tuple_ids: Sequence[str] = (),
-        restorer: Callable | None = None,
+        restorer: Callable[
+            [Mapping[str, Any], Mapping[str, Any], Any, RuntimeCheckpointEncodingPlan],
+            Any,
+        ]
+        | None = None,
+        migration: RuntimeMigrationReceipt | None = None,
     ) -> None:
         source = str(source_topology_id)
         target = str(target_topology_id)
@@ -200,13 +479,81 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
             identifier = str(relation_id)
             if not identifier:
                 raise ValueError("Restart relation identity must be nonempty.")
+        if migration is not None:
+            if not isinstance(migration, RuntimeMigrationReceipt):
+                raise TypeError("migration must be a RuntimeMigrationReceipt or None.")
+            if (
+                identifier != migration.receipt_id
+                or source != migration.source.topology_id
+                or target != migration.target.topology_id
+            ):
+                raise ValueError("Restart relation does not bind its migration receipt.")
         self.source_topology_id = source
         self.target_topology_id = target
         self.classification = classification
         self.tolerance = tolerance_
         self.support_tuple_ids = supports
+        self.migration = migration
         self.restorer = restorer
         self.relation_id = identifier
+
+    @classmethod
+    @checked
+    def from_migration(
+        cls,
+        receipt: RuntimeMigrationReceipt,
+        transport: Callable[[Any], Any],
+        /,
+        *,
+        source_template: Any,
+        classification: ReplayClassification,
+        tolerance: float | None = None,
+        support_tuple_ids: Sequence[str] = (),
+    ) -> RuntimeRestartRelation:
+        """Restart relation across one committed ownership or epoch migration.
+
+        Archived state arrays are first restored into ``source_template`` (the
+        source owners' exact leaf structure, shapes and dtypes) and validated;
+        ``transport`` then replays the receipt's native owner transport on that
+        source state and returns the destination-structured state. The callable
+        restorer keeps numerical transport/template leaves dynamic.
+        """
+
+        return cls(
+            receipt.source.topology_id,
+            receipt.target.topology_id,
+            classification=classification,
+            relation_id=receipt.receipt_id,
+            tolerance=tolerance,
+            support_tuple_ids=support_tuple_ids,
+            restorer=_MigrationRestorer(transport, source_template),
+            migration=receipt,
+        )
+
+    def admit_inventory(
+        self,
+        archived: RuntimeIdentityInventory | None,
+        target: RuntimeIdentityInventory | None,
+        /,
+    ) -> None:
+        """Refuse a stale or foreign checkpoint before any archived value is used."""
+        if archived is None:
+            if target is not None:
+                raise StaleRuntimeCheckpointError(target.roles)
+            return
+        if target is None:
+            raise StaleRuntimeCheckpointError(archived.roles)
+        if self.migration is None:
+            changed = archived.changed_roles(target)
+        else:
+            changed = tuple(
+                dict.fromkeys(
+                    archived.changed_roles(self.migration.source)
+                    + target.changed_roles(self.migration.target)
+                )
+            )
+        if changed:
+            raise StaleRuntimeCheckpointError(changed)
 
     @classmethod
     def identity(cls, topology_id: str, /) -> RuntimeRestartRelation:
@@ -219,7 +566,10 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
     def from_composition_rebind(
         cls,
         receipt: CompositionRebindReceipt,
-        restorer: Callable,
+        restorer: Callable[
+            [Mapping[str, Any], Mapping[str, Any], Any, RuntimeCheckpointEncodingPlan],
+            Any,
+        ],
         /,
         *,
         classification: ReplayClassification,
@@ -302,7 +652,9 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
                 if sharding is None
                 else jax.device_put(source_value, sharding)
             )
-        return jax.tree_util.tree_unflatten(template_tree, destination_leaves)
+        destination = jax.tree_util.tree_unflatten(template_tree, destination_leaves)
+        validate_tree(destination)
+        return destination
 
 
 def _pack_state_tree(
@@ -502,6 +854,25 @@ def _default_runtime_id(
     )
 
 
+def _checkpoint_identity(
+    record: Mapping[str, Any],
+    inventory: Mapping[str, str] | None,
+    /,
+) -> str:
+    """Canonical checkpoint identity; an identity inventory binds when present."""
+    identity = {"kind": "runtime-checkpoint-envelope", **record}
+    if inventory is not None:
+        identity["inventory"] = dict(inventory)
+    return canonical_fingerprint(identity)
+
+
+def _archived_inventory(
+    manifest: Mapping[str, Any], /
+) -> RuntimeIdentityInventory | None:
+    record = manifest.get("inventory")
+    return None if record is None else RuntimeIdentityInventory.from_record(record)
+
+
 class RuntimeCheckpointEnvelope(StrictModule):
     state: Any
     controller_state: Any
@@ -512,6 +883,7 @@ class RuntimeCheckpointEnvelope(StrictModule):
     schedule_cursor: Array
     encoding_plan: RuntimeCheckpointEncodingPlan
     archive_arrays: Mapping[str, Any]
+    inventory: RuntimeIdentityInventory | None
     archive_specs: Mapping[str, Any] = eqx.field(static=True)
     mesh_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -540,6 +912,7 @@ class RuntimeCheckpointEnvelope(StrictModule):
         partition_id: str | None = None,
         runtime_id: str | None = None,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
+        inventory: RuntimeIdentityInventory | None = None,
     ) -> None:
         time_ = np.asarray(time)
         step = np.asarray(step_index)
@@ -571,6 +944,8 @@ class RuntimeCheckpointEnvelope(StrictModule):
             raise TypeError(
                 "encoding_plan must be RuntimeCheckpointEncodingPlan or None."
             )
+        if inventory is not None and not isinstance(inventory, RuntimeIdentityInventory):
+            raise TypeError("inventory must be a RuntimeIdentityInventory or None.")
         state_ = _host_array_tree(state, "state")
         controller = _host_array_tree(controller_state, "controller state")
         observers = tuple(
@@ -627,6 +1002,7 @@ class RuntimeCheckpointEnvelope(StrictModule):
         self.schedule_cursor = jnp.asarray(immutable_arrays["runtime/schedule_cursor"])
         self.encoding_plan = encoding
         self.archive_arrays = immutable_arrays
+        self.inventory = inventory
         self.archive_specs = frozen_specs
         self.mesh_id, self.method_id, self.precision_id, self.topology_epoch_id = (
             identifiers
@@ -634,9 +1010,8 @@ class RuntimeCheckpointEnvelope(StrictModule):
         self.partition_id = partition
         self.runtime_id = runtime
         self.content_digest = content_digest
-        self.checkpoint_id = canonical_fingerprint(
+        self.checkpoint_id = _checkpoint_identity(
             {
-                "kind": "runtime-checkpoint-envelope",
                 "runtime": runtime,
                 "mesh": self.mesh_id,
                 "method": self.method_id,
@@ -646,7 +1021,8 @@ class RuntimeCheckpointEnvelope(StrictModule):
                 "encoding": encoding.encoding_id,
                 "content": content_digest,
                 "trees": specs,
-            }
+            },
+            None if inventory is None else inventory.record(),
         )
 
     def tree_specs_record(self, /) -> dict[str, Any]:
@@ -662,9 +1038,8 @@ def verify_runtime_checkpoint_envelope(
     if not isinstance(envelope, RuntimeCheckpointEnvelope):
         raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
     digest = array_collection_digest(envelope.archive_arrays)
-    expected_checkpoint = canonical_fingerprint(
+    expected_checkpoint = _checkpoint_identity(
         {
-            "kind": "runtime-checkpoint-envelope",
             "runtime": envelope.runtime_id,
             "mesh": envelope.mesh_id,
             "method": envelope.method_id,
@@ -674,7 +1049,8 @@ def verify_runtime_checkpoint_envelope(
             "encoding": envelope.encoding_plan.encoding_id,
             "content": digest,
             "trees": envelope.tree_specs_record(),
-        }
+        },
+        None if envelope.inventory is None else envelope.inventory.record(),
     )
     if digest != envelope.content_digest or expected_checkpoint != envelope.checkpoint_id:
         raise ValueError("Runtime checkpoint envelope changed after construction.")
@@ -699,6 +1075,7 @@ def _runtime_checkpoint_manifest(
         "precision_id": envelope.precision_id,
         "topology_epoch_id": envelope.topology_epoch_id,
         "partition_id": envelope.partition_id,
+        "inventory": None if envelope.inventory is None else envelope.inventory.record(),
         **envelope.tree_specs_record(),
     }
     return manifest
@@ -726,7 +1103,9 @@ def read_runtime_checkpoint(
     partition_id: str | None = None,
     runtime_id: str | None = None,
     encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
+    inventory: RuntimeIdentityInventory | None = None,
 ) -> RuntimeCheckpointEnvelope:
+    """Read one archive; a stale or foreign inventory refuses before unpacking."""
     partition = None if partition_id is None else str(partition_id)
     runtime = (
         _default_runtime_id(
@@ -761,6 +1140,9 @@ def read_runtime_checkpoint(
         "topology_epoch_id": str(topology_epoch_id),
         "partition_id": partition,
     }
+    RuntimeRestartRelation.identity(str(mesh_id)).admit_inventory(
+        _archived_inventory(manifest), inventory
+    )
     if any(manifest.get(name) != value for name, value in expected.items()):
         raise ValueError("Runtime checkpoint compatibility identities changed.")
     state_spec = manifest.get("state")
@@ -782,6 +1164,7 @@ def read_runtime_checkpoint(
         unpack_array_tree(specification, arrays, template)
         for specification, template in zip(observer_specs, templates, strict=True)
     )
+    validate_tree((state, controller, observers, rng))
     envelope = RuntimeCheckpointEnvelope(
         state,
         time=arrays["runtime/time"],
@@ -797,6 +1180,7 @@ def read_runtime_checkpoint(
         partition_id=partition_id,
         runtime_id=runtime,
         encoding_plan=encoding,
+        inventory=inventory,
     )
     if (
         manifest.get("content_digest") != envelope.content_digest
@@ -823,8 +1207,13 @@ def restore_runtime_checkpoint_arrays(
     restart_relation: RuntimeRestartRelation,
     partition_id: str | None = None,
     encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
+    inventory: RuntimeIdentityInventory | None = None,
 ) -> tuple[RuntimeCheckpointEnvelope, str]:
-    """Verify logical checkpoint arrays and restore into the destination binding."""
+    """Verify logical checkpoint arrays and restore into the destination binding.
+
+    The archived identity inventory is admitted against ``inventory`` through
+    ``restart_relation`` before any archived array is used.
+    """
 
     if not isinstance(manifest, Mapping) or manifest.get("kind") != "runtime-checkpoint":
         raise ValueError("Runtime checkpoint manifest schema is invalid.")
@@ -833,6 +1222,8 @@ def restore_runtime_checkpoint_arrays(
     encoding = RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
     if not isinstance(encoding, RuntimeCheckpointEncodingPlan):
         raise TypeError("encoding_plan must be RuntimeCheckpointEncodingPlan or None.")
+    archived_inventory = _archived_inventory(manifest)
+    restart_relation.admit_inventory(archived_inventory, inventory)
     source_mesh = str(manifest.get("mesh_id", ""))
     if (
         source_mesh != restart_relation.source_topology_id
@@ -876,9 +1267,8 @@ def restore_runtime_checkpoint_arrays(
     source_method = str(manifest.get("method_id", ""))
     source_precision = str(manifest.get("precision_id", ""))
     source_epoch = str(manifest.get("topology_epoch_id", ""))
-    expected_checkpoint_id = canonical_fingerprint(
+    expected_checkpoint_id = _checkpoint_identity(
         {
-            "kind": "runtime-checkpoint-envelope",
             "runtime": source_runtime,
             "mesh": source_mesh,
             "method": source_method,
@@ -888,7 +1278,8 @@ def restore_runtime_checkpoint_arrays(
             "encoding": encoding.encoding_id,
             "content": content_digest,
             "trees": tree_specs,
-        }
+        },
+        None if archived_inventory is None else archived_inventory.record(),
     )
     if not source_runtime or source_checkpoint_id != expected_checkpoint_id:
         raise ValueError("Runtime checkpoint content identity is inconsistent.")
@@ -913,6 +1304,7 @@ def restore_runtime_checkpoint_arrays(
         unpack_array_tree(specification, arrays, template)
         for specification, template in zip(observer_specs, templates, strict=True)
     )
+    validate_tree((state, controller, observers, rng))
     envelope = RuntimeCheckpointEnvelope(
         state,
         time=arrays["runtime/time"],
@@ -928,6 +1320,7 @@ def restore_runtime_checkpoint_arrays(
         partition_id=partition,
         runtime_id=target_runtime_id,
         encoding_plan=encoding,
+        inventory=inventory,
     )
     return envelope, source_checkpoint_id
 
@@ -1745,7 +2138,13 @@ __all__ = [
     "RuntimeCheckpointEncodingPlan",
     "RuntimeCheckpointEnvelope",
     "RuntimeCheckpointLeafBinding",
+    "RuntimeIdentityClass",
+    "RuntimeIdentityInventory",
+    "RuntimeIdentityRole",
+    "RuntimeMigrationKind",
+    "RuntimeMigrationReceipt",
     "RuntimeRestartRelation",
+    "StaleRuntimeCheckpointError",
     "StreamingMomentPlan",
     "StreamingMomentState",
     "StreamingObservablePlan",

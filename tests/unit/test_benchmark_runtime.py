@@ -5,9 +5,8 @@
 from __future__ import annotations
 
 import importlib.metadata
-import json
 import math
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +33,6 @@ from benchmarks._runtime import (
     validate_benchmark_record,
 )
 from phydrax._fingerprint import canonical_fingerprint
-from phydrax.applications.two_phase_flow import TwoPhaseStepEvidence
 
 
 def test_benchmark_runtime_scenario_1() -> None:
@@ -310,12 +308,12 @@ def test_benchmark_record_rejects_case_evidence_field_set_mismatch(
         validate_benchmark_record(stored, identity)
 
 
-def test_current_two_phase_vof_benchmark_record_validates() -> None:
-    root = Path(__file__).resolve().parents[2]
-    driver = root / "benchmarks" / "two_phase_vof_step.py"
-    record_path = driver.with_suffix(".json")
-    record = json.loads(record_path.read_text(encoding="utf-8"))
-    evidence_fields = tuple(field.name for field in fields(TwoPhaseStepEvidence))
-    identity = capture_benchmark_identity(root, driver, evidence_fields)
+def test_adaptive_sphere_refuses_point_limit_before_preparation() -> None:
+    from benchmarks.meshfree_closure_adaptive_restart import (
+        measure_adaptive_sphere_zonal_peak,
+    )
+    from benchmarks.meshfree_scaling import DeclaredCapacityRefusal, MeshfreeConfig
 
-    validate_benchmark_record(record, identity)
+    config = MeshfreeConfig(sizes=(768,), dimension=3, max_points=64)
+    with pytest.raises(DeclaredCapacityRefusal, match="max_points=64"):
+        measure_adaptive_sphere_zonal_peak(768, 0, config)

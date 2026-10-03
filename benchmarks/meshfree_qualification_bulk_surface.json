@@ -1,0 +1,1264 @@
+{
+  "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+  "campaigns": [
+    {
+      "aggregate_gates": [],
+      "campaign_id": "Q7",
+      "config": {
+        "candidates": null,
+        "chunk_rows": 32,
+        "degree": 2,
+        "dimension": 3,
+        "max_points": 4096,
+        "neighbors": 24,
+        "precision": "float64",
+        "repeats": 3,
+        "resource_bytes": 1073741824,
+        "seeds": [
+          0
+        ],
+        "sizes": [
+          128,
+          256
+        ],
+        "steps": 80,
+        "working_set_bytes": 268435456
+      },
+      "evidence": {
+        "coverage": {
+          "evaluated_at": 1790930004088657001,
+          "failed_predicate_ids": [],
+          "gaps": [],
+          "inconclusive_predicate_ids": [],
+          "kind": "qualification-coverage-report",
+          "matched_evidence_ids": [
+            "200c6c74df72be44842b679da76367d73f34112c3f3f1f2ccaa21450e463917c",
+            "676816cf31ca8b242113696c17c61b3b2fb3ad311020a2a786e29b48b75c59d2",
+            "e4d96f967bba57fd8a02d68195169e93fb0e9ac9bfcbd0dff978631137e5cafb",
+            "edf4c39bb57c026c4dcd0d80b81b2e97cf57d0101476d1316f95943af1d28531"
+          ],
+          "matrix_id": "4ab594e5b33aba4ff3d73697050519357f2c75244634d95fc7a09c1d4abd9f18",
+          "outcome": "passed",
+          "passed_predicate_ids": [
+            "Q7:dfb06b5eda619202:analytic",
+            "Q7:dfb06b5eda619202:conservation",
+            "Q7:dfb06b5eda619202:window-lag",
+            "Q7:dfb06b5eda619202:window-status"
+          ],
+          "report_id": "807ccf68747755952ecca686ef3b1d780e7a27b0e5121d62b05811e4ff761713"
+        },
+        "matrix": {
+          "kind": "qualification-matrix",
+          "matrix_id": "4ab594e5b33aba4ff3d73697050519357f2c75244634d95fc7a09c1d4abd9f18",
+          "predicates": {
+            "Q7:dfb06b5eda619202:analytic": {
+              "criterion_id": "a48090c37d60c87d24b4842302d7e7b51fa9ce89faba6536386c4f0e7686de56",
+              "evidence_kind": "scientific",
+              "subject_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "Q7:dfb06b5eda619202:conservation": {
+              "criterion_id": "5d0b8881f23e9dae966024eeaf5d724a5d32423eec485c376a02708a95b9d99f",
+              "evidence_kind": "scientific",
+              "subject_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "Q7:dfb06b5eda619202:window-lag": {
+              "criterion_id": "7251c23380ece9a0abb72a31fa755775475d0f24a474a2ee3777b2ae5770a209",
+              "evidence_kind": "scientific",
+              "subject_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "Q7:dfb06b5eda619202:window-status": {
+              "criterion_id": "3ba3aa63f14746ff527963a59305c928144e8d14a86ce832788c56160ce10697",
+              "evidence_kind": "scientific",
+              "subject_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            }
+          }
+        },
+        "records": [
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "a48090c37d60c87d24b4842302d7e7b51fa9ce89faba6536386c4f0e7686de56",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "f37e14017ab47abf8c6f10afd668d4b7ad822c70d7fbdafb5ab545f1c2f12879",
+              "observed_at": 1790930004088657000,
+              "raw_artifact_ids": [
+                "d07cba9a7c74f1a9c107a001ce2137fb9d006548723e67bdca19e955f1a6adcf"
+              ],
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "42fc3be33ef91d5e97428af9dc8db9df757a91f6eaf0a5913c64cb4e7a4c262a",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "a48090c37d60c87d24b4842302d7e7b51fa9ce89faba6536386c4f0e7686de56",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "42fc3be33ef91d5e97428af9dc8db9df757a91f6eaf0a5913c64cb4e7a4c262a",
+              "started_at": 1790929793842287000,
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q7:analytic",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "a48090c37d60c87d24b4842302d7e7b51fa9ce89faba6536386c4f0e7686de56",
+              "issued_at": 1790929790847125000,
+              "kind": "qualification-criterion",
+              "metric": "equilibrium_error",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+              "target": 0.0001,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "fc2d4daac886489e0094a3caff57d16998257acb7888d718c707f1b33b955479",
+              "campaign_observation_record_ids": [
+                "f37e14017ab47abf8c6f10afd668d4b7ad822c70d7fbdafb5ab545f1c2f12879"
+              ],
+              "campaign_start_record_ids": [
+                "42fc3be33ef91d5e97428af9dc8db9df757a91f6eaf0a5913c64cb4e7a4c262a"
+              ],
+              "criteria_ids": [
+                "a48090c37d60c87d24b4842302d7e7b51fa9ce89faba6536386c4f0e7686de56"
+              ],
+              "environment_id": "88a27f6e7fee1147e8f1958255b42476cc110dda26a2992157a34ea8956e6210",
+              "evidence_id": "edf4c39bb57c026c4dcd0d80b81b2e97cf57d0101476d1316f95943af1d28531",
+              "evidence_kind": "scientific",
+              "expires_at": 1793522004088657001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1790930004088657001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "d07cba9a7c74f1a9c107a001ce2137fb9d006548723e67bdca19e955f1a6adcf"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "analytic",
+            "raw_observation": {
+              "campaign": "Q7",
+              "gate": "analytic",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 128,
+                  "label": "langmuir",
+                  "observed": 4.274358644806853e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 256,
+                  "label": "langmuir",
+                  "observed": 1.0624834345662748e-13,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "d07cba9a7c74f1a9c107a001ce2137fb9d006548723e67bdca19e955f1a6adcf"
+            },
+            "status": "passed",
+            "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "5d0b8881f23e9dae966024eeaf5d724a5d32423eec485c376a02708a95b9d99f",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "21f6070e1c791c237731b93ed9a2f4a784b37c0b7b0c5ca7da5252f3208a3573",
+              "observed_at": 1790930004088657000,
+              "raw_artifact_ids": [
+                "fcb5c71d4cc153fb5ceb95c016b06d3106f6a3a6c75eadc357aad76648ebf9a6"
+              ],
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "16a258637e0b7f8f332cb3b909d91673c744223b0436aad0a5840b7434c6d496",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "5d0b8881f23e9dae966024eeaf5d724a5d32423eec485c376a02708a95b9d99f",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "16a258637e0b7f8f332cb3b909d91673c744223b0436aad0a5840b7434c6d496",
+              "started_at": 1790929793842287000,
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q7:conservation",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "5d0b8881f23e9dae966024eeaf5d724a5d32423eec485c376a02708a95b9d99f",
+              "issued_at": 1790929790847125000,
+              "kind": "qualification-criterion",
+              "metric": "conservation_error",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+              "target": 1e-06,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "fc2d4daac886489e0094a3caff57d16998257acb7888d718c707f1b33b955479",
+              "campaign_observation_record_ids": [
+                "21f6070e1c791c237731b93ed9a2f4a784b37c0b7b0c5ca7da5252f3208a3573"
+              ],
+              "campaign_start_record_ids": [
+                "16a258637e0b7f8f332cb3b909d91673c744223b0436aad0a5840b7434c6d496"
+              ],
+              "criteria_ids": [
+                "5d0b8881f23e9dae966024eeaf5d724a5d32423eec485c376a02708a95b9d99f"
+              ],
+              "environment_id": "88a27f6e7fee1147e8f1958255b42476cc110dda26a2992157a34ea8956e6210",
+              "evidence_id": "676816cf31ca8b242113696c17c61b3b2fb3ad311020a2a786e29b48b75c59d2",
+              "evidence_kind": "scientific",
+              "expires_at": 1793522004088657001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1790930004088657001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "fcb5c71d4cc153fb5ceb95c016b06d3106f6a3a6c75eadc357aad76648ebf9a6"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "conservation",
+            "raw_observation": {
+              "campaign": "Q7",
+              "gate": "conservation",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 128,
+                  "label": "langmuir",
+                  "observed": 1.7763568394002505e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 256,
+                  "label": "langmuir",
+                  "observed": 1.7763568394002505e-15,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "fcb5c71d4cc153fb5ceb95c016b06d3106f6a3a6c75eadc357aad76648ebf9a6"
+            },
+            "status": "passed",
+            "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "7251c23380ece9a0abb72a31fa755775475d0f24a474a2ee3777b2ae5770a209",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "da4e276446b9a48e02a9bd337227bed03bd8adfaa5801d870f64db2be9c15a84",
+              "observed_at": 1790930004088657000,
+              "raw_artifact_ids": [
+                "4ed7ad2bf154a9fdc69bd8b0b3cea74820e400262f5fb8c8dcd769a93275753b"
+              ],
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "11f33ac38040470ecab6988f8b3331d20c53ccaf64bac6bf15a312c00f96c107",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "7251c23380ece9a0abb72a31fa755775475d0f24a474a2ee3777b2ae5770a209",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "11f33ac38040470ecab6988f8b3331d20c53ccaf64bac6bf15a312c00f96c107",
+              "started_at": 1790929793842287000,
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q7:window-lag",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "less-than-or-equal",
+              "criterion_id": "7251c23380ece9a0abb72a31fa755775475d0f24a474a2ee3777b2ae5770a209",
+              "issued_at": 1790929790847125000,
+              "kind": "qualification-criterion",
+              "metric": "window_lag_error",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+              "target": 0.0001,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "fc2d4daac886489e0094a3caff57d16998257acb7888d718c707f1b33b955479",
+              "campaign_observation_record_ids": [
+                "da4e276446b9a48e02a9bd337227bed03bd8adfaa5801d870f64db2be9c15a84"
+              ],
+              "campaign_start_record_ids": [
+                "11f33ac38040470ecab6988f8b3331d20c53ccaf64bac6bf15a312c00f96c107"
+              ],
+              "criteria_ids": [
+                "7251c23380ece9a0abb72a31fa755775475d0f24a474a2ee3777b2ae5770a209"
+              ],
+              "environment_id": "88a27f6e7fee1147e8f1958255b42476cc110dda26a2992157a34ea8956e6210",
+              "evidence_id": "200c6c74df72be44842b679da76367d73f34112c3f3f1f2ccaa21450e463917c",
+              "evidence_kind": "scientific",
+              "expires_at": 1793522004088657001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1790930004088657001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "4ed7ad2bf154a9fdc69bd8b0b3cea74820e400262f5fb8c8dcd769a93275753b"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "window-lag",
+            "raw_observation": {
+              "campaign": "Q7",
+              "gate": "window-lag",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 128,
+                  "label": "langmuir",
+                  "observed": 0.0,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 256,
+                  "label": "langmuir",
+                  "observed": 0.0,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "4ed7ad2bf154a9fdc69bd8b0b3cea74820e400262f5fb8c8dcd769a93275753b"
+            },
+            "status": "passed",
+            "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+          },
+          {
+            "campaign_observation": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "3ba3aa63f14746ff527963a59305c928144e8d14a86ce832788c56160ce10697",
+              "kind": "campaign-observation-record",
+              "observation_record_id": "26b1509e89c6a3f9d6e7dafcf25aee63268ee2a7d2c7a99d9efc72a4b4d07b6b",
+              "observed_at": 1790930004088657000,
+              "raw_artifact_ids": [
+                "e59e512245bac8c5dc7e0b1a8c8be3851759da4c45297b1fbef3e314ab9cf825"
+              ],
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "0da300bba2266d2725997fe528b84ff983357739e75d794bd182e105f277de7b",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "campaign_start": {
+              "campaign_spec_id": "434841c5b7a72b02753b6ec16c4ca3c3c53c2427eef173c4ceb3c5816a623e7b",
+              "criterion_id": "3ba3aa63f14746ff527963a59305c928144e8d14a86ce832788c56160ce10697",
+              "kind": "campaign-start-record",
+              "resolved_run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "start_record_id": "0da300bba2266d2725997fe528b84ff983357739e75d794bd182e105f277de7b",
+              "started_at": 1790929793842287000,
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+            },
+            "criterion": {
+              "aggregation": "every-observation",
+              "applicability": "Q7:window-status",
+              "approval_id": "meshfree-closure-plan-p16-declared-thresholds",
+              "comparison": "equal",
+              "criterion_id": "3ba3aa63f14746ff527963a59305c928144e8d14a86ce832788c56160ce10697",
+              "issued_at": 1790929790847125000,
+              "kind": "qualification-criterion",
+              "metric": "accepted",
+              "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+              "target": 1.0,
+              "uncertainty": "deterministic-seeded-single-execution",
+              "unit": "1",
+              "valid_until": null
+            },
+            "evidence": {
+              "backend": "cpu",
+              "build_id": "fc2d4daac886489e0094a3caff57d16998257acb7888d718c707f1b33b955479",
+              "campaign_observation_record_ids": [
+                "26b1509e89c6a3f9d6e7dafcf25aee63268ee2a7d2c7a99d9efc72a4b4d07b6b"
+              ],
+              "campaign_start_record_ids": [
+                "0da300bba2266d2725997fe528b84ff983357739e75d794bd182e105f277de7b"
+              ],
+              "criteria_ids": [
+                "3ba3aa63f14746ff527963a59305c928144e8d14a86ce832788c56160ce10697"
+              ],
+              "environment_id": "88a27f6e7fee1147e8f1958255b42476cc110dda26a2992157a34ea8956e6210",
+              "evidence_id": "e4d96f967bba57fd8a02d68195169e93fb0e9ac9bfcbd0dff978631137e5cafb",
+              "evidence_kind": "scientific",
+              "expires_at": 1793522004088657001,
+              "forecast_resource_record_ids": [],
+              "issued_at": 1790930004088657001,
+              "kind": "qualification-evidence",
+              "observed_resource_record_ids": [],
+              "outcome": "passed",
+              "precision": "float64",
+              "raw_artifact_ids": [
+                "e59e512245bac8c5dc7e0b1a8c8be3851759da4c45297b1fbef3e314ab9cf825"
+              ],
+              "reason": "passed: observed against declared criterion",
+              "reduction": "every-observation",
+              "replay_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+              "requalification_triggers": [
+                "environment-change",
+                "source-change",
+                "threshold-change"
+              ],
+              "reviewer_id": "unreviewed-automated-producer",
+              "subject_ids": [
+                "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+              ],
+              "supersedes_evidence_ids": [],
+              "topology": "1-process-1-device"
+            },
+            "gate": "window-status",
+            "raw_observation": {
+              "campaign": "Q7",
+              "gate": "window-status",
+              "kind": "meshfree-qualification-observation",
+              "observations": [
+                {
+                  "capacity": 128,
+                  "label": "langmuir",
+                  "observed": true,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                },
+                {
+                  "capacity": 256,
+                  "label": "langmuir",
+                  "observed": true,
+                  "reason": null,
+                  "seed": 0,
+                  "status": "passed"
+                }
+              ],
+              "raw_artifact_id": "e59e512245bac8c5dc7e0b1a8c8be3851759da4c45297b1fbef3e314ab9cf825"
+            },
+            "status": "passed",
+            "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222"
+          }
+        ]
+      },
+      "name": "langmuir-exchange-and-moving-window",
+      "release_gates": [
+        {
+          "comparison": "equal",
+          "evidence_kind": "scientific",
+          "gate": "independent-reference",
+          "metric": "independent-physical-reference",
+          "observed": null,
+          "reason": "blocked: manufactured/analytic oracles prove numerical behavior only; an independent physical reference with provenance, tolerances and rights is an external prerequisite",
+          "status": "blocked",
+          "target": 1.0,
+          "unit": "1"
+        },
+        {
+          "comparison": "equal",
+          "evidence_kind": "operational",
+          "gate": "independent-review",
+          "metric": "independent-reviewer-decision",
+          "observed": null,
+          "reason": "blocked: producer evidence is unreviewed; release needs an independent reviewer, trust record and promotion decision",
+          "status": "blocked",
+          "target": 1.0,
+          "unit": "1"
+        },
+        {
+          "comparison": "equal",
+          "evidence_kind": "performance",
+          "gate": "resource-envelope",
+          "metric": "approved-resource-envelope",
+          "observed": null,
+          "reason": "Sampled phase peaks are not certified upper bounds; no approved resource envelope exists for Q7",
+          "status": "unexecuted",
+          "target": 1.0,
+          "unit": "1"
+        }
+      ],
+      "released": false,
+      "rows": [
+        {
+          "capability": "meshfree.bulk-surface-exchange",
+          "capacity": 128,
+          "consumer": "examples.meshfree_bulk_surface_exchange.run_workflow",
+          "consumer_source_fingerprint": "e49d1a3068b0c21f17ff32e21306eb94b508b10d86bbfd738207fd6a818f38e1",
+          "cpu_seconds": 68.42957,
+          "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+          "gates": [
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "analytic",
+              "metric": "equilibrium_error",
+              "observed": 4.274358644806853e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 0.0001,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "conservation",
+              "metric": "conservation_error",
+              "observed": 1.7763568394002505e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "window-lag",
+              "metric": "window_lag_error",
+              "observed": 0.0,
+              "reason": null,
+              "status": "passed",
+              "target": 0.0001,
+              "unit": "1"
+            },
+            {
+              "comparison": "equal",
+              "evidence_kind": "scientific",
+              "gate": "window-status",
+              "metric": "accepted",
+              "observed": true,
+              "reason": null,
+              "status": "passed",
+              "target": 1.0,
+              "unit": "1"
+            }
+          ],
+          "label": "langmuir",
+          "metrics": {
+            "accepted": true,
+            "conservation_error": 1.7763568394002505e-15,
+            "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+            "equilibrium_error": 4.274358644806853e-15,
+            "flux_error": 6.161737786669619e-15,
+            "geometry_differentiated_within_window": false,
+            "metric_exact": false,
+            "metric_moment_slack": 0.24395634440823502,
+            "nonlinear_iterations": 61,
+            "nonlinear_residual": 8.267176623318975e-13,
+            "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+            "points": 128,
+            "positive_deposition": true,
+            "query_constant_error": 4.440892098500626e-16,
+            "query_displacement": 0.0009995115578361725,
+            "retained_bytes": 1908568,
+            "window_lag": 0.05000000000001137,
+            "window_lag_error": 0.0
+          },
+          "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+          "phases": {
+            "assembly": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "communication-migration": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "compilation": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "conic": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "end-to-end": {
+              "compile_count": 1345,
+              "compile_seconds": 60.00202226638794,
+              "cpu_seconds": 68.426318,
+              "memory": {
+                "evidence": {
+                  "baseline": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 26834092032
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 1333542912
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 1332510720
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1790929793845337000
+                  },
+                  "devices": [],
+                  "duration_seconds": 143.1998898750171,
+                  "final": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 40094810112
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 2341191680
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 2341158912
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1790929937049955000
+                  },
+                  "interval_peak_resident": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": 1,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 2341191680
+                  },
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 2.0005326659884304,
+                  "phase": "end-to-end",
+                  "sample_count": 2110,
+                  "sampled_peak_resident": {
+                    "method": "interval_sampling",
+                    "resolution_bytes": 16384,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 2341191680
+                  }
+                },
+                "sampled_peak_increase_bytes": 1008680960
+              },
+              "occurrences": [
+                {
+                  "compile_count": 1345,
+                  "compile_seconds": 60.00202226638794,
+                  "cpu_seconds": 68.426318,
+                  "sampled_peak_increase_bytes": 1008680960,
+                  "scope": "meshfree_bulk_surface_exchange.run_workflow",
+                  "wall_seconds": 143.198585208
+                }
+              ],
+              "status": "measured",
+              "wall_seconds": 143.198585208
+            },
+            "epoch-commit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "first": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "geometry": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "hierarchy": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "jvp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "local-fit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "lowering": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "numeric-refresh": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "ordering-fill": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "output": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "rank-certificate": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "restart": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "search": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "solve": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "transfer": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "vjp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "warm": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            }
+          },
+          "seed": 0,
+          "status": "passed",
+          "support": {
+            "boundary": "bulk-surface-interface",
+            "capacity": 4096,
+            "derivative-class": "none",
+            "device": "cpu",
+            "dimension": 3,
+            "geometry-authority": "sphere-interface-in-box",
+            "method": "langmuir-bulk-surface-exchange",
+            "precision": "float64",
+            "provider": "phydrax-native",
+            "reproducibility": "deterministic-seeded",
+            "temporal-method": "explicit-window-buffer"
+          },
+          "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+          "wall_seconds": 143.2059402500745
+        },
+        {
+          "capability": "meshfree.bulk-surface-exchange",
+          "capacity": 256,
+          "consumer": "examples.meshfree_bulk_surface_exchange.run_workflow",
+          "consumer_source_fingerprint": "e49d1a3068b0c21f17ff32e21306eb94b508b10d86bbfd738207fd6a818f38e1",
+          "cpu_seconds": 64.388389,
+          "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+          "gates": [
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "analytic",
+              "metric": "equilibrium_error",
+              "observed": 1.0624834345662748e-13,
+              "reason": null,
+              "status": "passed",
+              "target": 0.0001,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "conservation",
+              "metric": "conservation_error",
+              "observed": 1.7763568394002505e-15,
+              "reason": null,
+              "status": "passed",
+              "target": 1e-06,
+              "unit": "1"
+            },
+            {
+              "comparison": "less-than-or-equal",
+              "evidence_kind": "scientific",
+              "gate": "window-lag",
+              "metric": "window_lag_error",
+              "observed": 0.0,
+              "reason": null,
+              "status": "passed",
+              "target": 0.0001,
+              "unit": "1"
+            },
+            {
+              "comparison": "equal",
+              "evidence_kind": "scientific",
+              "gate": "window-status",
+              "metric": "accepted",
+              "observed": true,
+              "reason": null,
+              "status": "passed",
+              "target": 1.0,
+              "unit": "1"
+            }
+          ],
+          "label": "langmuir",
+          "metrics": {
+            "accepted": true,
+            "conservation_error": 1.7763568394002505e-15,
+            "domain": "unit sphere interface and deposition-compatible unit-ball bulk",
+            "equilibrium_error": 1.0624834345662748e-13,
+            "flux_error": 1.603994714827195e-13,
+            "geometry_differentiated_within_window": false,
+            "metric_exact": false,
+            "metric_moment_slack": 0.2097540162996273,
+            "nonlinear_iterations": 62,
+            "nonlinear_residual": 3.937449709537652e-13,
+            "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+            "points": 256,
+            "positive_deposition": true,
+            "query_constant_error": 3.3306690738754696e-16,
+            "query_displacement": 0.0009998778805744523,
+            "retained_bytes": 4304784,
+            "window_lag": 0.05000000000001137,
+            "window_lag_error": 0.0
+          },
+          "oracle_provenance": "Langmuir isotherm plus closed total-amount quadratic, independent of Newton iterations",
+          "phases": {
+            "assembly": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "communication-migration": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "compilation": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "conic": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "end-to-end": {
+              "compile_count": 1174,
+              "compile_seconds": 28.46517848968506,
+              "cpu_seconds": 64.38769799999999,
+              "memory": {
+                "evidence": {
+                  "baseline": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 40094810112
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 2341224448
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 2341224448
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1790929937052289000
+                  },
+                  "devices": [],
+                  "duration_seconds": 67.02933066606056,
+                  "final": {
+                    "host_available": {
+                      "method": "mach_host_vm_statistics",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 44389842944
+                    },
+                    "host_total": {
+                      "method": "sysconf_physical_pages",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 68719476736
+                    },
+                    "process_index": 0,
+                    "process_peak_resident": {
+                      "method": "getrusage_max_rss",
+                      "resolution_bytes": 1,
+                      "scope": "peak",
+                      "unavailable_reason": null,
+                      "value_bytes": 2895560704
+                    },
+                    "process_resident": {
+                      "method": "mach_task_basic_info",
+                      "resolution_bytes": 16384,
+                      "scope": "baseline",
+                      "unavailable_reason": null,
+                      "value_bytes": 2895527936
+                    },
+                    "provider": "darwin_mach",
+                    "timestamp_ns": 1790930004084432000
+                  },
+                  "interval_peak_resident": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": 1,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 2895560704
+                  },
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.8988777919439599,
+                  "phase": "end-to-end",
+                  "sample_count": 1012,
+                  "sampled_peak_resident": {
+                    "method": "interval_sampling",
+                    "resolution_bytes": 16384,
+                    "scope": "peak",
+                    "unavailable_reason": null,
+                    "value_bytes": 2895544320
+                  }
+                },
+                "sampled_peak_increase_bytes": 554319872
+              },
+              "occurrences": [
+                {
+                  "compile_count": 1174,
+                  "compile_seconds": 28.46517848968506,
+                  "cpu_seconds": 64.38769799999999,
+                  "sampled_peak_increase_bytes": 554319872,
+                  "scope": "meshfree_bulk_surface_exchange.run_workflow",
+                  "wall_seconds": 67.02829575
+                }
+              ],
+              "status": "measured",
+              "wall_seconds": 67.02829575
+            },
+            "epoch-commit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "first": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "geometry": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "hierarchy": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "jvp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "local-fit": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "lowering": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "numeric-refresh": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "ordering-fill": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "output": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "rank-certificate": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "restart": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "search": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "solve": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "transfer": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "vjp": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            },
+            "warm": {
+              "reason": "Not a separately executed phase of this workload",
+              "status": "unavailable"
+            }
+          },
+          "seed": 0,
+          "status": "passed",
+          "support": {
+            "boundary": "bulk-surface-interface",
+            "capacity": 4096,
+            "derivative-class": "none",
+            "device": "cpu",
+            "dimension": 3,
+            "geometry-authority": "sphere-interface-in-box",
+            "method": "langmuir-bulk-surface-exchange",
+            "precision": "float64",
+            "provider": "phydrax-native",
+            "reproducibility": "deterministic-seeded",
+            "temporal-method": "explicit-window-buffer"
+          },
+          "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+          "wall_seconds": 67.03456775005907
+        }
+      ],
+      "scenario": "accepted",
+      "status": "passed"
+    }
+  ],
+  "config": {
+    "candidates": null,
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 2,
+    "max_points": 4096,
+    "neighbors": 24,
+    "precision": "float64",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      64
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "69ffcdaeb7937d3625f9096aa3f7a3f67c79308c8e97607ffddbd9ac70621f76",
+    "evidence_schema": {
+      "fields": [
+        "campaigns",
+        "config",
+        "environment",
+        "identity",
+        "released",
+        "summary"
+      ],
+      "signature": "f63410dac7fdf4d0d6cfa5dd690f293955462c00f01fd0fa3bcb1fa1aedbab68"
+    },
+    "fingerprint": "b25ccd33fe8bfcec879faf472a1a98bd0d2c31910413a265fd8e196642b11203",
+    "source_build_fingerprint": "fc2d4daac886489e0094a3caff57d16998257acb7888d718c707f1b33b955479"
+  },
+  "kind": "meshfree-qualification-campaign",
+  "promotion": {
+    "reason": "Unreviewed producer evidence cannot advance a promotion channel",
+    "status": "not-requested"
+  },
+  "released": false,
+  "reviewer_id": "unreviewed-automated-producer",
+  "run_spec_id": "6238e85c78f2be01578523f792a919bce6f5123f6d6673ed37423014bc3b8554",
+  "selected_campaigns": [
+    "Q7"
+  ],
+  "summary": [
+    {
+      "boundary": "bulk-surface-interface",
+      "campaign": "Q7",
+      "capability": "meshfree.bulk-surface-exchange",
+      "capacities": [
+        128,
+        256
+      ],
+      "compile_count": 2519,
+      "cpu_seconds": 132.817959,
+      "device": "cpu",
+      "dimension": 3,
+      "gates": {
+        "analytic": "passed",
+        "conservation": "passed",
+        "window-lag": "passed",
+        "window-status": "passed"
+      },
+      "geometry_authority": "sphere-interface-in-box",
+      "method": "langmuir-bulk-surface-exchange",
+      "precision": "float64",
+      "scenario": "accepted",
+      "status": "passed",
+      "support_tuple_id": "dfb06b5eda619202096fb693113aed85b2cfadffa9e4f9c0cb0296710e036222",
+      "wall_seconds": 210.24050800013356
+    }
+  ],
+  "unexecuted_campaigns": [
+    "Q1",
+    "Q1-refusal",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q4-refusal",
+    "Q5",
+    "Q6",
+    "Q8",
+    "Q8-refusal",
+    "Q12",
+    "Q12-refusal",
+    "Q14",
+    "Q14-refusal",
+    "Q10",
+    "Q10-refusal",
+    "Q11",
+    "Q11-refusal",
+    "Q11-surface",
+    "Q11-surface-refusal",
+    "Q9",
+    "Q9-refusal",
+    "Q13",
+    "Q13-refusal",
+    "Q16",
+    "Q16-refusal",
+    "Q15",
+    "Q15-refusal",
+    "Q17",
+    "Q17-refusal",
+    "Q11-elasticity-order"
+  ]
+}

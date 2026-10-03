@@ -11,6 +11,11 @@ from phydrax.discretization.spatial import (
     morton_encode_integer,
     MortonAddressPlan,
 )
+from phydrax.domain import HyperRectangle, PeriodicIdentification, TimeInterval
+
+
+_BOX = HyperRectangle(np.asarray([0.0, -1.0]), np.asarray([2.0, 3.0]))
+_SEAM_X = PeriodicIdentification(_BOX, "x", component=0)
 
 
 def test_morton_scenario_1() -> None:
@@ -71,3 +76,73 @@ def test_morton_scenario_1() -> None:
         np.testing.assert_array_equal(np.sum(np.abs(np.diff(walk, axis=0)), axis=1), 1)
         with pytest.raises(ValueError, match="code budget"):
             hilbert_encode_integer(jnp.asarray(grid), 63 // dimension + 1)
+
+
+def test_identification_derived_address_binds_bounds_mask_and_seam_identity() -> None:
+    address = MortonAddressPlan.from_periodic_identifications((_SEAM_X,), maximum_depth=8)
+    assert (address.lower, address.upper) == ((0.0, -1.0), (2.0, 3.0))
+    assert address.periodic_axes == (True, False)
+    assert address.coordinates == (("x", 0), ("x", 1))
+    assert address.identifications == (_SEAM_X.revision, None)
+    # Half-open: the upper face of the identified coordinate is the lower face.
+    encoded = address.encode(jnp.asarray([[2.0, 0.0], [0.0, 0.0]]))
+    assert bool(encoded.successful)
+    np.testing.assert_array_equal(encoded.codes[0], encoded.codes[1])
+    renamed = PeriodicIdentification(_BOX, "x", component=0, identification_id="other")
+    other = MortonAddressPlan.from_periodic_identifications((renamed,), maximum_depth=8)
+    raw = MortonAddressPlan((0.0, -1.0), (2.0, 3.0), 8, periodic_axes=(True, False))
+    assert (other.lower, other.upper, other.periodic_axes) == (
+        address.lower,
+        address.upper,
+        address.periodic_axes,
+    )
+    assert len({address.plan_id, other.plan_id, raw.plan_id}) == 3
+    transposed = MortonAddressPlan.from_periodic_identifications(
+        (_SEAM_X,), maximum_depth=8, coordinates=(("x", 1), ("x", 0))
+    )
+    assert transposed.periodic_axes == (False, True)
+    assert (transposed.lower, transposed.upper) == ((-1.0, 0.0), (3.0, 2.0))
+
+
+@pytest.mark.parametrize(
+    ("identifications", "coordinates", "message"),
+    [
+        pytest.param((), None, "at least one", id="empty"),
+        pytest.param(
+            (
+                _SEAM_X,
+                PeriodicIdentification(_BOX, "x", component=0, identification_id="x"),
+            ),
+            None,
+            "identified more than once",
+            id="duplicate-binding",
+        ),
+        pytest.param(
+            (
+                _SEAM_X,
+                PeriodicIdentification(
+                    HyperRectangle(np.zeros(2), np.ones(2)), "x", component=1
+                ),
+            ),
+            None,
+            "one fundamental domain",
+            id="cross-domain",
+        ),
+        pytest.param(
+            (PeriodicIdentification(_BOX @ TimeInterval(0.0, 1.0), "x", component=0),),
+            None,
+            "explicit point coordinates",
+            id="multi-label-domain",
+        ),
+        pytest.param((_SEAM_X,), (("x", 1),), "not a point axis", id="unbound-seam"),
+    ],
+)
+def test_identification_derived_address_refuses_ambiguous_bindings(
+    identifications: tuple[PeriodicIdentification, ...],
+    coordinates: tuple[tuple[str, int | None], ...] | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        MortonAddressPlan.from_periodic_identifications(
+            identifications, maximum_depth=8, coordinates=coordinates
+        )

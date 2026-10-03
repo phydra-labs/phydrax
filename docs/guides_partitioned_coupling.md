@@ -214,7 +214,8 @@ advance(window, start_state, inputs, args) -> CouplingSubsystemResult
 
 `inputs` and `outputs` are tuples aligned with the declared ports. The result reports
 one candidate state, scalar success/status/residual/iteration/work evidence, and
-optional fixed-structure auxiliary data.
+optional fixed-structure native `evidence`: an array PyTree the participant
+publishes for accepted and refused evaluations alike.
 
 Preparation uses shape evaluation to prove that the callback preserves participant
 state structure and returns every declared output space. Native participants must be
@@ -327,12 +328,20 @@ that sum plus the final certification evaluation. General-root methods do not re
 per-evaluation work, so their windows count only the final evaluation and report
 `counts_complete=False`; that work is never inferred.
 
+`participant_evidence` retains each participant's native `evidence` from the
+evaluation defining the candidate, ordered by `subsystem_ids`, whether the window
+commits or rolls back. Participants keep their own structures; nothing is summed
+or maximized across participants.
+
 ## Fixed-window rollout
 
 `CouplingProblem` requires an exact integer number of fixed coupling windows and
 explicit initial values for every exchange. `CouplingRolloutPlan` provides final,
 checkpoint, or trajectory retention and reuses `FixedStepReplayPolicy` for deterministic
-reverse recomputation.
+reverse recomputation. Its `evidence_retention` bounds retained participant
+evidence: `"terminal"` (default) keeps the last committed window and the refusing
+window as separate records, `"steps"` adds one record per window with a committed
+mask, and `"none"` keeps nothing.
 
 After the first failed window, later scan positions perform no participant work. The
 accepted state remains fixed and retained validity is a prefix mask.
@@ -470,6 +479,14 @@ output and is required exactly when such ports exist. The owner must itself have
 spent those amounts, for example through a native flux accumulator; the participant
 does not compute a debit. An optional `estimate_error` supplies the adaptive window
 error.
+
+A fixed-step participant publishes `FixedStepParticipantEvidence(executed,
+successful, method)`: per-substep masks of the native steps that ran and that the
+owner accepted (the first executed unaccepted substep is the refusal), and the
+owner's evidence over the window. Only the owner reduces its substep evidence,
+through `AbstractFixedStepMethod.reduce_evidence`; an owner declaring no
+reduction keeps the bounded per-substep stack, as does conservative IMEX stage
+evidence. A refused window keeps this evidence while its checkpoint is unchanged.
 
 `DAECouplingParticipant(prepared, bind, observe, subsystem_id=...)` binds an
 adaptive, event-free `PreparedDAESolve`. Its prepared time grid is a template whose
@@ -726,6 +743,14 @@ reconstruction and capacity without pretending to have a facet trace.
 exact coordinate transpose, preserving bulk loss and surface gain.
 `MeshfreeBulkSurfaceMethod` composes the existing conservative Langmuir solver
 with a positive deposition route and binds `FixedStepCouplingParticipant`.
+Each step publishes `MeshfreeBulkSurfaceEvidence`: native film and nonlinear
+statuses, nonlinear work and residual, Langmuir coverage, the amount actually
+transferred (spent only by accepted steps) beside the raw candidate transfer, the
+closed-system amount defect, complete query coverage, and whether the surface
+metric was admitted exactly or relaxed. Its declared window reduction sums spent
+transfers and work, keeps extremal coverage and residuals, and reports the
+refusing substep's status, so window and rollout evidence balance the amounts
+the participant actually moved.
 
 Host window boundaries relocate moving surface queries. Their sites remain
 frozen within the window; displacement, lag, and conservation are reported.
@@ -733,6 +758,57 @@ No within-window geometry derivative is implied. A topology epoch separately
 transfers extensive histories atomically through native lifecycle owners.
 See [Meshfree solvers](guides_meshfree.md#bulk-surface-exchange) and
 `examples/meshfree_bulk_surface_exchange.py`.
+
+The same `SurfaceExchangeLaw` also joins a monolithic transient: with a
+finite-element bulk, a meshfree surface, and `LangmuirAdsorptionFlux`, it lowers
+through `prepare_coupled_transient` onto the native index-one DAE, whose BDF
+stages Newton-solve the nonlinear exchange. `CoupledTransientSolution` admits the
+native discrete implicit derivatives only at an accepted solution
+(`derivative_valid`); derivatives through a refused trajectory are NaN.
+
+## Mixed-method meshfree interfaces
+
+A point cloud has no facets of its own. `PointBoundaryCharts` takes them from a
+geometry boundary atlas whose Gauss–Lobatto sites must coincide with cloud
+points, and `MeshfreeTraceComponent` publishes the cloud's coupling boundaries
+through that authority. Collocated coupling rows are homogeneous Neumann conormal
+rows scaled by the charts' lumped measure; the owner's residual reaction is the
+canonical conormal flux, and the value trace is the charts' nodal interpolant.
+Scalar dissipative rows already contain the integrated weak balance and are not
+rescaled. Their natural boundary nodes retain volume capacity/reaction weights;
+only Dirichlet rows exclude those terms. Floating weak-owner modes reach the
+coupled gauge consumer only after both actual reduced operator and transpose
+actions verify the owner-declared candidates.
+Rows, normals, and measures that disagree with the charts are refused, as are a
+pointwise flux and a trace-inverse certificate, so a Nitsche side on a cloud must
+carry zero flux weight. The cloud then couples through the ordinary laws:
+`ScalarTransmissionLaw` with a mortar in either orientation or a one-sided
+Nitsche against finite elements, and `ConservativeFluxLaw` with an
+`InterfaceConductance` against a `FiniteVolumeComponent`. The owner must itself
+be admitted by its spectral stability assessment. For traction interfaces,
+prepare `PointGhostLayerPlan(boundary).prepare(cloud)` and pass it as `ghosts`
+to `PointBlockSystemPlan`: this preserves the cloud PDE at every interface
+point and imposes traction on the corresponding ghost equation. Coupling
+publishes each cloud field and its `<field>-ghost` unknowns, exchanges the
+traction and PDE rows, and scales traction by boundary measure times ghost
+offset. The original extended equations, including cross-component stress
+terms, remain the coupled residual.
+
+In mixed Stokes owners, component-specific traction anchors pressure only where
+that component owns a nonzero normal contribution. Tangential-only traction does
+not remove the pressure gauge.
+
+`VectorTransmissionLaw` couples vector fields (velocity, displacement rate)
+component by component; `VectorTransmissionCertificate.resultants` reports the
+integrated interface force and each side's power as a dual pairing of the
+traction covector with that side's trace, never a sum of vector coefficients.
+
+Pass the complete `dict(solution.fields)` to `resultants`, including ghost
+fields. The FSI example computes solid elastic power with the same prepared
+ghost-extended derivative family and the complete displacement-rate state;
+cloud-only derivatives do not represent the solved traction discretization.
+See `examples/meshfree_mixed_method_coupling.py` and
+`examples/meshfree_fluid_structure.py`.
 
 ## Statuses
 

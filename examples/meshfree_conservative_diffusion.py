@@ -15,7 +15,7 @@ from jax import Array
 
 from benchmarks._runtime import logical_array_bytes
 from phydrax.discretization.meshfree import (
-    MeshfreeAdvection,
+    edge_upwind_content,
     MeshfreeExteriorCalculusPlan,
     MeshfreeMetricPolicy,
     PreparedMeshfreeMetric,
@@ -95,8 +95,7 @@ def _host_dilation_weights(plan: PreparedMeshfreeMetric, scale: float) -> np.nda
         )
     rows = np.asarray(relation.target_indices)
     columns = np.asarray(relation.source_indices)
-    moments = rows % plan.moment_count
-    degree = np.where(moments < plan.intrinsic_dimension, 1, 2)
+    degree = np.asarray(plan.row_degrees)[rows]
     phi = np.asarray(plan.prior)
     coefficients = (
         np.asarray(plan.constraint.coefficients)
@@ -133,10 +132,18 @@ def run_workflow(
     volume_flux = metric.weights * (offset @ jnp.ones((dimension,)) / dimension) * 0.1
     # This axial Cartesian fixture has degree <=2d and speed components 0.1/d.
     # Bound outgoing flow without duplicating the native CFL reduction; the
-    # actual outgoing CFL and ledger are measured by MeshfreeAdvection.step.
+    # actual outgoing CFL and ledger are measured by edge_upwind_content.
     flow_bound = 0.2 * jnp.max(jnp.abs(metric.weights)) * jnp.max(prepared.lengths)
     dt = 0.5 * jnp.min(prepared.node_volumes) / flow_bound
-    advection = MeshfreeAdvection(prepared).step(temperature, volume_flux, dt)
+    advection = edge_upwind_content(
+        temperature,
+        prepared.node_volumes,
+        prepared.incidence,
+        volume_flux,
+        dt,
+        metric_nonnegative=metric.nonnegative,
+        metric_accepted=metric.accepted,
+    )
 
     def dilated_weights(scale: Array) -> Array:
         return prepared.refresh(points=scale * prepared.points).metric_result.weights
@@ -185,8 +192,9 @@ def run_workflow(
         "positivity_admitted": bool(np.asarray(advection.positivity_admitted)),
         "negative_weights": int(np.asarray(metric.negative_count)),
         "zero_weights": int(np.asarray(metric.zero_count)),
-        "rank": metric.rank,
-        "redundant_constraints": metric.redundant_constraints,
+        "rank": int(np.asarray(metric.rank)),
+        "rank_route": metric.rank_certificate.route,
+        "redundant_constraints": int(np.asarray(metric.redundant_constraints)),
         "reduced_spd": bool(np.asarray(diffusion.evidence.spd)),
         "derivative_error": float(np.asarray(derivative_error)),
         "derivative_available": bool(np.asarray(metric.derivative_available)),

@@ -25,7 +25,14 @@ from ...linalg import (
     StabilityLowerBound,
 )
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone
-from ._conic_sensitivity import ConicProgramData, ConicSensitivityResult
+from ._conic_sensitivity import (
+    _active_set_evidence,
+    _resolve_status,
+    ConicActiveSetEvidence,
+    ConicProgramData,
+    ConicSensitivityResult,
+    ConicSensitivityStatus,
+)
 from ._exponential_cone import ExponentialCone
 from ._lifecycle import ConvexProgramExecution, PreparedConvexProgram
 from ._policy import ConicGeneralizedDerivativePolicy
@@ -39,19 +46,19 @@ from ._problem import (
 
 
 class PreparedMatrixFreeConicSensitivity(StrictModule):
+    """Audited state for matrix-free projection-KKT sensitivities of one program."""
+
     original_data: ConicProgramData
     state: Array
     operator: JacobianLinearOperator
     cone: AbstractConvexCone
     stability: StabilityLowerBound
-    forward_valid: Array
-    projection_margin: Array
-    projection_regular: Array
-    root_residual_norm: Array
+    active_set: ConicActiveSetEvidence
     linear_policy: LinearSolvePolicy
     numeric_version: Array
     generalized: ConicGeneralizedDerivativePolicy | None
     num_variables: int = eqx.field(static=True)
+    regularization: float = eqx.field(static=True)
     regularity_tolerance: float = eqx.field(static=True)
     failure_mode: FailureMode = eqx.field(static=True)
     convex_plan_id: str = eqx.field(static=True)
@@ -111,6 +118,7 @@ def _residual(
     state: Array,
     cone: AbstractConvexCone,
     variables: int,
+    regularization: float,
     generalized: ConicGeneralizedDerivativePolicy | None,
 ) -> Array:
     primal = state[:variables]
@@ -118,8 +126,10 @@ def _residual(
     projection_point = (
         dual + _conic_matrix_mv(data.constraint_matrix, primal) - data.constraint_rhs
     )
+    # The executed map includes the solve policy's explicit regularization.
     stationarity = (
         _conic_quadratic_mv(data.quadratic, primal)
+        + regularization * primal
         + data.linear
         + _conic_matrix_transpose_mv(data.constraint_matrix, dual)
     )
@@ -137,6 +147,7 @@ def prepare_matrix_free_conic_sensitivity(
     regularity_tolerance: float,
     generalized: ConicGeneralizedDerivativePolicy | None,
     failure_mode: FailureMode,
+    fixed_active_set: ConicActiveSetEvidence | None,
 ) -> PreparedMatrixFreeConicSensitivity:
     program = prepared.program
     if not isinstance(program, ConicProgram) or program.batch_shape:
@@ -146,7 +157,9 @@ def prepare_matrix_free_conic_sensitivity(
         or program.lower_bound_indices
         or program.upper_bound_indices
     ):
-        raise ValueError("Matrix-free sensitivity currently requires no bounds.")
+        raise ValueError(
+            "Matrix-free sensitivity requires bounds expressed as cone rows."
+        )
     if not callable(stability):
         raise TypeError("stability must build evidence for the exact Jacobian.")
     if generalized is not None and not isinstance(
@@ -161,6 +174,8 @@ def prepare_matrix_free_conic_sensitivity(
         program.lower_bounds,
         program.upper_bounds,
     )
+    policy = prepared.plan.policy
+    regularization = policy.regularization
     result = execution.result
     state = jnp.concatenate((result.primal, result.cone_dual))
     linearization = prepare_linearization(
@@ -169,6 +184,7 @@ def prepare_matrix_free_conic_sensitivity(
             candidate,
             program.cone,
             program.num_variables,
+            regularization,
             generalized,
         ),
         state,
@@ -184,99 +200,127 @@ def prepare_matrix_free_conic_sensitivity(
         raise ValueError("Matching constructive/verified stability evidence is required.")
     residual = linearization.primal
     root_norm = jnp.max(jnp.abs(residual), initial=0.0)
-    point = (
-        result.cone_dual
-        + _conic_matrix_mv(program.constraint_matrix, result.primal)
-        - program.constraint_rhs
+    active_set = _active_set_evidence(
+        program,
+        result,
+        regularization=regularization,
+        termination=policy.termination,
+        tolerance=regularity_tolerance,
+        projection_residual_norm=root_norm,
+        projection_finite=jnp.all(jnp.isfinite(state)) & jnp.isfinite(root_norm),
+        kkt_nonsingular=evidence.valid,
+        reference=fixed_active_set,
     )
-    margin = program.cone.dual_projection_smoothness_margin(point)
-    scale = jnp.maximum(jnp.max(jnp.abs(point), initial=0.0), 1.0)
     if generalized is not None:
         blocks = (
             program.cone.cones
             if isinstance(program.cone, ProductCone)
             else (program.cone,)
         )
-        if any(isinstance(block, (ExponentialCone, PowerCone)) for block in blocks):
-            if bool(margin <= regularity_tolerance * scale):
-                raise ValueError(
-                    "Nonsmooth exponential/power generalized strata are unsupported."
-                )
-    projection_regular = (margin > regularity_tolerance * scale) | (
-        generalized is not None
-    )
-    termination = prepared.plan.policy.termination
-    data_scale = jnp.maximum(
-        1.0,
-        jnp.maximum(
-            jnp.max(jnp.abs(program.linear), initial=0.0),
-            jnp.max(jnp.abs(program.constraint_rhs), initial=0.0),
-        ),
-    )
-    forward_valid = (
-        result.successful
-        & jnp.all(jnp.isfinite(state))
-        & (root_norm <= termination.absolute + termination.relative * data_scale)
-    )
+        ambiguous = bool(
+            active_set.status == int(ConicSensitivityStatus.AMBIGUOUS_ACTIVE_SET)
+        )
+        if ambiguous and any(
+            isinstance(block, (ExponentialCone, PowerCone)) for block in blocks
+        ):
+            raise ValueError(
+                "Nonsmooth exponential/power generalized strata are unsupported."
+            )
     return PreparedMatrixFreeConicSensitivity(
         data,
         state,
         operator,
         program.cone,
         evidence,
-        forward_valid,
-        margin,
-        projection_regular,
-        root_norm,
+        active_set,
         linear,
         prepared.numeric_version,
         generalized,
-        program.num_variables,
-        regularity_tolerance,
-        failure_mode,
-        prepared.plan.plan_id,
-        prepared.numeric_binding_id,
+        num_variables=program.num_variables,
+        regularization=regularization,
+        regularity_tolerance=regularity_tolerance,
+        failure_mode=failure_mode,
+        convex_plan_id=prepared.plan.plan_id,
+        numeric_binding_id=prepared.numeric_binding_id,
     )
 
 
-def _regular(
-    prepared: PreparedMatrixFreeConicSensitivity, linear_result: LinearSolveResult
-) -> Array:
-    return (
-        prepared.forward_valid
-        & prepared.projection_regular
-        & prepared.stability.valid
-        & linear_result.successful
+def _resolution(
+    prepared: PreparedMatrixFreeConicSensitivity,
+    linear_result: LinearSolveResult,
+    residual: Array,
+) -> tuple[Array, Array]:
+    # With the certified stability constant sigma, the exact derivative system
+    # solution differs from the computed one by at most ||residual|| / sigma.
+    # A positive but numerically negligible sigma therefore never certifies a
+    # least-squares solution of a (near-)singular system.
+    value = linear_result.value
+    error_bound = jnp.linalg.norm(residual) / prepared.stability.lower_bound
+    certified = error_bound <= prepared.regularity_tolerance * jnp.maximum(
+        1.0, jnp.linalg.norm(value)
+    )
+    linear_regular = (
+        linear_result.successful
         & linear_result.diagnostics.finite
         & linear_result.diagnostics.converged
-        & jnp.all(jnp.isfinite(linear_result.value))
+        & jnp.all(jnp.isfinite(value))
+        & certified
     )
+    return _resolve_status(
+        prepared.active_set.status, linear_regular, prepared.generalized is not None
+    )
+
+
+def _data_residual(
+    prepared: PreparedMatrixFreeConicSensitivity,
+) -> tuple[Callable[[ConicProgramData], Array], ConicProgramData]:
+    # Sparse operators carry integer topology leaves; only inexact numerical
+    # coordinates are differentiated, the fixed topology is closed over.
+    numeric, topology = eqx.partition(prepared.original_data, eqx.is_inexact_array)
+
+    def residual(candidate: ConicProgramData) -> Array:
+        return _residual(
+            eqx.combine(candidate, topology),
+            prepared.state,
+            prepared.cone,
+            prepared.num_variables,
+            prepared.regularization,
+            prepared.generalized,
+        )
+
+    return residual, numeric
 
 
 def matrix_free_conic_primal_jvp(
     prepared: PreparedMatrixFreeConicSensitivity, tangent: ConicProgramData
 ) -> ConicSensitivityResult:
-    _, action = jax.jvp(
-        lambda data: _residual(
-            data,
-            prepared.state,
-            prepared.cone,
-            prepared.num_variables,
-            prepared.generalized,
-        ),
-        (prepared.original_data,),
-        (tangent,),
+    if not isinstance(tangent, ConicProgramData):
+        raise TypeError("tangent must be a ConicProgramData.")
+    residual, numeric = _data_residual(prepared)
+    tangent_numeric, _ = eqx.partition(tangent, eqx.is_inexact_array)
+    tangent_finite = jnp.all(
+        jnp.stack(
+            [jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(tangent_numeric)]
+        )
     )
+    _, action = jax.jvp(residual, (numeric,), (tangent_numeric,))
+    action = eqx.error_if(action, ~tangent_finite, "Conic tangent must be finite.")
     linear_result = solve_linear(
         LeastSquaresProblem(prepared.operator, problem_id="matrix-free-conic-jvp"),
         -action,
         policy=prepared.linear_policy,
     )
-    regular = _regular(prepared, linear_result)
-    value = jnp.where(regular, linear_result.value[: prepared.num_variables], jnp.nan)
+    status, available = _resolution(
+        prepared,
+        linear_result,
+        jnp.asarray(prepared.operator.mv(linear_result.value)) + action,
+    )
+    value = jnp.where(available, linear_result.value[: prepared.num_variables], jnp.nan)
     if prepared.failure_mode == "error":
-        value = eqx.error_if(value, ~regular, "Conic matrix-free JVP is not regular.")
-    return _result(prepared, linear_result, regular, value)
+        value = eqx.error_if(
+            value, ~available, "Conic matrix-free JVP has no available derivative."
+        )
+    return _result(prepared, linear_result, status, available, value)
 
 
 def matrix_free_conic_primal_vjp(
@@ -285,6 +329,11 @@ def matrix_free_conic_primal_vjp(
     cotangent_ = jnp.asarray(cotangent, dtype=prepared.state.dtype)
     if cotangent_.shape != (prepared.num_variables,):
         raise ValueError("cotangent has the wrong shape.")
+    cotangent_ = eqx.error_if(
+        cotangent_,
+        jnp.any(~jnp.isfinite(cotangent_)),
+        "Conic primal cotangent must be finite.",
+    )
     state_cotangent = jnp.concatenate(
         (
             cotangent_,
@@ -294,57 +343,48 @@ def matrix_free_conic_primal_vjp(
             ),
         )
     )
+    adjoint_operator = adjoint(prepared.operator)
     linear_result = solve_linear(
-        LeastSquaresProblem(
-            adjoint(prepared.operator), problem_id="matrix-free-conic-vjp"
-        ),
+        LeastSquaresProblem(adjoint_operator, problem_id="matrix-free-conic-vjp"),
         state_cotangent,
         policy=prepared.linear_policy,
     )
-    _, pullback = jax.vjp(
-        lambda data: _residual(
-            data,
-            prepared.state,
-            prepared.cone,
-            prepared.num_variables,
-            prepared.generalized,
-        ),
-        prepared.original_data,
+    residual, numeric = _data_residual(prepared)
+    _, pullback = jax.vjp(residual, numeric)
+    status, available = _resolution(
+        prepared,
+        linear_result,
+        jnp.asarray(adjoint_operator.mv(linear_result.value)) - state_cotangent,
     )
-    value = jax.tree.map(jnp.negative, pullback(linear_result.value)[0])
-    regular = _regular(prepared, linear_result)
-    value = jax.tree.map(
-        lambda leaf: (
-            jnp.where(regular, leaf, jnp.full_like(leaf, jnp.nan))
-            if jnp.issubdtype(leaf.dtype, jnp.inexact)
-            else leaf
-        ),
-        value,
+    numeric_cotangent = jax.tree.map(
+        lambda leaf: jnp.where(available, -leaf, jnp.full_like(leaf, jnp.nan)),
+        pullback(linear_result.value)[0],
     )
     if prepared.failure_mode == "error":
-        leaves, structure = jax.tree.flatten(value)
+        leaves, structure = jax.tree.flatten(numeric_cotangent)
         leaves[0] = eqx.error_if(
-            leaves[0], ~regular, "Conic matrix-free VJP is not regular."
+            leaves[0], ~available, "Conic matrix-free VJP has no available derivative."
         )
-        value = jax.tree.unflatten(structure, leaves)
-    return _result(prepared, linear_result, regular, value)
+        numeric_cotangent = jax.tree.unflatten(structure, leaves)
+    _, topology = eqx.partition(prepared.original_data, eqx.is_inexact_array)
+    value = eqx.combine(numeric_cotangent, topology)
+    return _result(prepared, linear_result, status, available, value)
 
 
 def _result(
     prepared: PreparedMatrixFreeConicSensitivity,
     linear_result: LinearSolveResult,
-    regular: Array,
+    status: Array,
+    available: Array,
     value: PyTree[Array],
 ) -> ConicSensitivityResult:
     return ConicSensitivityResult(
         value,
-        prepared.forward_valid,
-        prepared.projection_margin,
-        prepared.projection_regular,
-        prepared.root_residual_norm,
+        status,
+        available,
+        prepared.active_set,
         linear_result.status,
         linear_result.diagnostics,
-        regular,
         prepared.numeric_version,
         convex_plan_id=prepared.convex_plan_id,
         linear_plan_id=linear_result.provenance.plan_id,
