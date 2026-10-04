@@ -22,6 +22,7 @@ from ..._trainable import NonTrainableState
 from ...atomistic._graph import (
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphTopology,
     realize_atomistic_graph,
 )
 from ...atomistic._potential import (
@@ -35,6 +36,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
+from ...sparse._streamed import PreparedStreamedRelation, StreamedPayloadSpec
 from ...typing import checked, PRNGKey
 from ..layers import Linear
 from ..parameters import IdentityTransform
@@ -149,53 +151,90 @@ class _PaiNNInteraction(StrictModule):
 
     def __call__(
         self,
+        potential: PaiNNPotential,
         scalar: Array,
         vector: Array,
-        graph: AtomisticGraph,
-        radial: Array,
-        cutoff_weight: Array,
+        edges: PreparedStreamedRelation,
+        edge_data: tuple[Array, Array],
+        edge_active: Array,
         /,
     ) -> tuple[Array, Array]:
-        ir = graph.graph
-        if ir.senders is None or ir.receivers is None or ir.edge_mask is None:
-            raise ValueError("PaiNN requires an explicit masked edge relation.")
         feature_count = scalar.shape[-1]
-        edge_mask = ir.edge_mask[:, None]
-        safe_radial = jnp.where(edge_mask, radial, 0.0)
-        safe_cutoff = jnp.where(edge_mask, cutoff_weight, 0.0)
-        filtered = self.filter_out(self.filter_in(safe_radial)) * safe_cutoff
-        sender_scalar = jnp.where(edge_mask, scalar[ir.senders], 0.0)
-        message = self.message_out(self.message_in(sender_scalar)) * filtered
-        message = jnp.where(edge_mask, message, 0.0)
-        scalar_coefficient, vector_coefficient, direction_coefficient = jnp.split(
-            message, 3, axis=-1
+        node = jax.ShapeDtypeStruct((feature_count,), scalar.dtype)
+        node_vector = jax.ShapeDtypeStruct((3, feature_count), vector.dtype)
+        payload = StreamedPayloadSpec(
+            message={"scalar": node, "vector": node_vector},
+            output=(node, node_vector),
         )
-        direction = jnp.where(
-            edge_mask,
-            jnp.asarray(ir.edges["direction"], dtype=scalar.dtype),
-            0.0,
-        )
-        sender_vector = jnp.where(edge_mask[:, :, None], vector[ir.senders], 0.0)
-        vector_message = (
-            vector_coefficient[:, None, :] * sender_vector
-            + direction_coefficient[:, None, :] * direction[:, :, None]
-        )
-        scalar_delta = jnp.zeros_like(scalar).at[ir.receivers].add(scalar_coefficient)
-        vector_delta = jnp.zeros_like(vector).at[ir.receivers].add(vector_message)
-        scalar, vector = self.atomwise_update(
-            scalar + scalar_delta, vector + vector_delta
-        )
+        scalar, vector = edges.evaluate(
+            payload,
+            _painn_message,
+            _painn_update,
+            (potential, self),
+            (scalar, vector),
+            (scalar, vector),
+            edge_data,
+            edge_active=edge_active,
+        ).receiver_outputs
         if scalar.shape[-1] != feature_count:
             raise RuntimeError("PaiNN interaction changed its scalar feature width.")
         return scalar, vector
 
 
-class PaiNNPotential(AbstractAtomisticPotential):
-    """Finite nonperiodic molecular PaiNN scalar energy potential.
+def _painn_message(
+    parameters: tuple[PaiNNPotential, _PaiNNInteraction],
+    sender: tuple[Array, Array],
+    receiver: tuple[Array, Array],
+    edge: tuple[Array, Array],
+    /,
+) -> dict[str, Array]:
+    """Filtered scalar and equivariant vector message of one directed edge."""
+    potential, interaction = parameters
+    del receiver
+    sender_scalar, sender_vector = sender
+    distance, direction = edge
+    radial, cutoff_weight = potential._radial_basis(distance)
+    filtered = interaction.filter_out(interaction.filter_in(radial)) * cutoff_weight
+    message = interaction.message_out(interaction.message_in(sender_scalar)) * filtered
+    scalar_coefficient, vector_coefficient, direction_coefficient = jnp.split(
+        message, 3, axis=-1
+    )
+    return {
+        "scalar": scalar_coefficient,
+        "vector": vector_coefficient[None, :] * sender_vector
+        + direction_coefficient[None, :] * direction[:, None],
+    }
 
-    The candidate topology is fixed by ``AtomisticBatch``. Geometry only changes
-    differentiable displacement payloads and smooth cutoff weights; no edge is
-    truncated or rebuilt inside the force derivative.
+
+def _painn_update(
+    parameters: tuple[PaiNNPotential, _PaiNNInteraction],
+    receiver: tuple[Array, Array],
+    aggregate: dict[str, Array],
+    /,
+) -> tuple[Array, Array]:
+    """Residual message sum followed by the atomwise update, once per receiver."""
+    _potential, interaction = parameters
+    scalar, vector = receiver
+    updated_scalar, updated_vector = interaction.atomwise_update(
+        (scalar + aggregate["scalar"])[None], (vector + aggregate["vector"])[None]
+    )
+    return updated_scalar[0], updated_vector[0]
+
+
+class PaiNNPotential(AbstractAtomisticPotential):
+    """PaiNN scalar energy potential on finite or explicit periodic-image graphs.
+
+    The candidate topology is fixed by the prepared graph topology: finite
+    batches use the dense all-pairs layout, periodic (orthorhombic, triclinic or
+    partially periodic) batches use explicit integer image routes, including
+    nonzero self images. Geometry and cell vectors only change differentiable
+    displacement payloads and smooth cutoff weights; no edge is truncated or
+    rebuilt inside a derivative, so forces and the first strain derivative
+    (stress) are exact. The cosine envelope is only C1 at the cutoff:
+    coordinate second derivatives jump where an edge crosses it. Every
+    interaction evaluates each directed edge message once and each receiver
+    update once on the streamed schedule the graph topology prepared for its
+    execution plan.
     """
 
     embedding: Array
@@ -304,8 +343,13 @@ class PaiNNPotential(AbstractAtomisticPotential):
 
     @property
     def capabilities(self) -> AtomisticPotentialCapabilities:
+        # The radius-local energy consumes explicit image routes; strain enters
+        # only through cell-dependent image displacements (first derivative).
         return AtomisticPotentialCapabilities(
-            species_kind=self.configuration.species_kind
+            orthorhombic_periodic=True,
+            triclinic_periodic=True,
+            cell_derivative=True,
+            species_kind=self.configuration.species_kind,
         )
 
     @checked
@@ -318,27 +362,23 @@ class PaiNNPotential(AbstractAtomisticPotential):
             raise ValueError(
                 "Batch coordinate dtype does not match the PaiNN precision contract."
             )
-        if batch.has_periodic_metadata:
-            raise ValueError(
-                "PaiNNPotential supports finite nonperiodic molecules only and rejects "
-                "preserved cell or periodic metadata."
-            )
 
     def _radial_basis(self, distance: Array, /) -> tuple[Array, Array]:
+        """Sinc radial basis and cosine envelope, broadcast over distance axes."""
         dtype = jnp.dtype(self.precision.compute_dtype)
         radius = jnp.asarray(distance, dtype=dtype)
         cutoff = jnp.asarray(self.configuration.cutoff, dtype=dtype)
         scaled = radius / cutoff
         frequencies = self.configuration.radial_frequencies
         basis = (jnp.pi * frequencies / cutoff) * jnp.sinc(
-            scaled[:, None] * frequencies[None, :]
+            scaled[..., None] * frequencies
         )
         envelope = jnp.where(
             scaled < 1.0,
             0.5 * (jnp.cos(jnp.pi * scaled) + 1.0),
             0.0,
         )
-        return basis, envelope[:, None]
+        return basis, envelope[..., None]
 
     def graph_energy(
         self,
@@ -363,10 +403,20 @@ class PaiNNPotential(AbstractAtomisticPotential):
             dtype=self.precision.compute_dtype,
         )
         scalar = scalar * mask[:, None]
-        distance = jnp.asarray(graph.graph.edges["distance"])[:, 0]
-        radial, cutoff_weight = self._radial_basis(distance)
+        ir = graph.graph
+        if ir.edge_mask is None:
+            raise ValueError("PaiNN requires an explicit masked edge relation.")
+        # One prepared candidate schedule serves every interaction; the cutoff
+        # mask is runtime route activity, never a schedule change.
+        edges = graph.topology.streamed
+        edge_data = (
+            jnp.asarray(ir.edges["distance"])[:, 0],
+            jnp.asarray(ir.edges["direction"], dtype=scalar.dtype),
+        )
         for interaction in self.interactions:
-            scalar, vector = interaction(scalar, vector, graph, radial, cutoff_weight)
+            scalar, vector = interaction(
+                self, scalar, vector, edges, edge_data, ir.edge_mask
+            )
             scalar = scalar * mask[:, None]
             vector = vector * mask[:, None, None]
         atom_energy = self.readout_energy(self.readout_hidden(scalar))
@@ -389,6 +439,9 @@ class PaiNNPotential(AbstractAtomisticPotential):
         positions: Array,
         execution: AtomisticGraphExecutionPlan,
         /,
+        *,
+        topology: AtomisticGraphTopology | None = None,
+        cell_vectors: Array | None = None,
     ) -> tuple[Array, Array, AtomisticGraph]:
         coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
         if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER:
@@ -402,6 +455,8 @@ class PaiNNPotential(AbstractAtomisticPotential):
             execution,
             cutoff=self.configuration.cutoff,
             positions=coordinate,
+            topology=topology,
+            cell_vectors=cell_vectors,
         )
         species = (
             batch.atomic_numbers
@@ -425,12 +480,21 @@ class PaiNNPotential(AbstractAtomisticPotential):
         /,
         *,
         positions: Array | None = None,
+        topology: AtomisticGraphTopology | None = None,
+        cell_vectors: Array | None = None,
     ) -> Array:
-        """Evaluate typed-scale total energies, failing closed on graph overflow."""
+        """Evaluate typed-scale total energies, failing closed on graph overflow.
+
+        Periodic batches require ``topology`` from
+        ``prepare_atomistic_graph_topology``, prepared on the host before any
+        transformed call; ``cell_vectors`` default to the batch cells.
+        """
 
         self._validate_batch(batch)
         coordinate = batch.positions if positions is None else positions
-        energy, _, graph = self._energy_unchecked(batch, coordinate, execution)
+        energy, _, graph = self._energy_unchecked(
+            batch, coordinate, execution, topology=topology, cell_vectors=cell_vectors
+        )
         return graph.require_success(energy)
 
     def __call__(

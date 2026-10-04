@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from enum import IntEnum, IntFlag
 from typing import Any, TypeAlias
 
@@ -22,23 +23,45 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite, tree_where
 from ..discretization import (
+    AbstractPreparedParticleImageNeighborhood,
     AbstractPreparedParticleNeighborhood,
+    lattice_measure,
+    ParticleImageCapacityLadder,
+    ParticleImageNeighborhoodState,
+    ParticleImageVerletState,
     ParticleNeighborhoodState,
     ParticleVerletState,
     PeriodicCell,
+    PreparedImageVerletParticleNeighborhood,
     PreparedVerletParticleNeighborhood,
 )
 from ..typing import checked, PRNGKey
 from ._constraints import PreparedDistanceConstraints
 from ._ensemble_advanced import AtomisticSplittingPlan, SplittingOperatorKind
+from ._graph import AtomisticGraphTopology, particle_atomistic_graph_topology
 from ._potential_program import (
     AbstractPreparedAtomisticHamiltonian,
     AtomisticHamiltonianEvaluation,
+    PreparedAtomisticPotentialProgram,
 )
 from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
 from ._thermal import apply_baoab_ornstein_uhlenbeck, BAOABLangevinPlan
-from ._thermodynamic import PreparedThermodynamicStateTable
+from ._thermodynamic import (
+    AtomisticThermodynamicStatePlan,
+    PreparedThermodynamicStateTable,
+)
+
+
+AtomisticNeighborhoodState: TypeAlias = (
+    ParticleNeighborhoodState | ParticleImageNeighborhoodState
+)
+AtomisticNeighborhoodCache: TypeAlias = ParticleVerletState | ParticleImageVerletState
+AtomisticPreparedNeighborhood: TypeAlias = (
+    AbstractPreparedParticleNeighborhood
+    | AbstractPreparedParticleImageNeighborhood
+    | PreparedImageVerletParticleNeighborhood
+)
 
 
 class AtomisticDynamicsStatus(IntEnum):
@@ -104,8 +127,8 @@ class AtomisticDynamicsState(StrictModule):
     kinematics: AtomisticKinematics
     species: Array
     cell_vectors: Array
-    neighborhood: ParticleNeighborhoodState
-    neighborhood_cache: ParticleVerletState | None
+    neighborhood: AtomisticNeighborhoodState
+    neighborhood_cache: AtomisticNeighborhoodCache | None
     force: AtomisticForceState
     constraint_lagrange: Array
     constraint_position_residual: Array
@@ -183,10 +206,108 @@ class VelocityVerletPlan(StrictModule, NonTrainableState):
 AtomisticIntegratorPlan: TypeAlias = VelocityVerletPlan | BAOABLangevinPlan
 
 
+def _admit_image_neighborhood(
+    system: PreparedAtomisticSystem,
+    potential: AbstractPreparedAtomisticHamiltonian,
+    neighborhood: AbstractPreparedParticleImageNeighborhood
+    | PreparedImageVerletParticleNeighborhood,
+    /,
+) -> None:
+    """Admit an image-aware neighborhood only for pure directed-graph programs.
+
+    Image routes may exceed the unique-image radius and repeat a pair under
+    distinct translations, so classical pair-once, interaction-site, bonded or
+    reciprocal terms keep their pair-once neighborhoods and unique-image guards.
+    """
+    if system.cell is None:
+        raise ValueError("Image-aware neighborhoods require a periodic system cell.")
+    requirements = potential.plan.requirements
+    if not requirements.directed_graph or (
+        requirements.pair_geometry
+        or requirements.interaction_site_geometry
+        or requirements.bonded_geometry
+        or requirements.reciprocal_grid
+    ):
+        raise ValueError(
+            "Image-aware neighborhoods admit only pure directed-graph potential "
+            "programs; classical terms require a pair-once neighborhood."
+        )
+    cutoff = requirements.cutoff
+    radius = (
+        neighborhood.plan.interaction_radius
+        if isinstance(neighborhood, PreparedImageVerletParticleNeighborhood)
+        else neighborhood.search_radius
+    )
+    if cutoff is None or cutoff > radius:
+        raise ValueError(
+            "Image neighborhood radius must cover the directed-graph cutoff."
+        )
+    if (
+        isinstance(neighborhood, PreparedImageVerletParticleNeighborhood)
+        and neighborhood.plan.streamed is not None
+    ):
+        from ._alchemical import PreparedControlledHamiltonian
+
+        program = (
+            potential.potential
+            if isinstance(potential, PreparedControlledHamiltonian)
+            else potential
+        )
+        if (
+            isinstance(program, PreparedAtomisticPotentialProgram)
+            and program.graph_execution is not None
+            and neighborhood.plan.streamed.plan_id
+            != program.graph_execution.streamed.plan_id
+        ):
+            raise ValueError(
+                "Image Verlet and graph execution must share one streamed plan."
+            )
+
+
+def neighborhood_route_work(neighborhood: AtomisticNeighborhoodState, /) -> Array:
+    """Return the stored route count charged as neighborhood work.
+
+    Classical pair states charge their candidate pairs; image states charge
+    their stored directed image routes.
+    """
+    if isinstance(neighborhood, ParticleImageNeighborhoodState):
+        return jnp.sum(neighborhood.evidence.stored_edges, dtype=jnp.int32)
+    return neighborhood.candidate_pair_count
+
+
+def _neighborhood_failures(
+    neighborhood: AtomisticNeighborhoodState,
+    cache: AtomisticNeighborhoodCache | None,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Classify neighborhood failure as cell capacity, route capacity or domain.
+
+    Image evidence maps cell occupancy to cell capacity; image, edge and degree
+    budgets to route capacity; stencil-envelope, domain and nonfinite failures
+    (and a lifecycle certificate that failed without a capacity cause) to the
+    domain reason, which is never repaired by a capacity retry.
+    """
+    if isinstance(neighborhood, ParticleNeighborhoodState):
+        return (
+            neighborhood.cell_overflow,
+            neighborhood.pair_overflow,
+            neighborhood.domain_violation,
+        )
+    evidence = neighborhood.evidence
+    cell = jnp.any(evidence.cell_overflow)
+    pair = jnp.any(
+        evidence.image_overflow | evidence.edge_overflow | evidence.degree_overflow
+    )
+    domain = jnp.any(evidence.scientific_failure)
+    if isinstance(cache, ParticleImageVerletState):
+        domain = domain | (~cache.successful & ~(cell | pair))
+    return cell, pair, domain
+
+
 class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     potential: AbstractPreparedAtomisticHamiltonian
-    neighborhood: AbstractPreparedParticleNeighborhood
+    neighborhood: AtomisticPreparedNeighborhood
     schedule: AtomisticSplittingPlan
     integrator: AtomisticIntegratorPlan
     constraints: PreparedDistanceConstraints | None
@@ -197,7 +318,7 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
         self,
         system: PreparedAtomisticSystem,
         potential: AbstractPreparedAtomisticHamiltonian,
-        neighborhood: AbstractPreparedParticleNeighborhood,
+        neighborhood: AtomisticPreparedNeighborhood,
         integrator: AtomisticIntegratorPlan,
         /,
         *,
@@ -230,7 +351,15 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
             if constraints.system.prepared_id != system.prepared_id:
                 raise ValueError("Constraints belong to another atomistic system.")
         cutoff = potential.plan.requirements.cutoff
-        if cutoff is not None and system.cell is not None:
+        if isinstance(
+            neighborhood,
+            (
+                AbstractPreparedParticleImageNeighborhood,
+                PreparedImageVerletParticleNeighborhood,
+            ),
+        ):
+            _admit_image_neighborhood(system, potential, neighborhood)
+        elif cutoff is not None and system.cell is not None:
             skin = (
                 neighborhood.plan.skin
                 if isinstance(neighborhood, PreparedVerletParticleNeighborhood)
@@ -269,7 +398,7 @@ class PreparedAtomisticDynamics(StrictModule):
     plan: AtomisticDynamicsPlan
     system: PreparedAtomisticSystem
     potential: AbstractPreparedAtomisticHamiltonian
-    neighborhood: AbstractPreparedParticleNeighborhood
+    neighborhood: AtomisticPreparedNeighborhood
     integrator: AtomisticIntegratorPlan
     schedule: AtomisticSplittingPlan
     constraints: PreparedDistanceConstraints | None
@@ -340,25 +469,48 @@ class PreparedAtomisticDynamics(StrictModule):
     def _build_neighborhood(
         self,
         positions: Array,
-        previous: ParticleVerletState | None,
+        previous: AtomisticNeighborhoodCache | None,
         cell_vectors: Array | None = None,
+        image_counts: Array | None = None,
         /,
-    ) -> tuple[ParticleNeighborhoodState, ParticleVerletState | None]:
-        if isinstance(self.neighborhood, PreparedVerletParticleNeighborhood):
-            cache = (
-                self.neighborhood.initialize(positions, cell_vectors=cell_vectors)
+    ) -> tuple[AtomisticNeighborhoodState, AtomisticNeighborhoodCache | None]:
+        neighborhood = self.neighborhood
+        vectors = None if cell_vectors is None or cell_vectors.size == 0 else cell_vectors
+        if isinstance(neighborhood, PreparedImageVerletParticleNeighborhood):
+            if previous is not None and not isinstance(
+                previous, ParticleImageVerletState
+            ):
+                raise TypeError("Image Verlet dynamics requires an image Verlet cache.")
+            image_cache = (
+                neighborhood.initialize(
+                    positions, cell_vectors=vectors, image_counts=image_counts
+                )
                 if previous is None
-                else self.neighborhood.update(
-                    positions, previous, cell_vectors=cell_vectors
+                else neighborhood.update(
+                    positions,
+                    previous,
+                    cell_vectors=vectors,
+                    image_counts=image_counts,
                 )
             )
+            return image_cache.neighborhood, image_cache
+        if isinstance(neighborhood, AbstractPreparedParticleImageNeighborhood):
+            return neighborhood.build(positions, cell_vectors=vectors), None
+        if isinstance(neighborhood, PreparedVerletParticleNeighborhood):
+            if previous is not None and not isinstance(previous, ParticleVerletState):
+                raise TypeError("Verlet dynamics requires a pair Verlet cache.")
+            cache = (
+                neighborhood.initialize(positions, cell_vectors=cell_vectors)
+                if previous is None
+                else neighborhood.update(positions, previous, cell_vectors=cell_vectors)
+            )
             return cache.neighborhood, cache
-        return self.neighborhood.build(positions), None
+        return neighborhood.build(positions), None
 
     def _force_state(
         self,
         evaluation: AtomisticHamiltonianEvaluation,
-        neighborhood_cache: ParticleVerletState | None,
+        neighborhood_cache: AtomisticNeighborhoodCache | None,
         position_epoch: Array,
         /,
     ) -> AtomisticForceState:
@@ -379,32 +531,85 @@ class PreparedAtomisticDynamics(StrictModule):
             program_id=evaluation.program_id,
         )
 
+    def _graph_topology(
+        self,
+        neighborhood: AtomisticNeighborhoodState,
+        cache: AtomisticNeighborhoodCache | None,
+        /,
+    ) -> AtomisticGraphTopology | None:
+        """Bind the cached epoch schedule of an image Verlet cache, if present.
+
+        Reused epochs keep route membership, so the schedule prepared at the
+        last rebuild is attached without a sort; otherwise the program prepares
+        its topology from the neighborhood itself.
+        """
+        if (
+            not isinstance(neighborhood, ParticleImageNeighborhoodState)
+            or not isinstance(cache, ParticleImageVerletState)
+            or cache.schedule is None
+        ):
+            return None
+        return particle_atomistic_graph_topology(
+            self.system,
+            neighborhood,
+            epoch=cache.epoch,
+            streamed=cache.schedule,
+        )
+
+    def _potential_kwargs(
+        self,
+        positions: Array,
+        unwrapped_positions: Array,
+        species: Array,
+        cell_vectors: Array,
+        neighborhood: AtomisticNeighborhoodState,
+        cache: AtomisticNeighborhoodCache | None,
+        controls: Array,
+        /,
+    ) -> dict[str, Any]:
+        potential_kwargs: dict[str, Any] = {
+            "unwrapped_positions": unwrapped_positions,
+            "species": species,
+            "cell": self.system.cell,
+        }
+        if isinstance(neighborhood, ParticleImageNeighborhoodState):
+            potential_kwargs["cell_vectors"] = cell_vectors
+            topology = self._graph_topology(neighborhood, cache)
+            if topology is not None:
+                potential_kwargs["topology"] = topology
+        elif (
+            self.system.cell is not None
+            and not self.potential.plan.requirements.directed_graph
+        ):
+            potential_kwargs["cell_vectors"] = cell_vectors
+        if controls.shape[0] > 0:
+            potential_kwargs["control_values"] = controls
+        return potential_kwargs
+
     def _evaluate_configuration(
         self,
         positions: Array,
         unwrapped_positions: Array,
         species: Array,
         cell_vectors: Array,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: AtomisticNeighborhoodState,
+        cache: AtomisticNeighborhoodCache | None,
         controls: Array,
         /,
     ) -> AtomisticHamiltonianEvaluation:
-        potential_kwargs: dict[str, Any] = {
-            "unwrapped_positions": unwrapped_positions,
-            "species": species,
-            "cell": self.system.cell,
-        }
-        if (
-            self.system.cell is not None
-            and not self.potential.plan.requirements.directed_graph
-        ):
-            potential_kwargs["fractional_positions"] = (
-                self.system.cell.fractional_with_vectors(positions, cell_vectors)
-            )
-            potential_kwargs["cell_vectors"] = cell_vectors
-        if controls.shape[0] > 0:
-            potential_kwargs["control_values"] = controls
-        return self.potential.evaluate(positions, neighborhood, **potential_kwargs)
+        return self.potential.evaluate(
+            positions,
+            neighborhood,
+            **self._potential_kwargs(
+                positions,
+                unwrapped_positions,
+                species,
+                cell_vectors,
+                neighborhood,
+                cache,
+                controls,
+            ),
+        )
 
     def _energy_configuration(
         self,
@@ -412,27 +617,23 @@ class PreparedAtomisticDynamics(StrictModule):
         unwrapped_positions: Array,
         species: Array,
         cell_vectors: Array,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: AtomisticNeighborhoodState,
+        cache: AtomisticNeighborhoodCache | None,
         controls: Array,
         /,
     ) -> AtomisticPotentialEnergyEvaluation:
-        potential_kwargs: dict[str, Any] = {
-            "unwrapped_positions": unwrapped_positions,
-            "species": species,
-            "cell": self.system.cell,
-        }
-        if (
-            self.system.cell is not None
-            and not self.potential.plan.requirements.directed_graph
-        ):
-            potential_kwargs["fractional_positions"] = (
-                self.system.cell.fractional_with_vectors(positions, cell_vectors)
-            )
-            potential_kwargs["cell_vectors"] = cell_vectors
-        if controls.shape[0] > 0:
-            potential_kwargs["control_values"] = controls
         energy, (_, _, successful, _) = self.potential.energy(
-            positions, neighborhood, **potential_kwargs
+            positions,
+            neighborhood,
+            **self._potential_kwargs(
+                positions,
+                unwrapped_positions,
+                species,
+                cell_vectors,
+                neighborhood,
+                cache,
+                controls,
+            ),
         )
         return AtomisticPotentialEnergyEvaluation(
             energy,
@@ -464,6 +665,7 @@ class PreparedAtomisticDynamics(StrictModule):
             state.species,
             state.cell_vectors,
             state.neighborhood,
+            state.neighborhood_cache,
             row.controls,
         )
         successful = evaluation.successful & row.valid
@@ -498,6 +700,7 @@ class PreparedAtomisticDynamics(StrictModule):
             state.species,
             state.cell_vectors,
             state.neighborhood,
+            state.neighborhood_cache,
             row.controls,
         )
         return eqx.tree_at(
@@ -576,7 +779,9 @@ class PreparedAtomisticDynamics(StrictModule):
             else:
                 wrapped, image_counts = self.system.cell.wrap(projection.positions)
         kinematics = AtomisticKinematics(wrapped, momenta, image_counts)
-        neighborhood, cache = self._build_neighborhood(wrapped, None, cell_vectors)
+        neighborhood, cache = self._build_neighborhood(
+            wrapped, None, cell_vectors, image_counts
+        )
         species_ = (
             self.system.plan.atom_type_ids
             if species is None
@@ -588,6 +793,7 @@ class PreparedAtomisticDynamics(StrictModule):
             species_,
             cell_vectors,
             neighborhood,
+            cache,
             thermodynamic_row.controls,
         )
         force = self._force_state(evaluation, cache, jnp.zeros((), dtype=jnp.int32))
@@ -707,6 +913,7 @@ class PreparedAtomisticDynamics(StrictModule):
                 state.species,
                 state.cell_vectors,
                 state.neighborhood,
+                state.neighborhood_cache,
                 next_row.controls,
             )
             return (
@@ -785,7 +992,8 @@ class PreparedAtomisticDynamics(StrictModule):
     def _rejection_reasons(
         self,
         state: AtomisticDynamicsState,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: AtomisticNeighborhoodState,
+        cache: AtomisticNeighborhoodCache | None,
         potential: AtomisticHamiltonianEvaluation,
         candidate_finite: Array,
         constraint_successful: Array,
@@ -794,18 +1002,21 @@ class PreparedAtomisticDynamics(StrictModule):
         /,
     ) -> Array:
         reasons = jnp.zeros((), dtype=jnp.int32)
+        cell_failure, pair_failure, domain_failure = _neighborhood_failures(
+            neighborhood, cache
+        )
         reasons = reasons | jnp.where(
-            neighborhood.cell_overflow,
+            cell_failure,
             int(AtomisticStepRejectionReason.CELL_CAPACITY),
             0,
         ).astype(jnp.int32)
         reasons = reasons | jnp.where(
-            neighborhood.pair_overflow,
+            pair_failure,
             int(AtomisticStepRejectionReason.PAIR_CAPACITY),
             0,
         ).astype(jnp.int32)
         reasons = reasons | jnp.where(
-            neighborhood.domain_violation,
+            domain_failure,
             int(AtomisticStepRejectionReason.DOMAIN),
             0,
         ).astype(jnp.int32)
@@ -850,12 +1061,79 @@ class PreparedAtomisticDynamics(StrictModule):
         return self.step_detailed(state, thermodynamic).accepted_state
 
     @checked
+    def rebind_neighborhood(
+        self,
+        neighborhood: AtomisticPreparedNeighborhood,
+        state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
+        states: tuple[AtomisticThermodynamicStatePlan, ...],
+        /,
+    ) -> tuple[
+        PreparedAtomisticDynamics,
+        PreparedThermodynamicStateTable,
+        AtomisticDynamicsState,
+    ]:
+        """Rebind an accepted state to a replacement prepared neighborhood (host).
+
+        Kinematics, species, cell, RNG, thermostat/barostat state, energy
+        ledger, step index and the accepted force cache are retained exactly;
+        only the neighborhood relation and its cache epoch are rebuilt at the
+        accepted positions.  ``states`` must be the thermodynamic state plans of
+        ``thermodynamic`` (checked by table identity); the table is rebound to
+        the replacement runtime.  This is the lifecycle transaction behind a
+        capacity replacement: it never advances physical or random state.
+        """
+        if state.prepared_dynamics_id != self.prepared_id:
+            raise ValueError("State belongs to another atomistic dynamics runtime.")
+        thermodynamic.validate_dynamics(self)
+        if (
+            PreparedThermodynamicStateTable(self, states).table_id
+            != thermodynamic.table_id
+            or state.thermodynamic_table_id != thermodynamic.table_id
+        ):
+            raise ValueError("Thermodynamic states do not reproduce the bound table.")
+        dynamics = AtomisticDynamicsPlan(
+            self.system,
+            self.potential,
+            neighborhood,
+            self.integrator,
+            constraints=self.constraints,
+        ).prepare()
+        table = PreparedThermodynamicStateTable(dynamics, states)
+        rebuilt, cache = dynamics._build_neighborhood(
+            state.kinematics.positions,
+            None,
+            state.cell_vectors,
+            state.kinematics.image_counts,
+        )
+        epoch = jnp.zeros((), dtype=jnp.int32) if cache is None else cache.epoch
+        force = eqx.tree_at(lambda value: value.neighborhood_epoch, state.force, epoch)
+        return (
+            dynamics,
+            table,
+            dataclasses.replace(
+                state,
+                neighborhood=rebuilt,
+                neighborhood_cache=cache,
+                force=force,
+                thermodynamic_table_id=table.table_id,
+                prepared_dynamics_id=dynamics.prepared_id,
+            ),
+        )
+
+    @checked
     def step_detailed(
         self,
         state: AtomisticDynamicsState,
         thermodynamic: PreparedThermodynamicStateTable,
         /,
     ) -> AtomisticStepEvaluation:
+        """Apply ordered substeps and publish exactly one accepted transaction.
+
+        Keep cache refresh, rejection evidence, and commit/rollback in this
+        owner: splitting the existing transaction during image-cache migration
+        risks changing event order and same-draw continuation semantics.
+        """
         thermodynamic.validate_dynamics(self)
         if (
             state.prepared_dynamics_id != self.prepared_id
@@ -902,7 +1180,7 @@ class PreparedAtomisticDynamics(StrictModule):
                             unwrapped, state.cell_vectors
                         )
                     neighborhood, cache = self._build_neighborhood(
-                        position, cache, state.cell_vectors
+                        position, cache, state.cell_vectors, images
                     )
                     evaluation = self._evaluate_configuration(
                         position,
@@ -910,6 +1188,7 @@ class PreparedAtomisticDynamics(StrictModule):
                         state.species,
                         state.cell_vectors,
                         neighborhood,
+                        cache,
                         row.controls,
                     )
                     forces = evaluation.forces
@@ -991,7 +1270,7 @@ class PreparedAtomisticDynamics(StrictModule):
                     unwrapped, state.cell_vectors
                 )
             neighborhood, cache = self._build_neighborhood(
-                position, cache, state.cell_vectors
+                position, cache, state.cell_vectors, images
             )
             evaluation = self._evaluate_configuration(
                 position,
@@ -999,6 +1278,7 @@ class PreparedAtomisticDynamics(StrictModule):
                 state.species,
                 state.cell_vectors,
                 neighborhood,
+                cache,
                 row.controls,
             )
         next_kinematics = AtomisticKinematics(position, momentum, images)
@@ -1034,6 +1314,7 @@ class PreparedAtomisticDynamics(StrictModule):
         reasons = self._rejection_reasons(
             state,
             neighborhood,
+            cache,
             evaluation,
             candidate_finite,
             constraint_successful,
@@ -1074,7 +1355,7 @@ class PreparedAtomisticDynamics(StrictModule):
         )
         accepted = tree_where(successful, candidate, state)
         diagnostics = self.diagnostics(candidate, thermodynamic, successful, reasons)
-        pair_count = neighborhood.candidate_pair_count
+        pair_count = neighborhood_route_work(neighborhood)
         work = pair_count + jnp.asarray(len(self.potential.terms), dtype=jnp.int32)
         return AtomisticStepEvaluation(
             candidate_state=candidate,
@@ -1117,29 +1398,35 @@ class PreparedAtomisticDynamics(StrictModule):
         force = jnp.where(self.system.active_mask[:, None], state.force.forces, 0.0)
         net_force = jnp.sum(force, axis=0)
         net_torque = jnp.sum(jnp.cross(unwrapped - center, force), axis=0)
-        valid_pairs = state.neighborhood.pair_relation.valid
-        diagnostic_kwargs: dict[str, Any] = {
-            "unwrapped_positions": unwrapped,
-            "species": state.species,
-            "cell": self.system.cell,
-        }
-        if (
-            self.system.cell is not None
-            and not self.potential.plan.requirements.directed_graph
-        ):
-            diagnostic_kwargs["fractional_positions"] = (
-                self.system.cell.fractional_with_vectors(
-                    state.kinematics.positions, state.cell_vectors
-                )
+        neighborhood = state.neighborhood
+        if isinstance(neighborhood, ParticleImageNeighborhoodState):
+            relation = neighborhood.relation
+            valid_pairs = relation.valid
+            image_displacement = relation.displacement(
+                state.kinematics.positions, state.cell_vectors
             )
-            diagnostic_kwargs["cell_vectors"] = state.cell_vectors
-        if row.controls.shape[0] > 0:
-            diagnostic_kwargs["control_values"] = row.controls
-        distances = self.potential.context(
-            state.kinematics.positions,
-            state.neighborhood,
-            **diagnostic_kwargs,
-        ).pair_distance
+            distances = jnp.sqrt(
+                jnp.sum(image_displacement * image_displacement, axis=-1)
+            )
+        else:
+            valid_pairs = neighborhood.pair_relation.valid
+            diagnostic_kwargs: dict[str, Any] = {
+                "unwrapped_positions": unwrapped,
+                "species": state.species,
+                "cell": self.system.cell,
+            }
+            if (
+                self.system.cell is not None
+                and not self.potential.plan.requirements.directed_graph
+            ):
+                diagnostic_kwargs["cell_vectors"] = state.cell_vectors
+            if row.controls.shape[0] > 0:
+                diagnostic_kwargs["control_values"] = row.controls
+            distances = self.potential.context(
+                state.kinematics.positions,
+                neighborhood,
+                **diagnostic_kwargs,
+            ).pair_distance
         minimum_distance = jnp.min(jnp.where(valid_pairs, distances, jnp.inf))
         cutoff = self.potential.plan.requirements.cutoff
         cutoff_margin = (
@@ -1149,7 +1436,9 @@ class PreparedAtomisticDynamics(StrictModule):
         )
         image_margin = (
             jnp.asarray(jnp.inf, dtype=distances.dtype)
-            if self.system.cell is None or cutoff is None
+            if self.system.cell is None
+            or cutoff is None
+            or isinstance(neighborhood, ParticleImageNeighborhoodState)
             else jnp.asarray(
                 self.system.cell.unique_image_radius - cutoff, dtype=distances.dtype
             )
@@ -1180,12 +1469,7 @@ class PreparedAtomisticDynamics(StrictModule):
         current_volume = (
             jnp.asarray(jnp.nan, dtype=distances.dtype)
             if self.system.cell is None
-            else jnp.abs(
-                jnp.sum(
-                    state.cell_vectors[0]
-                    * jnp.cross(state.cell_vectors[1], state.cell_vectors[2])
-                )
-            )
+            else lattice_measure(state.cell_vectors)[0]
         )
         pressure = (
             jnp.asarray(jnp.nan, dtype=distances.dtype)
@@ -1228,6 +1512,68 @@ class PreparedAtomisticDynamics(StrictModule):
         )
 
 
+_CAPACITY_REJECTIONS = int(
+    AtomisticStepRejectionReason.CELL_CAPACITY
+    | AtomisticStepRejectionReason.PAIR_CAPACITY
+)
+
+
+def retry_atomistic_step_with_capacity(
+    dynamics: PreparedAtomisticDynamics,
+    state: AtomisticDynamicsState,
+    thermodynamic: PreparedThermodynamicStateTable,
+    states: tuple[AtomisticThermodynamicStatePlan, ...],
+    ladder: ParticleImageCapacityLadder,
+    /,
+) -> tuple[
+    PreparedAtomisticDynamics, PreparedThermodynamicStateTable, AtomisticStepEvaluation
+]:
+    """Attempt one step, growing image capacity on the host only when required.
+
+    A rejected attempt carrying an image-neighborhood capacity reason (cell or
+    route capacity) may also carry potential/nonfinite flags caused by that
+    overflow. Independent domain, thermodynamic, constraint, stale-state, or
+    other reasons are returned unchanged. Capacity-only growth rebinds the
+    accepted state and retries at the same positions, step and RNG address;
+    an exhausted ladder raises.
+    Growth is finite because the ladder is declared and strictly increasing.
+    """
+    if not isinstance(dynamics, PreparedAtomisticDynamics):
+        raise TypeError("dynamics must be PreparedAtomisticDynamics.")
+    neighborhood = dynamics.neighborhood
+    if not isinstance(
+        neighborhood,
+        (
+            AbstractPreparedParticleImageNeighborhood,
+            PreparedImageVerletParticleNeighborhood,
+        ),
+    ):
+        raise TypeError("Capacity retry requires an image-aware prepared neighborhood.")
+    if not isinstance(ladder, ParticleImageCapacityLadder):
+        raise TypeError("ladder must be a ParticleImageCapacityLadder.")
+    evaluation = dynamics.step_detailed(state, thermodynamic)
+    repairable = _CAPACITY_REJECTIONS | int(
+        AtomisticStepRejectionReason.POTENTIAL | AtomisticStepRejectionReason.NONFINITE
+    )
+    while not bool(np.asarray(evaluation.successful)):
+        reasons = int(np.asarray(evaluation.rejection_reasons))
+        if not reasons & _CAPACITY_REJECTIONS or reasons & ~repairable:
+            return dynamics, thermodynamic, evaluation
+        candidate = evaluation.candidate_state.neighborhood
+        if not isinstance(candidate, ParticleImageNeighborhoodState):
+            raise TypeError("Image dynamics produced a non-image neighborhood state.")
+        capacity = ladder.select(candidate.evidence, neighborhood.capacity)
+        replacement = neighborhood.plan.with_capacity(capacity).prepare(
+            dynamics.system.particles
+        )
+        dynamics, thermodynamic, state = dynamics.rebind_neighborhood(
+            replacement, state, thermodynamic, states
+        )
+        neighborhood = replacement
+        evaluation = dynamics.step_detailed(state, thermodynamic)
+    return dynamics, thermodynamic, evaluation
+
+
 __all__ = [
     "AtomisticDynamicsDiagnostics",
     "AtomisticDynamicsPlan",
@@ -1242,4 +1588,5 @@ __all__ = [
     "AtomisticStepRejectionReason",
     "PreparedAtomisticDynamics",
     "VelocityVerletPlan",
+    "retry_atomistic_step_with_capacity",
 ]

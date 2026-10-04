@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import opt_einsum as oe
+import pytest
 
 import phydrax as phx
 
@@ -78,20 +79,28 @@ def test_equivariant_graph_convolution_supports_radial_weights_and_normalization
 ):
     graph = phx.graph.euclidean_edge_features(_triangle_graph())
 
-    def radial(edges: Any, distance: Any, unit: Any, sent: Any, recv: Any) -> Any:
+    def radial(edge: Any, distance: Any, unit: Any, sent: Any, recv: Any) -> Any:
         del distance, unit, sent, recv
-        return 1.0 / edges["distance"][:, 0]
+        return 1.0 / edge["distance"][0]
 
-    out = phx.graph.EquivariantGraphConvolution(
-        radial,
-        input_key="features",
-        scalar_output_key="scalar",
-        vector_output_key="vector",
-        normalize=True,
-    )(graph)
+    for execution in (
+        None,
+        phx.sparse.StreamedRelationPlan(receiver_tile=1, edge_tile=1),
+    ):
+        out = phx.graph.EquivariantGraphConvolution(
+            phx.graph.RouteLocal(radial),
+            input_key="features",
+            scalar_output_key="scalar",
+            vector_output_key="vector",
+            normalize=True,
+            execution=execution,
+        )(graph)
 
-    assert jnp.allclose(out.nodes["scalar"][:, 0], jnp.array([3.0, 1.0, 2.0]))
-    assert out.nodes["vector"].shape == (3, 2, 1)
+        assert jnp.allclose(out.nodes["scalar"][:, 0], jnp.array([3.0, 1.0, 2.0]))
+        assert out.nodes["vector"].shape == (3, 2, 1)
+    # A bare callable is refused at runtime as well as statically.
+    with pytest.raises(TypeError, match="route-local"):
+        phx.graph.EquivariantGraphConvolution(radial)  # ty: ignore[invalid-argument-type]
 
 
 def test_equivariant_graph_convolution_wraps_as_graph_model() -> None:

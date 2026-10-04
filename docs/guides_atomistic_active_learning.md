@@ -33,9 +33,15 @@ configuration/provider pairs are rejected.
 Training and validation membership is stored on each label and cannot be silently
 reshuffled by a campaign round.
 
-`AtomisticLabelSet.training_problem` lowers the immutable labels to the existing dense
-`AtomisticTrainingProblem`; the atomistic trainer remains the single implementation of
-energy/force optimization.
+`AtomisticLabelSet.training_problem(system, graph_execution, cutoff=..., skin=0.0)`
+lowers the immutable labels to `AtomisticTrainingProblem` energy, force, and stress
+supervision; the atomistic trainer remains the single implementation of the
+optimization. Label units must equal the prepared system's unit system. Periodic records
+keep their frame cell vectors. Provider stress labels are retained as tensile stress in
+the system pressure unit (energy per cubic length of the system scale), the
+`ExternalAtomisticEvaluation.stress` convention; records without stress stay
+unsupervised through the stress mask rather than becoming zero targets. Each split
+freezes its candidate graph topology for `cutoff + skin`.
 
 ## One campaign round
 
@@ -50,9 +56,21 @@ energy/force optimization.
 7. caller-supplied physical qualification;
 8. transactional promotion.
 
-Training uses a dense graph execution plan. Runtime committee programs require a
-separate particle graph plan. The distinction is explicit in
-`AtomisticLearningCampaignPlan`.
+Training uses the campaign's `graph_execution` plan, which need not be dense; each round
+freezes the training topology with the largest cutoff among the member potentials.
+Runtime committee programs require a separate particle graph plan. The distinction is
+explicit in `AtomisticLearningCampaignPlan`.
+
+Promotion evidence is identity-bound. Each member's model manifest associates the label
+set, the training problem (which binds the graph-execution plan, scale contract, and each
+split's frozen topology and labels), the training policy, and the potential's capability
+identity. Continuing a member requires the same concrete family, configuration,
+capability identity, and training problem. Because frozen topologies, stress labels and
+masks, and capability identities now enter these records, training-problem and campaign
+manifest identities differ from those recorded by earlier versions.
+
+Promoted models are persisted with the pickle-free native model artifacts and training
+restarts documented in [Atomistic learning and dynamics](api/atomistic.md).
 
 A provider failure does not mutate the label revision. A failed member or failed
 qualification preserves the previously promoted committee. An empty acquisition is a

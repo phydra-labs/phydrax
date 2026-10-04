@@ -59,9 +59,37 @@ from ._ops import (
 )
 from ._pattern import SparsePattern, SparsePatternOrigin
 from ._relation import EdgeRelation, RowRelation, SparseRelation
+from ._streamed import (
+    PreparedStreamedRelation,
+    StreamedDirection,
+    StreamedEdgeFunction,
+    StreamedFragment,
+    StreamedFragmentAggregator,
+    StreamedPayloadSpec,
+    StreamedReceiverEpilogue,
+    StreamedRelationEvidence,
+    StreamedRelationPlan,
+    StreamedRelationResources,
+    StreamedRelationResult,
+    StreamedSchedule,
+    StreamedTopologyBinding,
+)
 
 
 __all__ = [
+    "PreparedStreamedRelation",
+    "StreamedDirection",
+    "StreamedEdgeFunction",
+    "StreamedFragment",
+    "StreamedFragmentAggregator",
+    "StreamedPayloadSpec",
+    "StreamedReceiverEpilogue",
+    "StreamedRelationEvidence",
+    "StreamedRelationPlan",
+    "StreamedRelationResources",
+    "StreamedRelationResult",
+    "StreamedSchedule",
+    "StreamedTopologyBinding",
     "block_linear_adjoint_apply",
     "block_linear_apply",
     "block_linear_transpose_apply",

@@ -10,6 +10,7 @@ from opt_einsum import contract
 
 from phydrax.atomistic import (
     AtomicStructure,
+    atomistic_energy_derivatives,
     atomistic_potential_revision,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
@@ -18,8 +19,11 @@ from phydrax.atomistic import (
     AtomisticStatus,
     energy_and_forces,
 )
+from phydrax.atomistic._graph import prepare_atomistic_graph_topology
+from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic import PaiNNPotential
 from phydrax.nn.atomistic._painn import _PaiNNInteraction
+from phydrax.sparse import StreamedRelationPlan
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
@@ -191,6 +195,14 @@ def test_painn_scenario_2() -> None:
     prediction = energy_and_forces(_model(precision=precision), structure, _execution())
     assert prediction.energy.dtype == jnp.float32
     assert prediction.forces.dtype == jnp.float32
+    # The numerical helper admits the same batch precision contract as the
+    # host path: a float32 batch never silently feeds a float64 model.
+    batch = AtomisticBatch.from_structure(structure)
+    topology = prepare_atomistic_graph_topology(batch, _execution(), cutoff=2.5)
+    with pytest.raises(ValueError, match="precision contract"):
+        atomistic_energy_derivatives(
+            _model(), batch, _execution(), batch.positions, topology=topology
+        )
 
 
 def test_jit_vjp_and_second_order_parameter_derivative() -> None:
@@ -233,8 +245,11 @@ def test_painn_scenario_3() -> None:
         periodic_axes=[True, False, False],
     )
     assert periodic.has_periodic_metadata
-    with pytest.raises(ValueError, match="nonperiodic"):
+    # Image routes are a charged resource; a direct call needs a host topology.
+    with pytest.raises(ValueError, match="image_capacity"):
         energy_and_forces(_model(), periodic, _execution())
+    with pytest.raises(ValueError, match="require a topology"):
+        _model()(periodic, _execution())
     structure = AtomicStructure(
         # ty: ignore[invalid-argument-type]
         [1, 1],
@@ -367,3 +382,186 @@ def test_painn_scenario_5() -> None:
     np.testing.assert_allclose(prediction.net_torque, 0.0, atol=0.0)
     assert bool(jnp.all(jnp.isfinite(prediction.net_torque)))
     assert prediction.net_torque.dtype == jnp.float32
+
+
+def _dense_painn_energy(model: Any, positions: Any, numbers: Any, active: Any) -> Any:
+    """Independent all-pairs PaiNN energy: full edge messages and receiver sums."""
+    count = positions.shape[0]
+    send, receive = np.nonzero(~np.eye(count, dtype=bool))
+    displacement = positions[receive] - positions[send]
+    distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
+    live = active[send] & active[receive] & (distance < model.configuration.cutoff)
+    safe = jnp.where(live, distance, 1.0)
+    direction = displacement / safe[:, None]
+    radial, envelope = model._radial_basis(safe)
+    scalar = model.embedding[numbers] * active[:, None]
+    vector = jnp.zeros((count, 3, model.configuration.feature_count))
+    for interaction in model.interactions:
+        filtered = interaction.filter_out(interaction.filter_in(radial)) * envelope
+        message = interaction.message_out(interaction.message_in(scalar[send])) * filtered
+        message = jnp.where(live[:, None], message, 0.0)
+        scalar_part, vector_part, direction_part = jnp.split(message, 3, axis=-1)
+        vector_message = (
+            vector_part[:, None, :] * vector[send]
+            + direction_part[:, None, :] * direction[:, :, None]
+        )
+        scalar, vector = interaction.atomwise_update(
+            scalar + jax.ops.segment_sum(scalar_part, receive, count),
+            vector + jax.ops.segment_sum(vector_message, receive, count),
+        )
+        scalar = scalar * active[:, None]
+        vector = vector * active[:, None, None]
+    atom_energy = model.readout_energy(model.readout_hidden(scalar)) * active
+    return jnp.sum(atom_energy)
+
+
+def test_streamed_painn_matches_dense_energy_forces_and_force_loss_gradient() -> None:
+    structure = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
+        [8, 1, 1, 1, 0],
+        # ty: ignore[invalid-argument-type]
+        [
+            [0.0, 0.0, 0.0],
+            [0.9, 0.1, 0.0],
+            [-0.2, 0.8, 0.2],
+            [2.6, 0.2, 0.1],
+            [0.3, 0.3, 0.3],
+        ],
+        # ty: ignore[invalid-argument-type]
+        [15.999, 1.008, 1.008, 1.008, 0.0],
+        SCALE,
+        # ty: ignore[invalid-argument-type]
+        active_mask=[True, True, True, True, False],
+    )
+    batch = AtomisticBatch.from_structure(structure)
+    numbers = batch.atomic_numbers[0]
+    active = batch.atom_mask[0]
+    model = PaiNNPotential(
+        SCALE,
+        cutoff=2.5,
+        feature_count=8,
+        interaction_count=2,
+        radial_basis_count=6,
+        key=jr.key(71),
+    )
+    # A one-receiver, two-event tile fragments every multi-neighbor receiver.
+    tiny = StreamedRelationPlan(receiver_tile=1, edge_tile=2)
+    for plan in (None, tiny):
+        execution = AtomisticGraphExecutionPlan(4, maximum_dense_atoms=5, streamed=plan)
+        topology = prepare_atomistic_graph_topology(batch, execution, cutoff=2.5)
+
+        def streamed(model: Any, position: Any) -> Any:
+            return model.energy(
+                batch, execution, positions=position[None], topology=topology
+            )[0]
+
+        def dense(model: Any, position: Any) -> Any:
+            return _dense_painn_energy(model, position, numbers, active)
+
+        position = batch.positions[0]
+        np.testing.assert_allclose(
+            streamed(model, position), dense(model, position), rtol=1e-11, atol=1e-11
+        )
+        np.testing.assert_allclose(
+            jax.grad(streamed, argnums=1)(model, position),
+            jax.grad(dense, argnums=1)(model, position),
+            rtol=1e-10,
+            atol=1e-10,
+        )
+
+        def force_loss(energy: Any) -> Any:
+            def loss(model: Any) -> Any:
+                forces = -jax.grad(energy, argnums=1)(model, position)
+                return jnp.sum(forces * forces)
+
+            return loss
+
+        observed = eqx.filter_grad(force_loss(streamed))(model)
+        expected = eqx.filter_grad(force_loss(dense))(model)
+        for actual, reference in zip(
+            jax.tree_util.tree_leaves(observed),
+            jax.tree_util.tree_leaves(expected),
+            strict=True,
+        ):
+            np.testing.assert_allclose(actual, reference, rtol=1e-9, atol=1e-10)
+        tangent = jnp.zeros_like(position).at[1, 0].set(1.0)
+        np.testing.assert_allclose(
+            jax.jvp(
+                lambda x: jax.grad(streamed, argnums=1)(model, x), (position,), (tangent,)
+            )[1],
+            jax.jvp(
+                lambda x: jax.grad(dense, argnums=1)(model, x), (position,), (tangent,)
+            )[1],
+            rtol=1e-9,
+            atol=1e-10,
+        )
+
+
+PERIODIC_CELL = np.asarray([[2.8, 0.0, 0.0], [0.3, 2.9, 0.0], [0.2, 0.1, 3.0]])
+PERIODIC_POSITIONS = np.asarray([[0.0, 0.0, 0.0], [1.1, 0.3, 0.2]])
+
+
+def _periodic_execution() -> Any:
+    return AtomisticGraphExecutionPlan(
+        64,
+        backend="particle",
+        image_capacity=ParticleImageCapacity(
+            maximum_particles_per_cell=8,
+            maximum_edges=2048,
+            maximum_degree=64,
+            maximum_images=125,
+        ),
+    )
+
+
+def _periodic_structure(positions: Any, cell: Any, numbers: Any) -> Any:
+    return AtomicStructure(
+        numbers,
+        positions,
+        np.where(np.asarray(numbers) == 8, 15.999, 1.008),
+        SCALE,
+        cell=cell,
+        # ty: ignore[invalid-argument-type]
+        periodic_axes=[True, True, True],
+    )
+
+
+def test_periodic_painn_is_extensive_wrap_invariant_and_has_intensive_stress() -> None:
+    model = _model()
+    unit = energy_and_forces(
+        model,
+        _periodic_structure(PERIODIC_POSITIONS, PERIODIC_CELL, [1, 8]),
+        _periodic_execution(),
+        compute_stress=True,
+    )
+    supercell = PERIODIC_CELL * np.asarray([[2.0], [1.0], [1.0]])
+    doubled = energy_and_forces(
+        model,
+        _periodic_structure(
+            np.concatenate((PERIODIC_POSITIONS, PERIODIC_POSITIONS + PERIODIC_CELL[0])),
+            supercell,
+            [1, 8, 1, 8],
+        ),
+        _periodic_execution(),
+        compute_stress=True,
+    )
+    assert bool(unit.valid[0]) and bool(doubled.valid[0])
+    # Self images and distinct-pair images enter exactly once per directed route.
+    np.testing.assert_allclose(doubled.energy, 2.0 * unit.energy, rtol=1e-11, atol=1e-11)
+    np.testing.assert_allclose(
+        doubled.forces[0], np.tile(unit.forces[0], (2, 1)), rtol=1e-10, atol=1e-10
+    )
+    assert unit.stress is not None and doubled.stress is not None
+    np.testing.assert_allclose(doubled.stress, unit.stress, rtol=1e-10, atol=1e-10)
+    wrapped = energy_and_forces(
+        model,
+        _periodic_structure(
+            PERIODIC_POSITIONS
+            + np.stack((np.zeros(3), PERIODIC_CELL[1] - PERIODIC_CELL[2])),
+            PERIODIC_CELL,
+            [1, 8],
+        ),
+        _periodic_execution(),
+    )
+    np.testing.assert_allclose(wrapped.energy, unit.energy, rtol=1e-11, atol=1e-11)
+    np.testing.assert_allclose(wrapped.forces, unit.forces, rtol=1e-10, atol=1e-10)

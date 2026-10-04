@@ -4,15 +4,33 @@
 
 from __future__ import annotations
 
-from numbers import Integral
-from typing import Any
+import math
+from numbers import Integral, Real
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from .._dtype_names import inexact_result_type
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ..linalg import (
+    ArraySpace,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSolveStatus,
+    LinearSystem,
+    prepare as prepare_linear_solve,
+    PreparedLinearSolve,
+    RHSLayout,
+    solve as solve_linear,
+    StructuredDirect,
+    TridiagonalLinearOperator,
+)
 from ..typing import parse
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import (
@@ -22,6 +40,9 @@ from ._types import (
     MaskMode,
     NearestTiePolicy,
 )
+
+
+CubicSplineEndCondition: TypeAlias = Literal["clamped", "natural", "not-a-knot"]
 
 
 def _derivative_order(value: int, maximum: int, family: str, /) -> int:
@@ -540,11 +561,394 @@ def cubic_hermite_interpolate(
     return _fill_result(InterpolationResult(output, support), fill_value)
 
 
+class UniformSpanLocation(StrictModule, NonTrainableState):
+    """Constant-time span location of queries on a uniform node grid."""
+
+    lower: Array
+    fraction: Array
+    support: Array
+
+    def __init__(self, lower: Array, fraction: Array, support: Array, /) -> None:
+        lower_ = jnp.asarray(lower, dtype=jnp.int32)
+        fraction_ = jnp.asarray(fraction)
+        support_ = jnp.asarray(support, dtype=jnp.bool_)
+        if lower_.shape != fraction_.shape or support_.shape != fraction_.shape:
+            raise ValueError("Uniform span location fields must share the query shape.")
+        self.lower = lower_
+        self.fraction = fraction_
+        self.support = support_
+
+
+class UniformNodeGrid(StrictModule, NonTrainableState):
+    """Uniform node grid with constant-time span lookup."""
+
+    start: Array
+    spacing: Array
+    node_count: int = eqx.field(static=True)
+    grid_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        start: float,
+        stop: float,
+        node_count: int,
+        /,
+        *,
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
+        if isinstance(start, bool) or not isinstance(start, Real):
+            raise TypeError("Uniform grid start must be a real scalar.")
+        if isinstance(stop, bool) or not isinstance(stop, Real):
+            raise TypeError("Uniform grid stop must be a real scalar.")
+        if isinstance(node_count, bool) or not isinstance(node_count, Integral):
+            raise TypeError("Uniform grid node_count must be an integer.")
+        dtype_ = np.dtype(dtype)
+        if not np.issubdtype(dtype_, np.floating):
+            raise TypeError("Uniform grid dtype must be a real floating dtype.")
+        start_ = float(start)
+        stop_ = float(stop)
+        count = int(node_count)
+        if not (math.isfinite(start_) and math.isfinite(stop_)):
+            raise ValueError("Uniform grid bounds must be finite.")
+        if not stop_ > start_:
+            raise ValueError("Uniform grid stop must exceed start.")
+        if count < 2:
+            raise ValueError("Uniform grid requires at least two nodes.")
+        start_host = np.asarray(start_, dtype=dtype_)
+        spacing_host = (np.asarray(stop_, dtype=dtype_) - start_host) / np.asarray(
+            count - 1, dtype=dtype_
+        )
+        if not (np.isfinite(spacing_host) and spacing_host > 0):
+            raise ValueError("Uniform grid spacing must be finite and positive.")
+        self.start = jnp.asarray(start_host)
+        self.spacing = jnp.asarray(spacing_host)
+        self.node_count = count
+        self.grid_id = canonical_fingerprint(
+            {
+                "kind": "uniform-node-grid",
+                "start": start_,
+                "stop": stop_,
+                "node_count": count,
+                "dtype": dtype_.name,
+            }
+        )
+
+    @property
+    def nodes(self) -> Array:
+        return self.start + self.spacing * jnp.arange(
+            self.node_count, dtype=self.spacing.dtype
+        )
+
+    @property
+    def stop(self) -> Array:
+        return self.start + self.spacing * jnp.asarray(
+            self.node_count - 1, dtype=self.spacing.dtype
+        )
+
+    def locate(
+        self,
+        query: ArrayLike,
+        /,
+        *,
+        bounds: BoundsMode = "error",
+    ) -> UniformSpanLocation:
+        bounds = parse(bounds, BoundsMode, "bounds")
+        query_raw = jnp.asarray(query)
+        if jnp.issubdtype(query_raw.dtype, jnp.complexfloating):
+            raise TypeError("Uniform grid queries must be real-valued.")
+        dtype = inexact_result_type(query_raw, self.start)
+        query_ = eqx.error_if(
+            query_raw.astype(dtype),
+            jnp.any(~jnp.isfinite(query_raw)),
+            "Piecewise interpolation queries must be finite.",
+        )
+        start = self.start.astype(dtype)
+        stop = self.stop.astype(dtype)
+        outside = (query_ < start) | (query_ > stop)
+        if bounds == "error":
+            query_ = eqx.error_if(
+                query_,
+                jnp.any(outside),
+                "Piecewise interpolation query is outside the node interval.",
+            )
+        query_eval = (
+            jnp.clip(query_, start, stop) if bounds in ("clip", "fill") else query_
+        )
+        support = (
+            ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=jnp.bool_)
+        )
+        position = (query_eval - start) / self.spacing.astype(dtype)
+        lower = jnp.clip(jnp.floor(position), 0, self.node_count - 2).astype(jnp.int32)
+        fraction = position - lower.astype(dtype)
+        return UniformSpanLocation(lower, fraction, support)
+
+
+def _uniform_node_payload(
+    grid: UniformNodeGrid, values: ArrayLike, name: str, /
+) -> Array:
+    array = jnp.asarray(values)
+    if array.ndim < 1 or array.shape[0] != grid.node_count:
+        raise ValueError(f"{name} must lead with the uniform grid node axis.")
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype(grid.spacing.dtype)
+    return array
+
+
+def cubic_hermite_uniform_interpolate(
+    grid: UniformNodeGrid,
+    values: ArrayLike,
+    slopes: ArrayLike,
+    query: ArrayLike,
+    /,
+    *,
+    derivative_order: int = 0,
+    bounds: BoundsMode = "error",
+    fill_value: Any = 0.0,
+) -> InterpolationResult:
+    """Evaluate a cubic Hermite interpolant on a uniform grid in constant time."""
+    order = _derivative_order(derivative_order, 2, "Cubic Hermite")
+    source = _uniform_node_payload(grid, values, "Uniform Hermite values")
+    slopes_ = _uniform_node_payload(grid, slopes, "Uniform Hermite slopes")
+    if slopes_.shape != source.shape:
+        raise ValueError("Uniform Hermite slopes must match the values shape.")
+    location = grid.locate(query, bounds=bounds)
+    upper = location.lower + 1
+    output = cubic_hermite_segment(
+        source[location.lower],
+        source[upper],
+        slopes_[location.lower],
+        slopes_[upper],
+        location.fraction,
+        grid.spacing,
+        derivative_order=order,
+    )
+    return _fill_result(InterpolationResult(output, location.support), fill_value)
+
+
+class CubicSplineSlopes(StrictModule, NonTrainableState):
+    """Global C2 cubic-spline node slopes plus linear-solve evidence."""
+
+    slopes: Array
+    status: Array
+    successful: Array
+
+    def __init__(self, slopes: Array, status: Array, /) -> None:
+        slopes_ = jnp.asarray(slopes)
+        status_ = jnp.asarray(status, dtype=jnp.int32)
+        self.slopes = slopes_
+        self.status = status_
+        self.successful = jnp.all(status_ == int(LinearSolveStatus.SUCCESS)) & jnp.all(
+            jnp.isfinite(slopes_)
+        )
+
+
+def _end_rows(
+    condition: CubicSplineEndCondition,
+    /,
+) -> tuple[float, float]:
+    match condition:
+        case "clamped":
+            return 1.0, 0.0
+        case "natural":
+            return 2.0, 1.0
+        case "not-a-knot":
+            return 2.0, 4.0
+        case _:
+            assert_never(condition)
+
+
+class CubicSplineSlopePlan(StrictModule, NonTrainableState):
+    """Prepared global cubic-spline slope solve on a uniform grid."""
+
+    grid: UniformNodeGrid
+    prepared: PreparedLinearSolve
+    left: CubicSplineEndCondition = eqx.field(static=True)
+    right: CubicSplineEndCondition = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        grid: UniformNodeGrid,
+        /,
+        *,
+        left: CubicSplineEndCondition,
+        right: CubicSplineEndCondition,
+    ) -> None:
+        if not isinstance(grid, UniformNodeGrid):
+            raise TypeError("CubicSplineSlopePlan requires a UniformNodeGrid.")
+        left_ = parse(left, CubicSplineEndCondition, "left")
+        right_ = parse(right, CubicSplineEndCondition, "right")
+        count = grid.node_count
+        minimum = 4 if "not-a-knot" in (left_, right_) else 2
+        if count < minimum:
+            raise ValueError(
+                f"Cubic spline end conditions ({left_}, {right_}) require at least "
+                f"{minimum} nodes."
+            )
+        dtype = np.dtype(grid.spacing.dtype)
+        diagonal = np.full((count,), 4.0, dtype=dtype)
+        lower = np.ones((count - 1,), dtype=dtype)
+        upper = np.ones((count - 1,), dtype=dtype)
+        diagonal[0], upper[0] = _end_rows(left_)
+        diagonal[-1], lower[-1] = _end_rows(right_)
+        operator = TridiagonalLinearOperator(
+            lower,
+            diagonal,
+            upper,
+            space=ArraySpace((count,), dtype=dtype),
+        )
+        policy = LinearSolvePolicy(StructuredDirect(), failure=FailurePolicy("status"))
+        prepared = prepare_linear_solve(LinearSystem(operator), policy)
+        self.grid = grid
+        self.prepared = prepared
+        self.left = left_
+        self.right = right_
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "uniform-cubic-spline-slope-plan",
+                "grid": grid.grid_id,
+                "left": left_,
+                "right": right_,
+            }
+        )
+
+    def slopes(
+        self,
+        values: ArrayLike,
+        /,
+        *,
+        left_slope: ArrayLike | None = None,
+        right_slope: ArrayLike | None = None,
+    ) -> CubicSplineSlopes:
+        if (left_slope is None) != (self.left != "clamped"):
+            raise ValueError(
+                "left_slope is required exactly when the left end is clamped."
+            )
+        if (right_slope is None) != (self.right != "clamped"):
+            raise ValueError(
+                "right_slope is required exactly when the right end is clamped."
+            )
+        dtype = self.grid.spacing.dtype
+        source = _uniform_node_payload(self.grid, values, "Cubic spline values")
+        if jnp.issubdtype(source.dtype, jnp.complexfloating):
+            raise TypeError("Cubic spline values must be real-valued.")
+        source = source.astype(dtype)
+        payload_shape = source.shape[1:]
+        columns = math.prod(payload_shape)
+        y = source.reshape((self.grid.node_count, columns))
+        h = self.grid.spacing
+        interior = 3.0 * (y[2:] - y[:-2]) / h
+        first = self._end_rhs(
+            self.left, 1.0, y[0], y[1], y[2:3], left_slope, payload_shape
+        )
+        last = self._end_rhs(
+            self.right, -1.0, y[-1], y[-2], y[-3:-2], right_slope, payload_shape
+        )
+        rhs = jnp.concatenate((first[None], interior, last[None]), axis=0)
+        result = solve_linear(self.prepared, rhs, rhs_layout=RHSLayout((columns,)))
+        slopes = result.value.reshape(source.shape)
+        return CubicSplineSlopes(slopes, result.status.reshape(payload_shape))
+
+    def _end_rhs(
+        self,
+        condition: CubicSplineEndCondition,
+        orientation: float,
+        edge: Array,
+        neighbor: Array,
+        beyond: Array,
+        slope: ArrayLike | None,
+        payload_shape: tuple[int, ...],
+        /,
+    ) -> Array:
+        """Right-hand side of one end row.
+
+        `orientation` is `+1` at the left end and `-1` at the right end, where
+        `edge`, `neighbor`, and `beyond` walk inward from that end.
+        """
+        h = self.grid.spacing
+        match condition:
+            case "clamped":
+                if slope is None:
+                    raise ValueError("A clamped spline end requires its slope.")
+                slope_ = jnp.broadcast_to(
+                    jnp.asarray(slope, dtype=h.dtype), payload_shape
+                )
+                return slope_.reshape(edge.shape)
+            case "natural":
+                return orientation * 3.0 * (neighbor - edge) / h
+            case "not-a-knot":
+                far = beyond[0]
+                return (
+                    orientation
+                    * (2.0 * (-edge + 2.0 * neighbor - far) + 3.0 * (far - edge))
+                    / h
+                )
+            case _:
+                assert_never(condition)
+
+
+class CubicHermiteKnotJets(StrictModule, NonTrainableState):
+    """One-sided first and second derivatives at both ends of every segment."""
+
+    segment_start: Array
+    segment_end: Array
+
+    def __init__(self, segment_start: Array, segment_end: Array, /) -> None:
+        start = jnp.asarray(segment_start)
+        end = jnp.asarray(segment_end)
+        if start.shape != end.shape or start.ndim < 2 or start.shape[0] != 2:
+            raise ValueError("Knot jets must have matching shape (2, segments, ...).")
+        self.segment_start = start
+        self.segment_end = end
+
+
+def cubic_hermite_knot_jets(
+    grid: UniformNodeGrid,
+    values: ArrayLike,
+    slopes: ArrayLike,
+    /,
+) -> CubicHermiteKnotJets:
+    """Return one-sided knot derivatives of a uniform cubic Hermite interpolant."""
+    source = _uniform_node_payload(grid, values, "Uniform Hermite values")
+    slopes_ = _uniform_node_payload(grid, slopes, "Uniform Hermite slopes")
+    if slopes_.shape != source.shape:
+        raise ValueError("Uniform Hermite slopes must match the values shape.")
+    segments = grid.node_count - 1
+    fraction_dtype = inexact_result_type(source, grid.spacing)
+
+    def jet(fraction: float, /) -> Array:
+        s = jnp.full((segments,), fraction, dtype=fraction_dtype)
+        return jnp.stack(
+            [
+                cubic_hermite_segment(
+                    source[:-1],
+                    source[1:],
+                    slopes_[:-1],
+                    slopes_[1:],
+                    s,
+                    grid.spacing,
+                    derivative_order=order,
+                )
+                for order in (1, 2)
+            ]
+        )
+
+    return CubicHermiteKnotJets(jet(0.0), jet(1.0))
+
+
 __all__ = [
     "CUBIC_HERMITE_CAPABILITIES",
     "LINEAR_CAPABILITIES",
     "NEAREST_CAPABILITIES",
+    "CubicHermiteKnotJets",
+    "CubicSplineEndCondition",
+    "CubicSplineSlopePlan",
+    "CubicSplineSlopes",
+    "UniformNodeGrid",
+    "UniformSpanLocation",
+    "cubic_hermite_knot_jets",
     "cubic_hermite_interpolate",
+    "cubic_hermite_uniform_interpolate",
     "cubic_hermite_segment",
     "linear_interpolate",
     "linear_segment",

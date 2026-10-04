@@ -721,14 +721,26 @@ def _require_edge_product(
             f"{name} must own its path weights; externally weighted products are not admitted."
         )
     plan = product.plan
-    if (
-        _multiplicities(plan.left_representation) != _multiplicities(left)
-        or _multiplicities(plan.right_representation)
-        != _multiplicities(_tangent_representation())
-        or _multiplicities(plan.output_representation) != _multiplicities(output)
+    declared = (
+        (plan.left_representation, left),
+        (plan.right_representation, _tangent_representation()),
+        (plan.output_representation, output),
+    )
+    # Compare complete layout identities: a general irrep layout never matches a
+    # Cartesian degree-two declaration, so higher degrees cannot be silently dropped.
+    if any(
+        not isinstance(actual, O3Representation) or actual.layout_id != expected.layout_id
+        for actual, expected in declared
     ):
         raise ValueError(
             f"{name} must map the declared representation and the polar edge frame to its declared output."
+        )
+    if any(
+        path.connection_mode != "uvw" or not path.weighted or path.path_scale != 1.0
+        for path in plan.paths
+    ):
+        raise ValueError(
+            f"{name} must use owned fully connected unit-scale paths of the canonical edge product."
         )
 
 

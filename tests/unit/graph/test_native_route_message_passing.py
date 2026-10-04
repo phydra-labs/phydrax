@@ -109,11 +109,34 @@ def _attention_case() -> Any:
 
 def _kernel_integral_case() -> Any:
     graph = _graph(_random((NODE_COUNT, 2), 4), _random((SENDERS.size, 1), 5))
-    operator = phx.graph.GraphKernelIntegral(lambda edges, s, r, g: edges[:, 0])
+    operator = phx.graph.GraphKernelIntegral(
+        phx.graph.RouteLocal(lambda edge, s, r, g: edge[0])
+    )
 
     def reference(graph: Any) -> Any:
         messages = graph.nodes[graph.senders] * graph.edges
         return jax.ops.segment_sum(messages, graph.receivers, NODE_COUNT)
+
+    return graph, lambda g: operator(g).nodes, reference
+
+
+def _tiled_kernel_integral_case() -> Any:
+    graph = _graph(_random((NODE_COUNT, 2), 42), _random((SENDERS.size, 1), 43))
+    measure = jnp.abs(_random((NODE_COUNT,), 44)) + 0.5
+    operator = phx.graph.GraphKernelIntegral(
+        phx.graph.RouteLocal(lambda edge, s, r, g: jnp.tanh(edge[0] + s[1] - r[0])),
+        source_measure=measure,
+        reduction="mean",
+        normalize=True,
+        # One-event fragments split every receiver's mean and measure normalizers.
+        execution=phx.sparse.StreamedRelationPlan(receiver_tile=2, edge_tile=1),
+    )
+
+    def reference(graph: Any) -> Any:
+        s, r, x = graph.senders, graph.receivers, graph.nodes
+        weight = jnp.tanh(graph.edges[:, 0] + x[s][:, 1] - x[r][:, 0])
+        mean = _segment_mean(x[s] * (weight * measure[s])[:, None], r, NODE_COUNT)
+        return mean * _inverse(jax.ops.segment_sum(measure[s], r, NODE_COUNT))[:, None]
 
     return graph, lambda g: operator(g).nodes, reference
 
@@ -264,6 +287,7 @@ PARITY_CASES: dict[str, Callable] = {
     "mesh_graph_net_block": _mesh_graph_net_block_case,
     "graph_attention": _attention_case,
     "graph_kernel_integral": _kernel_integral_case,
+    "graph_kernel_integral_tiled_mean": _tiled_kernel_integral_case,
     "equivariant_convolution": _equivariant_case,
     "relational_convolution": _relational_case,
     "hypergraph_convolution": _hypergraph_case,
@@ -337,7 +361,7 @@ def _padding_cases() -> dict[str, tuple[phx.graph.GraphIR, Callable]]:
         processor_steps=2,
         key=jr.key(3),
     )
-    kernel = lambda edges, s, r, g: edges[:, 0]
+    kernel = phx.graph.RouteLocal(lambda edge, s, r, g: edge[0])
     geometric = {"positions": _random((NODE_COUNT, 2), 21), "features": features}
     return {
         "mesh_graph_net": (
@@ -395,3 +419,35 @@ def test_masked_routes_do_not_change_mesh_graph_net_gradients() -> None:
 
     for expected, actual in zip(reference, padded, strict=True):
         np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_streamed_mesh_block_keeps_nan_padding_out_of_real_nodes_and_edges() -> None:
+    nodes = jnp.asarray([[1.0], [2.0], [jnp.nan]], dtype=jnp.float64)
+    graph = phx.graph.GraphIR(
+        nodes=nodes,
+        edges=jnp.ones((1, 1), dtype=jnp.float64),
+        senders=np.asarray([0], dtype=np.int32),
+        receivers=np.asarray([1], dtype=np.int32),
+        n_node=np.asarray([3], dtype=np.int32),
+        n_edge=np.asarray([1], dtype=np.int32),
+        node_mask=np.asarray([True, True, False], dtype=np.bool_),
+    )
+    block = eqx.filter_jit(phx.graph.MeshGraphNetBlock(1, key=jr.key(0)))
+    expected = block(graph.replace(nodes=nodes.at[2].set(0.0)))
+    observed = block(graph)
+    np.testing.assert_array_equal(observed.nodes, expected.nodes)
+    np.testing.assert_array_equal(observed.edges, expected.edges)
+
+
+@pytest.mark.parametrize("mapping", [False, True], ids=["array", "pytree"])
+def test_zero_global_mesh_block_does_not_consume_unused_global_payload(
+    mapping: bool,
+) -> None:
+    graph = _graph(_random((NODE_COUNT, 4), 1), _random((SENDERS.size, 4), 2))
+    block = eqx.filter_jit(phx.graph.MeshGraphNetBlock(4, key=jr.key(0)))
+    value = jnp.asarray([[4.0]], dtype=jnp.float64)
+    globals_ = {"unused": value} if mapping else value
+    expected = block(graph)
+    observed = block(graph.replace(globals=globals_))
+    np.testing.assert_array_equal(observed.nodes, expected.nodes)
+    np.testing.assert_array_equal(observed.edges, expected.edges)

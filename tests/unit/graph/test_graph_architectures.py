@@ -1,7 +1,10 @@
 from typing import Any
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 
 import phydrax as phx
 
@@ -142,3 +145,75 @@ def test_graph_multiscale_block_unpools_coarse_update() -> None:
     out = block(graph)
 
     assert jnp.allclose(out.nodes[:, 0], jnp.array([12.0, 12.0, 16.0, 16.0]))
+
+
+def test_streamed_mesh_graph_net_block_matches_dense_outputs_and_combined_loss() -> None:
+    senders = np.asarray([0, 1, 2, 0, 2, 3, 4, 5, 3, 5, 4], dtype=np.int32)
+    receivers = np.asarray([1, 2, 0, 2, 1, 4, 5, 3, 5, 4, 3], dtype=np.int32)
+    edge_mask = np.asarray([True] * 9 + [False, False])
+    rng = np.random.default_rng(5)
+    graph = phx.graph.GraphIR(
+        nodes=jnp.asarray(rng.normal(size=(6, 3))),
+        edges=jnp.asarray(np.where(edge_mask[:, None], rng.normal(size=(11, 3)), 1.0e3)),
+        senders=senders,
+        receivers=receivers,
+        globals=jnp.asarray(rng.normal(size=(2, 2))),
+        n_node=[3, 3],
+        n_edge=[5, 6],
+        edge_mask=edge_mask,
+    )
+    node_graph = np.repeat([0, 1], [3, 3])
+    edge_graph = np.repeat([0, 1], [5, 6])
+    # One receiver per tile and two events per fragment split every receiver row.
+    block = phx.graph.MeshGraphNetBlock(
+        3,
+        global_size=2,
+        execution=phx.sparse.StreamedRelationPlan(receiver_tile=1, edge_tile=2),
+        key=jr.key(9),
+    )
+
+    def dense(block: Any, nodes: Any) -> Any:
+        globals_ = graph.globals
+        edges = graph.edges + block.edge_mlp(
+            jnp.concatenate(
+                [graph.edges, nodes[senders], nodes[receivers], globals_[edge_graph]],
+                -1,
+            )
+        )
+        edges = jnp.where(edge_mask[:, None], edges, 0.0)
+        received = jax.ops.segment_sum(edges, receivers, 6)
+        updated = nodes + block.node_mlp(
+            jnp.concatenate([nodes, received, globals_[node_graph]], -1)
+        )
+        return updated, edges
+
+    def streamed(block: Any, nodes: Any) -> Any:
+        out = block(graph.replace(nodes=nodes, validate=False))
+        return out.nodes, out.edges
+
+    observed, expected = streamed(block, graph.nodes), dense(block, graph.nodes)
+    for actual, reference in zip(observed, expected, strict=True):
+        np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
+
+    def combined_loss(evaluate: Any) -> Any:
+        def loss(block: Any, nodes: Any) -> Any:
+            updated, edges = evaluate(block, nodes)
+            return jnp.sum(updated**2) + jnp.sum(jnp.sin(edges))
+
+        return loss
+
+    grad = eqx.filter_grad(combined_loss(streamed))(block, graph.nodes)
+    reference_grad = eqx.filter_grad(combined_loss(dense))(block, graph.nodes)
+    for actual, reference in zip(
+        jax.tree_util.tree_leaves(grad),
+        jax.tree_util.tree_leaves(reference_grad),
+        strict=True,
+    ):
+        np.testing.assert_allclose(actual, reference, rtol=1e-11, atol=1e-11)
+    node_grad = jax.grad(combined_loss(streamed), argnums=1)(block, graph.nodes)
+    np.testing.assert_allclose(
+        node_grad,
+        jax.grad(combined_loss(dense), argnums=1)(block, graph.nodes),
+        rtol=1e-11,
+        atol=1e-11,
+    )

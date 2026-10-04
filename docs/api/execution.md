@@ -113,6 +113,18 @@ Unknown evidence, a remote host without a sample, or a `sampled` basis refuses
 the plan instead of assuming free memory. The default `declared` envelope keeps
 checking ceilings against owner estimates only.
 
+Streamed sparse relations use the same distinction between declared and
+compiled memory. `phydrax.sparse.StreamedRelationResources` declares only the
+logical bytes owned by the streamed substrate: schedules, one tile of
+workspace, spill and replay carries, outputs, and cotangent accumulators. It
+excludes callback internals and compiler temporaries. To certify a forward,
+reverse, force-loss, or HVP route, call `compiled_memory_estimate` on that
+transformed executable. `MACEAcceleratedCoupling.resource_evidence` converts
+this estimate into `ExecutionResourceEvidence` with
+`memory_basis="compiler_analysis"`; kernel registers and shared memory remain
+outside XLA's analysis. See
+[Streamed nonlinear relations](../guides_sparse_spatial_hierarchies.md#streamed-nonlinear-relations).
+
 ::: phydrax.execution.PhaseMemorySampler
 
 ---

@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from enum import IntEnum
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
+import jax.core as jax_core
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -21,6 +25,40 @@ from ..typing import checked, parse
 from ._policies import DifferentiationMode, DifferentiationPolicy, MixedPrecisionPolicy
 from ._rectangular_rank import RectangularRankCertificate
 from ._recycling import RecyclingState
+
+
+def _numeric_versions(
+    values: tuple[Any, ...],
+    invalid: Callable[..., Any],
+    scalar_message: str,
+    invalid_message: str,
+    /,
+) -> tuple[Array, ...]:
+    """Canonical scalar int32 numeric versions behind one validity invariant.
+
+    Host metadata (Python, NumPy, or concrete JAX scalars) is validated before any
+    value is staged and stays a concrete array inside traces, so constant versions
+    embed without a runtime check here or in downstream provenance. Traced versions
+    keep the runtime refusal on every returned leaf.
+    """
+    if any(isinstance(value, jax_core.Tracer) for value in values):
+        versions = tuple(jnp.asarray(value, dtype=jnp.int32) for value in values)
+        if any(version.ndim != 0 for version in versions):
+            raise ValueError(scalar_message)
+        predicate = invalid(*versions)
+        return tuple(
+            eqx.error_if(version, predicate, invalid_message) for version in versions
+        )
+    host = tuple(np.asarray(value, dtype=np.int32) for value in values)
+    if any(version.ndim != 0 for version in host):
+        raise ValueError(scalar_message)
+    if bool(invalid(*host)):
+        raise ValueError(invalid_message)
+    with jax.ensure_compile_time_eval():
+        return tuple(
+            jnp.asarray(value if isinstance(value, Array) else version, dtype=jnp.int32)
+            for value, version in zip(values, host, strict=True)
+        )
 
 
 class LinearSolveStatus(IntEnum):
@@ -464,30 +502,18 @@ class LinearSolveProvenance(StrictModule):
         self.preconditioner_refresh = (
             None if preconditioner_refresh is None else str(preconditioner_refresh)
         )
-        preconditioner_version = jnp.asarray(
-            preconditioner_numeric_version,
-            dtype=jnp.int32,
-        )
-        built_version = jnp.asarray(
-            preconditioner_built_numeric_version,
-            dtype=jnp.int32,
-        )
-        if preconditioner_version.ndim != 0 or built_version.ndim != 0:
-            raise ValueError("Preconditioner provenance versions must be scalar.")
-        invalid_versions = (
-            (preconditioner_version < -1)
-            | (built_version < -1)
-            | ((preconditioner_version == -1) != (built_version == -1))
-            | ((preconditioner_version >= 0) & (built_version > preconditioner_version))
-        )
-        self.preconditioner_numeric_version = eqx.error_if(
-            preconditioner_version,
-            invalid_versions,
-            "Preconditioner provenance versions are invalid.",
-        )
-        self.preconditioner_built_numeric_version = eqx.error_if(
-            built_version,
-            invalid_versions,
+        (
+            self.preconditioner_numeric_version,
+            self.preconditioner_built_numeric_version,
+        ) = _numeric_versions(
+            (preconditioner_numeric_version, preconditioner_built_numeric_version),
+            lambda version, built: (
+                (version < -1)
+                | (built < -1)
+                | ((version == -1) != (built == -1))
+                | ((version >= 0) & (built > version))
+            ),
+            "Preconditioner provenance versions must be scalar.",
             "Preconditioner provenance versions are invalid.",
         )
         preconditioner_costs = (
@@ -504,16 +530,14 @@ class LinearSolveProvenance(StrictModule):
             self.preconditioner_apply_workspace_bytes_per_rhs,
             self.preconditioner_setup_matvec_count,
         ) = preconditioner_costs
-        operator_version = jnp.asarray(operator_numeric_version, dtype=jnp.int32)
         recycling_costs = (
             int(recycling_capacity),
             int(recycling_state_bytes),
         )
-        if operator_version.ndim != 0:
-            raise ValueError("operator_numeric_version must be scalar.")
-        operator_version = eqx.error_if(
-            operator_version,
-            operator_version < 0,
+        (operator_version,) = _numeric_versions(
+            (operator_numeric_version,),
+            lambda version: version < 0,
+            "operator_numeric_version must be scalar.",
             "operator_numeric_version must be non-negative.",
         )
         if any(value < 0 for value in recycling_costs):

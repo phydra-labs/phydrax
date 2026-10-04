@@ -26,7 +26,16 @@ from phydrax.discretization.meshfree._coverage import (
 )
 from phydrax.nn.layers import Linear
 from phydrax.nn.models import InputConvexNetwork, PartiallyInputConvexNetwork
-from phydrax.nn.operator.representations import O3Representation
+from phydrax.nn.operator.layers import (
+    O3TensorProduct,
+    O3TensorProductPath,
+    O3TensorProductPlan,
+)
+from phydrax.nn.operator.representations import (
+    O3IrrepBlock,
+    O3IrrepLayout,
+    O3Representation,
+)
 from phydrax.nn.parameters import IdentityTransform, LowRankUpdate
 from phydrax.units import LENGTH
 
@@ -455,6 +464,49 @@ def test_coupled_laws_refuse_unsupported_and_conflicting_models() -> None:
     )
     with pytest.raises(ValueError, match="own its path weights"):
         MonotoneCoupledEdgeFlux(external, potential())
+    # A general irrep product with a degree-three output block never matches the
+    # declared Cartesian layout, even though its low-degree blocks would.
+    irreps = O3IrrepLayout(
+        (
+            O3IrrepBlock("s", 0, 1),
+            O3IrrepBlock("p", 0, -1),
+            O3IrrepBlock("v", 1, -1, multiplicity=2),
+            O3IrrepBlock("a", 1, 1),
+            O3IrrepBlock("t", 2, 1),
+        )
+    )
+    frame = O3IrrepLayout(
+        (O3IrrepBlock("s", 0, 1), O3IrrepBlock("v", 1, -1), O3IrrepBlock("t", 2, 1))
+    )
+    high_degree = O3IrrepLayout((O3IrrepBlock("s", 0, 1), O3IrrepBlock("f", 3, -1)))
+    general = eqx.tree_at(
+        lambda value: value.quadratic,
+        invariants,
+        O3TensorProduct(O3TensorProductPlan(irreps, frame, high_degree), key=jr.key(8)),
+    )
+    with pytest.raises(ValueError, match="declared representation"):
+        MonotoneCoupledEdgeFlux(general, potential())
+    plan = invariants.quadratic.plan
+    rescaled = eqx.tree_at(
+        lambda value: value.quadratic,
+        invariants,
+        O3TensorProduct(
+            O3TensorProductPlan(
+                plan.left_representation,
+                plan.right_representation,
+                plan.output_representation,
+                paths=tuple(
+                    O3TensorProductPath(
+                        path.left, path.right, path.output, path_scale=2.0
+                    )
+                    for path in plan.paths
+                ),
+            ),
+            key=jr.key(9),
+        ),
+    )
+    with pytest.raises(ValueError, match="unit-scale paths"):
+        MonotoneCoupledEdgeFlux(rescaled, potential())
     law = MonotoneCoupledEdgeFlux(invariants, potential(), odd_size=features.odd.shape[1])
     with pytest.raises(ValueError, match="three-dimensional"):
         law.flux(jnp.zeros((8, _STATE.packed_size)), _cloud(dimension=2))

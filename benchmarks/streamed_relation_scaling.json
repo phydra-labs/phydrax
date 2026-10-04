@@ -1,0 +1,5250 @@
+{
+  "capacity_refusal": {
+    "case": "receivers-16",
+    "reason": "Payload needs 5 channel elements; the plan admits 4.",
+    "status": "refused"
+  },
+  "config": {
+    "accumulation": "fast",
+    "channels": [
+      4
+    ],
+    "degrees": [
+      4
+    ],
+    "hidden": 8,
+    "hub_degrees": [
+      0,
+      24
+    ],
+    "memory_interval_seconds": 0.01,
+    "receivers": [
+      16,
+      32,
+      64
+    ],
+    "repeats": 2,
+    "seed": 0,
+    "tiles": [
+      [
+        4,
+        16
+      ]
+    ],
+    "warmup": 1
+  },
+  "driver_dependencies": {
+    "benchmarks/streamed_relation_scaling.py": "56bcf37a375e0f5cdc662d3aa82155ea5b0389958c2ae7c6a034dbcc8e36bb4a"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "41e39caf2e7d3c8269427094d86f1b660c8c674802b19afeba3b44f2819d8193",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "e904db69052e74586ff3c14c2d8370715a338a4c57ed3e2cf3f96bc7f5be6a72",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "host_load": {
+    "load_average_1_5_15": [
+      85.86279296875,
+      69.5439453125,
+      42.56787109375
+    ],
+    "logical_cpus": 10
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "56bcf37a375e0f5cdc662d3aa82155ea5b0389958c2ae7c6a034dbcc8e36bb4a",
+    "evidence_schema": {
+      "fields": [
+        "capacity_refusal",
+        "config",
+        "driver_dependencies",
+        "environment",
+        "host_load",
+        "kind",
+        "passed",
+        "resource_measurement",
+        "rows"
+      ],
+      "signature": "b08d20388dc604fa3fd89f483e5c4070f2bcd047924f25763d554665bd76a30f"
+    },
+    "fingerprint": "d4755b78657d4d642c39f41916a9816f601fb84953191144b6edf86fcd0154cb",
+    "source_build_fingerprint": "f2f81b530ea40edbe559f8bfdb6ddad921e1b22ea6a9f6526891a76420efdb84"
+  },
+  "kind": "streamed-relation-scaling",
+  "passed": true,
+  "resource_measurement": {
+    "compiler_scope": "official executable estimates of each transformed route, not process resident memory",
+    "declared_scope": "StreamedRelationResources logical substrate bytes; excludes callback internals and compiler temporaries",
+    "retained_scope": "unique logical payload of the prepared relation visible to the runtime object walker",
+    "sampled_scope": "phydrax.execution.PhaseMemorySampler peak during warm repeats; sampled, never an upper bound"
+  },
+  "rows": [
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 1.007197625,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 18172,
+        "flops": 4055,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-receivers-16-streamed-forward",
+        "temporary_bytes": 3720,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 2946,
+        "temporary_bytes": 3720
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.036772417,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.388284125,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 15027372032
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1204731904
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 530235392
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088104559672000
+        },
+        "devices": [],
+        "duration_seconds": 0.03588433307595551,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 15022915584
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1204731904
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 537362432
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088104597999000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.020129667012952268,
+        "phase": "warm-receivers-16-streamed-forward",
+        "sample_count": 4,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 537362432
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "transform": "forward",
+      "warm_median_seconds": 0.00619775,
+      "warm_samples_seconds": [
+        0.003839875,
+        0.008555625
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 0.216457125,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 35600,
+        "flops": 10543,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-receivers-16-materialized-forward",
+        "temporary_bytes": 6656,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 2192,
+        "temporary_bytes": 6656
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.005951666,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.0306725,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 15029288960
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1204731904
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 537083904
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088104852994000
+        },
+        "devices": [],
+        "duration_seconds": 0.00394087505992502,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 15025176576
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1204731904
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 537477120
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088104857532000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.00394087505992502,
+        "phase": "warm-receivers-16-materialized-forward",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 537477120
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 0.0,
+      "transform": "forward",
+      "warm_median_seconds": 0.000912187,
+      "warm_samples_seconds": [
+        0.001456916,
+        0.000367458
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 2.446642917,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 82091,
+        "flops": 15153,
+        "generated_code_bytes": 0,
+        "output_bytes": 1184,
+        "source": "jax-compiled-streamed-relation-receivers-16-streamed-reverse",
+        "temporary_bytes": 13448,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1184,
+        "peak_bytes": 5917,
+        "temporary_bytes": 13448
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.012839083,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 6.844764792,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13405569024
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1454784512
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1450360832
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088114613915000
+        },
+        "devices": [],
+        "duration_seconds": 0.0014307500096037984,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13404995584
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1454784512
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1452146688
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088114616241000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.0014307500096037984,
+        "phase": "warm-receivers-16-streamed-reverse",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1452146688
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "transform": "reverse",
+      "warm_median_seconds": 0.0002872705,
+      "warm_samples_seconds": [
+        0.000419583,
+        0.000154958
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 0.287172041,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 120608,
+        "flops": 35040,
+        "generated_code_bytes": 0,
+        "output_bytes": 1184,
+        "source": "jax-compiled-streamed-relation-receivers-16-materialized-reverse",
+        "temporary_bytes": 16256,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1184,
+        "peak_bytes": 3368,
+        "temporary_bytes": 16256
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.004489875,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.117646583,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13345210368
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455521792
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1455489024
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088115030921000
+        },
+        "devices": [],
+        "duration_seconds": 0.021824290975928307,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13341376512
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1455505408
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088115053218000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": 1,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1455652864
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.016141540952958167,
+        "phase": "warm-receivers-16-materialized-reverse",
+        "sample_count": 3,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1455620096
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 4.1820649676155296e-16,
+      "transform": "reverse",
+      "warm_median_seconds": 0.002363146,
+      "warm_samples_seconds": [
+        0.002,
+        0.002726292
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 3.411519625,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 213304,
+        "flops": 37728,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-receivers-16-streamed-force-loss",
+        "temporary_bytes": 27904,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 9507,
+        "temporary_bytes": 27904
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.053773959,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 3.106050958,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12905611264
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 592494592
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088122653519000
+        },
+        "devices": [],
+        "duration_seconds": 0.09754212491679937,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12907577344
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 604192768
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088122754426000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.02044333389494568,
+        "phase": "warm-receivers-16-streamed-force-loss",
+        "sample_count": 8,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 604192768
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.03166475,
+      "warm_samples_seconds": [
+        0.021092625,
+        0.042236875
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 1.677588334,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 248348,
+        "flops": 66048,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-receivers-16-materialized-force-loss",
+        "temporary_bytes": 39680,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 3360,
+        "temporary_bytes": 39680
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.005229041,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.157424667,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12866387968
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 553828352
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088124620932000
+        },
+        "devices": [],
+        "duration_seconds": 0.009919708012603223,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12865847296
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 554450944
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088124632195000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.009919708012603223,
+        "phase": "warm-receivers-16-materialized-force-loss",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 554450944
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 4.810656174156232e-16,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.0001517705,
+      "warm_samples_seconds": [
+        0.000168458,
+        0.000135083
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 2.890943,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 139234,
+        "flops": 24273,
+        "generated_code_bytes": 0,
+        "output_bytes": 384,
+        "source": "jax-compiled-streamed-relation-receivers-16-streamed-hvp",
+        "temporary_bytes": 16352,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 384,
+        "peak_bytes": 5885,
+        "temporary_bytes": 16352
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.075216792,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 1.97196925,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12931694592
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 549994496
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088129693235000
+        },
+        "devices": [],
+        "duration_seconds": 0.08793437504209578,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12924436480
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 543834112
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088129810367000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.02105245809070766,
+        "phase": "warm-receivers-16-streamed-hvp",
+        "sample_count": 7,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 549994496
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "transform": "hvp",
+      "warm_median_seconds": 0.019079688,
+      "warm_samples_seconds": [
+        0.020813667,
+        0.017345709
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-16",
+      "channels": 4,
+      "compilation_seconds": 1.227455,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 235024,
+        "flops": 53040,
+        "generated_code_bytes": 0,
+        "output_bytes": 384,
+        "source": "jax-compiled-streamed-relation-receivers-16-materialized-hvp",
+        "temporary_bytes": 28544,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 384,
+        "peak_bytes": 4488,
+        "temporary_bytes": 28544
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2048,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 128,
+        "persistent_schedule_bytes": 6565,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 256,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a6c60a79d81a6abf297e9afdcb2897b42fd9e2c7897e76972fa6003172703a2f",
+        "spill_carry_bytes": 64,
+        "tile_count": 4
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.039569125,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.115150042,
+      "name": "receivers-16",
+      "preparation_seconds": 26.71103225,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 64,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12867698688
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 557711360
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088131219090000
+        },
+        "devices": [],
+        "duration_seconds": 0.04296783299650997,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12852953088
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 555778048
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088131262563000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.012720791040919721,
+        "phase": "warm-receivers-16-materialized-hvp",
+        "sample_count": 5,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 557875200
+        }
+      },
+      "schedule": {
+        "execution_id": "44170bb2f8a5e35093901baf3ca01d463c7a8e0323107e553942491685773801",
+        "fragmented_receivers": 0,
+        "logical_bytes": 6241,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 4
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 1.1102230246251565e-16,
+      "transform": "hvp",
+      "warm_median_seconds": 0.013670854,
+      "warm_samples_seconds": [
+        0.020877875,
+        0.006463833
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 1.913907041,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 20548,
+        "flops": 4107,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-receivers-32-streamed-forward",
+        "temporary_bytes": 3976,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 5058,
+        "temporary_bytes": 3976
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.048068166,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.358209666,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "streamed",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12934201344
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 477462528
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088165261667000
+        },
+        "devices": [],
+        "duration_seconds": 0.1188158750301227,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12923994112
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 481738752
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088165409458000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.03481125005055219,
+        "phase": "warm-receivers-32-streamed-forward",
+        "sample_count": 7,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 481787904
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "transform": "forward",
+      "warm_median_seconds": 0.016788292,
+      "warm_samples_seconds": [
+        0.012877292,
+        0.020699292
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 0.354640458,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 70416,
+        "flops": 21087,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-receivers-32-materialized-forward",
+        "temporary_bytes": 13312,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 3600,
+        "temporary_bytes": 13312
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.011137375,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.016942625,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "materialized",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12908953600
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 482213888
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088165799240000
+        },
+        "devices": [],
+        "duration_seconds": 0.06920337490737438,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12912361472
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 481099776
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088165869058000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.02636741695459932,
+        "phase": "warm-receivers-32-materialized-forward",
+        "sample_count": 4,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 482213888
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 0.0,
+      "transform": "forward",
+      "warm_median_seconds": 0.0114048755,
+      "warm_samples_seconds": [
+        0.017400459,
+        0.005409292
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 3.566980125,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 94571,
+        "flops": 15301,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "jax-compiled-streamed-relation-receivers-32-streamed-reverse",
+        "temporary_bytes": 15240,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1568,
+        "peak_bytes": 10077,
+        "temporary_bytes": 15240
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.055157666,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 1.469216458,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "streamed",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12871335936
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 526123008
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088170977424000
+        },
+        "devices": [],
+        "duration_seconds": 0.05378333304543048,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12876513280
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 525336576
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088171060465000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.02309262496419251,
+        "phase": "warm-receivers-32-streamed-reverse",
+        "sample_count": 4,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 528941056
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "transform": "reverse",
+      "warm_median_seconds": 0.0121859795,
+      "warm_samples_seconds": [
+        0.004708167,
+        0.019663792
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 0.61662975,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 238880,
+        "flops": 70080,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "jax-compiled-streamed-relation-receivers-32-materialized-reverse",
+        "temporary_bytes": 32512,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1568,
+        "peak_bytes": 5160,
+        "temporary_bytes": 32512
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.017420083,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.103118625,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "materialized",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12875841536
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 505905152
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088171864577000
+        },
+        "devices": [],
+        "duration_seconds": 0.08688158402219415,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12877627392
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 505905152
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088171979930000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.024064416997134686,
+        "phase": "warm-receivers-32-materialized-reverse",
+        "sample_count": 5,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 506134528
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 6.708605825581377e-16,
+      "transform": "reverse",
+      "warm_median_seconds": 0.0211900415,
+      "warm_samples_seconds": [
+        0.014429208,
+        0.027950875
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 5.509651167,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 230136,
+        "flops": 38068,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-receivers-32-streamed-force-loss",
+        "temporary_bytes": 28928,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 16995,
+        "temporary_bytes": 28928
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.129939125,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 3.370846,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "streamed",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12870057984
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 577470464
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088181619408000
+        },
+        "devices": [],
+        "duration_seconds": 0.09825862501747906,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12872597504
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 588939264
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088181744363000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.025587124982848763,
+        "phase": "warm-receivers-32-streamed-force-loss",
+        "sample_count": 7,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 588939264
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.0258948125,
+      "warm_samples_seconds": [
+        0.027428042,
+        0.024361583
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 0.5725225,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 490012,
+        "flops": 132000,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-receivers-32-materialized-force-loss",
+        "temporary_bytes": 79360,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 5152,
+        "temporary_bytes": 79360
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.015764834,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.284970625,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "materialized",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12868911104
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 628260864
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088182713673000
+        },
+        "devices": [],
+        "duration_seconds": 0.018281041993759573,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12870500352
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 628670464
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088182739150000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.01624541694764048,
+        "phase": "warm-receivers-32-materialized-force-loss",
+        "sample_count": 3,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 628670464
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 8.562124398015839e-16,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.004806729,
+      "warm_samples_seconds": [
+        0.009177875,
+        0.000435583
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 3.593766417,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 153258,
+        "flops": 24421,
+        "generated_code_bytes": 0,
+        "output_bytes": 768,
+        "source": "jax-compiled-streamed-relation-receivers-32-streamed-hvp",
+        "temporary_bytes": 17440,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 768,
+        "peak_bytes": 10813,
+        "temporary_bytes": 17440
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.055424208,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 10.823437375,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "streamed",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12869025792
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1132462080
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088197281480000
+        },
+        "devices": [],
+        "duration_seconds": 0.08055708301253617,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12876234752
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1090273280
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088197400535000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.03266487503424287,
+        "phase": "warm-receivers-32-streamed-hvp",
+        "sample_count": 5,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1132462080
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "transform": "hvp",
+      "warm_median_seconds": 0.012495354,
+      "warm_samples_seconds": [
+        0.009596833,
+        0.015393875
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-32",
+      "channels": 4,
+      "compilation_seconds": 0.647504667,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 466960,
+        "flops": 106080,
+        "generated_code_bytes": 0,
+        "output_bytes": 768,
+        "source": "jax-compiled-streamed-relation-receivers-32-materialized-hvp",
+        "temporary_bytes": 57088,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1536,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 768,
+        "peak_bytes": 8200,
+        "temporary_bytes": 57088
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 3328,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 256,
+        "output_staging_bytes": 256,
+        "persistent_schedule_bytes": 13069,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 512,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "a222d75b01ced0a4e5e845789f5f3f39eac7ac97bcf5583a82c95fcbd200396e",
+        "spill_carry_bytes": 64,
+        "tile_count": 8
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.008129083,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.165480833,
+      "name": "receivers-32",
+      "preparation_seconds": 31.549804833,
+      "receiver_tile": 4,
+      "receivers": 32,
+      "route": "materialized",
+      "routes": 128,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12874612736
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 838877184
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088198251302000
+        },
+        "devices": [],
+        "duration_seconds": 0.12681820802390575,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12878626816
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 774979584
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088198447505000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.024727332987822592,
+        "phase": "warm-receivers-32-materialized-hvp",
+        "sample_count": 8,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 838877184
+        }
+      },
+      "schedule": {
+        "execution_id": "25902ea988eb241eb205b5ab432e5502fb1e04b4b79495c24e7267dbc3dacf07",
+        "fragmented_receivers": 0,
+        "logical_bytes": 12425,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 8
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 2.220446049250313e-16,
+      "transform": "hvp",
+      "warm_median_seconds": 0.013217687,
+      "warm_samples_seconds": [
+        0.018081083,
+        0.008354291
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 2.993430208,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 26372,
+        "flops": 4211,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-receivers-64-streamed-forward",
+        "temporary_bytes": 4488,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 9282,
+        "temporary_bytes": 4488
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.00265675,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.404751625,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "streamed",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12813418496
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 501776384
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088238261778000
+        },
+        "devices": [],
+        "duration_seconds": 0.002019332954660058,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12806324224
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 507510784
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088238268571000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.002019332954660058,
+        "phase": "warm-receivers-64-streamed-forward",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 507510784
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "transform": "forward",
+      "warm_median_seconds": 0.000447667,
+      "warm_samples_seconds": [
+        0.000427542,
+        0.000467792
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 0.368742625,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 141120,
+        "flops": 42175,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-receivers-64-materialized-forward",
+        "temporary_bytes": 26624,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 6416,
+        "temporary_bytes": 26624
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.004806791,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.114316542,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "materialized",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12882591744
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 506068992
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088238758485000
+        },
+        "devices": [],
+        "duration_seconds": 0.032339208060875535,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12878446592
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 506052608
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088238791977000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.018321000039577484,
+        "phase": "warm-receivers-64-materialized-forward",
+        "sample_count": 3,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 506167296
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 0.0,
+      "transform": "forward",
+      "warm_median_seconds": 0.0046631039999999995,
+      "warm_samples_seconds": [
+        0.004763708,
+        0.0045625
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 3.133375584,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 104195,
+        "flops": 15245,
+        "generated_code_bytes": 0,
+        "output_bytes": 2336,
+        "source": "jax-compiled-streamed-relation-receivers-64-streamed-reverse",
+        "temporary_bytes": 16648,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 2336,
+        "peak_bytes": 18397,
+        "temporary_bytes": 16648
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.036515875,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 1.865167083,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "streamed",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12889833472
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 641581056
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088243905826000
+        },
+        "devices": [],
+        "duration_seconds": 0.001958749955520034,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12895846400
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 642351104
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088243909126000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.001958749955520034,
+        "phase": "warm-receivers-64-streamed-reverse",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 642351104
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "transform": "reverse",
+      "warm_median_seconds": 0.0005405835,
+      "warm_samples_seconds": [
+        0.0004885,
+        0.000592667
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 0.803259333,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 475424,
+        "flops": 140160,
+        "generated_code_bytes": 0,
+        "output_bytes": 2336,
+        "source": "jax-compiled-streamed-relation-receivers-64-materialized-reverse",
+        "temporary_bytes": 65024,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 2336,
+        "peak_bytes": 8744,
+        "temporary_bytes": 65024
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.00233425,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.041092375,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "materialized",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12879675392
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 634175488
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088244763110000
+        },
+        "devices": [],
+        "duration_seconds": 0.004677791032008827,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12877299712
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 634290176
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088244768418000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.004677791032008827,
+        "phase": "warm-receivers-64-materialized-reverse",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 634290176
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 1.0103302625715086e-15,
+      "transform": "reverse",
+      "warm_median_seconds": 0.0017969795,
+      "warm_samples_seconds": [
+        0.001561417,
+        0.002032542
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 4.641844041,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 248464,
+        "flops": 38396,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-receivers-64-streamed-force-loss",
+        "temporary_bytes": 30976,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 31971,
+        "temporary_bytes": 30976
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.07987125,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 4.427135125,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "streamed",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13396606976
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 655966208
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088254250850000
+        },
+        "devices": [],
+        "duration_seconds": 0.1312384168850258,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13397590016
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 653180928
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088254442456000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.02324445894919336,
+        "phase": "warm-receivers-64-streamed-force-loss",
+        "sample_count": 9,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 657670144
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.042379979,
+      "warm_samples_seconds": [
+        0.027664,
+        0.057095958
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 0.945741334,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 973340,
+        "flops": 263904,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-receivers-64-materialized-force-loss",
+        "temporary_bytes": 158720,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 8736,
+        "temporary_bytes": 158720
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.011705209,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.109091,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "materialized",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13361987584
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 598523904
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088255594872000
+        },
+        "devices": [],
+        "duration_seconds": 0.11813512491062284,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13362036736
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 596279296
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088255713667000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.02083770791068673,
+        "phase": "warm-receivers-64-materialized-force-loss",
+        "sample_count": 8,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 598523904
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 7.34601616318103e-16,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.007672958,
+      "warm_samples_seconds": [
+        0.013611083,
+        0.001734833
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 4.051683875,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 166074,
+        "flops": 24221,
+        "generated_code_bytes": 0,
+        "output_bytes": 1536,
+        "source": "jax-compiled-streamed-relation-receivers-64-streamed-hvp",
+        "temporary_bytes": 19360,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1536,
+        "peak_bytes": 20669,
+        "temporary_bytes": 19360
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.020137125,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 2.654923375,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "streamed",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13172178944
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 596525056
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088262550580000
+        },
+        "devices": [],
+        "duration_seconds": 0.11263375007547438,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13168656384
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 596475904
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088262705204000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.044652875047177076,
+        "phase": "warm-receivers-64-streamed-hvp",
+        "sample_count": 6,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 597770240
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "transform": "hvp",
+      "warm_median_seconds": 0.0137761255,
+      "warm_samples_seconds": [
+        0.018198042,
+        0.009354209
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "receivers-64",
+      "channels": 4,
+      "compilation_seconds": 0.785492375,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 930832,
+        "flops": 212160,
+        "generated_code_bytes": 0,
+        "output_bytes": 1536,
+        "source": "jax-compiled-streamed-relation-receivers-64-materialized-hvp",
+        "temporary_bytes": 114176,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 2304,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1536,
+        "peak_bytes": 15624,
+        "temporary_bytes": 114176
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 5888,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 512,
+        "output_staging_bytes": 512,
+        "persistent_schedule_bytes": 26077,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 1024,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "701dcc6072684ad8f1439a74cc4fbcaced8b1a766db82f43262e1ca980cfa3b5",
+        "spill_carry_bytes": 64,
+        "tile_count": 16
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.009449166,
+      "hidden": 8,
+      "hub_degree": 0,
+      "lowering_seconds": 0.310528375,
+      "name": "receivers-64",
+      "preparation_seconds": 36.328835959,
+      "receiver_tile": 4,
+      "receivers": 64,
+      "route": "materialized",
+      "routes": 256,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13081198592
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 571588608
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088263837313000
+        },
+        "devices": [],
+        "duration_seconds": 0.0013674580259248614,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 13081837568
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 571654144
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088263839251000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.0013674580259248614,
+        "phase": "warm-receivers-64-materialized-hvp",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 571654144
+        }
+      },
+      "schedule": {
+        "execution_id": "4f6db18f6a067296031aba5b67bd91c49c1a50f7cf2dc8431a0fc9875a684eae",
+        "fragmented_receivers": 0,
+        "logical_bytes": 24793,
+        "maximum_receiver_degree": 4,
+        "successful": true,
+        "tile_count": 16
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 2.220446049250313e-16,
+      "transform": "hvp",
+      "warm_median_seconds": 0.0003115835,
+      "warm_samples_seconds": [
+        0.000519083,
+        0.000104084
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 2.873597208,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 20306,
+        "flops": 4307,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-hub-24-streamed-forward",
+        "temporary_bytes": 4104,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 4472,
+        "temporary_bytes": 4104
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.033822916,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 0.626718334,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12889915392
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 525008896
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088297359225000
+        },
+        "devices": [],
+        "duration_seconds": 0.02578387502580881,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12889554944
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 530251776
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088297405974000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.019979292061179876,
+        "phase": "warm-hub-24-streamed-forward",
+        "sample_count": 3,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 531529728
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "transform": "forward",
+      "warm_median_seconds": 0.007133812,
+      "warm_samples_seconds": [
+        0.012478041,
+        0.001789583
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 0.513031458,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 46832,
+        "flops": 14023,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled-streamed-relation-hub-24-materialized-forward",
+        "temporary_bytes": 8960,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 8,
+        "peak_bytes": 2576,
+        "temporary_bytes": 8960
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.00476775,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 0.02945475,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12885606400
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 517308416
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088297955605000
+        },
+        "devices": [],
+        "duration_seconds": 0.0410355000058189,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12871499776
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 516030464
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088297997219000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.01933666702825576,
+        "phase": "warm-hub-24-materialized-forward",
+        "sample_count": 4,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 517308416
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 0.0,
+      "transform": "forward",
+      "warm_median_seconds": 0.012493187,
+      "warm_samples_seconds": [
+        0.006294208,
+        0.018692166
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 4.272124333,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 83439,
+        "flops": 15186,
+        "generated_code_bytes": 0,
+        "output_bytes": 1184,
+        "source": "jax-compiled-streamed-relation-hub-24-streamed-reverse",
+        "temporary_bytes": 13640,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1184,
+        "peak_bytes": 8951,
+        "temporary_bytes": 13640
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.03253725,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 1.539819,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12888555520
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 566149120
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088303888402000
+        },
+        "devices": [],
+        "duration_seconds": 0.11491662508342415,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12891291648
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 567050240
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088304010391000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.04786204104311764,
+        "phase": "warm-hub-24-streamed-reverse",
+        "sample_count": 7,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 568901632
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "transform": "reverse",
+      "warm_median_seconds": 0.033058333,
+      "warm_samples_seconds": [
+        0.056029541,
+        0.010087125
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 0.349337875,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 159968,
+        "flops": 46848,
+        "generated_code_bytes": 0,
+        "output_bytes": 1184,
+        "source": "jax-compiled-streamed-relation-hub-24-materialized-reverse",
+        "temporary_bytes": 22208,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 1184,
+        "peak_bytes": 3752,
+        "temporary_bytes": 22208
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.006889208,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 0.317634709,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12883345408
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 537952256
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088304691400000
+        },
+        "devices": [],
+        "duration_seconds": 0.012260666000656784,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12888309760
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 537477120
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088304705109000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.012260666000656784,
+        "phase": "warm-hub-24-materialized-reverse",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 537952256
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 2.0965008770785616e-15,
+      "transform": "reverse",
+      "warm_median_seconds": 0.0027078545,
+      "warm_samples_seconds": [
+        0.003946375,
+        0.001469334
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 4.77836225,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 217354,
+        "flops": 38009,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-hub-24-streamed-force-loss",
+        "temporary_bytes": 28224,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 15428,
+        "temporary_bytes": 28224
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.072508292,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 4.39253475,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12902039552
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 596656128
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088314214659000
+        },
+        "devices": [],
+        "duration_seconds": 0.10682070802431554,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12881723392
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 603783168
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088314389454000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.025640207924880087,
+        "phase": "warm-hub-24-streamed-force-loss",
+        "sample_count": 7,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 603815936
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.020517062500000002,
+      "warm_samples_seconds": [
+        0.025597542,
+        0.015436583
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 1.54109475,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 328988,
+        "flops": 88080,
+        "generated_code_bytes": 0,
+        "output_bytes": 792,
+        "source": "jax-compiled-streamed-relation-hub-24-materialized-force-loss",
+        "temporary_bytes": 53120,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 792,
+        "peak_bytes": 3744,
+        "temporary_bytes": 53120
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.04347375,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 0.402944833,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12882952192
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 588300288
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088316443297000
+        },
+        "devices": [],
+        "duration_seconds": 0.0019442919874563813,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12889800704
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1455652864
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 588775424
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088316445876000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.0019442919874563813,
+        "phase": "warm-hub-24-materialized-force-loss",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 588775424
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 4.489200227783133e-15,
+      "transform": "force-loss",
+      "warm_median_seconds": 0.00017414600000000002,
+      "warm_samples_seconds": [
+        0.000147667,
+        0.000200625
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 3.443809208,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 140710,
+        "flops": 24306,
+        "generated_code_bytes": 0,
+        "output_bytes": 384,
+        "source": "jax-compiled-streamed-relation-hub-24-streamed-hvp",
+        "temporary_bytes": 16928,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 384,
+        "peak_bytes": 8919,
+        "temporary_bytes": 16928
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.034717833,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 10.137456792,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "streamed",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12888965120
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1610465280
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1609760768
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088330382261000
+        },
+        "devices": [],
+        "duration_seconds": 0.0014353339793160558,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12886720512
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1615233024
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1615200256
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088330396545000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": 1,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1615233024
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.0014353339793160558,
+        "phase": "warm-hub-24-streamed-hvp",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1615200256
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "transform": "hvp",
+      "warm_median_seconds": 0.0002585415,
+      "warm_samples_seconds": [
+        0.000291583,
+        0.0002255
+      ]
+    },
+    {
+      "accumulation": "fast",
+      "case": "hub-24",
+      "channels": 4,
+      "compilation_seconds": 1.568936917,
+      "compiler": {
+        "argument_bytes": 1152,
+        "bytes_accessed": 312784,
+        "flops": 71088,
+        "generated_code_bytes": 0,
+        "output_bytes": 384,
+        "source": "jax-compiled-streamed-relation-hub-24-materialized-hvp",
+        "temporary_bytes": 38720,
+        "unavailable_reason": null
+      },
+      "compiler_estimate": {
+        "alias_bytes": 0,
+        "argument_bytes": 1152,
+        "generated_code_bytes": 0,
+        "host_alias_bytes": 0,
+        "host_argument_bytes": 0,
+        "host_generated_code_bytes": 0,
+        "host_output_bytes": 0,
+        "host_temporary_bytes": 0,
+        "output_bytes": 384,
+        "peak_bytes": 5448,
+        "temporary_bytes": 38720
+      },
+      "declared": {
+        "cotangent_accumulator_bytes": 2240,
+        "edge_tile": 16,
+        "edge_workspace_bytes": 1408,
+        "output_bytes": 128,
+        "output_staging_bytes": 192,
+        "persistent_schedule_bytes": 9473,
+        "receiver_tile": 4,
+        "receiver_workspace_bytes": 768,
+        "replay": "step",
+        "replay_boundary_bytes": 384,
+        "replay_tiles_in_flight": 1,
+        "resources_id": "ebe48c9afa28e66667ac01eca3c8d1fb6c83bf92600cad6a8e4f8ed7e0b41a3b",
+        "spill_carry_bytes": 64,
+        "tile_count": 6
+      },
+      "degree": 4,
+      "edge_tile": 16,
+      "first_seconds": 0.012841792,
+      "hidden": 8,
+      "hub_degree": 24,
+      "lowering_seconds": 0.092378208,
+      "name": "hub-24",
+      "preparation_seconds": 29.758931834,
+      "receiver_tile": 4,
+      "receivers": 16,
+      "route": "materialized",
+      "routes": 88,
+      "sampled_memory": {
+        "baseline": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12884672512
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1619574784
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1606762496
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088332078429000
+        },
+        "devices": [],
+        "duration_seconds": 0.0007541249506175518,
+        "final": {
+          "host_available": {
+            "method": "mach_host_vm_statistics",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 12884901888
+          },
+          "host_total": {
+            "method": "sysconf_physical_pages",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 68719476736
+          },
+          "process_index": 0,
+          "process_peak_resident": {
+            "method": "getrusage_max_rss",
+            "resolution_bytes": 1,
+            "scope": "peak",
+            "unavailable_reason": null,
+            "value_bytes": 1619574784
+          },
+          "process_resident": {
+            "method": "mach_task_basic_info",
+            "resolution_bytes": 16384,
+            "scope": "baseline",
+            "unavailable_reason": null,
+            "value_bytes": 1606778880
+          },
+          "provider": "darwin_mach",
+          "timestamp_ns": 1791088332079796000
+        },
+        "interval_peak_resident": {
+          "method": "getrusage_max_rss",
+          "resolution_bytes": null,
+          "scope": "peak",
+          "unavailable_reason": "the process RSS high-water mark predates the phase; only its upper bound is known",
+          "value_bytes": null
+        },
+        "interval_seconds": 0.01,
+        "maximum_sample_gap_seconds": 0.0007541249506175518,
+        "phase": "warm-hub-24-materialized-hvp",
+        "sample_count": 2,
+        "sampled_peak_resident": {
+          "method": "interval_sampling",
+          "resolution_bytes": 16384,
+          "scope": "peak",
+          "unavailable_reason": null,
+          "value_bytes": 1606778880
+        }
+      },
+      "schedule": {
+        "execution_id": "da72a80f7697f7ce29836cb605966effaa1934e04c9d7b8fda1c76b3378eb700",
+        "fragmented_receivers": 1,
+        "logical_bytes": 8989,
+        "maximum_receiver_degree": 28,
+        "successful": true,
+        "tile_count": 6
+      },
+      "seed": 0,
+      "streamed_materialized_defect": 3.0029863633343488e-15,
+      "transform": "hvp",
+      "warm_median_seconds": 6.7313e-05,
+      "warm_samples_seconds": [
+        6.6209e-05,
+        6.8417e-05
+      ]
+    }
+  ],
+  "workload_id": "cf4c1b5d33adf2b6d95d9fd2f4e196ce0d5c5dfd930334ac062596ec064668ad"
+}

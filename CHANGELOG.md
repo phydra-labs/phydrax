@@ -2,7 +2,114 @@
 
 ## Unreleased
 
+### Fixed
+- Streamed deterministic and compensated reductions preserve reverse-mode
+  curvature at valid zero events, and failed evaluations invalidate derivatives
+  through message-only parameters and array-bearing callbacks. Callback leaves
+  are included in cotangent admission.
+- Graph message passing excludes masked padding receivers from numerical
+  admission and does not consume unused global payloads.
+- Runtime atomistic topology binds exact route and schedule content; image
+  geometry follows its discovery lattice and refuses uncertified cell changes.
+  Capacity retry preserves independent thermodynamic and other rejections.
+- Distributed ownership validates logical row addresses and global epochs,
+  honors replicated partition specifications, rejects incomplete stencils, and
+  refuses checkpoint publication that would launder stale topology ownership.
+- Source coupling imports refuse complex values before real conversion, and
+  SU(2)/native symmetric-basis construction checks legality and workspace
+  admission before allocating dense mathematical data.
+- Provider conversion bounds irreps expansion and edge/image topology before
+  construction or discovery. ASE commits cache identity only after successful
+  preparation. IREE validates reflected input/output ABI and HAL element types
+  before decoding buffers, including scalar inputs and frozen output contracts.
+- Energy/force/stress loss uses the declared reduction precision under strict
+  dtype promotion; force masks must explicitly match their Cartesian layout.
+- Sparse grouped sums retain coordinate, parameter, and mixed derivatives for
+  valid zero-valued events and cancelling seeded subtotals. Primal zero-event
+  no-ops and uncollapsed compensated correction state are preserved; structural
+  padding remains derivative-inert.
+- Atomistic derivative failure poisoning preserves each carrier's precision
+  under float64 energy accumulation and float32 coordinate differentiation.
+  Image cell-key reductions retain their declared int32 address space under
+  strict dtype promotion.
+- Tabulated radial evaluation preserves the admitted one-sided derivative at
+  the lower support bound instead of inheriting the half-slope of clipping.
+- Accelerated MACE coupling executes every nonzero entry of the executed
+  coefficient tables, including admitted imported residuals where the native
+  coupling is zero: `MACEEdgeCouplingSpec` now takes the `O3TensorProduct` and
+  lowers its `coefficient_support`, so kernel structure, coefficient counts,
+  declared resources and `spec_id` change with the support (native supports
+  keep their previous structure). Tables mutated outside their recorded
+  support are refused in-graph instead of truncated. Multi-slot tangents of the
+  receiver, source and coefficient kernels stream every slot's lane events
+  through one seeded accumulator, so compensated mixed derivatives keep
+  cancelling residuals instead of collapsing per-slot subtotals; seeded
+  tangent binds transpose and coefficient partials keep each program's
+  correction.
+- MACE validation, preparation publication, and radial table freshness rebuild
+  every executed fixed Bessel, cutoff, Agnesi, harmonic, ZBL, and coupling
+  field from the stored arrays instead of trusting recorded identities, so a
+  changed prefactor or ZBL exponent is refused. Float32 Bessel bases now
+  identify their realized prefactor, which changes float32 radial and MACE
+  architecture identities without an alias. Radial tables admit atom-type ID
+  `0` and refuse out-of-domain species indices instead of wrapping or clipping
+  them onto another species pair.
+- IREE host inference reads owned outputs through the public HAL buffer
+  protocol, avoiding the mapped-array reference leak in runtime 3.11.
+- Native i-PI boundaries now convert row-stored cells, Bohr/Hartree units, and
+  configurational virial explicitly; tensile stress is not a wire virial.
+  Required unavailable virial is refused rather than replaced with zero.
+- Atomistic training restarts publish the model and continuation as one atomic
+  bundle with a digest receipt. Failed publication preserves the prior bundle;
+  obsolete receipt-free directory layouts are refused.
+- `PreparedLinearSolve` and `LinearSolveProvenance` validate Python, NumPy, and
+  concrete JAX numeric versions on the host and keep them concrete inside
+  traces, so default and other constant version metadata stage no host
+  callbacks and prepared native solves export with `jax.export`. Invalid
+  constant versions now raise `ValueError` at construction, including inside a
+  trace; traced versions keep their runtime refusals with unchanged messages.
+- Image neighborhood searches refuse a singular or non-finite runtime cell even
+  when no particle is active, and charge `maximum_candidate_slots` (and
+  `PeriodicCell` its `maximum_image_count`) before enumerating a radius- or
+  condition-sized stencil. Wrap counts, route shifts, representation offsets
+  and image-Verlet counts outside the symmetric int32 range now set the new
+  scientific `ParticleImageRelationEvidence.representation_overflow` (or
+  refuse at relation construction) instead of saturating or wrapping into a
+  wrong translation. `ParticleImageNeighborhoodState` gains
+  `reference_positions`, re-expressed with its routes and wrap counts by
+  `with_representation_offsets`; array fingerprints of image neighborhood
+  states and evidence change accordingly, without a compatibility alias.
+
 ### Added
+- Prepared bounded streamed relation execution, seeded reductions, fragment
+  replay, receiver epilogues, resource admission, and failure evidence. PaiNN,
+  NequIP, selected graph operators, and meshfree constitutive/conservation
+  consumers use the same canonical owner.
+- Multi-image periodic atomistic routes, nonzero self images, triclinic and
+  partial periodicity, certified Verlet reuse under wrapping and cell
+  deformation, and transactional same-attempt capacity replacement.
+- General real O(3) representations and tensor-product paths, sparse symmetric
+  product graphs, exact Bessel/cutoff radial execution, and distinct qualified
+  tabulated radial preparation. Cartesian low-degree consumers retain their
+  declared semantics; new coupling/preparation identities are canonical.
+- Native standard MACE construction and training, invariant single-interaction
+  readouts, source-faithful residual/density/head/scale/ZBL handling, and one
+  fixed-topology energy/force/stress derivative boundary. Stress conventions
+  distinguish full periodic volume from partial-PBC embedding volume.
+- Trusted, bounded source conversion and pickle-free native model artifacts
+  with registered scientific reconstruction. Safe state-dict storage metadata
+  is checked before provider allocation; trusted full-object checkpoints
+  require explicit trust and are not memory or security sandboxes.
+- Owner-local multilayer MACE with intermediate feature halos and reverse
+  force/cell returns, migration/restart, architecture-specialized Pallas Mosaic
+  GPU coupling and admitted mixed derivatives, and explicit unsupported-target
+  refusal. CPU interpretation and forced-device proofs do not qualify GPU or
+  multi-host performance.
+- Native ASE calculation, periodic E/F/S dynamics, i-PI inference, and frozen
+  native-JAX IREE export with lifecycle certificate/status refusal. Double
+  precision host export admits an explicit system-library executable format.
+  Capability profiles remain unreleased candidates; checkpoint licenses and
+  independent release authorization remain separate prerequisites.
 - `phydrax.typing.checked` checks a function's annotated arguments against their
   input contracts: nominal runtime classes, callables, and Phydrax tensor and
   metadata forms, in declaration order and one dimension `Scope` per call, after

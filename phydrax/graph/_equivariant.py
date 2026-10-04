@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 import equinox as eqx
@@ -8,10 +8,12 @@ import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
 
-from ..sparse import EdgeRelation, gather_routes, mask_routes, route_reduce
+from ..sparse import EdgeRelation, gather_routes
+from ..sparse._streamed import StreamedRelationPlan
 from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
+from ._route_payload import declared_payload, require_route_local, RouteLocal
 from ._typed import GraphFlow
 
 
@@ -146,10 +148,58 @@ def gaussian_radial_basis(
     return jnp.exp(-float(gamma) * jnp.square(d - c))
 
 
-def _broadcast_edge_weight(weight: jnp.ndarray, values: jnp.ndarray, /) -> jnp.ndarray:
-    while weight.ndim < values.ndim:
-        weight = jnp.expand_dims(weight, axis=-1)
-    return weight
+def _convolution_message(
+    convolution: EquivariantGraphConvolution,
+    source: tuple[jnp.ndarray, jnp.ndarray],
+    receiver: tuple[jnp.ndarray, jnp.ndarray],
+    edge: tuple[Any, jnp.ndarray | None],
+    /,
+) -> dict[str, jnp.ndarray]:
+    """Scalar and relative-vector messages of one route, with its weight magnitude."""
+    source_position, sent = source
+    receiver_position, received = receiver
+    edges, edge_weight = edge
+    relative = receiver_position - source_position
+    weight = jnp.ones((), dtype=sent.dtype)
+    if edge_weight is not None:
+        weight = weight * edge_weight.astype(weight.dtype)
+    if convolution.radial_fn is not None:
+        squared_distance = jnp.sum(jnp.square(relative), axis=-1, keepdims=True)
+        distance = jnp.sqrt(jnp.maximum(squared_distance, convolution.eps))
+        unit = relative / distance
+        radial = jnp.asarray(
+            convolution.radial_fn(edges, distance, unit, sent, received),
+            dtype=sent.dtype,
+        )
+        if radial.shape == (1,):
+            radial = radial[0]
+        if radial.shape != ():
+            raise ValueError("radial_fn must return shape () or (1,) for one route.")
+        weight = weight * radial
+    message = {
+        "scalar": sent * weight,
+        "vector": relative[:, None] * sent[None, :] * weight,
+    }
+    if convolution.normalize:
+        message["weight_magnitude"] = jnp.abs(weight)
+    return message
+
+
+def _convolution_output(
+    convolution: EquivariantGraphConvolution,
+    receiver: tuple[jnp.ndarray, jnp.ndarray],
+    aggregate: dict[str, jnp.ndarray],
+    /,
+) -> dict[str, jnp.ndarray]:
+    """Receiver epilogue normalizing by its complete incoming weight magnitude."""
+    del receiver
+    scalar, vector = aggregate["scalar"], aggregate["vector"]
+    if convolution.normalize:
+        denom = aggregate["weight_magnitude"]
+        scale = jnp.where(denom > 0, 1.0 / denom, 0.0)
+        scalar = scalar * scale
+        vector = vector * scale
+    return {"scalar": scalar, "vector": vector}
 
 
 def _mask_by_node_mask(value: jnp.ndarray, mask: jnp.ndarray | None, /) -> jnp.ndarray:
@@ -166,11 +216,17 @@ class EquivariantGraphConvolution(StrictModule):
     Scalar messages aggregate invariant source features. Vector messages are
     built from relative displacement vectors multiplied by invariant scalar
     coefficients, giving translation invariance and rotation equivariance when
-    positions are transformed rigidly. Messages are gathered and reduced over
-    `graph.edge_relation(flow=flow)`; routes with `edge_mask=False` are inert.
+    positions are transformed rigidly. Each route of
+    `graph.edge_relation(flow=flow)` evaluates its message once through the
+    prepared streamed relation selected by ``execution``, and every receiver
+    normalizes by its complete incoming weight magnitude only after its last
+    route; routes with `edge_mask=False` are inert. ``radial_fn`` must be a
+    `RouteLocal` callback ``(edge, distance, unit, sent, received)`` of one
+    route's unbatched rows returning one scalar weight.
     """
 
-    radial_fn: Callable | None
+    radial_fn: RouteLocal | None
+    execution: StreamedRelationPlan
     input_key: str | None = eqx.field(static=True)
     position_key: str = eqx.field(static=True)
     scalar_output_key: str | None = eqx.field(static=True)
@@ -182,7 +238,7 @@ class EquivariantGraphConvolution(StrictModule):
 
     def __init__(
         self,
-        radial_fn: Callable | None = None,
+        radial_fn: RouteLocal | None = None,
         /,
         *,
         input_key: str | None = "features",
@@ -193,11 +249,15 @@ class EquivariantGraphConvolution(StrictModule):
         flow: GraphFlow = "source_to_target",
         normalize: bool = False,
         eps: float = 1e-30,
+        execution: StreamedRelationPlan | None = None,
     ) -> None:
         flow = parse(flow, GraphFlow, "flow")
         if scalar_output_key is None and vector_output_key is None:
             raise ValueError("At least one output key must be provided.")
-        self.radial_fn = radial_fn
+        if execution is not None and not isinstance(execution, StreamedRelationPlan):
+            raise TypeError("execution must be a StreamedRelationPlan or None.")
+        self.radial_fn = require_route_local(radial_fn, "radial_fn")
+        self.execution = StreamedRelationPlan() if execution is None else execution
         self.input_key = input_key
         self.position_key = str(position_key)
         self.scalar_output_key = scalar_output_key
@@ -209,50 +269,37 @@ class EquivariantGraphConvolution(StrictModule):
 
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
-        relation, relative, distance, unit = _relative_geometry(
-            graph,
-            position_key=self.position_key,
-            flow=self.flow,
-            eps=self.eps,
-        )
+        positions = _positions(graph, self.position_key)
+        relation = _oriented_relation(graph, self.flow, positions.shape[0])
         scalars = _node_scalar(graph, self.input_key)
-        sent = gather_routes(relation, scalars)
-        recv = gather_routes(relation.transpose(), scalars)
-
-        weight = jnp.ones((relation.capacity,), dtype=scalars.dtype)
-        edge_weight = _edge_weight(graph, self.edge_weight_key)
-        if edge_weight is not None:
-            weight = weight * edge_weight.astype(weight.dtype)
-        if self.radial_fn is not None:
-            radial = jnp.asarray(
-                self.radial_fn(graph.edges, distance, unit, sent, recv),
-                dtype=scalars.dtype,
-            )
-            if radial.ndim == 2 and radial.shape[1] == 1:
-                radial = radial[:, 0]
-            if radial.ndim != 1:
-                raise ValueError("radial_fn must return shape (n_edge,) or (n_edge, 1).")
-            weight = weight * radial
-        weight = mask_routes(relation, weight)
-
-        scalar_messages = sent * _broadcast_edge_weight(weight, sent)
-        scalar_out = route_reduce(relation, scalar_messages)
-
-        vector_messages = (
-            relative[:, :, None]
-            * sent[:, None, :]
-            * _broadcast_edge_weight(weight, sent)[:, None, :]
+        endpoints = (positions, scalars)
+        edge_data = (
+            None if self.radial_fn is None else graph.edges,
+            _edge_weight(graph, self.edge_weight_key),
         )
-        vector_out = route_reduce(relation, vector_messages)
-
-        if self.normalize:
-            denom = route_reduce(relation, jnp.abs(weight))
-            scale = jnp.where(denom > 0, 1.0 / denom, 0.0)
-            scalar_out = scalar_out * scale[:, None]
-            vector_out = vector_out * scale[:, None, None]
-
-        scalar_out = _mask_by_node_mask(scalar_out, graph.node_mask)
-        vector_out = _mask_by_node_mask(vector_out, graph.node_mask)
+        payload = declared_payload(
+            _convolution_message,
+            _convolution_output,
+            self,
+            endpoints,
+            endpoints,
+            edge_data,
+            edge_output=False,
+        )
+        prepared = self.execution.prepare(
+            relation, owner_id="graph:EquivariantGraphConvolution"
+        )
+        outputs = prepared.evaluate(
+            payload,
+            _convolution_message,
+            _convolution_output,
+            self,
+            endpoints,
+            endpoints,
+            edge_data,
+        ).receiver_outputs
+        scalar_out = _mask_by_node_mask(outputs["scalar"], graph.node_mask)
+        vector_out = _mask_by_node_mask(outputs["vector"], graph.node_mask)
 
         nodes = _as_feature_mapping(graph.nodes)
         if self.scalar_output_key is not None:

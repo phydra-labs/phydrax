@@ -65,6 +65,12 @@ def _check_bounds(
     if indices.size == 0:
         return indices
     message = f"A valid {name} lies outside [0, {size})."
+    if not _traced(indices):
+        # A frozen route with every endpoint in range is safe under any runtime
+        # validity mask. Masked out-of-range padding still needs its guard.
+        host_indices = np.asarray(jax.device_get(indices))
+        if np.all((host_indices >= 0) & (host_indices < size)):
+            return indices
     if _traced(indices, valid):
         invalid = jnp.any(valid & ((indices < 0) | (indices >= size)))
         return eqx.error_if(indices, invalid, message)

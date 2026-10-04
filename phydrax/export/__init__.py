@@ -68,7 +68,7 @@ from ._neutral import (
 from ._onnx import load_onnx, OnnxExportResult, save_onnx
 
 
-_FACADE_EXPORT_MODULES = ("._array_archive",)
+_FACADE_EXPORT_MODULES = ("._array_archive", "._atomistic")
 
 
 def __getattr__(name: str) -> Any:
@@ -86,6 +86,16 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "AtomisticExportRoute",
+    "AtomisticExportFailurePolicy",
+    "AtomisticExportRefusal",
+    "AtomisticIREEContract",
+    "AtomisticIREEEvaluation",
+    "AtomisticIREEExportBundle",
+    "LoadedAtomisticIREE",
+    "load_atomistic_iree",
+    "prepare_atomistic_iree_contract",
+    "save_atomistic_iree",
     "ComplexImportPolicy",
     "ComplexInterchangeEntry",
     "ComplexInterchangeSemantics",

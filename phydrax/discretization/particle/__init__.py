@@ -243,8 +243,10 @@ from ._dfsph import (
 )
 from ._distributed import (
     certify_particle_precision,
+    FractionalOwnerPartition,
     halo_sum,
     halo_update,
+    ImageAliasPackets,
     migrate_particle_halos,
     MixedPrecisionCertification,
     particle_load_balance_report,
@@ -286,6 +288,24 @@ from ._hierarchical_cell_list import (
     PreparedHierarchicalRadiusParticleNeighborhood,
 )
 from ._iisph import IISPHMethodPlan, IISPHStateLayout, IISPHStepResult, PreparedIISPH
+from ._image_neighborhood import (
+    AbstractImageRouteSearch,
+    AbstractParticleImageNeighborhoodPlan,
+    AbstractPreparedParticleImageNeighborhood,
+    CellListImageRouteSearch,
+    CellListParticleImageNeighborhoodPlan,
+    DenseImageRouteSearch,
+    DenseParticleImageNeighborhoodPlan,
+    image_certificate,
+    ImageCertificate,
+    ImageRouteSearchResult,
+    ParticleImageCapacity,
+    ParticleImageCapacityLadder,
+    ParticleImageNeighborhoodState,
+    PreparedCellListParticleImageNeighborhood,
+    PreparedDenseParticleImageNeighborhood,
+)
+from ._image_relation import ParticleImageRelation, ParticleImageRelationEvidence
 from ._implicit_contact import (
     ImplicitContactResult,
     ImplicitRigidShapePlan,
@@ -789,7 +809,10 @@ from ._verification import (
     write_particle_replay,
 )
 from ._verlet import (
+    ImageVerletParticleNeighborhoodPlan,
+    ParticleImageVerletState,
     ParticleVerletState,
+    PreparedImageVerletParticleNeighborhood,
     PreparedVerletParticleNeighborhood,
     VerletParticleNeighborhoodPlan,
 )
@@ -843,6 +866,8 @@ __all__ = [
     "ParticleHaloState",
     "ParticleKernelRequestPlan",
     "ParticleLoadBalanceReport",
+    "FractionalOwnerPartition",
+    "ImageAliasPackets",
     "ParticleQualificationArtifact",
     "ParticleRefinementReport",
     "ParticleReplayPacket",
@@ -1101,6 +1126,26 @@ __all__ = [
     "ParticleVerletState",
     "PreparedVerletParticleNeighborhood",
     "VerletParticleNeighborhoodPlan",
+    "AbstractImageRouteSearch",
+    "AbstractParticleImageNeighborhoodPlan",
+    "AbstractPreparedParticleImageNeighborhood",
+    "CellListImageRouteSearch",
+    "CellListParticleImageNeighborhoodPlan",
+    "DenseImageRouteSearch",
+    "DenseParticleImageNeighborhoodPlan",
+    "image_certificate",
+    "ImageCertificate",
+    "ImageRouteSearchResult",
+    "ImageVerletParticleNeighborhoodPlan",
+    "ParticleImageCapacity",
+    "ParticleImageCapacityLadder",
+    "ParticleImageNeighborhoodState",
+    "ParticleImageRelation",
+    "ParticleImageRelationEvidence",
+    "ParticleImageVerletState",
+    "PreparedCellListParticleImageNeighborhood",
+    "PreparedDenseParticleImageNeighborhood",
+    "PreparedImageVerletParticleNeighborhood",
     "DEMCheckpointPolicy",
     "DEMCheckpointVJPResult",
     "DEMLocalValidityCertificate",

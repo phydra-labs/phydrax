@@ -583,6 +583,7 @@ class PreparedAtomisticMultistate(StrictModule):
                     lane.species,
                     lane.cell_vectors,
                     lane.neighborhood,
+                    lane.neighborhood_cache,
                     row.controls,
                 )
             )(dynamics_state, unwrapped)

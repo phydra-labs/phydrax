@@ -161,9 +161,21 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
         system: PreparedAtomisticSystem,
         graph_execution: AtomisticGraphExecutionPlan,
         /,
+        *,
+        cutoff: float,
+        skin: float = 0.0,
     ) -> AtomisticTrainingProblem:
+        """Lower train/validation records into energy/force/stress supervision.
+
+        Provider stress labels are retained in the system pressure unit
+        (energy per cubic length of the system scale); records without stress
+        stay unsupervised by mask. Each split freezes its candidate topology for
+        ``cutoff + skin``.
+        """
         if system.prepared_id != self.system_id:
             raise ValueError("Label set belongs to another prepared atomistic system.")
+        if self.units.unit_system_id != system.plan.units.unit_system_id:
+            raise ValueError("Label units differ from the prepared system unit system.")
         expected_ids = np.asarray(system.plan.particle_ids)
         if any(
             not np.array_equal(np.asarray(value.frame.stable_ids), expected_ids)
@@ -176,57 +188,82 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
         validation = tuple(value for value in self.records if value.split == "validation")
         if not training:
             raise ValueError("A label set requires at least one training record.")
-
-        def batch(records: tuple[AtomisticLabelRecord, ...]) -> AtomisticBatch:
-            count = len(records)
-            plan = system.plan
-            cells = None
-            periodic = None
-            if plan.cell is not None:
-                cells = jnp.stack(
-                    tuple(
-                        plan.cell.vectors
-                        if record.frame.cell_vectors is None
-                        else record.frame.cell_vectors
-                        for record in records
-                    )
-                )
-                periodic = jnp.broadcast_to(plan.cell.periodic_mask, (count, 3))
-            return AtomisticBatch(
-                jnp.broadcast_to(plan.atomic_numbers, (count, plan.particle_ids.size)),
-                jnp.stack(tuple(record.frame.positions for record in records)),
-                jnp.broadcast_to(plan.masses, (count, plan.particle_ids.size)),
-                plan.units.scale,
-                particle_ids=jnp.broadcast_to(
-                    plan.particle_ids, (count, plan.particle_ids.size)
-                ),
-                atom_mask=jnp.broadcast_to(
-                    plan.active_mask, (count, plan.particle_ids.size)
-                ),
-                cells=cells,
-                periodic_axes=periodic,
-                structure_ids=tuple(record.configuration_id for record in records),
-            )
-
-        training_batch = batch(training)
-        validation_batch = None if not validation else batch(validation)
+        training_stress, training_stress_mask = _label_stress(training)
+        validation_batch = None
+        validation_energy = None
+        validation_forces = None
+        validation_stress = None
+        validation_stress_mask = None
+        if validation:
+            validation_batch = _label_batch(system, validation)
+            validation_energy = jnp.stack(tuple(value.energy for value in validation))
+            validation_forces = jnp.stack(tuple(value.forces for value in validation))
+            validation_stress, validation_stress_mask = _label_stress(validation)
         return AtomisticTrainingProblem(
-            training_batch,
+            _label_batch(system, training),
             graph_execution,
+            cutoff=cutoff,
+            skin=skin,
             training_energy=jnp.stack(tuple(value.energy for value in training)),
             training_forces=jnp.stack(tuple(value.forces for value in training)),
+            training_stress=training_stress,
+            training_stress_mask=training_stress_mask,
             validation_batch=validation_batch,
-            validation_energy=(
-                None
-                if not validation
-                else jnp.stack(tuple(value.energy for value in validation))
-            ),
-            validation_forces=(
-                None
-                if not validation
-                else jnp.stack(tuple(value.forces for value in validation))
-            ),
+            validation_energy=validation_energy,
+            validation_forces=validation_forces,
+            validation_stress=validation_stress,
+            validation_stress_mask=validation_stress_mask,
         )
+
+
+def _label_batch(
+    system: PreparedAtomisticSystem, records: tuple[AtomisticLabelRecord, ...], /
+) -> AtomisticBatch:
+    count = len(records)
+    plan = system.plan
+    cells = None
+    periodic = None
+    if plan.cell is not None:
+        cells = jnp.stack(
+            tuple(
+                plan.cell.vectors
+                if record.frame.cell_vectors is None
+                else record.frame.cell_vectors
+                for record in records
+            )
+        )
+        periodic = jnp.broadcast_to(plan.cell.periodic_mask, (count, 3))
+    return AtomisticBatch(
+        jnp.broadcast_to(plan.atomic_numbers, (count, plan.particle_ids.size)),
+        jnp.stack(tuple(record.frame.positions for record in records)),
+        jnp.broadcast_to(plan.masses, (count, plan.particle_ids.size)),
+        plan.units.scale,
+        particle_ids=jnp.broadcast_to(plan.particle_ids, (count, plan.particle_ids.size)),
+        atom_mask=jnp.broadcast_to(plan.active_mask, (count, plan.particle_ids.size)),
+        cells=cells,
+        periodic_axes=periodic,
+        structure_ids=tuple(record.configuration_id for record in records),
+    )
+
+
+def _label_stress(
+    records: tuple[AtomisticLabelRecord, ...], /
+) -> tuple[Array | None, Array | None]:
+    """Stack provider stress labels; unlabeled records are masked, not zero targets."""
+    labeled = tuple(record.stress is not None for record in records)
+    if not any(labeled):
+        return None, None
+    reference = next(record.stress for record in records if record.stress is not None)
+    stress = jnp.stack(
+        tuple(
+            jnp.zeros_like(reference) if record.stress is None else record.stress
+            for record in records
+        )
+    )
+    mask = jnp.broadcast_to(
+        jnp.asarray(labeled, dtype=jnp.bool_)[:, None, None], stress.shape
+    )
+    return stress, mask
 
 
 class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
@@ -251,11 +288,6 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
         committee_reduction: CommitteeReductionPolicy,
         /,
     ) -> None:
-        if (
-            not isinstance(graph_execution, AtomisticGraphExecutionPlan)
-            or graph_execution.backend != "dense"
-        ):
-            raise TypeError("graph_execution must be a dense training graph plan.")
         if (
             not isinstance(runtime_graph_execution, AtomisticGraphExecutionPlan)
             or runtime_graph_execution.backend != "particle"
@@ -455,6 +487,7 @@ def _campaign_lifecycle(
                 state.labels.label_set_id,
                 result.problem_id,
                 result.policy_id,
+                result.capabilities_id,
             ),
         )
         for result, revision in zip(training_results, revisions, strict=True)
@@ -574,7 +607,11 @@ def run_atomistic_campaign_round(
             result_id=result_id,
         )
     updated_labels = state.labels.append(successful_labels)
-    problem = updated_labels.training_problem(plan.system, plan.graph_execution)
+    problem = updated_labels.training_problem(
+        plan.system,
+        plan.graph_execution,
+        cutoff=max(float(potential.configuration.cutoff) for potential in potentials),
+    )
     results = tuple(
         fit_atomistic_potential(potential, problem, plan.training, key=key)
         for potential, key in zip(potentials, key_values, strict=True)
@@ -612,9 +649,12 @@ def run_atomistic_campaign_round(
             plan_id=plan.plan_id,
             result_id=result_id,
         )
+    # A periodic campaign system requests periodic execution; the learned term
+    # admits it only when the trained member declares that capability.
+    periodic = plan.system.cell is not None
     programs = tuple(
         AtomisticPotentialProgram(
-            [LearnedGraphPotentialTerm(result.best_potential)]
+            [LearnedGraphPotentialTerm(result.best_potential, allow_periodic=periodic)]
         ).prepare(plan.system, graph_execution=plan.runtime_graph_execution)
         for result in results
     )

@@ -1,5 +1,5 @@
 {
-  "catalog_id": "798533040bc4bb3307072f7d199cd4d714db46ea91039e1b9aa2b2f15ecbaee8",
+  "catalog_id": "a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121",
   "kind": "omniphysics-closure-matrices",
   "matrices": [
     {
@@ -3143,5 +3143,5 @@
       "unclassified_requirement_ids": []
     }
   ],
-  "source_ledger_id": "3ba2807a679bcbdb2dbd653c37f2d45857869c50e6688fa444db13de0e313892"
+  "source_ledger_id": "0576a91cc97d0b77a579436bd297643224c9c348f95329a7894f6fb6507367fb"
 }

@@ -60,10 +60,16 @@ from ...solver.coupling._parameters import ParameterBinding, PreparedParameters
 from ...sparse import (
     compile_sparse_jacobian,
     EdgeRelation,
+    route_reduce,
     SparseCoordinateOperator,
     SparsePattern,
 )
 from ...sparse._linear import _SparseStoragePlan
+from ...sparse._streamed import (
+    PreparedStreamedRelation,
+    StreamedPayloadSpec,
+    StreamedRelationPlan,
+)
 from ...typing import Bool, Dim, Float64, Int32, Scalar
 from ._constitutive import (
     AbstractCoupledEdgeConstitutiveLaw,
@@ -786,6 +792,93 @@ class _ConservationValidity(StrictModule, NonTrainableState):
         return self.admitted(args)
 
 
+def _scalar_edge_flux(
+    parameters: tuple[AbstractEdgeConstitutiveLaw, Array],
+    first: Array,
+    second: Array,
+    edge: tuple[Array, Array, Array],
+    /,
+) -> tuple[Array, Array]:
+    """Metric-weighted law flux of one canonical edge, from its endpoint jump."""
+    law, conductance = parameters
+    metric, even, odd = edge
+    flux = conductance * metric * law.edge_flux(second - first, even, odd)
+    return flux, flux
+
+
+def _coupled_edge_flux(
+    parameters: tuple[AbstractCoupledEdgeConstitutiveLaw, Array],
+    first: Array,
+    second: Array,
+    edge: tuple[Array, Array, Array, Array],
+    /,
+) -> tuple[Array, Array]:
+    """Metric-weighted packed coupled flux of one canonical edge."""
+    law, conductance = parameters
+    metric, tangent, even, odd = edge
+    flux = conductance * metric * law.edge_flux(second - first, tangent, even, odd)
+    return flux, flux
+
+
+def _received_flux(parameters: object, node: Array, aggregate: Array, /) -> Array:
+    """Second-endpoint epilogue: the complete incoming flux sum of the node."""
+    del parameters, node
+    return aggregate
+
+
+def _edge_balance(
+    edges: PreparedStreamedRelation,
+    reaction: EdgeRelation,
+    edge_function: Callable[..., tuple[Array, Array]],
+    parameters: object,
+    full: Array,
+    edge_data: tuple[Array, ...],
+    /,
+) -> tuple[Array, Array]:
+    """Integrated ``B.T f`` and per-edge flux ``f``; each edge law is evaluated once.
+
+    The streamed receiver sum carries ``+f`` to every canonical edge's second
+    endpoint; the returned edge flux itself carries the exactly opposite ``-f``
+    to its first endpoint, so action and reaction never depend on law parity.
+    """
+    spec = jax.ShapeDtypeStruct(full.shape[1:], jnp.float64)
+    result = edges.evaluate(
+        StreamedPayloadSpec(message=spec, output=spec, edge_output=spec),
+        edge_function,
+        _received_flux,
+        parameters,
+        full,
+        full,
+        edge_data,
+    )
+    flux = result.edge_outputs
+    if flux is None:
+        raise RuntimeError("The streamed relation omitted its requested edge flux.")
+    return result.receiver_outputs - route_reduce(reaction, flux), flux
+
+
+def _prepared_edges(
+    problem: MeshfreeConservationProblem | MeshfreeCoupledConservationProblem,
+    execution: StreamedRelationPlan | None,
+    /,
+) -> tuple[PreparedStreamedRelation, EdgeRelation]:
+    """Streamed canonical edge schedule (first -> second endpoint) and its reaction."""
+    if execution is None:
+        execution = StreamedRelationPlan()
+    elif not isinstance(execution, StreamedRelationPlan):
+        raise TypeError("execution must be a StreamedRelationPlan or None.")
+    pairs = np.asarray(problem.exterior.pairs)
+    count = problem.source.shape[0]
+    relation = EdgeRelation(
+        pairs[:, 0], pairs[:, 1], source_size=count, target_size=count
+    )
+    prepared = execution.prepare(
+        relation,
+        owner_id=f"{problem.exterior.incidence.source.space_id}:constitutive-edges",
+    )
+    return prepared, relation.transpose()
+
+
 @final
 class _ConservationResidual(StrictModule, NonTrainableState):
     __strict_contract__ = True
@@ -794,6 +887,8 @@ class _ConservationResidual(StrictModule, NonTrainableState):
     free_indices: Int32[_ConservationFreeDim]
     validity: _ConservationValidity
     law_reference: AbstractEdgeConstitutiveLaw
+    edges: PreparedStreamedRelation
+    reaction: EdgeRelation
 
     def bound_law(self, args: _ConservationRuntime, /) -> AbstractEdgeConstitutiveLaw:
         return _bind_numeric_law(self.law_reference, args.law_parameters)
@@ -801,16 +896,24 @@ class _ConservationResidual(StrictModule, NonTrainableState):
     def reconstruct(self, state: Array, args: _ConservationRuntime, /) -> Array:
         return args.boundary_values.at[self.free_indices].set(state)
 
+    def full_balance(
+        self, full: Array, args: _ConservationRuntime, /
+    ) -> tuple[Array, Array]:
+        """Integrated law flux ``B.T f`` of a full nodal field and edge flux ``f``."""
+        return _edge_balance(
+            self.edges,
+            self.reaction,
+            _scalar_edge_flux,
+            (self.bound_law(args), args.conductance),
+            full,
+            (args.metric_weights, self.features.even, self.features.odd),
+        )
+
     def integrated_flux(
         self, state: Array, args: _ConservationRuntime, /
     ) -> tuple[Array, Array]:
-        full = self.reconstruct(state, args)
-        edge = (
-            args.conductance
-            * args.metric_weights
-            * self.bound_law(args).flux(self.exterior.gradient(full), self.features)
-        )
-        return self.exterior.incidence.transpose_mv(edge), -edge
+        integrated, edge = self.full_balance(self.reconstruct(state, args), args)
+        return integrated, -edge
 
     def __call__(self, state: Array, args: _ConservationRuntime, /) -> Array:
         def evaluate(_operand: None) -> Array:
@@ -834,6 +937,8 @@ class _CoupledConservationResidual(StrictModule, NonTrainableState):
     free_indices: Int32[_ConservationFreeDim]
     validity: _ConservationValidity
     law_reference: AbstractCoupledEdgeConstitutiveLaw
+    edges: PreparedStreamedRelation
+    reaction: EdgeRelation
 
     def bound_law(
         self, args: _CoupledConservationRuntime, /
@@ -850,15 +955,19 @@ class _CoupledConservationResidual(StrictModule, NonTrainableState):
     def integrated_flux(
         self, state: Array, args: _CoupledConservationRuntime, /
     ) -> tuple[Array, Array]:
-        full = self.reconstruct(state, args)
-        edge = (
-            args.conductance
-            * args.metric_weights[:, None]
-            * self.bound_law(args).flux(self.jumps(full), self.features)
+        integrated, edge = _edge_balance(
+            self.edges,
+            self.reaction,
+            _coupled_edge_flux,
+            (self.bound_law(args), args.conductance),
+            self.reconstruct(state, args),
+            (
+                args.metric_weights,
+                self.features.tangents,
+                self.features.even,
+                self.features.odd,
+            ),
         )
-        integrated = jax.vmap(
-            self.exterior.incidence.transpose_mv, in_axes=1, out_axes=1
-        )(edge)
         return integrated, -edge
 
     def __call__(self, state: Array, args: _CoupledConservationRuntime, /) -> Array:
@@ -1218,14 +1327,9 @@ class PreparedMeshfreeConservationSolve(StrictModule, NonTrainableState):
             full = jnp.asarray(state, dtype=jnp.float64)
             if full.shape == self.native.state.shape:
                 full = self.residual.reconstruct(full, args)
-            jumps = self.problem.exterior.gradient(full)
-            nonlinear = law.flux(jumps, self.problem.features) - b * jumps
-            rhs = (
-                rhs
-                - self.problem.exterior.incidence.transpose_mv(
-                    args.conductance * weights * nonlinear
-                )[self.residual.free_indices]
-            )
+            # B.T(c w (F - b D)) = B.T(c w F) - B.T diag(c b w) B u.
+            nonlinear = self.residual.full_balance(full, args)[0] - full_operator.mv(full)
+            rhs = rhs - nonlinear[self.residual.free_indices]
         return solve_linear(prepared, rhs)
 
     def constitutive_evidence(
@@ -1401,11 +1505,13 @@ def prepare_meshfree_conservation_solve(
     linear_policy: LinearSolvePolicy | None = None,
     termination: NonlinearTermination | None = None,
     derivative_policy: ImplicitRootDerivativePolicy | None = None,
+    execution: StreamedRelationPlan | None = None,
 ) -> PreparedMeshfreeConservationSolve:
     """Prepare native sparse compressed Jacobian and reusable nonlinear/linear plans.
 
     The background stiffness assessment is selected and charged by
-    ``problem.exterior.coercivity_policy``.
+    ``problem.exterior.coercivity_policy``. ``execution`` selects the streamed
+    canonical edge schedule on which every residual evaluates each edge law once.
     """
     if not isinstance(problem, MeshfreeConservationProblem):
         raise TypeError("problem must be a MeshfreeConservationProblem.")
@@ -1431,7 +1537,12 @@ def prepare_meshfree_conservation_solve(
     )
     validity = _ConservationValidity(coverage_good, assessment.admitted)
     residual = _ConservationResidual(
-        problem.exterior, problem.features, jnp.asarray(free), validity, problem.law
+        problem.exterior,
+        problem.features,
+        jnp.asarray(free),
+        validity,
+        problem.law,
+        *_prepared_edges(problem, execution),
     )
     initial = (
         problem.boundary_values[free]
@@ -1745,8 +1856,13 @@ def prepare_meshfree_coupled_conservation_solve(
     linear_policy: LinearSolvePolicy | None = None,
     termination: NonlinearTermination | None = None,
     derivative_policy: ImplicitRootDerivativePolicy | None = None,
+    execution: StreamedRelationPlan | None = None,
 ) -> PreparedMeshfreeCoupledConservationSolve:
-    """Prepare the block sparse Jacobian, NewtonKrylov template and background audit."""
+    """Prepare the block sparse Jacobian, NewtonKrylov template and background audit.
+
+    ``execution`` selects the streamed canonical edge schedule on which every
+    residual evaluates each coupled edge law once.
+    """
     if not isinstance(problem, MeshfreeCoupledConservationProblem):
         raise TypeError("problem must be a MeshfreeCoupledConservationProblem.")
     free = np.flatnonzero(np.asarray(problem.equation_mask)).astype(np.int32)
@@ -1806,7 +1922,12 @@ def prepare_meshfree_coupled_conservation_solve(
     )
     validity = _ConservationValidity(coverage_good, assessment.admitted)
     residual = _CoupledConservationResidual(
-        problem.exterior, problem.features, jnp.asarray(free), validity, problem.law
+        problem.exterior,
+        problem.features,
+        jnp.asarray(free),
+        validity,
+        problem.law,
+        *_prepared_edges(problem, execution),
     )
     initial = (
         problem.boundary_values[free]

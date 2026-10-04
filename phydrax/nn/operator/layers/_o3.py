@@ -4,19 +4,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import sqrt
+from typing import final
 
 import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
+from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
-from phydrax.nn.operator.representations import O3Features, O3Representation
+from phydrax.nn.operator.representations import (
+    O3Features,
+    O3IrrepLayout,
+    O3Representation,
+)
 
 from ....typing import PRNGKey
 
@@ -605,3 +613,96 @@ def o3_gated_activation(values: Array, representation: O3Representation, /) -> A
             pseudotensors=gate_geometric(features.pseudotensors, (-2, -1)),
         )
     )
+
+
+def _matching_sources(
+    in_layout: O3IrrepLayout, out_layout: O3IrrepLayout, /
+) -> tuple[tuple[int, ...], ...]:
+    sources: list[tuple[int, ...]] = []
+    for block in out_layout.blocks:
+        matches = tuple(
+            index
+            for index, candidate in enumerate(in_layout.blocks)
+            if (candidate.degree, candidate.parity) == (block.degree, block.parity)
+        )
+        if not matches:
+            raise ValueError(
+                f"Output block {block.name!r} has no input block of degree "
+                f"{block.degree} and parity {block.parity}."
+            )
+        sources.append(matches)
+    return tuple(sources)
+
+
+@final
+class O3IrrepLinear(StrictModule):
+    """Equivariant multiplicity mixing between general real-irrep layouts.
+
+    Output block ``k`` mixes every input block of identical degree and parity.
+    Its channels are concatenated in input-layout order, then multiplicity, to a
+    fan-in ``f_k``; ``weights[k]`` has shape ``(output multiplicity, f_k)`` and
+    the block is ``weights[k] @ x / sqrt(f_k)``. Weights are standard normal at
+    initialization (element normalization) and there is no bias, so every
+    block, including scalars, maps linearly and equivariantly. Output blocks
+    without a matching input block are refused rather than left zero.
+    """
+
+    in_layout: O3IrrepLayout
+    out_layout: O3IrrepLayout
+    weights: tuple[Array, ...]
+    sources: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        in_layout: O3IrrepLayout,
+        out_layout: O3IrrepLayout,
+        /,
+        *,
+        weights: Sequence[ArrayLike] | None = None,
+        dtype: DTypeLike = jnp.float64,
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
+        if not isinstance(in_layout, O3IrrepLayout) or not isinstance(
+            out_layout, O3IrrepLayout
+        ):
+            raise TypeError("O3IrrepLinear layouts must be O3IrrepLayout values.")
+        dtype_ = jnp.dtype(dtype)
+        sources = _matching_sources(in_layout, out_layout)
+        shapes = tuple(
+            (
+                block.multiplicity,
+                sum(in_layout.blocks[index].multiplicity for index in matches),
+            )
+            for block, matches in zip(out_layout.blocks, sources, strict=True)
+        )
+        if weights is None:
+            keys = jr.split(key, len(shapes))
+            resolved = tuple(
+                jr.normal(block_key, shape, dtype=dtype_)
+                for block_key, shape in zip(keys, shapes, strict=True)
+            )
+        else:
+            resolved = tuple(jnp.asarray(value, dtype=dtype_) for value in weights)
+            if tuple(value.shape for value in resolved) != shapes:
+                raise ValueError(
+                    f"O3IrrepLinear weights must have shapes {shapes}; got "
+                    f"{tuple(value.shape for value in resolved)}."
+                )
+        self.in_layout = in_layout
+        self.out_layout = out_layout
+        self.weights = resolved
+        self.sources = sources
+
+    def __call__(self, values: ArrayLike, /) -> Array:
+        blocks = self.in_layout.split(values)
+        mixed: list[Array] = []
+        for weight, matches in zip(self.weights, self.sources, strict=True):
+            stacked = jnp.concatenate([blocks[index] for index in matches], axis=-2)
+            mixed.append(
+                ein.contract("of,...fd->...od", weight, stacked)
+                / sqrt(float(weight.shape[1]))
+            )
+        return self.out_layout.join(mixed)
+
+
+register_artifact_value("phydrax.nn.operator:O3IrrepLinear", O3IrrepLinear)

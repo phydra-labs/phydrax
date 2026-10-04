@@ -18,12 +18,13 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
-from ..discretization import ParticleNeighborhoodState
+from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ..typing import checked
 from ._dynamics import (
     AtomisticDynamicsState,
     AtomisticEnergyLedgerState,
     AtomisticKinematics,
+    neighborhood_route_work,
     PreparedAtomisticDynamics,
 )
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
@@ -31,6 +32,7 @@ from ._potential_program import (
     AbstractAtomisticEnergyTerm,
     AbstractPreparedAtomisticEnergyTerm,
     AbstractPreparedAtomisticHamiltonian,
+    AtomisticDerivativePoint,
     AtomisticPotentialContext,
     AtomisticTermEvaluation,
     PreparedAtomisticPotentialProgram,
@@ -52,7 +54,7 @@ def evaluate_force_group(
     potential: AbstractPreparedAtomisticHamiltonian,
     group: int,
     positions: ArrayLike,
-    neighborhood: ParticleNeighborhoodState,
+    neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
     /,
     **context_kwargs: Any,
 ) -> ForceGroupEvaluation:
@@ -64,8 +66,19 @@ def evaluate_force_group(
     if not selected:
         raise ValueError(f"Potential program has no force group {group}.")
 
+    position = jnp.asarray(positions, dtype=potential.system.plan.coordinate_dtype)
+    point = AtomisticDerivativePoint(
+        potential.system,
+        position,
+        context_kwargs,
+        neighborhood=neighborhood,
+        strained=False,
+        cell_derivative=False,
+    )
+
     def energy_closure(value: Array) -> tuple[Array, tuple[Array, Array]]:
-        context = potential.context(value, neighborhood, **context_kwargs)
+        bound, kwargs = point.bind(value, None)
+        context = potential.context(bound, neighborhood, **kwargs)
         evaluations = tuple(potential.terms[index].energy(context) for index in selected)
         terms = jnp.stack(tuple(item.energy for item in evaluations))
         coefficients = potential.coefficients[jnp.asarray(selected)]
@@ -76,7 +89,7 @@ def evaluate_force_group(
         return energy, (terms, successful)
 
     (energy, auxiliary), gradient = jax.value_and_grad(energy_closure, has_aux=True)(
-        jnp.asarray(positions)
+        position
     )
     terms, successful = auxiliary
     finite = jnp.isfinite(energy) & jnp.all(jnp.isfinite(gradient))
@@ -266,13 +279,9 @@ def respa_step(
         }
         if row.controls.shape[0] > 0:
             values["control_values"] = row.controls
-        if (
-            dynamics.system.cell is not None
-            and not dynamics.potential.plan.requirements.directed_graph
-        ):
-            values["fractional_positions"] = dynamics.system.cell.fractional_with_vectors(
-                position, state.cell_vectors
-            )
+        if dynamics.system.cell is not None:
+            # The program derives fractional coordinates of the evaluated
+            # positions from these runtime vectors with a reported solve status.
             values["cell_vectors"] = state.cell_vectors
         return values
 
@@ -306,7 +315,7 @@ def respa_step(
                 unwrapped, state.cell_vectors
             )
         neighborhood, cache = dynamics._build_neighborhood(
-            position, cache, state.cell_vectors
+            position, cache, state.cell_vectors, images
         )
         fast = evaluate_force_group(
             dynamics.potential,
@@ -318,7 +327,7 @@ def respa_step(
         momentum = momentum + 0.5 * inner * force_scale * fast.forces
         momentum = jnp.where(mobile, momentum, 0.0)
         successful = successful & fast.successful & neighborhood.successful
-        fast_work = fast_work + neighborhood.candidate_pair_count
+        fast_work = fast_work + neighborhood_route_work(neighborhood)
     slow = evaluate_force_group(
         dynamics.potential,
         plan.slow_group,
@@ -378,7 +387,7 @@ def respa_step(
         tree_where(successful, candidate, state),
         successful,
         fast_work,
-        neighborhood.candidate_pair_count,
+        neighborhood_route_work(neighborhood),
         plan.plan_id,
     )
 
@@ -477,11 +486,49 @@ def local_species_energy_delta(
 
 
 class ExternalAtomisticEvaluation(StrictModule):
+    """One external or native host evaluation in the bound system's units.
+
+    ``energy`` is the scalar system energy in ``units.scale.energy_unit`` and
+    ``forces`` the ``(capacity, 3)`` negative position gradient in
+    ``units.scale.force_unit``. ``stress`` is the native tensile Cauchy stress
+    ``(1 / V) dE/d(strain)`` in ``units.pressure_unit`` for the row-lattice
+    deformation ``H' = H @ (I + strain).T``, the same convention as
+    ``atomistic_cell_energy_and_stress``; ``None`` declares it unavailable.
+    Configurational virials ``W = -V * stress`` exist only at protocol
+    boundaries that require them, never in this record.
+    """
+
     energy: Array
     forces: Array
     stress: Array | None
     successful: Array
     provider_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        energy: ArrayLike,
+        forces: ArrayLike,
+        stress: ArrayLike | None,
+        successful: ArrayLike,
+        provider_id: str,
+    ) -> None:
+        energy_ = jnp.asarray(energy)
+        forces_ = jnp.asarray(forces)
+        stress_ = None if stress is None else jnp.asarray(stress)
+        successful_ = jnp.asarray(successful)
+        if energy_.shape != () or forces_.ndim != 2 or forces_.shape[-1] != 3:
+            raise ValueError(
+                "External atomistic energy must be scalar and forces (capacity, 3)."
+            )
+        if stress_ is not None and stress_.shape != (3, 3):
+            raise ValueError("External atomistic stress must be a (3, 3) tensor.")
+        if successful_.shape != () or successful_.dtype != jnp.bool_:
+            raise ValueError("External atomistic success must be a boolean scalar.")
+        self.energy = energy_
+        self.forces = forces_
+        self.stress = stress_
+        self.successful = successful_
+        self.provider_id = provider_id
 
 
 class AbstractExternalAtomisticProvider(StrictModule, NonTrainableState):

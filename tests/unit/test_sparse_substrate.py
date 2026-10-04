@@ -1040,3 +1040,76 @@ def test_concrete_row_operator_constructed_under_jit_preserves_actions_and_jvp()
         (jnp.ones_like(coefficients),),
     )
     np.testing.assert_allclose(tangent, np.asarray([3.0, 1.0, 0.0]))
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+@pytest.mark.parametrize("seeded", [False, True], ids=["unseeded", "seeded"])
+def test_valid_zero_group_event_preserves_coordinate_and_mixed_derivatives(
+    accumulation: phx.sparse.RelationAccumulation, seeded: bool
+) -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32),
+        jnp.asarray([True, False], dtype=jnp.bool_),
+    )
+    initial = (
+        phx.sparse.KeyGroupAccumulation(
+            jnp.asarray([4.0], dtype=jnp.float64),
+            jnp.asarray([0.25], dtype=jnp.float64),
+        )
+        if seeded
+        else None
+    )
+
+    def reduced(theta: Array, coordinate: Array) -> Array:
+        active = theta * coordinate + coordinate * coordinate
+        padded = 7.0 * theta * coordinate
+        result, _ = phx.sparse.reduce_key_groups(
+            groups,
+            jnp.stack((active, padded)),
+            accumulation=accumulation,
+            initial=initial,
+        )
+        return result.value[0]
+
+    theta = jnp.asarray(2.0, dtype=jnp.float64)
+    coordinate = jnp.asarray(0.0, dtype=jnp.float64)
+    coordinate_gradient = jax.grad(reduced, argnums=1)
+    value, tangent = jax.jvp(
+        lambda point: reduced(theta, point), (coordinate,), (jnp.ones_like(coordinate),)
+    )
+    _, pullback = jax.vjp(lambda point: reduced(theta, point), coordinate)
+    np.testing.assert_array_equal(value, 4.25 if seeded else 0.0)
+    np.testing.assert_array_equal(tangent, 2.0)
+    np.testing.assert_array_equal(pullback(jnp.ones_like(value))[0], 2.0)
+    np.testing.assert_array_equal(jax.jit(coordinate_gradient)(theta, coordinate), 2.0)
+    np.testing.assert_array_equal(
+        jax.jit(jax.grad(coordinate_gradient, argnums=0))(theta, coordinate), 1.0
+    )
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+def test_cancelling_group_subtotal_preserves_parameter_tangent(
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32), jnp.ones((2,), dtype=jnp.bool_)
+    )
+    initial = phx.sparse.KeyGroupAccumulation(
+        jnp.asarray([3.0], dtype=jnp.float64),
+        jnp.asarray([0.5], dtype=jnp.float64),
+    )
+
+    def reduced(parameter: Array) -> Array:
+        result, _ = phx.sparse.reduce_key_groups(
+            groups,
+            jnp.stack((parameter, jnp.asarray(-2.0, dtype=parameter.dtype))),
+            accumulation=accumulation,
+            initial=initial,
+        )
+        return result.value[0]
+
+    parameter = jnp.asarray(2.0, dtype=jnp.float64)
+    value, tangent = jax.jvp(reduced, (parameter,), (jnp.ones_like(parameter),))
+    np.testing.assert_array_equal(value, 3.5)
+    np.testing.assert_array_equal(tangent, 1.0)
+    np.testing.assert_array_equal(jax.jit(jax.grad(reduced))(parameter), 1.0)

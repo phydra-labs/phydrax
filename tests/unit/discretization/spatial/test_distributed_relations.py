@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import numpy as np
 import pytest
+from jax.sharding import PartitionSpec as P
 
 from phydrax._execution_runtime import ExecutionGroup, ExecutionRuntime
 from phydrax.discretization.spatial import (
@@ -297,6 +298,133 @@ def test_ingress_refuses_duplicate_ids_and_capacity_overflow() -> None:
         DistributedPointLayout.from_global(plan, points, np.asarray([0, 0, 0, 1]))
     with pytest.raises(ValueError, match="owner_count"):
         DistributedPointLayout.from_global(plan, points, np.asarray([0, 1, 2, 4]))
+
+
+def test_lane_reference_owners_run_the_same_collective_relations() -> None:
+    # Four owner lanes on one device: queries, halos, and migration execute the
+    # identical collective program as named vmap lanes.
+    group = ExecutionRuntime.current().child_groups(len(jax.devices()))[0]
+    address = MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 10, periodic_axes=(True, True))
+    points = _cloud(2, 64, 17, 0.0)
+    owners = _quadrant_owners(points, (0, 1))
+    ids = np.arange(points.shape[0], dtype=np.int64) * 5 + 3
+    plan = DistributedOwnershipPlan(address, group, 40, owner_lanes=4)
+    assert plan.lane_reference and plan.owner_count == 4
+    layout = DistributedPointLayout.from_global(plan, points, owners, stable_ids=ids)
+    assert bool(layout.stable_ids_unique)
+
+    knn = DistributedNeighborQueryPlan(plan, plan, 6).query(layout, layout)
+    assert bool(knn.evidence.successful)
+    np.testing.assert_array_equal(
+        np.asarray(layout.collect(knn.source_stable_ids)),
+        _brute_knn(points, ids, 6, address),
+    )
+
+    rows = DistributedRadiusQueryPlan(plan, plan, 0.15, 40).query(layout, layout)
+    halo = DistributedHaloPlan(
+        plan,
+        rows.source_owners.reshape((-1,)),
+        rows.source_slots.reshape((-1,)),
+        rows.valid.reshape((-1,)),
+        halo_capacity=plan.local_capacity,
+    )
+    assert bool(halo.evidence.successful)
+    rng = np.random.default_rng(2)
+    values = rng.normal(size=(plan.total_capacity,))
+    cotangent = rng.normal(size=(plan.owner_count * halo.column_count,))
+    np.testing.assert_allclose(
+        np.dot(np.asarray(halo.gather(values)), cotangent),
+        np.dot(values, np.asarray(halo.transpose(cotangent))),
+        rtol=1e-13,
+    )
+
+    destination = np.where(
+        np.asarray(layout.active), (np.asarray(layout.slot_owners) + 1) % 4, 0
+    ).astype(np.int32)
+    moved = layout.migrate(destination, packet_capacity=40)
+    assert bool(moved.evidence.committed)
+    np.testing.assert_array_equal(
+        np.asarray(moved.layout.collect(moved.layout.points)), points
+    )
+    if len(jax.devices()) > 1:
+        with pytest.raises(ValueError, match="one-device group"):
+            DistributedOwnershipPlan(
+                address, ExecutionRuntime.current().root_group, 40, owner_lanes=4
+            )
+
+
+def _two_lane_plan(dimension: int = 2) -> DistributedOwnershipPlan:
+    group = ExecutionRuntime.current().child_groups(len(jax.devices()))[0]
+    address = MortonAddressPlan((0.0,) * dimension, (1.0,) * dimension, 10)
+    return DistributedOwnershipPlan(address, group, 2, owner_lanes=2)
+
+
+def test_lane_replicated_specs_follow_shard_map_semantics() -> None:
+    # P(None) is replicated, not owner-blocked: every owner sees the whole
+    # value, exactly as under shard_map on devices.
+    plan = _two_lane_plan(1)
+    axis = plan.axis_name
+    values = jax.numpy.asarray([1.0, 2.0, 3.0, 4.0])
+    whole = plan.map(lambda x: jax.numpy.sum(x, keepdims=True), P(None), P(axis))
+    np.testing.assert_array_equal(np.asarray(whole(values)), [10.0, 10.0])
+    total = plan.map(
+        lambda x: jax.lax.psum(jax.numpy.sum(x, keepdims=True), axis), P(axis), P(None)
+    )
+    np.testing.assert_array_equal(np.asarray(total(values)), [10.0])
+    with pytest.raises(ValueError, match="leading dimension"):
+        plan.map(lambda x: x, P(None, axis), P(axis))(values.reshape((2, 2)))
+
+
+def test_explicit_logical_rows_must_be_distinct_and_in_range() -> None:
+    plan = _two_lane_plan()
+    points = np.asarray([[0.1, 0.1], [0.2, 0.2], [0.6, 0.6], [0.7, 0.7]])
+    values = jax.numpy.asarray([10.0, 20.0, 30.0, 40.0])
+    for logical in ([0, 0, 2, 3], [0, 1, 2, 4], [-1, 1, 2, 3]):
+        with pytest.raises(ValueError, match="logical_indices"):
+            DistributedPointLayout.from_blocks(
+                plan,
+                points,
+                stable_ids=np.arange(4),
+                logical_indices=np.asarray(logical),
+                logical_count=4,
+            )
+    with pytest.raises(ValueError, match="logical_indices"):
+        DistributedPointLayout.from_blocks(plan, points, logical_count=3)
+    permuted = DistributedPointLayout.from_blocks(
+        plan, points, logical_indices=np.asarray([3, 2, 1, 0]), logical_count=4
+    )
+    np.testing.assert_array_equal(
+        np.asarray(permuted.collect(values)), [40.0, 30.0, 20.0, 10.0]
+    )
+    # Inactive rows do not claim logical rows.
+    sparse = DistributedPointLayout.from_blocks(
+        plan,
+        points,
+        active=np.asarray([True, False, True, True]),
+        logical_indices=np.asarray([0, 0, 1, 2]),
+        logical_count=3,
+    )
+    np.testing.assert_array_equal(np.asarray(sparse.collect(values)), [10.0, 30.0, 40.0])
+
+
+def test_stale_owner_cannot_commit_a_self_migration() -> None:
+    plan = _two_lane_plan()
+    points = np.asarray([[0.1, 0.1], [0.2, 0.2], [0.6, 0.6], [0.7, 0.7]])
+    layout = DistributedPointLayout.from_global(plan, points, np.asarray([0, 0, 1, 1]))
+    stale = eqx.tree_at(
+        lambda value: value.owner_epochs,
+        layout,
+        jax.numpy.asarray([0, 1], dtype=jax.numpy.int64),
+    )
+    # Each owner only keeps its own rows, so no packet ever crosses the stale
+    # owner boundary; the common-epoch requirement must still refuse.
+    result = stale.migrate(np.asarray([0, 0, 1, 1]), packet_capacity=2)
+    assert not bool(result.evidence.committed)
+    assert not bool(result.evidence.epochs_consistent)
+    np.testing.assert_array_equal(np.asarray(result.layout.owner_epochs), [0, 1])
+    current = layout.migrate(np.asarray([1, 1, 0, 0]), packet_capacity=2)
+    assert bool(current.evidence.committed)
+    np.testing.assert_array_equal(np.asarray(current.layout.owner_epochs), [1, 1])
 
 
 def test_halo_gather_transpose_duality_and_exactly_once_conservation() -> None:

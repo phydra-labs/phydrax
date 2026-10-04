@@ -11,6 +11,7 @@ from ._chaos import (
     PolynomialMultiIndexSet,
 )
 from ._multiindex import total_degree_multiindices
+from ._product_graph import ProductGraphPlan, project_tuple_coefficients
 from ._scaled_monomial import ScaledMonomialBasis
 
 
@@ -19,6 +20,8 @@ __all__ = [
     "normalized_vandermonde",
     "PolynomialChaosMeasure",
     "PolynomialMultiIndexSet",
+    "ProductGraphPlan",
+    "project_tuple_coefficients",
     "ScaledMonomialBasis",
     "total_degree_multiindices",
 ]

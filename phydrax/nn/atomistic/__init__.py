@@ -1,7 +1,132 @@
-"""O(3)-equivariant finite-molecule energy potentials."""
+"""Native equivariant atomistic models, preparations, and numerical substrates."""
 
+from ._mace import (
+    MACEArchitecture,
+    MACEDistanceTransform,
+    MACELayerUpdate,
+    MACEPotential,
+)
+from ._mace_interaction import (
+    MACECutoffPlacement,
+    MACEInteractionKind,
+    MACESourceRows,
+)
+from ._mace_kernel_derivatives import MACECouplingDerivativeError
+from ._mace_kernels import (
+    fragment_extent,
+    MACEAcceleratedCoupling,
+    MACECouplingRow,
+    MACEEdgeCouplingSpec,
+    MACEFragmentExtent,
+    MACEFragmentResources,
+    MACEKernelEvidence,
+    MACEKernelPlan,
+    MACELayoutBlock,
+    require_fragment_routing,
+)
+from ._mace_prepare import (
+    MACERadialRealization,
+    prepare_mace_potential,
+    PreparedMACEPotential,
+    StaleMACEPreparation,
+)
+from ._mace_readout import MACEEnergyScaling
+from ._mace_source import mace_potential_from_source
 from ._nequip import NequIPPotential
 from ._painn import PaiNNPotential
+from ._radial import (
+    AgnesiTransform,
+    BesselRadialBasis,
+    normalized_silu_scale,
+    PolynomialCutoff,
+    RadialEmbedding,
+    RadialMLP,
+    RadialPostprocess,
+)
+from ._radial_projection import (
+    prepare_radial_tables,
+    PreparedRadialTables,
+    qualify_radial_tables,
+    radial_source_revision,
+    radial_table_resources,
+    RadialSpeciesBinding,
+    RadialTableDeclaration,
+    RadialTableLayout,
+    RadialTableLayoutChoice,
+    RadialTableObjective,
+    RadialTableQualification,
+    RadialTableQualificationError,
+    RadialTableQualificationPolicy,
+    RadialTableResources,
+    select_radial_table_layout,
+    StaleRadialTableBinding,
+)
+from ._symmetric_contraction import (
+    MergedSymmetricContraction,
+    StaleSymmetricContractionBinding,
+    symmetric_contraction_revision,
+    SymmetricBasisOrigin,
+    SymmetricContraction,
+    SymmetricContractionBasis,
+    SymmetricContractionPlan,
+)
 
 
-__all__ = ["NequIPPotential", "PaiNNPotential"]
+__all__ = [
+    "AgnesiTransform",
+    "BesselRadialBasis",
+    "MACEAcceleratedCoupling",
+    "MACEArchitecture",
+    "MACECouplingDerivativeError",
+    "MACECouplingRow",
+    "MACECutoffPlacement",
+    "MACEDistanceTransform",
+    "MACEEdgeCouplingSpec",
+    "MACEEnergyScaling",
+    "MACEFragmentExtent",
+    "MACEFragmentResources",
+    "MACEInteractionKind",
+    "MACEKernelEvidence",
+    "MACEKernelPlan",
+    "MACELayerUpdate",
+    "MACELayoutBlock",
+    "MACEPotential",
+    "MACERadialRealization",
+    "MACESourceRows",
+    "MergedSymmetricContraction",
+    "NequIPPotential",
+    "PaiNNPotential",
+    "PolynomialCutoff",
+    "PreparedMACEPotential",
+    "PreparedRadialTables",
+    "RadialEmbedding",
+    "RadialMLP",
+    "RadialPostprocess",
+    "RadialSpeciesBinding",
+    "RadialTableDeclaration",
+    "RadialTableLayout",
+    "RadialTableLayoutChoice",
+    "RadialTableObjective",
+    "RadialTableQualification",
+    "RadialTableQualificationError",
+    "RadialTableQualificationPolicy",
+    "RadialTableResources",
+    "StaleMACEPreparation",
+    "StaleRadialTableBinding",
+    "StaleSymmetricContractionBinding",
+    "SymmetricBasisOrigin",
+    "SymmetricContraction",
+    "SymmetricContractionBasis",
+    "SymmetricContractionPlan",
+    "fragment_extent",
+    "mace_potential_from_source",
+    "normalized_silu_scale",
+    "prepare_mace_potential",
+    "prepare_radial_tables",
+    "qualify_radial_tables",
+    "radial_source_revision",
+    "radial_table_resources",
+    "require_fragment_routing",
+    "select_radial_table_layout",
+    "symmetric_contraction_revision",
+]

@@ -8,24 +8,26 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
+# i-PI exchanges Hartree atomic units, so the system needs SI-convertible units.
 system = phx.atomistic.AtomisticSystemPlan(
     # ty: ignore[invalid-argument-type]
     [0, 1],
     # ty: ignore[invalid-argument-type]
     [1, 1],
     # ty: ignore[invalid-argument-type]
-    [1.0, 1.0],
-    phx.atomistic.AtomisticUnitSystem.reduced(),
+    [1.008, 1.008],
+    phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond(),
 ).prepare()
-positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
+positions = jnp.asarray([[0.0, 0.0, 0.0], [0.74, 0.0, 0.0]])
 
 
 def evaluator(prepared: Any, coordinate: Any, cell_vectors: Any) -> Any:
     del prepared, cell_vectors
+    # A finite molecule has no cell stress; the transport declares it unavailable.
     return phx.atomistic.ExternalAtomisticEvaluation(
         jnp.sum(coordinate**2),
         -2.0 * coordinate,
-        jnp.zeros((3, 3)),
+        None,
         jnp.asarray(True),
         "loopback-local",
     )
@@ -33,7 +35,9 @@ def evaluator(prepared: Any, coordinate: Any, cell_vectors: Any) -> Any:
 
 provider = phx.atomistic.CallableBornOppenheimerProvider(evaluator, "loopback-local")
 socket_path = os.path.join(tempfile.gettempdir(), f"phydrax-ipi-{os.getpid()}.sock")
-transport = phx.atomistic.interchange.IPITransportPlan.unix(socket_path, timeout=5.0)
+transport = phx.atomistic.interchange.IPITransportPlan.unix(
+    socket_path, timeout=5.0, virial="optional"
+)
 listener = transport.listen()
 
 
@@ -55,4 +59,4 @@ if status is not phx.atomistic.interchange.IPITransportStatus.READY or not bool(
     result.successful
 ):
     raise RuntimeError("i-PI loopback failed")
-print(float(result.energy), result.forces)
+print(float(result.energy), result.forces, result.stress)

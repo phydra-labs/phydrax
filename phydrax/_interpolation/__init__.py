@@ -35,7 +35,13 @@ from ._inverse_distance import (
 from ._piecewise import (
     CUBIC_HERMITE_CAPABILITIES,
     cubic_hermite_interpolate,
+    cubic_hermite_knot_jets,
     cubic_hermite_segment,
+    cubic_hermite_uniform_interpolate,
+    CubicHermiteKnotJets,
+    CubicSplineEndCondition,
+    CubicSplineSlopePlan,
+    CubicSplineSlopes,
     LINEAR_CAPABILITIES,
     linear_interpolate,
     linear_segment,
@@ -47,6 +53,8 @@ from ._piecewise import (
     nearest_interpolate,
     nearest_stencil,
     nearest_stencil_from_indices,
+    UniformNodeGrid,
+    UniformSpanLocation,
 )
 from ._rational_spline import RationalSplineJet
 from ._rectilinear import (
@@ -70,6 +78,14 @@ from ._types import (
 __all__ = [
     "CUBIC_HERMITE_CAPABILITIES",
     "LINEAR_CAPABILITIES",
+    "CubicHermiteKnotJets",
+    "CubicSplineEndCondition",
+    "CubicSplineSlopePlan",
+    "CubicSplineSlopes",
+    "UniformNodeGrid",
+    "UniformSpanLocation",
+    "cubic_hermite_knot_jets",
+    "cubic_hermite_uniform_interpolate",
     "NEAREST_CAPABILITIES",
     "INVERSE_DISTANCE_CAPABILITIES",
     "FOURIER_CAPABILITIES",

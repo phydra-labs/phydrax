@@ -136,3 +136,19 @@ def projector_consumer(
     assert_type(analysis.projected, CorrelatedRatioResult)
     assert_type(analysis.projected.mean_covariance, jax.Array)
     initialize_projector_monte_carlo(prepared, 1)  # ty: ignore[invalid-argument-type]
+
+
+def atomistic_execution(
+    potential: phx.nn.atomistic.MACEPotential,
+    batch: phx.atomistic.AtomisticBatch,
+    execution: phx.atomistic.AtomisticGraphExecutionPlan,
+) -> None:
+    assert_type(potential.configuration, phx.nn.atomistic.MACEArchitecture)
+    topology = phx.atomistic.prepare_atomistic_graph_topology(
+        batch, execution, cutoff=potential.configuration.cutoff
+    )
+    assert_type(topology, phx.atomistic.AtomisticGraphTopology)
+    derivatives = phx.atomistic.atomistic_energy_derivatives(
+        potential, batch, execution, batch.positions, topology=topology
+    )
+    assert_type(derivatives, phx.atomistic.AtomisticEnergyDerivatives)

@@ -1,5 +1,5 @@
 {
-  "catalog_id": "798533040bc4bb3307072f7d199cd4d714db46ea91039e1b9aa2b2f15ecbaee8",
+  "catalog_id": "a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121",
   "kind": "application-promotion-portfolios",
   "portfolios": [
     {
@@ -87,6 +87,7 @@
         "application.polymer-construction",
         "application.polymer-field-theory",
         "application.polymer-liquids",
+        "atomistic.mace-inference",
         "atomistic.transport.green-kubo",
         "chemistry.interchange.wannier90-hr",
         "chemistry.interchange.wannier90-mmn",
@@ -160,7 +161,7 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "atomistic-chemistry-polymer",
-      "portfolio_id": "b462c29e503767a19356e1e1ea4469256a199b5867b0927c619fbae297332628",
+      "portfolio_id": "612f9b7060b019cb9f59932b68d6f7967853738016748031ac59b636ac802b5b",
       "profile_ids": [
         "01045dded49be0f7bd5f143de54d278a7809725383dfdae4ab86c2becdbb13e5",
         "026d06d9de26ca1822ec50557fc43ac8528dc967b6198502204cae87a846df27",
@@ -175,6 +176,7 @@
         "2cfd6eb503fec058702c48e453ac40814b1a2742a57b7af93d50f6380202f4e2",
         "2d55a3382f7c8f90c8ec61072bfd5408ef16e7c626e8d744337cc64403741774",
         "2dc4a5a394cfacedd8a9f120768e162ff7a1efdef96ae661b0f725f6dd981a89",
+        "3145e8a789481d858e9282d65d4a04208436a8a0949c9c2971cf0f713bf773b7",
         "36bca280ecf20abe7dba465a5961b373ee7130625afe6e5eea039090d30d8637",
         "3e40a547a407e1c64ab275597834aff33374b0872c933fd15eb2c8c2b421216d",
         "407a7c1da49aab57296853a3984948ccbd708f315c9e4f97735f2afa763e7129",
@@ -188,6 +190,7 @@
         "54bc2ce43ff1e79254bce8a2dc8fed7f667dafe20cc2ca5c768c95d4a0798f7f",
         "5615c913bea284747b91d8507bcb72a62080bff761c8d4c94e8297d9e49791e3",
         "5bcec6d132c2e95e9458967424b156c234ae8cae1c50c236d4b52356e59c9f60",
+        "5c2724732809207d4228754c82009c3e23fc26cbfadd495e00487d5602760cb6",
         "5da333c3ce1eb0472d98041eca418c126e3019d77193ab2c1e1b1b2cd51bf1cd",
         "617b96b9fb3a0f753e45e2a03c1a223588aa82ba4cb30685ae09c35aa71f88f7",
         "62d2d0c0ee900260fc11184cd1abd0144b88157fd61827ba7eb5c7cf705989b6",
@@ -208,6 +211,7 @@
         "9a0f133fc5b2c2ba352111a14e666a230b979f684c044f157123257ad8c9e6ad",
         "9f1eb9559c2a0583c023e09bd3b453b326cdd53886202e68507d02b6728970e8",
         "a072b27166ee9e7fd9b68264e496d3bd4798afeb65197426f4223cd198381c68",
+        "a2b4a48d0e215fb1d3b388cae699f7581bf545c79e95107fabb5874958e151f5",
         "a717da4e4f32a64a542aaad460dd40610a531187e8f80787a398a6baabc3ccae",
         "ac00e6c74b24390bbf743e9bf2a6b2eb6aae589b95ba849a680d05c330ce155e",
         "b076191d5439dd8e1943baab74995aa864fbcea82811350ead9db9bc47395d24",
@@ -225,6 +229,7 @@
         "d8e4e5b69d444cd6dac0914514b6fdf630d12d34aa30fbcd6a0cba920d4c81b3",
         "daf4a6da336ced8ed14f21b7343871350f23f4e899bb5dcb2dd359b9d183ef86",
         "e159c48eadd6e29a6a15fc0ffc60b10ecd04304da026d6db23ad361ef3a0b206",
+        "e67ab9635013f25e8609e54150ce317c13f251b8a36398f3077cf3afd7109536",
         "e91bf2dee133f5fd8e47c22bee8112589e5ecbae715f436f1b275d6a48f8df4c",
         "eb922c04b00046cf933adace7a6b0014ca51bf3030279723b1c6ae60b8bd59cf",
         "ef9df404823e0febedb24ca74cde3296b98725bff77939f5098542e80bc734f1",

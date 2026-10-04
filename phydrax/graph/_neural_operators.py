@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
@@ -16,9 +17,17 @@ from ..sparse import (
     route_reduce,
     RouteReduction,
 )
+from ..sparse._streamed import StreamedRelationPlan
 from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
+from ._route_payload import (
+    declared_payload,
+    entity_graph_ids,
+    graph_feature_table,
+    require_route_local,
+    RouteLocal,
+)
 from ._typed import GraphFlow, node_type_ids
 
 
@@ -333,26 +342,98 @@ def _num_graph_nodes(graph: GraphIR, /) -> int:
     return int(jnp.asarray(graph.n_node).sum())
 
 
+def _one_route(tree: ArrayTree, /) -> ArrayTree:
+    return jtu.tree_map(lambda leaf: jnp.asarray(leaf)[None], tree)
+
+
+def _kernel_message(
+    parameters: tuple[GraphKernelIntegral, ArrayTree | None],
+    source: tuple[ArrayTree, ArrayTree, jnp.ndarray | None],
+    receiver: ArrayTree,
+    edge: tuple[ArrayTree, jnp.ndarray | None],
+    /,
+) -> dict[str, ArrayTree]:
+    """Kernel-weighted source message of one route plus its additive normalizers."""
+    integral, edge_table = parameters
+    sent_source, sent_nodes, measure = source
+    edges, graph_id = edge
+    messages = _one_route(sent_source)
+    if integral.kernel_fn is not None:
+        glob_edge = (
+            None
+            if edge_table is None
+            else jtu.tree_map(lambda table: table[graph_id], edge_table)
+        )
+        weight = integral.kernel_fn(edges, sent_nodes, receiver, glob_edge)
+        # Route-leading alignment of the weight matches the graph-wide product.
+        messages = _multiply_tree(messages, _one_route(weight))
+    if measure is not None:
+        messages = _multiply_tree(messages, measure[None])
+    message: dict[str, ArrayTree] = {
+        "value": jtu.tree_map(lambda leaf: leaf[0], messages)
+    }
+    if integral.reduction == "mean":
+        message["count"] = jnp.ones((), dtype=jnp.float64)
+    if integral.normalize:
+        message["normalizer"] = (
+            jnp.ones((), dtype=jnp.float64) if measure is None else measure
+        )
+    return message
+
+
+def _kernel_output(
+    parameters: tuple[GraphKernelIntegral, ArrayTree | None],
+    receiver: ArrayTree,
+    aggregate: dict[str, ArrayTree],
+    /,
+) -> ArrayTree:
+    """Receiver epilogue: mean division, then measure normalization, of the full row."""
+    integral, _edge_table = parameters
+    del receiver
+    value = aggregate["value"]
+    if integral.reduction == "mean":
+        count = aggregate["count"]
+        value = jtu.tree_map(
+            lambda leaf: jnp.where(
+                count > 0,
+                leaf / jnp.maximum(count, 1).astype(leaf.dtype),
+                jnp.zeros((), leaf.dtype),
+            ),
+            value,
+        )
+    if integral.normalize:
+        degree = aggregate["normalizer"]
+        value = _multiply_tree(value, jnp.where(degree > 0, 1.0 / degree, 0.0))
+    return value
+
+
 class GraphKernelIntegral(StrictModule):
     """Edge-kernel integral operator over a sparse graph.
 
     The block sends source node features along directed edges, optionally
-    multiplies them by a learned/analytic kernel, reduces them onto receivers
-    with `phydrax.sparse.route_reduce`, and writes the aggregate as the graph's
-    node payload. Routes with `edge_mask=False` never contribute.
+    multiplies them by a learned/analytic kernel and source measure, reduces
+    them onto receivers, and writes the aggregate as the graph's node payload.
+    Sum and mean reductions evaluate each route once through the prepared
+    streamed relation selected by ``execution``; every receiver divides by its
+    complete route count and normalizes by its complete incoming measure only
+    after its last route. Max and min reductions use
+    `phydrax.sparse.route_reduce`. ``kernel_fn`` must be a `RouteLocal`
+    callback ``(edge, sent, received, globals)`` of one route's unbatched rows.
+    Routes with `edge_mask=False` never contribute.
     """
 
-    kernel_fn: Callable | None
+    kernel_fn: RouteLocal | None
     source_fn: Callable | None
     update_node_fn: Callable | None
     source_measure: Any
+    execution: StreamedRelationPlan
     reduction: RouteReduction = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
     source_measure_key: str | None = eqx.field(static=True)
 
     def __init__(
         self,
-        kernel_fn: Callable | None = None,
+        kernel_fn: RouteLocal | None = None,
         /,
         *,
         source_fn: Callable | None = None,
@@ -361,12 +442,16 @@ class GraphKernelIntegral(StrictModule):
         source_measure: Any | None = None,
         reduction: RouteReduction = "sum",
         normalize: bool = False,
+        execution: StreamedRelationPlan | None = None,
     ) -> None:
-        self.kernel_fn = kernel_fn
+        if execution is not None and not isinstance(execution, StreamedRelationPlan):
+            raise TypeError("execution must be a StreamedRelationPlan or None.")
+        self.kernel_fn = require_route_local(kernel_fn, "kernel_fn")
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
         self.source_measure_key = source_measure_key
         self.source_measure = source_measure
+        self.execution = StreamedRelationPlan() if execution is None else execution
         self.reduction = _route_reduction(reduction)
         self.normalize = bool(normalize)
 
@@ -381,13 +466,8 @@ class GraphKernelIntegral(StrictModule):
         num_nodes = _num_nodes(graph, nodes)
         relation = graph.edge_relation(node_count=num_nodes)
         source = nodes if self.source_fn is None else self.source_fn(nodes)
-        sent_source = gather_routes(relation, source)
-        sent_nodes = gather_routes(relation, nodes)
-        recv_nodes = gather_routes(relation.transpose(), nodes)
         num_edges = _num_edges(graph)
-        glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
-
-        edge_measure = None
+        node_measure = None
         if self.source_measure_key is not None or self.source_measure is not None:
             node_measure = _node_measure(
                 graph,
@@ -395,10 +475,81 @@ class GraphKernelIntegral(StrictModule):
                 self.source_measure,
                 n_node=num_nodes,
             )
-            edge_measure = gather_routes(relation, node_measure)
+        if self.reduction in ("sum", "mean"):
+            aggregated = self._streamed_aggregate(
+                graph, relation, nodes, source, node_measure, num_edges
+            )
+        else:
+            aggregated = self._extreme_aggregate(
+                graph, relation, nodes, source, node_measure, num_edges
+            )
+
+        glob_node = _repeat_globals_for_entities(graph.globals, graph.n_node, num_nodes)
+        if self.update_node_fn is not None:
+            aggregated = self.update_node_fn(nodes, aggregated, glob_node)
+        aggregated = _mask_tree(aggregated, graph.node_mask)
+        return graph.replace(nodes=aggregated, validate=False)
+
+    def _streamed_aggregate(
+        self,
+        graph: GraphIR,
+        relation: EdgeRelation,
+        nodes: ArrayTree,
+        source: ArrayTree,
+        node_measure: jnp.ndarray | None,
+        num_edges: int,
+        /,
+    ) -> ArrayTree:
+        uses_globals = self.kernel_fn is not None and graph.globals is not None
+        edge_table = graph_feature_table(graph.globals) if uses_globals else None
+        parameters = (self, edge_table)
+        source_data = (source, nodes, node_measure)
+        edge_data = (
+            graph.edges if self.kernel_fn is not None else None,
+            entity_graph_ids(graph.n_edge, num_edges) if uses_globals else None,
+        )
+        payload = declared_payload(
+            _kernel_message,
+            _kernel_output,
+            parameters,
+            source_data,
+            nodes,
+            edge_data,
+            edge_output=False,
+        )
+        prepared = self.execution.prepare(relation, owner_id="graph:GraphKernelIntegral")
+        return prepared.evaluate(
+            payload,
+            _kernel_message,
+            _kernel_output,
+            parameters,
+            source_data,
+            nodes,
+            edge_data,
+        ).receiver_outputs
+
+    def _extreme_aggregate(
+        self,
+        graph: GraphIR,
+        relation: EdgeRelation,
+        nodes: ArrayTree,
+        source: ArrayTree,
+        node_measure: jnp.ndarray | None,
+        num_edges: int,
+        /,
+    ) -> ArrayTree:
+        sent_source = gather_routes(relation, source)
+        sent_nodes = gather_routes(relation, nodes)
+        recv_nodes = gather_routes(relation.transpose(), nodes)
+        glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
+        edge_measure = (
+            None if node_measure is None else gather_routes(relation, node_measure)
+        )
         messages = sent_source
         if self.kernel_fn is not None:
-            weight = self.kernel_fn(graph.edges, sent_nodes, recv_nodes, glob_edge)
+            weight = jax.vmap(self.kernel_fn)(
+                graph.edges, sent_nodes, recv_nodes, glob_edge
+            )
             messages = _multiply_tree(messages, weight)
         if edge_measure is not None:
             messages = _multiply_tree(messages, edge_measure)
@@ -413,12 +564,7 @@ class GraphKernelIntegral(StrictModule):
             degree = route_reduce(relation, normalizer)
             scale = jnp.where(degree > 0, 1.0 / degree, 0.0)
             aggregated = _multiply_tree(aggregated, scale)
-
-        glob_node = _repeat_globals_for_entities(graph.globals, graph.n_node, num_nodes)
-        if self.update_node_fn is not None:
-            aggregated = self.update_node_fn(nodes, aggregated, glob_node)
-        aggregated = _mask_tree(aggregated, graph.node_mask)
-        return graph.replace(nodes=aggregated, validate=False)
+        return aggregated
 
 
 class GraphDiffusion(StrictModule):

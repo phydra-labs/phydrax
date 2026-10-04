@@ -55,6 +55,17 @@ and Abel, Journal of Computational Physics 297:340-357, 2015), and Delaunay
 refinement after Ruppert, Chew, and Shewchuk. No upstream source code,
 including the public-domain `predicates.c`, is redistributed.
 
+The streamed equivariant atomistic substrate and native standard MACE models
+implement published algorithms and source-compatible mathematical contracts
+informed by Symmetrix-XL, MACE, and e3nn. The external MACE/e3nn converter is an
+optional, pinned host-provider boundary; their runtimes and foundation weights
+are not bundled. Exact source license notices are in LICENSES/MACE-MIT.txt,
+LICENSES/E3NN-MIT.txt, and LICENSES/SYMMETRIX-MIT.txt. Symmetrix's separate GPLv2
+LAMMPS pair style is excluded. Code licenses do not relicense model weights:
+MP/MPA weights are MIT, while OMAT/MH/OFF weights have separately admitted ASL
+rights. Technical source review and numerical evidence are not legal review or
+production release authorization.
+
 This distribution includes adapted numerical methods and implementation ideas
 from the following open-source projects:
 
