@@ -1,0 +1,140 @@
+{
+  "cases": {
+    "one_residual": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        3
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticResidualInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 1,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "three_density": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        3,
+        2,
+        2
+      ],
+      "distance_transform": "Agnesi",
+      "first": "RealAgnosticDensityInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 3,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": true,
+      "rest": "RealAgnosticDensityResidualInteractionBlock"
+    },
+    "two_multihead_unscaled": {
+      "apply_cutoff": false,
+      "class": "MACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticResidualInteractionBlock",
+      "heads": [
+        "first",
+        "second"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": true,
+      "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "two_scale_shift": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        3,
+        2
+      ],
+      "distance_transform": "Agnesi",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": true,
+      "rest": "RealAgnosticResidualInteractionBlock"
+    }
+  },
+  "generator": "tests/fixtures/mace_torch_0_3_16/generate.py",
+  "provider": {
+    "ase": "3.29.0",
+    "e3nn": "0.4.4",
+    "mace-torch": "0.3.16",
+    "torch": "2.14.1"
+  },
+  "structures": {
+    "crystal": {
+      "cell": [
+        [
+          2.4,
+          0.0,
+          0.0
+        ],
+        [
+          0.6,
+          2.2,
+          0.0
+        ],
+        [
+          0.3,
+          0.4,
+          2.6
+        ]
+      ],
+      "positions": [
+        [
+          0.1,
+          0.2,
+          0.05
+        ],
+        [
+          1.05,
+          0.65,
+          0.9
+        ]
+      ],
+      "symbols": "OH"
+    },
+    "molecule": {
+      "cell": null,
+      "positions": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.95,
+          0.1,
+          0.0
+        ],
+        [
+          -0.25,
+          0.85,
+          0.2
+        ]
+      ],
+      "symbols": "OHH"
+    }
+  },
+  "units": {
+    "energy": "eV",
+    "length": "angstrom"
+  },
+  "virial_convention": "provider virials = -dE/d(symmetric strain)"
+}

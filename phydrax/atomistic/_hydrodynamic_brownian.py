@@ -20,7 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleNeighborhoodState
+from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ..linalg import AbstractLinearOperator
 from ..typing import checked, parse, PRNGKey
 from ._dynamics import PreparedAtomisticDynamics
@@ -113,7 +113,7 @@ class HydrodynamicBrownianState(StrictModule):
     positions: Array
     image_counts: Array
     cell_vectors: Array
-    neighborhood: ParticleNeighborhoodState
+    neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState
     forces: Array
     potential_energy: Array
     step_index: Array
@@ -205,19 +205,22 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         image_counts: Array,
         cell_vectors: Array,
         /,
-    ) -> tuple[ParticleNeighborhoodState, AtomisticHamiltonianEvaluation]:
-        neighborhood = self.dynamics.neighborhood.build(positions)
+    ) -> tuple[
+        ParticleNeighborhoodState | ParticleImageNeighborhoodState,
+        AtomisticHamiltonianEvaluation,
+    ]:
+        neighborhood, _ = self.dynamics._build_neighborhood(
+            positions, None, cell_vectors, image_counts
+        )
         unwrapped = self._unwrapped(positions, image_counts, cell_vectors)
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "unwrapped_positions": unwrapped,
             "species": self.dynamics.system.plan.atom_type_ids,
             "cell": self.dynamics.system.cell,
         }
         if self.dynamics.system.cell is not None:
-            cell = self.dynamics.system.cell
-            kwargs["fractional_positions"] = cell.fractional_with_vectors(
-                positions, cell_vectors
-            )
+            # The program derives fractional coordinates of ``positions`` under
+            # these runtime vectors and reports the lattice solve status.
             kwargs["cell_vectors"] = cell_vectors
         evaluation = self.dynamics.potential.evaluate(positions, neighborhood, **kwargs)
         return neighborhood, evaluation

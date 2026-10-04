@@ -1285,7 +1285,7 @@ def _ipi_roundtrip(plan: Any, system: Any, positions: Any) -> None:
         return phx.atomistic.ExternalAtomisticEvaluation(
             jnp.sum(coordinate**2),
             -2.0 * coordinate,
-            jnp.zeros((3, 3)),
+            None,
             jnp.asarray(True),
             "local-provider",
         )
@@ -1306,23 +1306,25 @@ def _ipi_roundtrip(plan: Any, system: Any, positions: Any) -> None:
         status = future.result(timeout=10.0)
     listener.close()
     assert status is phx.atomistic.interchange.IPITransportStatus.READY
-    np.testing.assert_allclose(result.energy, jnp.sum(positions**2))
-    np.testing.assert_allclose(result.forces, -2.0 * positions)
+    np.testing.assert_allclose(result.energy, jnp.sum(positions**2), rtol=1e-12)
+    np.testing.assert_allclose(result.forces, -2.0 * positions, rtol=1e-12)
+    assert result.stress is None
 
 
 @pytest.mark.parametrize("mode", ["unix", "tcp"])
 def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str) -> None:
-    _, system, _, _, _, _, state = _runtime()
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    _, system, _, _, _, _, state = _runtime(units=units)
     if mode == "unix":
         plan = phx.atomistic.interchange.IPITransportPlan.unix(
-            f"/tmp/phydrax-ipi-{os.getpid()}.sock", timeout=5.0
+            f"/tmp/phydrax-ipi-{os.getpid()}.sock", timeout=5.0, virial="optional"
         )
     else:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         plan = phx.atomistic.interchange.IPITransportPlan.tcp(
-            "127.0.0.1", port, timeout=5.0
+            "127.0.0.1", port, timeout=5.0, virial="optional"
         )
     _ipi_roundtrip(plan, system, state.kinematics.positions)
 

@@ -18,12 +18,10 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
-from phydrax.ein import contract
-
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleNeighborhoodState
+from ..discretization import ParticleImageNeighborhoodState, ParticleNeighborhoodState
 from ..typing import checked
 from ._classical import (
     HarmonicAnglePotential,
@@ -41,10 +39,11 @@ from ._force_field import (
     GeneralForceFieldTerm,
     PreparedAtomisticForceField,
 )
-from ._potential import AtomisticPotentialRequirements
+from ._potential import AtomisticPotentialRequirements, AtomisticStressConvention
 from ._potential_program import (
     AbstractPreparedAtomisticEnergyTerm,
     AbstractPreparedAtomisticHamiltonian,
+    AtomisticDerivativePoint,
     AtomisticInteractionScaleState,
     AtomisticPotentialContext,
     PreparedAtomisticPotentialProgram,
@@ -705,6 +704,8 @@ class ControlledHamiltonianStatus(StrictModule):
 
 
 class ControlledHamiltonianEvaluation(StrictModule):
+    """Controlled ``AtomisticHamiltonianEvaluation`` plus control derivatives."""
+
     energy: Array
     term_energies: Array
     atom_energy: Array
@@ -713,7 +714,10 @@ class ControlledHamiltonianEvaluation(StrictModule):
     successful: Array
     neighborhood_successful: Array
     graph_overflow: Array
+    strain_derivative: Array | None
+    stress: Array | None
     program_id: str = eqx.field(static=True)
+    stress_convention: AtomisticStressConvention | None = eqx.field(static=True)
     dU_dcontrols: Array
     control_values: Array
     state_index: Array
@@ -856,11 +860,15 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
 
     def _interaction_scales(
         self,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
         controls: Array,
         dtype: DTypeLike,
         /,
     ) -> AtomisticInteractionScaleState:
+        if isinstance(neighborhood, ParticleImageNeighborhoodState):
+            # Directed image routes carry no pair-once interaction slots.
+            empty = jnp.zeros((0,), dtype=jnp.int32)
+            return self.partition.interaction_scales(empty, empty, controls, dtype)
         pairs = neighborhood.pair_relation
         return self.partition.interaction_scales(
             pairs.left_indices, pairs.right_indices, controls, dtype
@@ -869,7 +877,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
     def context(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
         /,
         *,
         state_index: ArrayLike | None = None,
@@ -888,7 +896,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
     def energy(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
         /,
         *,
         state_index: ArrayLike | None = None,
@@ -918,13 +926,19 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
     def evaluate(
         self,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
         /,
         *,
+        compute_stress: bool = False,
         state_index: ArrayLike | None = None,
         control_values: ArrayLike | None = None,
         **context_kwargs: Any,
     ) -> ControlledHamiltonianEvaluation:
+        """Differentiate one controlled scalar in positions, controls and strain.
+
+        ``compute_stress`` follows ``PreparedAtomisticPotentialProgram.evaluate``:
+        the strain derivative comes from the same reverse pass at fixed topology.
+        """
         position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
         expected = (self.system.capacity, 3)
         if position.shape != expected:
@@ -932,77 +946,38 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         controls, resolved_index, state_valid = self._resolve_controls(
             state_index, control_values, position.dtype
         )
-        selected_cell = context_kwargs.get("cell")
-        if selected_cell is None:
-            selected_cell = self.system.cell
-        vectors = context_kwargs.get("cell_vectors")
-        unwrapped = context_kwargs.get("unwrapped_positions")
-        fractional = context_kwargs.get("fractional_positions")
-        unwrapped_offset = None
-        if unwrapped is not None:
-            offset = jnp.asarray(unwrapped, dtype=position.dtype) - position
-            if selected_cell is None:
-                unwrapped_offset = jax.lax.stop_gradient(offset)
-            else:
-                image_vectors = (
-                    selected_cell.vectors if vectors is None else jnp.asarray(vectors)
-                ).astype(position.dtype)
-                images = jax.lax.stop_gradient(
-                    jnp.where(
-                        selected_cell.periodic_mask,
-                        jnp.round(
-                            contract(
-                                "ni,ij->nj",
-                                offset,
-                                selected_cell.inverse_for_vectors(image_vectors),
-                            )
-                        ),
-                        0.0,
-                    )
-                )
-                translation = contract("ni,ij->nj", images, image_vectors)
-                unwrapped_offset = translation + jax.lax.stop_gradient(
-                    offset - translation
-                )
-        fractional_offset = None
-        if fractional is not None and vectors is not None and selected_cell is not None:
-            fractional_offset = jax.lax.stop_gradient(
-                jnp.asarray(fractional, dtype=position.dtype)
-                - selected_cell.fractional_with_vectors(position, vectors)
-            )
+        point = AtomisticDerivativePoint(
+            self.system,
+            position,
+            context_kwargs,
+            neighborhood=neighborhood,
+            strained=compute_stress,
+            cell_derivative=self.potential.plan.capabilities.cell_derivative,
+        )
 
         def closure(
-            value: Array, control: Array
+            value: Array, control: Array, strain: Array | None
         ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
-            kwargs = dict(context_kwargs)
-            if unwrapped_offset is not None:
-                kwargs["unwrapped_positions"] = value + unwrapped_offset
-            if fractional_offset is not None:
-                # fractional_offset is only bound together with a cell and cell vectors.
-                if not (selected_cell is not None and vectors is not None):
-                    raise RuntimeError(
-                        "Internal invariant failed: selected_cell is not None and vectors is not None."
-                    )
-                kwargs["fractional_positions"] = (
-                    selected_cell.fractional_with_vectors(value, vectors)
-                    + fractional_offset
-                )
-            return self.energy(value, neighborhood, control_values=control, **kwargs)
+            bound, kwargs = point.bind(value, strain)
+            return self.energy(bound, neighborhood, control_values=control, **kwargs)
 
-        (energy, auxiliary), (position_gradient, control_gradient) = jax.value_and_grad(
-            closure, argnums=(0, 1), has_aux=True
-        )(position, controls)
-        term_energies, atom_energy, program_successful, graph_overflow = auxiliary
+        strain_derivative = None
+        if point.strained:
+            (energy, auxiliary), gradients = jax.value_and_grad(
+                closure, argnums=(0, 1, 2), has_aux=True
+            )(position, controls, point.zero_strain())
+            position_gradient, control_gradient, strain_derivative = gradients
+        else:
+            (energy, auxiliary), (position_gradient, control_gradient) = (
+                jax.value_and_grad(closure, argnums=(0, 1), has_aux=True)(
+                    position, controls, None
+                )
+            )
+        term_energies, atom_energy, energy_successful, graph_overflow = auxiliary
+        program_successful = energy_successful & point.successful
         forces = jnp.where(self.system.active_mask[:, None], -position_gradient, 0.0)
-        center = jnp.sum(
-            jnp.where(
-                self.system.active_mask[:, None],
-                self.system.plan.masses[:, None] * position,
-                0.0,
-            ),
-            axis=0,
-        ) / jnp.sum(jnp.where(self.system.active_mask, self.system.plan.masses, 0.0))
-        virial = -contract("ni,nj->ij", position - center, forces)
+        virial = point.moment_virial(self.system, position, forces)
+        stress = None if strain_derivative is None else point.stress(strain_derivative)
         controls_in_range = jnp.all(
             jnp.isfinite(controls) & (controls >= 0.0) & (controls <= 1.0)
         )
@@ -1014,6 +989,12 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
             & jnp.all(jnp.isfinite(virial))
             & jnp.all(jnp.isfinite(control_gradient))
         )
+        if strain_derivative is not None and stress is not None:
+            finite = (
+                finite
+                & jnp.all(jnp.isfinite(strain_derivative))
+                & jnp.all(jnp.isfinite(stress))
+            )
         successful = program_successful & finite & controls_in_range & state_valid
         status = ControlledHamiltonianStatus(
             finite=finite,
@@ -1032,7 +1013,14 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
             successful=successful,
             neighborhood_successful=program_successful,
             graph_overflow=graph_overflow,
+            strain_derivative=(
+                None
+                if strain_derivative is None
+                else jnp.where(successful, strain_derivative, nan)
+            ),
+            stress=None if stress is None else jnp.where(successful, stress, nan),
             program_id=self.prepared_id,
+            stress_convention=point.stress_convention,
             dU_dcontrols=jnp.where(successful, control_gradient, nan),
             control_values=controls,
             state_index=resolved_index,
@@ -1045,7 +1033,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         self,
         group: int,
         positions: ArrayLike,
-        neighborhood: ParticleNeighborhoodState,
+        neighborhood: ParticleNeighborhoodState | ParticleImageNeighborhoodState,
         /,
         *,
         state_index: ArrayLike | None = None,

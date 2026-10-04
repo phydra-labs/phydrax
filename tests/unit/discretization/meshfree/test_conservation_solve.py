@@ -598,3 +598,85 @@ def test_runtime_metric_weights_have_implicit_gradient_and_refuse_nonpositive() 
     assert not bool(refused.accepted)
     assert not bool(refused.constitutive_evidence.positive_metric)
     assert bool(jnp.all(jnp.isnan(refused.state)))
+
+
+def _incidence_balance(pairs: np.ndarray, edge: jax.Array, count: int) -> jax.Array:
+    """Independent ``B.T edge``: minus at each first endpoint, plus at the second."""
+    zeros = jnp.zeros((count,) + edge.shape[1:], dtype=edge.dtype)
+    return zeros.at[pairs[:, 0]].add(-edge).at[pairs[:, 1]].add(edge)
+
+
+def test_streamed_edge_laws_match_incidence_reference_on_fragmented_tiles() -> None:
+    # Two receivers and three events per tile fragment every high-degree node.
+    tiles = phx.sparse.StreamedRelationPlan(receiver_tile=2, edge_tile=3)
+    exterior, features = _coupled_cloud()
+    pairs = np.asarray(exterior.pairs)
+    count = exterior.points.shape[0]
+    rng = np.random.default_rng(17)
+    for family in ("monotone", "lipschitz"):
+        law = _coupled_law(family, features)
+        problem = MeshfreeCoupledConservationProblem(
+            exterior,
+            law,
+            features=features,
+            source=rng.normal(size=(count, 4)),
+            boundary_values=rng.normal(size=(count, 4)),
+        )
+        residual = prepare_meshfree_coupled_conservation_solve(
+            problem, termination=_TIGHT, execution=tiles
+        ).residual
+        args = problem.runtime()
+        state = jnp.asarray(rng.normal(size=(residual.free_indices.size * 4,)))
+
+        def reference(state: jax.Array) -> tuple[jax.Array, jax.Array]:
+            full = residual.reconstruct(state, args)
+            edge = (
+                args.conductance
+                * args.metric_weights[:, None]
+                * law.flux(full[pairs[:, 1]] - full[pairs[:, 0]], features)
+            )
+            return _incidence_balance(pairs, edge, count), -edge
+
+        observed, expected = residual.integrated_flux(state, args), reference(state)
+        for actual, wanted in zip(observed, expected, strict=True):
+            np.testing.assert_allclose(actual, wanted, rtol=1e-12, atol=1e-12)
+        # Action and reaction of every edge cancel in the total balance.
+        np.testing.assert_allclose(jnp.sum(observed[0], axis=0), 0.0, atol=1e-11)
+        tangent = jnp.asarray(rng.normal(size=state.shape))
+        np.testing.assert_allclose(
+            jax.jvp(lambda s: residual.integrated_flux(s, args)[0], (state,), (tangent,))[
+                1
+            ],
+            jax.jvp(lambda s: reference(s)[0], (state,), (tangent,))[1],
+            rtol=1e-11,
+            atol=1e-11,
+        )
+    recovery = prepare_recovery(size=12, dimension=2, seed=5)
+    problem = recovery.prepared.problem
+    parameters = {"constitutive-strength": jnp.asarray(1.3)}
+    tiled = prepare_meshfree_conservation_solve(
+        problem, parameters=parameters, execution=tiles
+    )
+    scalar_args = problem.runtime(parameters=parameters)
+    scalar_pairs = np.asarray(problem.exterior.pairs)
+    full = jnp.asarray(rng.normal(size=problem.source.shape), dtype=jnp.float64)
+    edge = (
+        scalar_args.conductance
+        * scalar_args.metric_weights
+        * tiled.residual.bound_law(scalar_args).flux(
+            full[scalar_pairs[:, 1]] - full[scalar_pairs[:, 0]], problem.features
+        )
+    )
+    integrated, flux = tiled.residual.full_balance(full, scalar_args)
+    np.testing.assert_allclose(flux, edge, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        integrated,
+        _incidence_balance(scalar_pairs, edge, problem.source.shape[0]),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    default = recovery.prepared.solve(parameters=parameters)
+    fragmented = tiled.solve(parameters=parameters)
+    assert bool(default.accepted) and bool(fragmented.accepted)
+    # Both roots are converged to the recovery's Newton termination, not bitwise.
+    np.testing.assert_allclose(fragmented.state, default.state, rtol=0.0, atol=1e-9)

@@ -144,15 +144,29 @@ def reduce_key_groups(
         )
         return next_high, next_correction, finite
 
-    result_high, result_correction, finite = jax.vmap(reduce_case)(
-        flat_values,
-        flat_order,
-        flat_valid,
-        flat_active,
-        flat_slots,
-        high.reshape(seed_shape),
-        correction.reshape(seed_shape),
-    )
+    if batch_size == 1:
+        case_high, case_correction, case_finite = reduce_case(
+            flat_values[0],
+            flat_order[0],
+            flat_valid[0],
+            flat_active[0],
+            flat_slots[0],
+            high.reshape(seed_shape)[0],
+            correction.reshape(seed_shape)[0],
+        )
+        result_high = case_high[None]
+        result_correction = case_correction[None]
+        finite = case_finite[None]
+    else:
+        result_high, result_correction, finite = jax.vmap(reduce_case)(
+            flat_values,
+            flat_order,
+            flat_valid,
+            flat_active,
+            flat_slots,
+            high.reshape(seed_shape),
+            correction.reshape(seed_shape),
+        )
     finite = finite.reshape(groups.plan.case_shape)
     return (
         KeyGroupAccumulation(
@@ -403,6 +417,27 @@ class RelationExecutionState(NonTrainableState, StrictModule):
         )
 
 
+def _zero_event_update(increment: Array, updated: Array, previous: Array, /) -> Array:
+    """Add ``increment``, keeping zero events primal no-ops but derivative-owning.
+
+    A zero event keeps ``previous`` bit-for-bit (signed-zero seeds survive),
+    while ``stop_gradient(increment) - increment``, an exact ``+0`` at a zero
+    event, restores the increment's derivative: ``x - (+0)`` is exact for every
+    ``x``. This is ordinary JAX arithmetic rather than a custom JVP rule because
+    linearizing a loop inlines custom-JVP primals into its known part, which
+    would drop zero-event tangents from reverse-over-forward and
+    reverse-over-reverse derivatives. Structural padding is masked to a
+    constant zero before forming the update, so it owns no derivative.
+    """
+    changed = increment != 0
+    restored = jnp.where(
+        changed,
+        jnp.zeros((), increment.dtype),
+        jax.lax.stop_gradient(increment) - increment,
+    )
+    return jnp.where(changed, updated, previous) - restored
+
+
 def _sum_segments(
     values: Array,
     group_slots: Array,
@@ -435,7 +470,7 @@ def _sum_segments(
             return (
                 subtotal
                 if initial is None
-                else jnp.where(subtotal != 0, high + subtotal, high),
+                else _zero_event_update(subtotal, high + subtotal, high),
                 correction,
             )
         case "deterministic":
@@ -444,7 +479,7 @@ def _sum_segments(
                 slot = group_slots[index]
                 value = safe_values[index]
                 previous = total[slot]
-                next_total = jnp.where(value != 0, previous + value, previous)
+                next_total = _zero_event_update(value, previous + value, previous)
                 return total.at[slot].set(next_total)
 
             return (
@@ -462,12 +497,15 @@ def _sum_segments(
                 previous = total[slot]
                 previous_residual = residual[slot]
                 next_total, error = two_sum(previous, value)
-                # Zero components, padding and key-retention items are true no-ops.
-                changed = value != 0
+                # The compensation owns no derivative of the sum (its tangent is
+                # zero in exact arithmetic), so a zero event's residual is a
+                # plain no-op.
                 return (
-                    total.at[slot].set(jnp.where(changed, next_total, previous)),
+                    total.at[slot].set(_zero_event_update(value, next_total, previous)),
                     residual.at[slot].set(
-                        jnp.where(changed, previous_residual + error, previous_residual)
+                        jnp.where(
+                            value != 0, previous_residual + error, previous_residual
+                        )
                     ),
                 )
 

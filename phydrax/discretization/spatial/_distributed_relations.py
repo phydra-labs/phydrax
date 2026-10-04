@@ -166,6 +166,106 @@ def _owner_box_distances(
     return near, far
 
 
+def _lane_axis(spec: PartitionSpec, axis: str) -> int | None:
+    """vmap axis of one owner-region spec: owner-blocked ``0`` or replicated.
+
+    Only a leading dimension partitioned by exactly the owner axis is mapped;
+    every dimension of a replicated spec (``P()``, ``P(None)``, ...) is
+    unpartitioned. Any other partitioning has no lane-reference meaning.
+    """
+    for position, entry in enumerate(spec):
+        if entry is None:
+            continue
+        names = (entry,) if isinstance(entry, str) else entry
+        if position == 0 and tuple(names) == (axis,):
+            continue
+        raise ValueError(
+            f"Lane-reference owner regions partition only the leading dimension by "
+            f"{axis!r}; got {spec}."
+        )
+    if len(spec) and spec[0] is not None:
+        return 0
+    return None
+
+
+def _is_spec(value: object) -> bool:
+    return isinstance(value, PartitionSpec)
+
+
+def _lane_map(
+    function: Callable[..., Any],
+    in_specs: Any,
+    out_specs: Any,
+    axis: str,
+    owners: int,
+) -> Callable[..., Any]:
+    """Execute owner regions as named vmap lanes on one device.
+
+    Each owner-blocked leaf ``(owners * k, ...)`` is viewed as
+    ``(owners, k, ...)`` and mapped along a vmap axis named like the owner mesh
+    axis, so every collective of the owner region (``psum``, ``all_to_all``,
+    ``axis_index``, ...) executes with the same owner semantics as `shard_map`.
+    Replicated inputs are unmapped (every lane sees the whole value);
+    replicated outputs must be lane-invariant collective results.
+    """
+
+    def lane_axis(spec: PartitionSpec) -> int | None:
+        return _lane_axis(spec, axis)
+
+    def require_rank(spec: PartitionSpec, ndim: int) -> None:
+        # `shard_map` refuses specs longer than the value rank; so do lanes.
+        if len(spec) > ndim:
+            raise ValueError(
+                f"Owner-region spec {spec} is longer than its value rank {ndim}."
+            )
+
+    def split(spec: PartitionSpec, subtree: Any) -> Any:
+        mapped_ = lane_axis(spec) is not None
+
+        def view(leaf: Any) -> Any:
+            require_rank(spec, jnp.ndim(leaf))
+            if not mapped_:
+                return leaf
+            if leaf.shape[0] % owners:
+                raise ValueError(
+                    f"Owner-blocked leaves must have a leading axis divisible by "
+                    f"{owners} owners; got shape {leaf.shape}."
+                )
+            return leaf.reshape((owners, leaf.shape[0] // owners) + leaf.shape[1:])
+
+        return jax.tree.map(view, subtree)
+
+    def merge(spec: PartitionSpec, subtree: Any) -> Any:
+        mapped_ = lane_axis(spec) is not None
+
+        def join(leaf: Array) -> Array:
+            require_rank(spec, leaf.ndim - int(mapped_))
+            if not mapped_:
+                return leaf
+            return leaf.reshape((owners * leaf.shape[1],) + leaf.shape[2:])
+
+        return jax.tree.map(join, subtree)
+
+    out_axes = jax.tree.map(lane_axis, out_specs, is_leaf=_is_spec)
+
+    def mapped(*args: Any) -> Any:
+        # A single spec is a tree prefix of the whole argument tuple, as in
+        # `shard_map`.
+        specs = (in_specs,) * len(args) if _is_spec(in_specs) else tuple(in_specs)
+        in_axes = jax.tree.map(lane_axis, specs, is_leaf=_is_spec)
+        lanes = jax.tree.map(split, specs, args, is_leaf=_is_spec)
+        outputs = jax.vmap(
+            function,
+            in_axes=in_axes,
+            out_axes=out_axes,
+            axis_name=axis,
+            axis_size=owners,
+        )(*lanes)
+        return jax.tree.map(merge, out_specs, outputs, is_leaf=_is_spec)
+
+    return mapped
+
+
 @final
 class DistributedOwnershipPlan(StrictModule):
     """Owner axis, per-owner slot capacity, and owner-to-process map.
@@ -174,6 +274,13 @@ class DistributedOwnershipPlan(StrictModule):
     process is recorded in ``owner_processes``. Point arrays are owner-blocked:
     rows ``[r * local_capacity, (r + 1) * local_capacity)`` belong to owner
     ``r``.
+
+    ``owner_lanes`` instead declares a lane-reference ownership on a
+    one-device group: owner regions execute as named vmap lanes of that device
+    with the identical collectives, packets, capacities, and epochs. It is the
+    numerical oracle of the device-collective execution, not distributed
+    hardware evidence. The group identity and owner count distinguish both
+    executions in ``plan_id``.
     """
 
     address_plan: MortonAddressPlan
@@ -182,6 +289,7 @@ class DistributedOwnershipPlan(StrictModule):
     owner_count: int = eqx.field(static=True)
     local_capacity: int = eqx.field(static=True)
     owner_processes: tuple[int, ...] = eqx.field(static=True)
+    lane_reference: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -190,6 +298,8 @@ class DistributedOwnershipPlan(StrictModule):
         execution_group: ExecutionGroup,
         local_capacity: int,
         /,
+        *,
+        owner_lanes: int | None = None,
     ) -> None:
         if not isinstance(address_plan, MortonAddressPlan):
             raise TypeError("address_plan must be a MortonAddressPlan.")
@@ -202,14 +312,23 @@ class DistributedOwnershipPlan(StrictModule):
             )
         capacity = _static_positive(local_capacity, "local_capacity")
         _require_x64()
-        owners = len(execution_group.devices)
-        processes = tuple(device.process_index for device in execution_group.devices)
+        if owner_lanes is None:
+            owners = len(execution_group.devices)
+            processes = tuple(device.process_index for device in execution_group.devices)
+        else:
+            if len(execution_group.devices) != 1:
+                raise ValueError(
+                    "Lane-reference ownership executes on a one-device group."
+                )
+            owners = _static_positive(owner_lanes, "owner_lanes")
+            processes = (execution_group.devices[0].process_index,) * owners
         self.address_plan = address_plan
         self.execution_group = execution_group
         self.axis_name = str(axes[0])
         self.owner_count = owners
         self.local_capacity = capacity
         self.owner_processes = processes
+        self.lane_reference = owner_lanes is not None
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "distributed-ownership-plan",
@@ -240,7 +359,11 @@ class DistributedOwnershipPlan(StrictModule):
         in_specs: Any,
         out_specs: Any,
     ) -> Callable[..., Any]:
-        """Bind ``function`` to one owner per device along the ownership axis."""
+        """Bind ``function`` to one owner region per device or reference lane."""
+        if self.lane_reference:
+            return _lane_map(
+                function, in_specs, out_specs, self.axis_name, self.owner_count
+            )
         return jax.shard_map(
             function,
             mesh=self.execution_group.mesh,
@@ -250,10 +373,11 @@ class DistributedOwnershipPlan(StrictModule):
         )
 
     def compatible(self, other: DistributedOwnershipPlan, /) -> bool:
-        """Whether two layouts share devices, axis, and addressing."""
+        """Whether two layouts share devices, axis, owners, and addressing."""
         return (
             self.execution_group.spec.group_id == other.execution_group.spec.group_id
             and self.axis_name == other.axis_name
+            and self.owner_count == other.owner_count
             and self.address_plan.plan_id == other.address_plan.plan_id
         )
 
@@ -428,7 +552,10 @@ class DistributedPointLayout(NonTrainableState, StrictModule):
         """Adopt already owner-blocked device rows in their given owner order.
 
         Global stable-ID uniqueness is audited on device by hashing every ID
-        to one bucket owner through a bounded all-to-all exchange.
+        to one bucket owner through a bounded all-to-all exchange. An explicit
+        ``logical_indices`` or ``logical_count`` is audited the same way and
+        refused at ingress unless every active row names a distinct logical
+        row in ``[0, logical_count)``; this eager audit requires concrete rows.
         """
         total = plan.total_capacity
         coordinates = jnp.asarray(points)
@@ -458,7 +585,27 @@ class DistributedPointLayout(NonTrainableState, StrictModule):
         logical = jnp.where(mask, logical, -1).astype(jnp.int32)
         identifiers = plan.place(identifiers)
         mask = plan.place(mask)
-        unique = _audit_unique_ids(plan, identifiers, mask)
+        logical = plan.place(logical)
+        count = (
+            total
+            if logical_count is None
+            else _static_positive(logical_count, "logical_count")
+        )
+        if logical_indices is not None or logical_count is not None:
+            admitted = _audit_unique_values(plan, logical, mask, count)
+            try:
+                admitted_ = bool(admitted)
+            except jax.errors.ConcretizationTypeError as error:
+                raise TypeError(
+                    "Explicit logical rows are audited eagerly at ingress and must "
+                    "be concrete."
+                ) from error
+            if not admitted_:
+                raise ValueError(
+                    "Active logical_indices must be distinct and lie in "
+                    f"[0, logical_count={count})."
+                )
+        unique = _audit_unique_values(plan, identifiers, mask, None)
         return cls(
             plan,
             coordinates,
@@ -467,7 +614,7 @@ class DistributedPointLayout(NonTrainableState, StrictModule):
             logical,
             jnp.full((plan.owner_count,), epoch, dtype=jnp.int64),
             unique,
-            total if logical_count is None else logical_count,
+            count,
         )
 
     @property
@@ -577,38 +724,43 @@ class DistributedMigrationResult(NonTrainableState, StrictModule):
 
 
 @eqx.filter_jit
-def _audit_unique_ids(
-    plan: DistributedOwnershipPlan, identifiers: Array, active: Array
+def _audit_unique_values(
+    plan: DistributedOwnershipPlan, values: Array, active: Array, upper: int | None
 ) -> Array:
+    """Whether active values are globally distinct (and in ``[0, upper)``)."""
     owners = plan.owner_count
     capacity = plan.local_capacity
     axis = plan.axis_name
 
-    def audit(local_ids: Array, local_active: Array) -> Array:
+    def audit(local_values: Array, local_active: Array) -> Array:
         provider = JaxCollectiveProvider(axis)
-        bucket = jnp.mod(local_ids, owners).astype(jnp.int32)
+        bucket = jnp.mod(local_values, owners).astype(jnp.int32)
         rank, _ = _bucket_ranks(bucket, local_active, owners)
-        sent_ids = _pack(local_ids, bucket, rank, local_active, owners, capacity, 0)
+        sent = _pack(local_values, bucket, rank, local_active, owners, capacity, 0)
         sent_valid = _pack(
             local_active, bucket, rank, local_active, owners, capacity, False
         )
-        received_ids = provider.all_to_all(sent_ids, split_axis=0, concat_axis=0)
+        received = provider.all_to_all(sent, split_axis=0, concat_axis=0)
         received_valid = provider.all_to_all(sent_valid, split_axis=0, concat_axis=0)
-        flat_ids = received_ids.reshape((-1,))
+        flat = received.reshape((-1,))
         flat_valid = received_valid.reshape((-1,))
-        order = jnp.lexsort((flat_ids, ~flat_valid))
-        ordered_ids = flat_ids[order]
+        order = jnp.lexsort((flat, ~flat_valid))
+        ordered = flat[order]
         ordered_valid = flat_valid[order]
-        duplicate = jnp.any(
-            ordered_valid[1:] & ordered_valid[:-1] & (ordered_ids[1:] == ordered_ids[:-1])
+        failed = jnp.any(
+            ordered_valid[1:] & ordered_valid[:-1] & (ordered[1:] == ordered[:-1])
         )
-        return provider.maximum(duplicate.astype(jnp.int32)) == 0
+        if upper is not None:
+            failed = failed | jnp.any(
+                local_active & ((local_values < 0) | (local_values >= upper))
+            )
+        return provider.maximum(failed.astype(jnp.int32)) == 0
 
     return plan.map(
         audit,
         (_spec(axis, 1), _spec(axis, 1)),
         PartitionSpec(),
-    )(identifiers, active)
+    )(values, active)
 
 
 @eqx.filter_jit
@@ -658,7 +810,13 @@ def _migrate(
         received_epoch = route(sender_epoch, -1)
         received_leaves = tuple(route(leaf, 0) for leaf in leaves)
         received_count = jnp.sum(received_valid, dtype=jnp.int32)
-        epochs_consistent = jnp.all(~received_valid | (received_epoch == epoch[0]))
+        # Every owner must hold the same accepted source epoch: a stale owner
+        # that exchanges only with itself must not advance alongside current
+        # owners, and every received packet must carry that common epoch.
+        common_epoch = provider.minimum(epoch[0]) == provider.maximum(epoch[0])
+        epochs_consistent = common_epoch & jnp.all(
+            ~received_valid | (received_epoch == epoch[0])
+        )
 
         padding = max(local - owners * capacity, 0)
 

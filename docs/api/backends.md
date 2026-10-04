@@ -587,6 +587,111 @@ if phx.backends.amgx_availability().available:
 
 ::: phydrax.backends.release_amgx
 
+## Accelerated atomistic Pallas kernels
+
+`phydrax.backends.atomistic` is the admission owner for the accelerated MACE
+edge-coupling kernels (`phydrax.nn.atomistic.MACEAcceleratedCoupling`). These
+kernels are written once against JAX Pallas Mosaic GPU, where one warpgroup of
+`WARPGROUP_LANES = 128` lanes owns a channel tile. They have five
+receiver/source/radial/harmonic/coefficient roles (`MACECouplingRole`), whose
+backend problem kinds are given by `mace_coupling_problem_kind(role)`. A
+streamed relation owns the fragment schedule and calls these kernels as its
+whole-fragment aggregator. No target substitutes ordinary JAX for a kernel. The
+ordinary-JAX streamed route remains the portable reference.
+
+`pallas_atomistic_availability(target)` returns `BackendAvailability` for one
+`AtomisticAccelerationTarget`:
+
+| Target | Lowering | Admission |
+| --- | --- | --- |
+| `"cuda"` | `"pallas_mosaic_gpu"` | Active JAX GPU backend on the NVIDIA CUDA client with compute capability 9.0 or newer. Other GPU clients, such as ROCm, and older devices are refused. |
+| `"cpu_interpret"` | `"pallas_mosaic_gpu_interpret"` | Always available. The CPU Mosaic GPU interpreter executes the same kernel bodies for semantic reference verification. |
+
+HIP/ROCm and TPU are not implemented targets. `AtomisticKernelTarget(target)`
+resolves and refuses an unavailable target at construction. It records the
+device kind, compute capability, platform version, and JAX/jaxlib versions in
+`target_id`.
+
+`AtomisticKernelAdmission(request, target, limits=ATOMISTIC_KERNEL_LIMITS)`
+admits one `AtomisticKernelRequest` before execution. Each of the following
+raises a refusal error:
+
+- `accumulation="fast"`: only receiver-owned `"deterministic"` or
+  `"compensated"` accumulation is implemented, so atomic scatter is refused;
+- a channel tile that is not a power-of-two multiple of 128 lanes, or any
+  channel/receiver/edge tile above `maximum_tile`;
+- more reduction programs than `maximum_reduction_programs`;
+- a coupling degree, path count, or coefficient count outside the admitted
+  limits;
+- a planned per-program workspace above `maximum_workspace_bytes`;
+- a derivative order above `maximum_derivative_order`;
+- declared fragment operand/result bytes above the caller's explicit
+  `fragment_budget_bytes`.
+
+`AtomisticKernelLimits.maximum_workspace_bytes` is a planning bound computed
+from static structure and tiles, not a measured occupancy, register, or
+shared-memory figure. `AtomisticKernelPrecision` admits `"float32"` and
+`"float64"`.
+
+Admission is not qualification. For `"cpu_interpret"`,
+`qualification_scope` states that it is reference verification and not GPU
+correctness, performance, or memory qualification; interpreter runs are not GPU
+performance evidence. For `"cuda"`, admission names a runtime-admitted CUDA
+candidate on the resolved device at the requested precision. Numerical,
+derivative, and performance qualification of that `(device, precision)` tuple
+is separate evidence. No CUDA tuple has been hardware-qualified, and
+`PALLAS_ATOMISTIC_CAPABILITIES` describes the provider boundary only.
+
+::: phydrax.backends.pallas_atomistic_availability
+
+---
+
+::: phydrax.backends.PALLAS_ATOMISTIC_CAPABILITIES
+
+---
+
+::: phydrax.backends.AtomisticKernelTarget
+
+---
+
+::: phydrax.backends.AtomisticKernelRequest
+
+---
+
+::: phydrax.backends.AtomisticKernelLimits
+
+---
+
+::: phydrax.backends.ATOMISTIC_KERNEL_LIMITS
+
+---
+
+::: phydrax.backends.AtomisticKernelAdmission
+
+---
+
+::: phydrax.backends.mace_coupling_problem_kind
+
+---
+
+::: phydrax.backends.MACECouplingRole
+
+---
+
+::: phydrax.backends.AtomisticAccelerationTarget
+
+---
+
+::: phydrax.backends.AtomisticKernelLowering
+
+---
+
+::: phydrax.backends.AtomisticKernelPrecision
+
+---
+
+::: phydrax.backends.WARPGROUP_LANES
+
 ## Polynomial geometry providers
 
 The HomotopyContinuation boundary is a host-only numerical polynomial provider.

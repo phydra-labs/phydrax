@@ -104,8 +104,10 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
         )
         if any(not value for value in units):
             raise ValueError("Spin energy, field, and moment units must be explicit.")
-        if bool(np.any(np.asarray(graph.overflow))):
-            raise ValueError("Classical spin preparation refuses graph overflow.")
+        if not bool(np.all(np.asarray(graph.valid))):
+            raise ValueError(
+                "Classical spin preparation refuses graph overflow or nonfinite geometry."
+            )
         senders = np.asarray(graph.graph.senders, dtype=np.int64)
         receivers = np.asarray(graph.graph.receivers, dtype=np.int64)
         edge_mask = np.asarray(graph.graph.edge_mask, dtype=np.bool_)

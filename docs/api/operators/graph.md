@@ -411,18 +411,38 @@ that applies a spectral graph operator without an eigendecomposition.
 
 Phydrax-native graph layers pass messages over `GraphIR.edge_relation()`, a
 `phydrax.sparse.EdgeRelation` whose routes are the graph edges and whose
-validity mask is `edge_mask`. Node payloads are gathered onto routes with
-`gather_routes` and messages are reduced onto targets with `route_reduce`
-(`"sum"`, `"mean"`, `"max"`, or `"min"`). Routes with `edge_mask=False` are
-inert in every gather, reduction, softmax, and degree normalization, so padded or
-boundary routes change neither node outputs nor gradients. This contract covers
-`MeshGraphNet`, `GraphAttentionOperator`, `GraphKernelIntegral` and
-`GraphNeuralOperator` (select the reduction with `reduction=`),
-`EquivariantGraphConvolution`, `RelationalGraphConvolution`,
-`HypergraphConvolution`, the DEC operators, cluster
-pooling, and the edge-index layers `GCNConv`, `SAGEConv`, `GINConv`, and
-`MessagePassing` (`aggr="add"` is the route `"sum"`; empty targets reduce to
-zero).
+validity mask is `edge_mask`. Routes with `edge_mask=False` are inert in every
+gather, reduction, softmax, and degree normalization, so padded or boundary
+routes change neither node outputs nor gradients.
+
+Layers whose per-route message feeds an additive receiver update run on a
+prepared `phydrax.sparse.StreamedRelationPlan`. Each accepts an
+`execution: StreamedRelationPlan | None` argument. Each route's callback is
+evaluated once inside bounded tiles. Every receiver applies its normalization or
+update once to its complete aggregate after its last route, and the per-route
+messages are not materialized graph-wide:
+
+- `EquivariantGraphConvolution` (normalization by complete incoming weight);
+- `GraphKernelIntegral` with `reduction="sum"` or `"mean"` (count and measure
+  normalization in the receiver epilogue);
+- `MeshGraphNetBlock`/`MeshGraphNet` (all processor steps share one schedule).
+  Updated edge latents are a requested graph-wide edge output and are charged
+  as such; only the MLP hidden activations are bounded by the edge tile.
+
+Their graph callbacks (`radial_fn`, `kernel_fn`) must be declared per route with
+`RouteLocal`. A graph-wide callback is refused rather than evaluated per route.
+See [Streamed nonlinear relations](../../guides_sparse_spatial_hierarchies.md#streamed-nonlinear-relations)
+for schedule, evidence, and resource semantics.
+
+The remaining native layers gather node payloads onto routes with
+`gather_routes` and reduce messages onto targets with `route_reduce` (`"sum"`,
+`"mean"`, `"max"`, or `"min"`). These include `GraphKernelIntegral` with
+`reduction="max"` or `"min"`, `GraphNeuralOperator` (select the reduction with
+`reduction=`), `GraphAttentionOperator` (its softmax keeps explicit
+route-reduction ownership), `RelationalGraphConvolution`,
+`HypergraphConvolution`, the DEC operators, cluster pooling, and the edge-index
+layers `GCNConv`, `SAGEConv`, `GINConv`, and `MessagePassing` (`aggr="add"` is
+the route `"sum"`; empty targets reduce to zero).
 
 The jraph-compatible family (`GraphNetwork`, `InteractionNetwork`,
 `RelationNetwork`, `DeepSets`, `GraphNetGAT`, `GraphConvolution`, and
@@ -459,6 +479,10 @@ residual = phx.graph.GraphFiniteVolumeDivergence(normalize_by_volume=False)(grap
 ---
 
 ::: phydrax.graph.FacetAdjacency
+
+---
+
+::: phydrax.graph.RouteLocal
 
 ## Learned graph simulator architectures
 

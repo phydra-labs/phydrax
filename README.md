@@ -14,6 +14,16 @@ Host-side execution events use the default-silent
 diagnostics, lifecycle evidence, audit records, scalar metrics, and explicit
 runtime snapshots without replacing them.
 
+Native [MACE execution](docs/guides_mace_execution.md) composes bounded streamed
+relations, general real O(3) coupling, sparse symmetric products, multi-image
+periodic graphs, and conservative energy/force/stress derivatives. Exact and
+tabulated inference have distinct scientific identities. Training, durable
+model/state restart, owner-local feature halos, ASE/i-PI, and frozen native-JAX
+IREE export share the [atomistic runtime](docs/guides_atomistic.md).
+Support profiles remain unreleased candidates: CPU kernel interpretation is not
+GPU performance evidence, simulated/forced-device ownership is not multi-host
+qualification, and provider code licenses do not grant checkpoint rights.
+
 Differentially private learning uses the research-only
 [`phydrax.privacy`](docs/guides_privacy.md) control plane: explicit privacy
 units and adjacency, Google DP Accounting event composition, provider-coupled

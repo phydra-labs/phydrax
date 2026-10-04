@@ -31,6 +31,7 @@ from phydrax.units import (
 
 
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
+CUTOFF = 2.0
 
 
 def _execution(maximum_neighbors: Any = 3) -> Any:
@@ -93,6 +94,7 @@ def test_training_and_rmd17_scenario_1() -> None:
         problem = AtomisticTrainingProblem(
             batch,
             _execution(),
+            cutoff=CUTOFF,
             training_energy=energy if target_kind != "force" else None,
             training_forces=forces if target_kind != "energy" else None,
         )
@@ -108,6 +110,7 @@ def test_training_and_rmd17_scenario_1() -> None:
         assert result.training_loss_history.shape == (8,)
         assert result.energy_loss_history.shape == (8,)
         assert result.force_loss_history.shape == (8,)
+        np.testing.assert_allclose(result.stress_loss_history, 0.0)
         assert float(result.training_loss_history[-1]) < float(
             result.training_loss_history[0]
         )
@@ -122,6 +125,7 @@ def test_training_and_rmd17_scenario_1() -> None:
     problem_a = AtomisticTrainingProblem(
         batch,
         _execution(),
+        cutoff=CUTOFF,
         training_energy=energy,
         validation_batch=validation,
         validation_energy=jnp.asarray([1e3, -1e3, 2e3]),
@@ -129,6 +133,7 @@ def test_training_and_rmd17_scenario_1() -> None:
     problem_b = AtomisticTrainingProblem(
         batch,
         _execution(),
+        cutoff=CUTOFF,
         training_energy=energy,
         validation_batch=validation,
         validation_energy=jnp.asarray([-4e8, 7e8, 9e8]),
@@ -143,7 +148,9 @@ def test_training_and_rmd17_scenario_1() -> None:
     assert first.normalization.fitted_from_problem_id == problem_a.problem_id
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
+    problem = AtomisticTrainingProblem(
+        batch, _execution(), cutoff=CUTOFF, training_energy=energy
+    )
     initial = _potential(jr.key(4))
     first = fit_atomistic_potential(
         initial,
@@ -183,7 +190,7 @@ def test_training_and_rmd17_scenario_2() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     problem = AtomisticTrainingProblem(
-        batch, _execution(), training_energy=energy.at[1].set(jnp.nan)
+        batch, _execution(), cutoff=CUTOFF, training_energy=energy.at[1].set(jnp.nan)
     )
     result = fit_atomistic_potential(
         _potential(jr.key(6)),
@@ -212,7 +219,9 @@ def test_training_and_rmd17_scenario_2() -> None:
 
     fit_atomistic_potential(
         _potential(jr.key(8)),
-        AtomisticTrainingProblem(batch, _execution(), training_energy=energy),
+        AtomisticTrainingProblem(
+            batch, _execution(), cutoff=CUTOFF, training_energy=energy
+        ),
         AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
         session=session,
     )
@@ -228,6 +237,7 @@ def test_training_and_rmd17_scenario_2() -> None:
     first_problem = AtomisticTrainingProblem(
         batch,
         _execution(),
+        cutoff=CUTOFF,
         training_energy=energy,
         validation_batch=batch,
         validation_energy=energy,
@@ -237,6 +247,7 @@ def test_training_and_rmd17_scenario_2() -> None:
     changed_problem = AtomisticTrainingProblem(
         batch,
         _execution(),
+        cutoff=CUTOFF,
         training_energy=energy,
         validation_batch=batch,
         validation_energy=energy,
@@ -267,6 +278,7 @@ def test_training_and_rmd17_scenario_3() -> None:
     problem = AtomisticTrainingProblem(
         batch,
         _execution(),
+        cutoff=CUTOFF,
         training_energy=energy,
         training_forces=forces,
         # ty: ignore[invalid-argument-type]
@@ -284,7 +296,9 @@ def test_training_and_rmd17_scenario_3() -> None:
     energy, _ = _targets(batch)
     result = fit_atomistic_potential(
         _potential(jr.key(43)),
-        AtomisticTrainingProblem(batch, _execution(0), training_energy=energy),
+        AtomisticTrainingProblem(
+            batch, _execution(0), cutoff=CUTOFF, training_energy=energy
+        ),
         AtomisticTrainingPolicy(maximum_steps=2, force_weight=0.0),
     )
     assert int(result.status) == int(AtomisticStatus.NEIGHBOR_OVERFLOW)
@@ -292,7 +306,9 @@ def test_training_and_rmd17_scenario_3() -> None:
     assert result.training_loss_history.shape == (0,)
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
+    problem = AtomisticTrainingProblem(
+        batch, _execution(), cutoff=CUTOFF, training_energy=energy
+    )
     continuation = fit_atomistic_potential(
         _potential(jr.key(405)),
         problem,
@@ -318,7 +334,9 @@ def test_training_and_rmd17_scenario_3() -> None:
     initial = _potential(jr.key(44))
     result = fit_atomistic_potential(
         initial,
-        AtomisticTrainingProblem(batch, _execution(), training_energy=energy),
+        AtomisticTrainingProblem(
+            batch, _execution(), cutoff=CUTOFF, training_energy=energy
+        ),
         AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
     )
     assert int(result.validation_steps[0]) == 0
@@ -420,6 +438,7 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(
         AtomisticTrainingProblem(
             batch,
             _execution(),
+            cutoff=CUTOFF,
             training_energy=teacher.energy,
             training_forces=teacher.forces,
         ),
@@ -442,7 +461,9 @@ def test_training_rejects_cross_family_continuation() -> None:
     for continuation_family in ["painn", "nequip"]:
         batch = _batch()
         energy, _ = _targets(batch)
-        problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
+        problem = AtomisticTrainingProblem(
+            batch, _execution(), cutoff=CUTOFF, training_energy=energy
+        )
 
         def nequip(key: Any) -> Any:
             return NequIPPotential(

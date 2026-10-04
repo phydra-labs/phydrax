@@ -63,22 +63,75 @@ Pair exclusions and 1–4 scales are explicit sparse stable-ID exceptions. Activ
 singular geometries and FENE extension at or beyond the maximum fail; they are not
 repaired by clipping distances or logarithm arguments.
 
-PaiNN and NequIP use `LearnedGraphPotentialTerm`. Dense prediction resources now belong
-to `AtomisticGraphExecutionPlan`, not model architecture identity. Periodic learned-graph
-execution requires `allow_periodic=True`; that is an execution capability, not evidence
+PaiNN, NequIP, and native MACE use `LearnedGraphPotentialTerm`. Graph resources belong
+to `AtomisticGraphExecutionPlan`, not to model architecture identity. Its
+`image_capacity` charges image-aware routes, and its optional `StreamedRelationPlan`
+prepares the receiver-major schedule once per topology epoch. Periodic learned-graph
+execution requires `allow_periodic=True`. That is an execution capability, not evidence
 that a fitted model is stable for molecular dynamics.
 
 ## Fixed-capacity neighborhoods
 
-Dense, cell-list, metric triclinic cell-list, and certificate-based Verlet backends retain
-the existing fail-closed particle contract. A triclinic `PeriodicCell` prepares a finite
-minimum-image stencil from its condition number. Short-range preparation requires a
-unique-image radius. Verlet certificates include both particle displacement and cell
-deformation.
-
 No overflow truncates neighbors. Candidate, cell, pair, domain, image, potential,
-constraint, thermostat, nonfinite, and stale-force failures remain separate rejection bits.
-A failed step retains the last accepted state.
+constraint, thermostat, nonfinite, and stale-force failures remain separate rejection
+bits. A failed step retains the last accepted state.
+
+### Pair-once neighborhoods
+
+Dense, cell-list, metric triclinic cell-list, and certificate-based Verlet backends
+retain the existing fail-closed particle contract for `ParticlePairRelation`. Each
+unordered distinct pair appears once, under its minimum image. A triclinic
+`PeriodicCell` prepares a finite minimum-image stencil from its condition number.
+Classical pair-once terms keep their unique-image guards. `AtomisticPotentialProgram`
+requires the cell's unique-image radius to cover every classical cutoff. With a
+pair-once neighborhood, `AtomisticDynamicsPlan` also requires it to cover the program
+cutoff plus the Verlet skin. Runtime cells outside the unique-image certificate fail
+closed. Verlet certificates include both particle displacement and cell deformation.
+
+### Image-aware neighborhoods for learned graphs
+
+A learned directed graph may use a cutoff larger than the unique-image radius. It then
+consumes a directed `ParticleImageRelation`. For row cell `H`, every route has
+
+`d_e = r_receiver - r_source + n_e @ H`
+
+with an explicit integer translation `n_e`. The pair `(i == j, n == 0)` is excluded.
+Every nonzero self image and every repeated image of a pair are separate routes. Route
+identity is the stable `(source, receiver, n, case)` tuple, and reversal maps it to
+`(receiver, source, -n)`. Nonperiodic axes of a partially periodic cell have zero
+integer components.
+
+`PeriodicCell.image_stencil` bounds the complete translation set from the lattice
+inverse at `cutoff + skin`. It refuses ill-conditioned cells and stencils over
+`maximum_image_count`. The image searches (`CellListParticleImageNeighborhoodPlan`,
+and `DenseParticleImageNeighborhoodPlan` as a bounded reference) charge cell occupancy,
+edges, receiver degree, and images separately through `ParticleImageCapacity`.
+
+An image-aware neighborhood is admitted only for programs made purely of directed-graph
+terms. A program that mixes classical and learned terms must use a pair-once
+neighborhood, so every classical term's unique-image guard still applies. An image
+neighborhood refuses such a program, and a pair-once neighborhood refuses a cutoff
+beyond the unique-image radius. This preserves classical pair multiplicity.
+
+`ImageVerletParticleNeighborhoodPlan` caches the image relation. Rewrapping an atom
+across a periodic face updates the cached `n` by the exact image-count difference, so
+displacements are unchanged and no rebuild or sort occurs. The cached relation is reused
+while its `ImageCertificate` holds. The certificate charges particle displacement and
+the cell deformation of every stencil coefficient, which covers images missing from the
+cached relation. When it expires, or when the coverage margin of the current cell is
+exhausted, the search re-enumerates. A cell outside the prepared stencil envelope is a
+scientific failure, not a capacity failure.
+
+Capacity growth is an explicit host transaction. `ParticleImageCapacityLadder`
+declares a finite, strictly increasing capacity sequence.
+`phx.atomistic.retry_atomistic_step_with_capacity(dynamics, state, thermodynamic,
+states, ladder)` attempts one step. If the step is rejected only for image cell or
+route capacity, it selects the next covering ladder entry and rebinds the accepted
+state through `PreparedAtomisticDynamics.rebind_neighborhood`. Kinematics, RNG,
+thermostat/barostat state, energy ledger, step index, and force cache are retained
+exactly. It then retries the same physical attempt. Scientific, domain, and geometric
+failures are returned unchanged and never retried. An exhausted ladder raises, so
+capacity never grows without bound.
 
 ## Thermodynamic state, NVE, and NVT
 
@@ -115,9 +168,31 @@ count.
 
 ## Periodic stress, PME, and pressure
 
-`atomistic_cell_energy_and_stress` differentiates fixed-fractional energy with respect to
-homogeneous strain. It is available only when every term supports dynamic cell geometry.
-The ordinary diagnostics virial remains available for fixed cells.
+`atomistic_cell_energy_and_stress`, and `program.evaluate(..., compute_stress=True)`,
+differentiate the same scalar energy with respect to homogeneous strain, at fixed
+fractional coordinates and fixed integer images. The convention is unchanged: column
+deformation `F = I + strain` maps row lattice vectors to `H' = H @ F.T` and positions to
+`origin + (r - origin) @ F.T`. `AtomisticStressConvention` names the result:
+`stress = sym(dE/dstrain) / |det H|`, positive under tension (pressure
+`-trace(stress) / 3`).
+
+- `CAUCHY_TENSION_POSITIVE` applies to fully periodic cells, where `|det H|` is the
+  physical volume.
+- `CAUCHY_TENSION_POSITIVE_EMBEDDING_VOLUME` applies to partially periodic cells. It
+  requires a full invertible 3x3 cell whose nonperiodic rows declare the embedding
+  thickness.
+
+A lower-rank lattice without an embedding volume is refused rather than given an
+invented thickness. Requested stress also refuses unless every term owns a cell
+derivative. It never falls back to zero or to the position-moment diagnostics virial,
+which remains available for fixed cells.
+
+Learned directed graphs with `allow_periodic=True` now own that cell derivative, through
+the explicit image vectors `n @ H`. Stress is therefore available for periodic PaiNN,
+NequIP, and MACE programs, including stress beyond the unique-image radius. Image terms
+enter the strain derivative directly. A self-image edge contributes zero net positional
+force but a nonzero cell stress, so a one-atom periodic cell has zero force and a
+nonzero strain response.
 
 `ParticleMeshEwaldPotential` uses the native periodic tensor B-spline particle-grid
 transfer, an FFT reciprocal solve, B-spline influence correction, real-space Ewald,
@@ -128,6 +203,11 @@ policy. `EwaldReferencePotential` provides a direct reciprocal reference.
 temperature, and the volume-measure entity count come from the thermodynamic state and
 phase-space measure. The move records proposal work and acceptance. Dynamic-cell moves
 currently require a dense pair authority and reject learned graph terms.
+
+Periodic learned graphs, MACE included, are admitted for fixed-cell NVE
+(`VelocityVerletPlan`) and NVT (`BAOABLangevinPlan`) dynamics over an image-aware Verlet
+neighborhood. No NPT or other dynamic-cell method is admitted for learned graph terms.
+Fixed-cell dynamics and strain evaluation alone do not establish NPT support.
 
 ## Rollout, replay, and persistence
 
@@ -142,12 +222,39 @@ prepared system, Hamiltonian, neighborhood, integrator, thermodynamic table, and
 parameter identity. There is no repair, implicit minimization, or changed protocol on
 resume.
 
+A runtime checkpoint still requires the caller to recreate the matching prepared
+potential. For learned models, `write_atomistic_restart(path, plan, state, model=model)`
+writes a portable restart instead. It bundles the pickle-free native model artifact with
+the dynamics state, and every learned term executed by `plan` must run exactly that
+model. A fresh process restores the model with `read_atomistic_restart_model(path)`,
+rebuilds its dynamics over the restored model, and resumes with
+`read_atomistic_restart(path, plan, template)`. An altered model, source binding,
+system, integrator, thermodynamic table, scope, or graph preparation is refused before
+any state is returned. Compiled caches are not part of restart correctness. See the
+[periodic MACE recipe](cookbook/atomistic_dynamics.md#periodic-native-mace-dynamics)
+and the [atomistic API](api/atomistic.md).
+
+The `AtomisticGraphExecutionPlan` identity now includes `image_capacity`, `streamed`,
+and `maximum_candidate_slots`. As a result, graph-execution identities, and the
+prepared-program identities that embed them, differ from those prepared before this
+change. Rebuild the preparation and write a new checkpoint rather than resuming across
+that boundary.
+
 ## Hybrid and specialized dynamics
 
 Potential composition includes coefficients, typed controlled Hamiltonians, region
 masks, subtractive regional replacement, force groups, and RESPA stepping. External electronic
 providers have explicit conservative and differentiable capabilities. The
 Born–Oppenheimer adapter is a host provider boundary, not an electronic-structure engine.
+`NativeAtomisticProviderPlan(model, graph_execution, finite_neighborhood=..., skin=...)`
+prepares one learned model as a `NativeAtomisticProvider`. Periodic systems get an
+image-aware Verlet cache, sized by `graph_execution.image_capacity`, over a cell-list
+image search of radius `cutoff + skin`; finite systems get a Verlet cache over
+`finite_neighborhood`. The provider serves energy, forces, and stress from one
+`program.evaluate` pass. Stress is available exactly when the cell is fully periodic
+3D. `provider.program` and `provider.neighborhood` drive the same model in
+`AtomisticDynamicsPlan`. A periodic learned graph served through the provider requires
+the image-aware neighborhood.
 
 Ring-polymer dynamics uses a leading bead axis, mass-correct springs, centroid and
 radius-of-gyration estimators, and PILE normal-mode thermostatting. The method is intended

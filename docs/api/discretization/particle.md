@@ -72,6 +72,183 @@
 
 ::: phydrax.discretization.particle_graph_view
 
+## Periodic cells and image-aware neighborhoods
+
+`PeriodicCell` stores row lattice vectors `H`. Its nearest-image stencil serves
+classical pair-once relations (`ParticlePairRelation`), which keep their
+unique-image guards. `PeriodicCell.image_stencil(radius, maximum_image_count=...)`
+is a separate, complete enumeration: it returns a `PeriodicImageStencil` holding
+every integer translation `n` for which `d = x_receiver - x_source + n @ H` can
+satisfy `|d| < radius`. It bounds the extent on each periodic axis by
+`floor(fractional_excursion + radius * ||H^+[:, a]||)` using the host right
+inverse. Nonperiodic axes have zero extent. The cell's condition certificate
+applies, and a stencil larger than `maximum_image_count` is refused rather than
+truncated. `lattice_right_inverse_with_status` and `lattice_measure` are the
+traced, non-raising lattice solve and `sqrt(det(H @ H.T))` measure; both return
+a status flag in place of a substitute value.
+
+`ParticleImageRelation` is directed and image-aware. Route `e` is identified by
+the stable tuple `(source id, receiver id, n, case)` and has displacement
+`d_e = x[receiver] - x[source] + n_e @ H`. Only `(source == receiver, n == 0)` is
+excluded. Every nonzero self image and every repeated image of a pair is a
+distinct route. `reversed()` maps `(source, receiver, n)` to
+`(receiver, source, -n)`. `with_representation_offsets` updates `n` by the exact
+image-count difference when positions are rewrapped, without rebuilding or
+re-sorting the relation. Shifts, wrap counts and offsets live in the symmetric
+int32 range `|n| <= 2**31 - 1`; wider integers are refused before storage, never
+clipped or wrapped. This relation is not pair-once. Classical pair terms do not
+consume it.
+
+`CellListParticleImageNeighborhoodPlan` is the scalable fractional cell-list
+search. It is not limited by the unique-image radius, and it charges
+`maximum_candidate_slots` from the scalar stencil size before enumerating any
+offsets. `DenseParticleImageNeighborhoodPlan` is a bounded, named dense
+reference for validation and small systems, guarded by `maximum_dense_routes`.
+`ParticleImageCapacity` charges cell occupancy, stored edges, receiver degree,
+and image count separately. `ParticleImageRelationEvidence` keeps capacity
+failures (cell, image, edge, degree) separate from scientific failures (stencil
+envelope, domain, nonfinite, representation overflow). A singular or non-finite
+runtime cell is a case-level `nonfinite` failure even when no particle is
+active. `representation_overflow` reports an active wrap count or route shift
+outside the int32 image range, for example coordinates billions of cells from
+the origin; translated systems inside that range keep their exact routes.
+`ParticleImageCapacityLadder.select` advances to the next declared covering
+entry only for a capacity-only failure. It refuses scientific failures and
+raises once the ladder is exhausted.
+
+`ParticleImageNeighborhoodState` stores the build-frame `reference_positions`
+(flat case-major) alongside `cell_vectors`, `wrap_counts` and
+`stencil_extents`. Its `with_representation_offsets` moves routes, reference
+positions and wrap counts together, so image certificates are unchanged, and
+marks `representation_overflow` instead of raising.
+
+`ImageVerletParticleNeighborhoodPlan` caches an image relation searched at
+`interaction_radius + skin`. `ImageCertificate` (from `image_certificate`) keeps
+the cache valid while two conditions hold:
+
+- `2 max|dx| + sum_i K_i |dH_i| <= skin`, charged over the complete stencil
+  extents `K`. This covers stored routes and images absent from the cached
+  relation.
+- The fractional-spread coverage margin stays positive under the current cell.
+
+Otherwise `PreparedImageVerletParticleNeighborhood.update` re-enumerates. Wraps
+across a periodic face reuse the cached epoch through exact image-count
+offsets; a count difference or re-expressed shift outside the int32 image range
+forces a rebuild, and unrepresentable active image counts make the state
+unsuccessful. An optional `StreamedRelationPlan` prepares the receiver-major
+schedule once per rebuild epoch.
+
+`FractionalOwnerPartition` splits the fractional coordinates of a periodic,
+triclinic, or partially periodic `PeriodicCell` into an owner grid. On
+nonperiodic axes the outer owner regions extend to infinity. `alias_mask`
+conservatively selects the image aliases that can reach each owner's receivers,
+and `local_alias_exchange` packs them into fixed-capacity `ImageAliasPackets`
+inside one mapped owner region. Completeness over translations is the caller's
+`PeriodicImageStencil` contract. See the
+[distributed atomistic guide](../../guides_atomistic_distributed_execution.md#owner-local-learned-execution).
+
+::: phydrax.discretization.PeriodicCell
+
+---
+
+::: phydrax.discretization.PeriodicImageStencil
+
+---
+
+::: phydrax.discretization.lattice_right_inverse_with_status
+
+---
+
+::: phydrax.discretization.lattice_measure
+
+---
+
+::: phydrax.discretization.ParticleImageRelation
+
+---
+
+::: phydrax.discretization.ParticleImageRelationEvidence
+
+---
+
+::: phydrax.discretization.ParticleImageCapacity
+
+---
+
+::: phydrax.discretization.ParticleImageCapacityLadder
+
+---
+
+::: phydrax.discretization.AbstractImageRouteSearch
+
+---
+
+::: phydrax.discretization.CellListImageRouteSearch
+
+---
+
+::: phydrax.discretization.DenseImageRouteSearch
+
+---
+
+::: phydrax.discretization.ImageRouteSearchResult
+
+---
+
+::: phydrax.discretization.AbstractParticleImageNeighborhoodPlan
+
+---
+
+::: phydrax.discretization.AbstractPreparedParticleImageNeighborhood
+
+---
+
+::: phydrax.discretization.CellListParticleImageNeighborhoodPlan
+
+---
+
+::: phydrax.discretization.PreparedCellListParticleImageNeighborhood
+
+---
+
+::: phydrax.discretization.DenseParticleImageNeighborhoodPlan
+
+---
+
+::: phydrax.discretization.PreparedDenseParticleImageNeighborhood
+
+---
+
+::: phydrax.discretization.ParticleImageNeighborhoodState
+
+---
+
+::: phydrax.discretization.ImageVerletParticleNeighborhoodPlan
+
+---
+
+::: phydrax.discretization.PreparedImageVerletParticleNeighborhood
+
+---
+
+::: phydrax.discretization.ParticleImageVerletState
+
+---
+
+::: phydrax.discretization.image_certificate
+
+---
+
+::: phydrax.discretization.ImageCertificate
+
+---
+
+::: phydrax.discretization.FractionalOwnerPartition
+
+---
+
+::: phydrax.discretization.ImageAliasPackets
+
 ## Discrete element method
 
 ::: phydrax.discretization.ParticlePairKeySpace

@@ -148,16 +148,19 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
     def _evaluate(
         self, positions: Array, image_counts: Array, cell_vectors: Array, /
     ) -> tuple[AtomisticHamiltonianEvaluation, Array]:
-        neighborhood = self.dynamics.neighborhood.build(positions)
+        neighborhood, _ = self.dynamics._build_neighborhood(
+            positions, None, cell_vectors, image_counts
+        )
         unwrapped = positions + contract(
             "ni,ij->nj", image_counts.astype(positions.dtype), cell_vectors
         )
         cell = self.cell.cell
+        # The program derives fractional coordinates of ``positions`` under the
+        # runtime vectors and reports the lattice solve status.
         evaluation = self.dynamics.potential.evaluate(
             positions,
             neighborhood,
             unwrapped_positions=unwrapped,
-            fractional_positions=cell.fractional_with_vectors(positions, cell_vectors),
             species=self.dynamics.system.plan.atom_type_ids,
             cell=cell,
             cell_vectors=cell_vectors,

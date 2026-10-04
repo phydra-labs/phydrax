@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `798533040bc4bb3307072f7d199cd4d714db46ea91039e1b9aa2b2f15ecbaee8`
+Catalog ID: `a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 300 |
+| candidate | 301 |
 | research | 171 |
 | internal | 5 |
 | retired | 0 |
@@ -119,6 +119,7 @@ Catalog ID: `798533040bc4bb3307072f7d199cd4d714db46ea91039e1b9aa2b2f15ecbaee8`
 | `application.vascular-devices` | `phydrax.applications.vascular_devices` | research | application-research | 0 |
 | `application.vortex-flow` | `phydrax.applications.vortex_flow` | research | application-research | 0 |
 | `application.wind-energy` | `phydrax.applications.wind_energy` | research | application-research | 0 |
+| `atomistic.mace-inference` | `phydrax.atomistic` | candidate | candidate | 4 |
 | `atomistic.transport.green-kubo` | `phydrax.applications` | candidate | candidate | 1 |
 | `battery.dfn.isothermal-finite-volume` | `phydrax.applications.battery` | candidate | candidate | 1 |
 | `battery.pack.series-dfn` | `phydrax.applications.battery` | candidate | candidate | 1 |

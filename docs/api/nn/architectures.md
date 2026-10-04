@@ -1790,16 +1790,169 @@ existing lattice callable and costs one model evaluation per group element.
 cross-dimensional embeddings and rejects a projected kernel whose discarded
 relative residual exceeds the configured tolerance.
 
-#### Low-degree Cartesian O(3) tensor products
+#### O(3) irreps and tensor products
 
-`O3TensorProductPlan` uses the existing `O3Representation` packing for ordinary
-and pseudo scalars, vectors, and symmetric-traceless rank-two tensors. It
-enumerates legal degree/parity paths through degree two, canonical `uvw`
-multiplicity connections, component normalization, parameter count, contraction
-work, coefficient storage, resource limits, and content identity before
-allocation. `O3TensorProduct` prepares independently derived Cartesian
-Clebsch--Gordan maps and accepts either internal trainable weights or one
-externally supplied weight per planned multiplicity connection.
+Two native layout kinds share one coupling plan. They are distinct
+representations, not aliases of each other.
+
+- `O3Representation` (with its `O3Features` view) is the physical Cartesian
+  field layout used by NequIP, EqGINO, and meshfree constitutive laws. It
+  packs ordinary and pseudo scalars, vectors as `(x, y, z)`, and
+  symmetric-traceless rank-two tensors. Its existing block order, basis,
+  multiplicity indexing, and learned parameter shapes are unchanged.
+  `irrep_blocks` describes its blocks as O(3) irreps, and the static
+  `O3Representation.real_harmonic_basis(degree)` is the explicit orthogonal
+  map from its Cartesian components to the real harmonic basis. Equal
+  dimensions alone are not a basis map.
+- `O3IrrepLayout` packs named `O3IrrepBlock(name, degree, parity,
+  multiplicity=...)` blocks of arbitrary degree in declaration order. Blocks
+  that share degree and parity remain distinct, and nothing is sorted or merged.
+  Each block is stored multiplicity-major as `(multiplicity, 2 l + 1)` in the
+  real harmonic basis of `phydrax.special.RealCartesianHarmonics`. That basis
+  has orders `m = -l..l` and no Condon--Shortley phase, so degree one is
+  `(y, z, x)`. Parity (`O3Parity`, `+1` or `-1`) is the sign under inversion.
+  `split`/`join` convert between packed values and per-block arrays.
+  `transform` and `representation_matrix` apply a full O(3) frame change,
+  reflections included, through `o3_irrep_action`.
+
+`o3_real_coupling(l1, l2, l3)` returns the exact sparse, component-normalized
+real coupling `O3RealCoupling` for one degree triangle. It is derived from exact
+SU(2) Clebsch--Gordan coefficients through the exact complex-to-real map.
+Omitted entries are mathematical zeros, with no numerical pruning. Coupling
+ignores parity; a tensor-product path is legal only when
+`|l1 - l2| <= l3 <= l1 + l2` and `p3 = p1 * p2`.
+
+`O3TensorProductPlan(left, right, output, paths=..., connection_mode=...)`
+accepts three layouts of the same kind: all Cartesian `O3Representation`
+(degrees zero to two, with the independently derived analytic Cartesian
+couplings) or all general `O3IrrepLayout` (couplings from
+`o3_real_coupling`). Mixing kinds is refused. Without `paths`, every legal
+degree/parity block triple is enumerated left-major with one
+`connection_mode`, which defaults to `"uvw"`. Explicit `O3TensorProductPath`
+values select blocks by name and declare per path:
+
+- `connection_mode="uvw"`: one weight per `(output w, left u, right v)`
+  multiplicity triple, stored `(w, u, v)`;
+- `connection_mode="uvu"`: `out[u] = sum_v weight[u, v] C(left[u], right[v])`,
+  stored `(u, v)`. Left and output multiplicities must be equal. Only `"uvu"`
+  admits `weighted=False`, which sums over `v`;
+- `path_scale`: a nonzero factor applied to the component-normalized coupling,
+  for example an imported source path normalization or basis sign.
+
+Component normalization gives every coupling output component unit coefficient
+norm. Path count, parameters, staged multiply-adds, dense coefficient storage,
+and the per-element working set are resolved before any allocation and checked
+against `maximum_paths`, `maximum_parameters`, `maximum_multiply_adds`,
+`maximum_coefficients`, and `maximum_working_set`. They are reported by
+`resource_evidence`, and `path_weight_layout` gives each path's offset and
+shape in the flat weight axis.
+
+`O3TensorProduct` prepares the dense output-major coupling tables. It accepts
+either internal trainable weights or externally supplied per-element path
+weights, such as radial-network outputs. `coefficients=` binds imported source
+tables only within an explicit `coefficient_tolerance` of the native coupling
+times `path_scale`. `coefficient_id` identifies the executed tables, their
+origin, and the tolerance. `O3IrrepLinear` mixes multiplicities between
+general layouts, combining every input block of identical degree and parity.
+An output block without a matching input block is refused.
+
+```python
+import jax
+import jax.numpy as jnp
+import phydrax as phx
+
+representations = phx.nn.operator.representations
+layers = phx.nn.operator.layers
+O3IrrepBlock = representations.O3IrrepBlock
+O3IrrepLayout = representations.O3IrrepLayout
+
+hidden = O3IrrepLayout(
+    (
+        O3IrrepBlock("h0e", 0, 1, multiplicity=4),
+        O3IrrepBlock("h1o", 1, -1, multiplicity=4),
+        O3IrrepBlock("h3o", 3, -1, multiplicity=4),
+    )
+)
+# Edge harmonics through degree three, packed exactly like RealCartesianHarmonics(3).
+harmonics = phx.special.RealCartesianHarmonics(3)
+edge_layout = O3IrrepLayout(
+    tuple(O3IrrepBlock(f"y{degree}", degree, (-1) ** degree) for degree in range(4))
+)
+messages = O3IrrepLayout(
+    (
+        O3IrrepBlock("m1o", 1, -1, multiplicity=4),
+        O3IrrepBlock("m2e", 2, 1, multiplicity=4),
+    )
+)
+plan = layers.O3TensorProductPlan(
+    hidden,
+    edge_layout,
+    messages,
+    paths=(
+        layers.O3TensorProductPath("h0e", "y1", "m1o", connection_mode="uvu"),
+        layers.O3TensorProductPath("h1o", "y0", "m1o", connection_mode="uvu"),
+        layers.O3TensorProductPath("h1o", "y1", "m2e", connection_mode="uvu"),
+        layers.O3TensorProductPath(
+            "h3o", "y1", "m2e", connection_mode="uvu", path_scale=0.5
+        ),
+        layers.O3TensorProductPath("h1o", "y2", "m1o", connection_mode="uvw"),
+    ),
+    maximum_paths=16,
+)
+product = layers.O3TensorProduct(plan, internal_weights=False)
+
+key_v, key_h, key_w = jax.random.split(jax.random.key(0), 3)
+vectors = jax.random.normal(key_v, (8, 3))
+features = jax.random.normal(key_h, (8, hidden.packed_size))
+weights = jax.random.normal(key_w, (8, plan.parameter_count))  # e.g. radial outputs
+output = product(features, harmonics(vectors), weights)  # (8, messages.packed_size)
+
+# Equivariance under an improper orthogonal transform, through the layouts' actions.
+rotation, _ = jnp.linalg.qr(jax.random.normal(jax.random.key(1), (3, 3)))
+reflection = rotation * jnp.sign(-jnp.linalg.det(rotation))
+transformed = product(
+    hidden.transform(features, reflection), harmonics(vectors @ reflection.T), weights
+)
+error = jnp.max(jnp.abs(transformed - messages.transform(output, reflection)))
+```
+
+For this plan `resource_evidence` reports 5 paths and 32 parameters, and
+`error` was observed at float64 rounding level (about `2e-15`). Gradients with
+respect to `vectors` and `weights` are ordinary JAX derivatives.
+
+`phydrax.nn.atomistic.NequIPPotential` keeps the Cartesian `O3Representation`
+route with external radial weights for every planned instruction. Native MACE
+uses the general `O3IrrepLayout` route (see
+[Atomistic simulation](../../guides_atomistic.md)). Both are continuous O(3)
+equivariance in three dimensions, not the finite lattice-group contract above.
+
+::: phydrax.nn.operator.representations.O3IrrepBlock
+
+---
+
+::: phydrax.nn.operator.representations.O3IrrepLayout
+
+---
+
+::: phydrax.nn.operator.representations.O3Parity
+
+---
+
+::: phydrax.nn.operator.representations.O3RealCoupling
+
+---
+
+::: phydrax.nn.operator.representations.o3_real_coupling
+
+---
+
+::: phydrax.nn.operator.representations.o3_irrep_action
+
+---
+
+::: phydrax.nn.operator.layers.O3TensorProductPath
+
+---
 
 ::: phydrax.nn.operator.layers.O3TensorProductPlan
 
@@ -1807,11 +1960,9 @@ externally supplied weight per planned multiplicity connection.
 
 ::: phydrax.nn.operator.layers.O3TensorProduct
 
-`phydrax.nn.atomistic.NequIPPotential` uses external radial weights for every
-actual planned instruction. This is continuous O(3) equivariance in three
-dimensions, not the finite lattice-group contract above. Its supported research
-scope is degree at most two and finite nonperiodic molecules; it is neither an
-arbitrary irreps layer nor a high-degree or MACE implementation.
+---
+
+::: phydrax.nn.operator.layers.O3IrrepLinear
 
 #### Clifford grade fields
 

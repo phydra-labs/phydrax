@@ -283,8 +283,9 @@ normalizes each vector, is invariant to positive rescaling, and returns a
 lane-local complex `NaN` for a zero or nonfinite vector. Direct Cartesian
 evaluation retains finite, correct derivatives on the z-axis instead of
 differentiating through the singular angular chart. It remains an angular
-harmonic, not the solid harmonic `r**n * Y_n^m`, and no public all-mode table is
-provided.
+harmonic, not the solid harmonic `r**n * Y_n^m`. These complex functions
+evaluate one `(n, m)` mode per call. The packed real all-degree table is
+`RealCartesianHarmonics` below.
 
 Low-width real inputs are evaluated as float32.
 `sph_legendre_p` returns float32 or float64; `sph_harm_y` and
@@ -309,14 +310,58 @@ Condon--Shortley basis above. Degree and order are static; real Cartesian
 vectors end in length three and broadcast over leading axes. Regular modes are
 homogeneous Cartesian polynomials with their analytic origin values.
 Irregular modes are singular at the origin and return lane-local complex
-`NaN` for zero or nonfinite vectors. No public all-mode table or spin-valued
-pairwise alias is provided.
+`NaN` for zero or nonfinite vectors. These complex functions provide no
+all-mode table or spin-valued pairwise alias.
 
 ::: phydrax.special.solid_harmonic_regular
     options:
       show_root_heading: true
 
 ::: phydrax.special.solid_harmonic_irregular
+    options:
+      show_root_heading: true
+
+## Real Cartesian harmonics
+
+`RealCartesianHarmonics(maximum_degree, normalization=..., argument=...)`
+evaluates every real harmonic through a static maximum degree in one packed
+array `(..., (maximum_degree + 1) ** 2)`. Components are ordered degree-major
+and, within a degree, by `m = -l, ..., l`; `component_offset(l)` is the packed
+offset of `m = -l`. The real basis removes the Condon--Shortley phase from the
+complex orthonormal `sph_harm_y_cart` modes, so degree one is proportional to
+`(y, z, x)`. `real_harmonic_basis(l)` returns the exact unitary `U` with
+`S_l = U @ Y_l`. This is the native component basis of
+`phydrax.nn.operator.representations.O3IrrepLayout`.
+
+Values are Cartesian polynomials evaluated by the solid-harmonic recurrence, so
+no polar-angle chart or pole singularity enters values or derivatives.
+
+- `argument="direction"` evaluates the harmonics of `v / |v|`. A zero-length or
+  nonfinite vector has no direction, and all of its components are `NaN`. The
+  computation runs on a fixed admitted direction, so other entries keep finite
+  derivatives. Replace inactive padding with an admitted direction before
+  evaluation, or mask it afterward.
+- `argument="regular_solid"` evaluates `|v|**l S_{l,m}(v / |v|)`, a homogeneous
+  polynomial that is smooth everywhere, including the origin.
+
+`normalization` scales each degree uniformly and preserves equivariance:
+`"orthonormal"` (unit integral over the sphere), `"fully_normalized"`
+(`sum_m S_{l,m}**2 = 2 l + 1` on unit directions), or `"schmidt"`
+(`sum_m S_{l,m}**2 = 1`).
+
+::: phydrax.special.RealCartesianHarmonics
+    options:
+      show_root_heading: true
+
+::: phydrax.special.real_harmonic_basis
+    options:
+      show_root_heading: true
+
+::: phydrax.special.RealHarmonicArgument
+    options:
+      show_root_heading: true
+
+::: phydrax.special.RealHarmonicNormalization
     options:
       show_root_heading: true
 

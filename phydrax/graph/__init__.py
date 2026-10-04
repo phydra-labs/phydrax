@@ -236,6 +236,7 @@ from ._query_batch import (
     QueryNeighborhood,
     QueryNeighborhoodEvidence,
 )
+from ._route_payload import RouteLocal
 from ._simplicial import (
     SimplicialComplexGraph,
     triangle_mesh_to_simplicial_graph,
@@ -283,6 +284,7 @@ def __dir__() -> list[str]:
 
 __all__ = [
     *_gauge_transport_all,
+    "RouteLocal",
     "compat",
     "nn",
     "FixedTopologyGraphDiffusion",

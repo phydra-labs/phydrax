@@ -321,9 +321,10 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
         coordinate_map = plan.coordinate_map.prepare(particles)
         inverse = jnp.where(plan.active_mask, 1.0 / plan.masses, 0.0)
         mobile_count = int(np.count_nonzero(np.asarray(plan.mobile_mask)))
-        molecule_labels = tuple(
-            np.unique(np.asarray(plan.molecule_ids)[np.asarray(plan.active_mask)])
+        molecule_label_values = np.unique(
+            np.asarray(plan.molecule_ids)[np.asarray(plan.active_mask)]
         )
+        molecule_labels = tuple(int(label) for label in molecule_label_values)
         degrees = 3 * mobile_count - topology.constraint_count
         if degrees <= 0:
             raise ValueError(
@@ -351,7 +352,9 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
                 "topology": topology.topology_id,
                 "units": plan.units.unit_system_id,
                 "coordinate_map": coordinate_map.prepared_id,
-                "molecule_labels": list(molecule_labels),
+                # Identity keeps the plan-dtype label scalars; the static field
+                # stores the same values as host ints.
+                "molecule_labels": list(molecule_label_values),
                 "numeric_version": version,
             }
         )

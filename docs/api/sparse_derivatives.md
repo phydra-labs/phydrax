@@ -1,4 +1,4 @@
-# Sparse derivatives
+# Sparse derivatives and streamed relations
 
 `phydrax.sparse` separates sparse derivative compilation from repeated numerical
 execution:
@@ -234,3 +234,73 @@ Positive definiteness, semidefiniteness, and rank remain explicit evidence.
 ---
 
 ::: phydrax.sparse.verify_sparse_derivative
+
+## Streamed nonlinear relations
+
+`StreamedRelationPlan` prepares bounded receiver-major (and optionally
+source-major) tile schedules over an `EdgeRelation` or `RowRelation`.
+`PreparedStreamedRelation.evaluate` runs a pure per-route edge function, adds
+its messages into seeded per-receiver accumulators, and applies one receiver
+epilogue after each receiver's final fragment. `evaluate_fragments` replaces
+the per-route callback with a whole-fragment aggregator.
+
+Duplicate routes remain distinct events. Empty rows receive the zero-aggregate
+epilogue. Requested edge outputs are charged graph-wide outputs. Derivatives,
+including mixed coordinate/parameter and HVP transforms, are ordinary JAX
+derivatives of the tiled primal.
+
+Declared `StreamedRelationResources` exclude callback internals and compiler
+temporaries. They are not a compiled-memory bound. See
+[Streamed nonlinear relations](../guides_sparse_spatial_hierarchies.md#streamed-nonlinear-relations)
+for schedule, identity, evidence, and derivative semantics and a complete
+example.
+
+::: phydrax.sparse.StreamedRelationPlan
+
+---
+
+::: phydrax.sparse.PreparedStreamedRelation
+
+---
+
+::: phydrax.sparse.StreamedPayloadSpec
+
+---
+
+::: phydrax.sparse.StreamedEdgeFunction
+
+---
+
+::: phydrax.sparse.StreamedReceiverEpilogue
+
+---
+
+::: phydrax.sparse.StreamedFragmentAggregator
+
+---
+
+::: phydrax.sparse.StreamedFragment
+
+---
+
+::: phydrax.sparse.StreamedSchedule
+
+---
+
+::: phydrax.sparse.StreamedTopologyBinding
+
+---
+
+::: phydrax.sparse.StreamedRelationResult
+
+---
+
+::: phydrax.sparse.StreamedRelationEvidence
+
+---
+
+::: phydrax.sparse.StreamedRelationResources
+
+---
+
+::: phydrax.sparse.StreamedDirection

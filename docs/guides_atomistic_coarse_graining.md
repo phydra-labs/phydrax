@@ -5,13 +5,16 @@ chemical element. `element_mask` separates chemical-element identity from active
 particle support, while `atom_type_ids` supplies learned or classical interaction
 types.
 
-PaiNN and NequIP declare an `AtomisticSpeciesKind`:
+PaiNN, NequIP, and MACE declare an `AtomisticSpeciesKind`:
 
 - `ATOMIC_NUMBER` requires every active particle to be a chemical element;
 - `ATOM_TYPE_ID` embeds explicit interaction or bead types.
 
-The type convention is part of model architecture identity. `maximum_species_id`
-therefore replaces the element-specific `maximum_atomic_number` constructor keyword.
+The type convention is part of model architecture identity. For PaiNN and NequIP,
+`maximum_species_id` therefore replaces the element-specific `maximum_atomic_number`
+constructor keyword. `MACEArchitecture` takes `species_kind` together with its
+explicit ordered `species` tuple. MACE's ZBL repulsion and Agnesi transform require
+atomic numbers.
 
 ## Fixed center-of-mass maps
 

@@ -5,17 +5,29 @@
 from __future__ import annotations
 
 from math import sqrt
-from typing import Literal
 
 import jax.numpy as jnp
-from jax import Array, core as jax_core
+import numpy as np
+from jax import Array
 
 import phydrax.ein as ein
+from phydrax._fingerprint import canonical_fingerprint
+from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
+from ._irreps import _orthogonal_frame, O3IrrepBlock, O3Parity
 
-O3Parity = Literal[-1, 1]
+
+# Packed Cartesian block names, degrees, and inversion parities.
+_CARTESIAN_BLOCKS: tuple[tuple[str, int, O3Parity], ...] = (
+    ("scalars", 0, 1),
+    ("pseudoscalars", 0, -1),
+    ("vectors", 1, -1),
+    ("pseudovectors", 1, 1),
+    ("tensors", 2, 1),
+    ("pseudotensors", 2, -1),
+)
 
 
 def _tensor_basis(dtype: jnp.dtype, /) -> Array:
@@ -115,6 +127,58 @@ class O3Representation(StrictModule, NonTrainableState):
             + self.tensors
             + self.pseudotensors
         )
+
+    @property
+    def layout_id(self) -> str:
+        """Canonical identity of this Cartesian multiplicity layout."""
+        return canonical_fingerprint(
+            {
+                "kind": "o3-cartesian-representation",
+                "multiplicities": [count for count, _ in self._channel_blocks()],
+            }
+        )
+
+    @property
+    def irrep_blocks(self) -> tuple[O3IrrepBlock, ...]:
+        """Nonempty Cartesian blocks in packed order, described as O(3) irreps.
+
+        Components remain Cartesian: vectors are ``(x, y, z)`` and rank-two
+        blocks use the orthonormal symmetric-traceless basis of `split`. Use
+        `real_harmonic_basis` to map them to the general real harmonic basis.
+        """
+        return tuple(
+            O3IrrepBlock(name, degree, parity, multiplicity=count)
+            for (name, degree, parity), (count, _) in zip(
+                _CARTESIAN_BLOCKS, self._channel_blocks(), strict=True
+            )
+            if count
+        )
+
+    @staticmethod
+    def real_harmonic_basis(degree: int, /) -> np.ndarray:
+        """Orthogonal host map ``B`` with real-harmonic components ``B @ c``.
+
+        ``c`` holds Cartesian components of one degree-``degree`` block:
+        scalars, ``(x, y, z)``, or the five symmetric-traceless coefficients.
+        Equal dimensions alone are not a basis map; the degree-two map is a
+        signed permutation.
+        """
+        match degree:
+            case 0:
+                return np.eye(1, dtype=np.float64)
+            case 1:
+                # Real harmonic order m = -1, 0, 1 is (y, z, x).
+                return np.eye(3, dtype=np.float64)[[1, 2, 0]]
+            case 2:
+                # m = -2..2 are xy, yz, (3 z^2 - r^2), xz, x^2 - y^2; the
+                # symmetric-traceless coefficient 1 is (x^2 + y^2 - 2 z^2) / sqrt(6).
+                basis = np.eye(5, dtype=np.float64)[[2, 4, 1, 3, 0]]
+                basis[2] = -basis[2]
+                return basis
+            case _:
+                raise ValueError(
+                    "Cartesian O(3) representations have degrees 0, 1, and 2."
+                )
 
     def _channel_blocks(self) -> tuple[tuple[int, int], ...]:
         # Packed order and orthonormal component widths of each irrep block.
@@ -240,14 +304,7 @@ class O3Representation(StrictModule, NonTrainableState):
 
     def transform(self, values: Array, orthogonal: Array, /) -> Array:
         """Apply an orthogonal 3-D frame transform to packed field values."""
-        matrix = jnp.asarray(orthogonal)
-        if matrix.shape != (3, 3):
-            raise ValueError("O(3) transforms require a (3, 3) matrix.")
-        if not isinstance(matrix, jax_core.Tracer):
-            error = jnp.max(jnp.abs(matrix.T @ matrix - jnp.eye(3, dtype=matrix.dtype)))
-            if float(error) > 1e-6:
-                raise ValueError("O(3) transform matrix must be orthogonal.")
-        determinant = jnp.linalg.det(matrix)
+        matrix, determinant = _orthogonal_frame(orthogonal)
         features = self.split(values)
         vectors = ein.contract("ij,...mj->...mi", matrix, features.vectors)
         pseudovectors = determinant * ein.contract(
@@ -267,3 +324,6 @@ class O3Representation(StrictModule, NonTrainableState):
                 pseudotensors=pseudotensors,
             )
         )
+
+
+register_artifact_value("phydrax.nn.operator:O3Representation", O3Representation)

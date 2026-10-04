@@ -23,6 +23,29 @@ class AtomisticSpeciesKind(StrEnum):
     ATOM_TYPE_ID = "atom-type-id"
 
 
+class AtomisticStressConvention(StrEnum):
+    """Named meaning of a homogeneous-strain energy derivative.
+
+    Both members use the column deformation ``F = I + strain`` about the cell
+    origin at fixed fractional coordinates and fixed integer images: row lattice
+    vectors map to ``H @ F.T`` and positions to ``origin + (r - origin) @ F.T``.
+    ``stress = sym(dE/dstrain) / |det H|`` in system energy per cubic length,
+    positive under tension (pressure ``-trace(stress) / 3``).
+
+    ``CAUCHY_TENSION_POSITIVE``: every axis is periodic and ``|det H|`` is the
+    physical cell volume.
+    ``CAUCHY_TENSION_POSITIVE_EMBEDDING_VOLUME``: some axes are nonperiodic and
+    ``|det H|`` is the declared embedding volume of the full invertible 3x3 cell
+    (the nonperiodic rows set the embedding thickness), not an intrinsic bulk
+    volume.
+    """
+
+    CAUCHY_TENSION_POSITIVE = "cauchy-tension-positive-column-strain"
+    CAUCHY_TENSION_POSITIVE_EMBEDDING_VOLUME = (
+        "cauchy-tension-positive-column-strain-embedding-volume"
+    )
+
+
 class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
     """Static execution capabilities, never a scientific stability claim."""
 
@@ -141,9 +164,9 @@ class AbstractAtomisticPotential(StrictModule, ParameterOwner):
 
     @property
     def requirements(self) -> AtomisticPotentialRequirements:
+        """A learned graph model consumes only its directed graph and cutoff."""
         return AtomisticPotentialRequirements(
             cutoff=float(self.configuration.cutoff),
-            pair_geometry=True,
             directed_graph=True,
         )
 
@@ -206,5 +229,6 @@ __all__ = [
     "AtomisticPotentialCapabilities",
     "AtomisticSpeciesKind",
     "AtomisticPotentialRequirements",
+    "AtomisticStressConvention",
     "atomistic_potential_revision",
 ]

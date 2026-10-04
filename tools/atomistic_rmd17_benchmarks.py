@@ -340,6 +340,7 @@ def _run_seed(dataset: Any, arguments: Any, seed: Any) -> Any:
     problem = phx.atomistic.AtomisticTrainingProblem(
         train_batch,
         execution,
+        cutoff=arguments.cutoff,
         training_energy=train_energy,
         training_forces=train_forces,
         validation_batch=validation_batch,

@@ -186,6 +186,9 @@ def _install_fake_save(
                 policy.target_backend if target_backend is None else target_backend
             ),
             runtime_driver=policy.runtime_driver,
+            executable_format=policy.executable_format,
+            executable_platform="test-platform",
+            system_linker=policy.system_linker,
             function_name="forward",
             entry_point="main",
             calling_convention_version=10,

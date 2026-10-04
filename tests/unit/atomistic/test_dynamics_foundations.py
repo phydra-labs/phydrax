@@ -185,9 +185,8 @@ def test_coordinate_representations_preserve_bond_force_and_curvature() -> None:
             state.force.forces, [[0.8, 0, 0], [-0.8, 0, 0]], atol=1e-12
         )
         position = state.kinematics.positions
-        kwargs = {"unwrapped_positions": unwrapped}
+        kwargs: dict[str, Any] = {"unwrapped_positions": unwrapped}
         if cell is not None:
-            kwargs["fractional_positions"] = cell.fractional(position)
             kwargs["cell_vectors"] = cell.vectors
 
         def energy(coordinates: Any) -> Any:
@@ -221,7 +220,6 @@ def test_coordinate_representations_preserve_bond_force_and_curvature() -> None:
                     coordinates,
                     state.neighborhood,
                     unwrapped_positions=whole,
-                    fractional_positions=fractional,
                     cell_vectors=vectors,
                 ).energy
 

@@ -22,6 +22,7 @@ from ..._trainable import NonTrainableState
 from ...atomistic._graph import (
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
+    AtomisticGraphTopology,
     realize_atomistic_graph,
 )
 from ...atomistic._potential import (
@@ -35,6 +36,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
+from ...sparse._streamed import PreparedStreamedRelation, StreamedPayloadSpec
 from ...typing import checked, PRNGKey
 from ..layers import Linear
 from ..operator.layers import o3_gated_activation, O3TensorProduct, O3TensorProductPlan
@@ -162,36 +164,74 @@ class _NequIPInteraction(StrictModule):
 
     def __call__(
         self,
+        potential: NequIPPotential,
         values: Array,
-        edge_features: Array,
         species_ids: Array,
-        graph: AtomisticGraph,
-        radial: Array,
-        cutoff_envelope: Array,
+        edges: PreparedStreamedRelation,
+        edge_data: tuple[Array, Array],
+        edge_active: Array,
         node_mask: Array,
         /,
     ) -> Array:
-        ir = graph.graph
-        if ir.senders is None or ir.receivers is None or ir.edge_mask is None:
-            raise ValueError("NequIP requires an explicit masked edge relation.")
-        edge_mask = ir.edge_mask.astype(values.dtype)
-        path_weights = self.radial_out(self.radial_in(radial))
-        path_weights = path_weights * cutoff_envelope[:, None] * edge_mask[:, None]
-        messages = self.tensor_product(values[ir.senders], edge_features, path_weights)
-        messages = messages * edge_mask[:, None]
-        aggregate = jnp.zeros_like(values).at[ir.receivers].add(messages)
-        connected = self.self_connection(values, species_ids) + aggregate
-        activated = o3_gated_activation(connected, self.representation)
+        node = jax.ShapeDtypeStruct(values.shape[1:], values.dtype)
+        activated = edges.evaluate(
+            StreamedPayloadSpec(message=node, output=node),
+            _nequip_message,
+            _nequip_update,
+            (potential, self),
+            values,
+            (values, species_ids),
+            edge_data,
+            edge_active=edge_active,
+        ).receiver_outputs
         return activated * node_mask[:, None]
 
 
+def _nequip_message(
+    parameters: tuple[NequIPPotential, _NequIPInteraction],
+    sender: Array,
+    receiver: tuple[Array, Array],
+    edge: tuple[Array, Array],
+    /,
+) -> Array:
+    """Radially weighted tensor-product message of one directed edge."""
+    potential, interaction = parameters
+    del receiver
+    distance, direction = edge
+    radial, cutoff_envelope = potential._radial_basis(distance)
+    path_weights = interaction.radial_out(interaction.radial_in(radial))
+    path_weights = path_weights * cutoff_envelope
+    return interaction.tensor_product(
+        sender, potential._edge_features(direction[None])[0], path_weights
+    )
+
+
+def _nequip_update(
+    parameters: tuple[NequIPPotential, _NequIPInteraction],
+    receiver: tuple[Array, Array],
+    aggregate: Array,
+    /,
+) -> Array:
+    """Species self-connection plus message sum, then gated activation, per receiver."""
+    _potential, interaction = parameters
+    values, species_id = receiver
+    connected = interaction.self_connection(values[None], species_id[None])[0] + aggregate
+    return o3_gated_activation(connected[None], interaction.representation)[0]
+
+
 class NequIPPotential(AbstractAtomisticPotential):
-    """Low-degree finite nonperiodic NequIP scalar energy potential.
+    """Low-degree NequIP scalar energy potential on finite or periodic-image graphs.
 
     This is a Cartesian O(3) implementation with degrees zero through two. It
-    consumes the same fixed candidate ``AtomisticBatch`` topology as PaiNN;
-    geometry only changes differentiable edge payloads and smooth weights inside
-    conservative force derivatives.
+    consumes the same prepared graph topology as PaiNN: finite dense all-pairs
+    routes, or explicit integer periodic image routes for orthorhombic,
+    triclinic and partially periodic cells. Geometry and cell vectors only
+    change differentiable edge payloads and smooth weights, so forces and the
+    first strain derivative (stress) are exact; the cosine envelope is only C1
+    at the cutoff, so coordinate second derivatives jump where an edge crosses
+    it. Every interaction evaluates each directed edge message once and each
+    receiver update once on the streamed schedule the graph topology prepared
+    for its execution plan.
     """
 
     embedding: Array
@@ -315,7 +355,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         self.architecture_id = canonical_fingerprint(
             {
                 "kind": "nequip-architecture",
-                "scope": "finite-nonperiodic-degree-at-most-two",
+                "scope": "cartesian-degree-at-most-two",
                 "scale": scale.scale_id,
                 "precision": precision_.policy_id,
                 "cutoff": cutoff_value,
@@ -332,8 +372,13 @@ class NequIPPotential(AbstractAtomisticPotential):
 
     @property
     def capabilities(self) -> AtomisticPotentialCapabilities:
+        # The radius-local energy consumes explicit image routes; strain enters
+        # only through cell-dependent image displacements (first derivative).
         return AtomisticPotentialCapabilities(
-            species_kind=self.configuration.species_kind
+            orthorhombic_periodic=True,
+            triclinic_periodic=True,
+            cell_derivative=True,
+            species_kind=self.configuration.species_kind,
         )
 
     @checked
@@ -346,29 +391,25 @@ class NequIPPotential(AbstractAtomisticPotential):
             raise ValueError(
                 "Batch coordinate dtype does not match the NequIP precision contract."
             )
-        if batch.has_periodic_metadata:
-            raise ValueError(
-                "NequIPPotential supports finite nonperiodic molecules only and rejects "
-                "preserved cell or periodic metadata."
-            )
 
     def _radial_basis(self, distance: Array, /) -> tuple[Array, Array]:
+        """Enveloped sinc radial basis and cosine envelope, broadcast over distances."""
         dtype = jnp.dtype(self.precision.compute_dtype)
         radius = jnp.asarray(distance, dtype=dtype)
         cutoff = jnp.asarray(self.configuration.cutoff, dtype=dtype)
         scaled = radius / cutoff
         frequencies = self.configuration.radial_frequencies
         basis = (jnp.pi * frequencies / cutoff) * jnp.sinc(
-            scaled[:, None] * frequencies[None, :]
+            scaled[..., None] * frequencies
         )
         envelope = jnp.where(
             scaled < 1.0,
             0.5 * (jnp.cos(jnp.pi * scaled) + 1.0),
             0.0,
         )
-        return basis * envelope[:, None], envelope
+        return basis * envelope[..., None], envelope
 
-    def _edge_features(self, direction: Array, edge_mask: Array, /) -> Array:
+    def _edge_features(self, direction: Array, /) -> Array:
         dtype = jnp.dtype(self.precision.compute_dtype)
         unit = jnp.asarray(direction, dtype=dtype)
         identity = jnp.eye(3, dtype=dtype)
@@ -380,7 +421,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         empty_scalar = jnp.zeros((edge_count, 0), dtype=dtype)
         empty_vector = jnp.zeros((edge_count, 0, 3), dtype=dtype)
         empty_tensor = jnp.zeros((edge_count, 0, 3, 3), dtype=dtype)
-        packed = self.configuration.edge_representation.join(
+        return self.configuration.edge_representation.join(
             O3Features(
                 scalars=jnp.ones((edge_count, 1), dtype=dtype),
                 pseudoscalars=empty_scalar,
@@ -390,7 +431,6 @@ class NequIPPotential(AbstractAtomisticPotential):
                 pseudotensors=empty_tensor,
             )
         )
-        return packed * edge_mask.astype(dtype)[:, None]
 
     def graph_energy(
         self,
@@ -422,20 +462,21 @@ class NequIPPotential(AbstractAtomisticPotential):
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
         values = values.at[:, : self.configuration.feature_count].set(scalar)
         values = values * node_mask[:, None]
-        distance = jnp.where(ir.edge_mask, jnp.asarray(ir.edges["distance"])[:, 0], 0.0)
-        direction = jnp.where(
-            ir.edge_mask[:, None], jnp.asarray(ir.edges["direction"]), 0.0
+        # One prepared candidate schedule serves every interaction; the cutoff
+        # mask is runtime route activity, never a schedule change.
+        edges = graph.topology.streamed
+        edge_data = (
+            jnp.asarray(ir.edges["distance"])[:, 0],
+            jnp.asarray(ir.edges["direction"]),
         )
-        radial, cutoff_envelope = self._radial_basis(distance)
-        edge_features = self._edge_features(direction, ir.edge_mask)
         for interaction in self.interactions:
             values = interaction(
+                self,
                 values,
-                edge_features,
                 numbers,
-                graph,
-                radial,
-                cutoff_envelope,
+                edges,
+                edge_data,
+                ir.edge_mask,
                 node_mask,
             )
         invariant_scalar = self.configuration.hidden_representation.split(values).scalars
@@ -459,6 +500,9 @@ class NequIPPotential(AbstractAtomisticPotential):
         positions: Array,
         execution: AtomisticGraphExecutionPlan,
         /,
+        *,
+        topology: AtomisticGraphTopology | None = None,
+        cell_vectors: Array | None = None,
     ) -> tuple[Array, Array, AtomisticGraph]:
         coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
         if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER:
@@ -475,6 +519,8 @@ class NequIPPotential(AbstractAtomisticPotential):
             execution,
             cutoff=self.configuration.cutoff,
             positions=coordinate,
+            topology=topology,
+            cell_vectors=cell_vectors,
         )
         species = (
             batch.atomic_numbers
@@ -498,12 +544,21 @@ class NequIPPotential(AbstractAtomisticPotential):
         /,
         *,
         positions: Array | None = None,
+        topology: AtomisticGraphTopology | None = None,
+        cell_vectors: Array | None = None,
     ) -> Array:
-        """Evaluate typed-scale total energies, failing closed on graph overflow."""
+        """Evaluate typed-scale total energies, failing closed on graph overflow.
+
+        Periodic batches require ``topology`` from
+        ``prepare_atomistic_graph_topology``, prepared on the host before any
+        transformed call; ``cell_vectors`` default to the batch cells.
+        """
 
         self._validate_batch(batch)
         coordinate = batch.positions if positions is None else positions
-        energy, _, graph = self._energy_unchecked(batch, coordinate, execution)
+        energy, _, graph = self._energy_unchecked(
+            batch, coordinate, execution, topology=topology, cell_vectors=cell_vectors
+        )
         return graph.require_success(energy)
 
     def __call__(

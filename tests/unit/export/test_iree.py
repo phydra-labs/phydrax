@@ -6,6 +6,7 @@ import json
 from dataclasses import replace
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,6 +24,9 @@ def _manifest() -> Any:
         runtime_version="3.11.0",
         target_backend="llvm-cpu",
         runtime_driver="local-task",
+        executable_format="embedded-elf",
+        executable_platform="embedded-elf-arm64",
+        system_linker=None,
         function_name="model",
         entry_point="main",
         calling_convention_version=10,
@@ -51,79 +55,6 @@ def test_iree_contracts() -> None:
     invalid["unknown"] = 1
     with pytest.raises(ValueError, match="not canonical"):
         phx.export.IREEArtifactManifest.from_dict(invalid)
-    manifest = replace(
-        _manifest(),
-        output_names=("prediction", "accepted", "iteration"),
-        output_shapes=((2,), (), (1,)),
-        output_dtypes=(
-            np.dtype(np.float32).str,
-            np.dtype(np.bool_).str,
-            np.dtype(np.int32).str,
-        ),
-        maximum_absolute_errors=(0.0, 0.0, 0.0),
-        maximum_relative_errors=(0.0, 0.0, 0.0),
-    )
-    argument = np.ones((2,), dtype=np.float32)
-    executable = _fake_executable(
-        manifest,
-        (
-            _HostArray(np.asarray((1.0, 2.0), dtype=np.float32)),
-            _HostArray(np.asarray(True, dtype=np.bool_)),
-            _HostArray(np.asarray((3,), dtype=np.int32)),
-        ),
-    )
-
-    result = executable(argument)
-
-    assert isinstance(result, tuple)
-    assert len(result) == 3
-    assert result[0].dtype == np.dtype(np.float32)
-    assert result[1].dtype == np.dtype(np.bool_)
-    assert result[2].dtype == np.dtype(np.int32)
-    with pytest.raises(RuntimeError, match="arity"):
-        _fake_executable(manifest, _HostArray(argument))(argument)
-    with pytest.raises(RuntimeError, match=r"output 1 .*shape"):
-        _fake_executable(
-            manifest,
-            (
-                _HostArray(argument),
-                _HostArray(np.asarray((True,), dtype=np.bool_)),
-                _HostArray(np.asarray((3,), dtype=np.int32)),
-            ),
-        )(argument)
-    with pytest.raises(RuntimeError, match=r"output 1 .*dtype"):
-        _fake_executable(
-            manifest,
-            (
-                _HostArray(argument),
-                _HostArray(np.asarray(1, dtype=np.int32)),
-                _HostArray(np.asarray((3,), dtype=np.int32)),
-            ),
-        )(argument)
-    with pytest.raises(RuntimeError, match=r"output 0 .*non-finite"):
-        _fake_executable(
-            manifest,
-            (
-                _HostArray(np.asarray((np.nan, 2.0), dtype=np.float32)),
-                _HostArray(np.asarray(True, dtype=np.bool_)),
-                _HostArray(np.asarray((3,), dtype=np.int32)),
-            ),
-        )(argument)
-
-
-class _HostArray:
-    def __init__(self, value: Any) -> None:
-        self._value = np.asarray(value)
-
-    def to_host(self) -> Any:
-        return self._value
-
-
-def _fake_executable(manifest: Any, result: Any) -> Any:
-    executable = object.__new__(phx.export.IREEExecutable)
-    executable.manifest = manifest
-    executable._function = lambda *_: result
-    return executable
 
 
 def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(
@@ -250,48 +181,168 @@ def test_iree_compiles_validates_loads_and_rejects_wrong_inputs(tmp_path: Any) -
 def test_iree_compiles_ordered_heterogeneous_outputs_without_packing(
     tmp_path: Any,
 ) -> None:
-    def model(x: Any, *, key: Any = None) -> Any:
+    def model(x: Any, scale: Any, *, key: Any = None) -> Any:
         del key
         return (
-            jnp.sin(x),
+            scale * jnp.sin(x),
             jnp.all(jnp.isfinite(x)),
+            x > 0.0,
             jnp.asarray(x.size, dtype=jnp.int32),
+            (x + 1j * x).astype(jnp.complex64),
+            (4.0 * jnp.abs(x)).astype(jnp.uint8),
         )
 
     sample = jnp.asarray((0.25, -0.5, 1.0), dtype=jnp.float32)
+    # A scalar input keeps its rank-0 HAL shape.
+    scale = jnp.asarray(2.0, dtype=jnp.float32)
     destination = tmp_path / "multi-output.phxiree"
     result = phx.export.save_iree(
         model,
         destination,
-        inputs=(sample,),
-        input_names=("x",),
-        output_names=("values", "finite", "count"),
+        inputs=(sample, scale),
+        input_names=("x", "scale"),
+        output_names=("values", "finite", "positive", "count", "complex", "bins"),
         validate=True,
     )
     deployed = phx.export.load_iree(
         destination,
         trusted_module_sha256=result.manifest.module_sha256,
     )
-    actual = deployed(np.asarray(sample))
-    expected = model(sample)
+    actual = deployed(np.asarray(sample), np.asarray(scale))
+    expected = model(sample, scale)
 
     assert isinstance(actual, tuple)
-    assert result.manifest.output_names == ("values", "finite", "count")
-    assert result.manifest.output_shapes == ((3,), (), ())
+    assert result.manifest.output_shapes == ((3,), (), (3,), (), (3,), (3,))
     assert result.manifest.output_dtypes == tuple(
         np.dtype(value.dtype).str for value in expected
     )
-    # ty: ignore[invalid-argument-type]
-    assert len(result.manifest.maximum_absolute_errors) == 3
-    # ty: ignore[invalid-argument-type]
-    assert len(result.manifest.maximum_relative_errors) == 3
     for deployed_value, native_value in zip(actual, expected, strict=True):
         native_array = np.asarray(native_value)
+        assert deployed_value.dtype == native_array.dtype
         if np.issubdtype(native_array.dtype, np.inexact):
             np.testing.assert_allclose(
                 deployed_value, native_array, rtol=1.0e-4, atol=1.0e-6
             )
         else:
             np.testing.assert_array_equal(deployed_value, native_array)
-    assert actual[1].dtype == np.dtype(np.bool_)
-    assert actual[2].dtype == np.dtype(np.int32)
+
+
+@pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
+def test_iree_load_refuses_a_manifest_abi_the_pinned_module_does_not_declare(
+    tmp_path: Any,
+) -> None:
+    def model(x: Any, *, key: Any = None) -> Any:
+        del key
+        return jnp.sqrt(x)
+
+    destination = tmp_path / "root.phxiree"
+    result = phx.export.save_iree(
+        model, destination, inputs=(jnp.ones((2,), dtype=jnp.float32),)
+    )
+    pin = result.manifest.module_sha256
+    with pytest.raises(RuntimeError, match=r"output 0 .*non-finite"):
+        phx.export.load_iree(destination, trusted_module_sha256=pin)(
+            np.asarray((-1.0, 4.0), dtype=np.float32)
+        )
+    original = result.manifest.to_dict()
+    # Same-width forgeries would otherwise reinterpret float32 bit patterns.
+    for forged, refusal in (
+        ({"output_dtypes": ["<i4"]}, r"output 0 .*dtype <f4.* dtype <i4"),
+        ({"output_shapes": [[1, 2]]}, r"output 0 as shape \(2,\)"),
+        ({"input_dtypes": ["<i4"]}, r"input 0 .*dtype <f4.* dtype <i4"),
+        (
+            {"input_shapes": [[1]], "output_shapes": [[1]]},
+            r"input 0 as shape \(2,\)",
+        ),
+    ):
+        (destination / "manifest.json").write_text(
+            json.dumps({**original, **forged}), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match=refusal):
+            phx.export.load_iree(destination, trusted_module_sha256=pin)
+
+
+@pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
+def test_iree_scatter_and_gather_keep_stablehlo_out_of_range_semantics(
+    tmp_path: Any,
+) -> None:
+    # Segment ids 4, 5 and -1 lie outside the four segments.
+    ids = jnp.asarray((0, 1, 1, 4, 5, 5, -1, 3), dtype=jnp.int32)
+    # Three windows leave the (6, 5) operand on a scattered axis.
+    starts = jnp.asarray(
+        ((0, 1), (2, 4), (3, -1), (5, 2), (6, 0), (1, 2)), dtype=jnp.int32
+    )
+    window = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(1,),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0, 1),
+    )
+
+    def model(x: Any, segment: Any, start: Any, *, key: Any = None) -> Any:
+        del key
+        # Segment axis is not leading; both sums start from the same zeros.
+        summed = jax.vmap(
+            lambda column: jax.ops.segment_sum(column, segment, 4),
+            in_axes=1,
+            out_axes=1,
+        )(x)
+        doubled = jax.vmap(
+            lambda column: jax.ops.segment_sum(2.0 * column, segment, 4),
+            in_axes=1,
+            out_axes=1,
+        )(x)
+        batched = jax.vmap(lambda row, index: jnp.zeros(4, x.dtype).at[index].add(row))(
+            x.T, jnp.stack((segment % 4, segment[::-1] % 4, (3 * segment) % 4))
+        )
+        windows = jax.lax.scatter_add(
+            jnp.zeros((6, 5), x.dtype), start, x[:6], window, mode="drop"
+        )
+        clamped = x[:, 0].at[segment].get(mode="promise_in_bounds")
+        return summed, doubled, batched, windows, clamped
+
+    x = jnp.asarray(np.random.default_rng(0).normal(size=(8, 3)), dtype=jnp.float32)
+    result = phx.export.save_iree(
+        model,
+        tmp_path / "scatter.phxiree",
+        inputs=(x, ids, starts),
+        input_names=("x", "segment", "start"),
+        validate=True,
+    )
+    deployed = phx.export.load_iree(
+        result.path, trusted_module_sha256=result.manifest.module_sha256
+    )
+    actual = deployed(np.asarray(x), np.asarray(ids), np.asarray(starts))
+
+    for deployed_value, native_value in zip(actual, model(x, ids, starts), strict=True):
+        np.testing.assert_allclose(
+            deployed_value, np.asarray(native_value), rtol=1.0e-6, atol=1.0e-6
+        )
+
+
+@pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
+def test_iree_export_refuses_in_place_updates_iree_would_alias(tmp_path: Any) -> None:
+    def shared_constant(x: Any, *, key: Any = None) -> Any:
+        del key
+        base = jnp.arange(x.size, dtype=x.dtype).reshape(x.shape)
+        return base.at[0].add(x[0]), base.at[1].add(x[1])
+
+    def returned_argument(x: Any, *, key: Any = None) -> Any:
+        del key
+        # A legalized scatter writes a padded copy; dynamic_update_slice stays in place.
+        return jax.lax.dynamic_update_slice(x, x[1:2] + 1.0, (0, 0)), x
+
+    def fenced_destination(x: Any, *, key: Any = None) -> Any:
+        del key
+        values = jnp.sin(x)
+        summed = jax.ops.segment_sum(values, jnp.asarray((0, 1, 1)), 2)
+        return summed, jax.lax.dynamic_update_slice(values, x[:1], (1, 0))
+
+    x = jnp.ones((3, 2), dtype=jnp.float32)
+    for model, reason in (
+        (shared_constant, "shared input-independent destination"),
+        (returned_argument, "returned while updated in place"),
+        (fenced_destination, "operand reaches an in-place destination"),
+    ):
+        with pytest.raises(ValueError, match=reason):
+            phx.export.save_iree(model, tmp_path / model.__name__, inputs=(x,))
+        assert not (tmp_path / model.__name__).exists()

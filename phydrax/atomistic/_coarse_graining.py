@@ -487,6 +487,7 @@ def fit_coarse_potential(
     training_problem = AtomisticTrainingProblem(
         problem.training_batch,
         problem.graph_execution,
+        cutoff=potential.configuration.cutoff,
         training_forces=problem.residual_forces,
         validation_batch=problem.validation_batch,
         validation_forces=problem.validation_forces,

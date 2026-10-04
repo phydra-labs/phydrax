@@ -153,6 +153,7 @@ from .spineax import (
 
 
 _FACADE_EXPORT_MODULES = (
+    ".atomistic",
     ".homotopy_continuation",
     ".homotopy_geometry",
     ".lattice",
@@ -175,6 +176,19 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "ATOMISTIC_KERNEL_LIMITS",
+    "AtomisticAccelerationTarget",
+    "AtomisticKernelAdmission",
+    "AtomisticKernelLimits",
+    "AtomisticKernelLowering",
+    "AtomisticKernelPrecision",
+    "AtomisticKernelRequest",
+    "AtomisticKernelTarget",
+    "MACECouplingRole",
+    "mace_coupling_problem_kind",
+    "pallas_atomistic_availability",
+    "PALLAS_ATOMISTIC_CAPABILITIES",
+    "WARPGROUP_LANES",
     *_lattice_all,
     *_homotopy_continuation_all,
     *_homotopy_geometry_all,

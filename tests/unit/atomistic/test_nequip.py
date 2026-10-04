@@ -15,7 +15,11 @@ from phydrax.atomistic import (
     AtomisticStatus,
     energy_and_forces,
 )
+from phydrax.atomistic._graph import prepare_atomistic_graph_topology
+from phydrax.discretization import ParticleImageCapacity
 from phydrax.nn.atomistic import NequIPPotential
+from phydrax.nn.operator.layers import o3_gated_activation
+from phydrax.sparse import StreamedRelationPlan
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
@@ -220,7 +224,7 @@ def test_jit_position_vjp_and_second_parameter_derivative_are_finite() -> None:
     assert bool(jnp.all(jnp.isfinite(second)))
 
 
-def test_periodic_metadata_and_tensor_product_resource_overflow_are_rejected() -> None:
+def test_periodic_resource_refusals_and_tensor_product_resource_overflow() -> None:
     periodic = AtomicStructure(
         # ty: ignore[invalid-argument-type]
         [1],
@@ -233,8 +237,11 @@ def test_periodic_metadata_and_tensor_product_resource_overflow_are_rejected() -
         # ty: ignore[invalid-argument-type]
         periodic_axes=[True, False, False],
     )
-    with pytest.raises(ValueError, match="nonperiodic"):
+    # Image routes are a charged resource; a direct call needs a host topology.
+    with pytest.raises(ValueError, match="image_capacity"):
         energy_and_forces(_model(), periodic, _execution())
+    with pytest.raises(ValueError, match="require a topology"):
+        _model()(periodic, _execution())
     with pytest.raises(ValueError, match="parameters"):
         NequIPPotential(
             SCALE,
@@ -244,3 +251,153 @@ def test_periodic_metadata_and_tensor_product_resource_overflow_are_rejected() -
             radial_basis_count=4,
             maximum_tensor_product_parameters=1,
         )
+
+
+def _dense_nequip_energy(model: Any, positions: Any, numbers: Any, active: Any) -> Any:
+    """Independent all-pairs NequIP energy: full edge messages and receiver sums."""
+    count = positions.shape[0]
+    send, receive = np.nonzero(~np.eye(count, dtype=bool))
+    displacement = positions[receive] - positions[send]
+    distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
+    live = active[send] & active[receive] & (distance < model.configuration.cutoff)
+    safe = jnp.where(live, distance, 1.0)
+    radial, envelope = model._radial_basis(safe)
+    edge_features = model._edge_features(displacement / safe[:, None])
+    representation = model.configuration.hidden_representation
+    mask = active.astype(radial.dtype)
+    values = jnp.zeros((count, representation.packed_size), dtype=radial.dtype)
+    values = values.at[:, : model.configuration.feature_count].set(
+        model.embedding[numbers]
+    )
+    values = values * mask[:, None]
+    for interaction in model.interactions:
+        weights = interaction.radial_out(interaction.radial_in(radial))
+        weights = weights * envelope[:, None]
+        messages = interaction.tensor_product(values[send], edge_features, weights)
+        messages = jnp.where(live[:, None], messages, 0.0)
+        connected = interaction.self_connection(values, numbers) + jax.ops.segment_sum(
+            messages, receive, count
+        )
+        values = o3_gated_activation(connected, representation) * mask[:, None]
+    scalars = representation.split(values).scalars
+    return jnp.sum(model.readout_energy(model.readout_hidden(scalars)) * mask)
+
+
+def test_streamed_nequip_matches_dense_energy_forces_and_force_loss_gradient() -> None:
+    structure = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
+        [8, 1, 1, 1, 0],
+        # ty: ignore[invalid-argument-type]
+        [
+            [0.0, 0.0, 0.0],
+            [0.9, 0.1, 0.0],
+            [-0.2, 0.8, 0.2],
+            [2.6, 0.2, 0.1],
+            [0.3, 0.3, 0.3],
+        ],
+        # ty: ignore[invalid-argument-type]
+        [15.999, 1.008, 1.008, 1.008, 0.0],
+        SCALE,
+        # ty: ignore[invalid-argument-type]
+        active_mask=[True, True, True, True, False],
+    )
+    batch = AtomisticBatch.from_structure(structure)
+    numbers = batch.atomic_numbers[0]
+    active = batch.atom_mask[0]
+    position = batch.positions[0]
+    model = NequIPPotential(
+        SCALE,
+        cutoff=2.5,
+        feature_count=3,
+        interaction_count=2,
+        radial_basis_count=4,
+        key=jr.key(73),
+    )
+    # A one-receiver, two-event tile fragments every multi-neighbor receiver.
+    tiny = StreamedRelationPlan(receiver_tile=1, edge_tile=2)
+    for plan in (None, tiny):
+        execution = AtomisticGraphExecutionPlan(4, maximum_dense_atoms=5, streamed=plan)
+        topology = prepare_atomistic_graph_topology(batch, execution, cutoff=2.5)
+
+        def streamed(model: Any, position: Any) -> Any:
+            return model.energy(
+                batch, execution, positions=position[None], topology=topology
+            )[0]
+
+        def dense(model: Any, position: Any) -> Any:
+            return _dense_nequip_energy(model, position, numbers, active)
+
+        np.testing.assert_allclose(
+            streamed(model, position), dense(model, position), rtol=1e-11, atol=1e-11
+        )
+        np.testing.assert_allclose(
+            jax.grad(streamed, argnums=1)(model, position),
+            jax.grad(dense, argnums=1)(model, position),
+            rtol=1e-10,
+            atol=1e-10,
+        )
+
+        def force_loss(energy: Any) -> Any:
+            def loss(model: Any) -> Any:
+                forces = -jax.grad(energy, argnums=1)(model, position)
+                return jnp.sum(forces * forces)
+
+            return loss
+
+        observed = eqx.filter_grad(force_loss(streamed))(model)
+        expected = eqx.filter_grad(force_loss(dense))(model)
+        for actual, reference in zip(
+            jax.tree_util.tree_leaves(observed),
+            jax.tree_util.tree_leaves(expected),
+            strict=True,
+        ):
+            np.testing.assert_allclose(actual, reference, rtol=1e-9, atol=1e-10)
+
+
+def test_periodic_nequip_is_extensive_with_intensive_stress() -> None:
+    cell = np.asarray([[2.8, 0.0, 0.0], [0.3, 2.9, 0.0], [0.2, 0.1, 3.0]])
+    positions = np.asarray([[0.0, 0.0, 0.0], [1.1, 0.3, 0.2]])
+    execution = AtomisticGraphExecutionPlan(
+        64,
+        backend="particle",
+        image_capacity=ParticleImageCapacity(
+            maximum_particles_per_cell=8,
+            maximum_edges=2048,
+            maximum_degree=64,
+            maximum_images=125,
+        ),
+    )
+
+    def structure(positions: Any, cell: Any, numbers: Any) -> Any:
+        return AtomicStructure(
+            numbers,
+            positions,
+            np.where(np.asarray(numbers) == 8, 15.999, 1.008),
+            SCALE,
+            cell=cell,
+            # ty: ignore[invalid-argument-type]
+            periodic_axes=[True, True, True],
+        )
+
+    model = _model()
+    unit = energy_and_forces(
+        model, structure(positions, cell, [1, 8]), execution, compute_stress=True
+    )
+    doubled = energy_and_forces(
+        model,
+        structure(
+            np.concatenate((positions, positions + cell[0])),
+            cell * np.asarray([[2.0], [1.0], [1.0]]),
+            [1, 8, 1, 8],
+        ),
+        execution,
+        compute_stress=True,
+    )
+    assert bool(unit.valid[0]) and bool(doubled.valid[0])
+    # Self images and distinct-pair images enter exactly once per directed route.
+    np.testing.assert_allclose(doubled.energy, 2.0 * unit.energy, rtol=1e-11, atol=1e-11)
+    np.testing.assert_allclose(
+        doubled.forces[0], np.tile(unit.forces[0], (2, 1)), rtol=1e-10, atol=1e-10
+    )
+    assert unit.stress is not None and doubled.stress is not None
+    np.testing.assert_allclose(doubled.stress, unit.stress, rtol=1e-10, atol=1e-10)

@@ -250,6 +250,107 @@ remain unsupported.
 
 ::: phydrax.export.IREEExecutable
 
+## Frozen atomistic energy, force, and stress
+
+`save_atomistic_iree(plan, structure, units, path, ...)` freezes one native learned
+atomistic model, prepared from a `phydrax.atomistic.NativeAtomisticProviderPlan`, into a
+fixed-capacity IREE executable. `structure` is the reference geometry whose candidate
+lifecycle epoch is frozen. Model weights, species, units, periodicity, capacities, and
+the host-prepared candidate relation of that epoch (route identities, image shifts,
+masks, and route topology) become immutable artifact data. Neighbor discovery and cache
+lifecycles stay on the host; training and neighbor lifecycles are not exported.
+
+The ABI, recorded in `AtomisticIREEContract`, is:
+
+| Inputs | Outputs |
+|---|---|
+| `positions` (wrapped) | `energy`, `forces`, `atom_energy` |
+| `cell_vectors`, `image_counts` (periodic systems only) | `stress` (only when the provider has stress) |
+| | `status` (`phydrax.atomistic.AtomisticStatus`), `active_routes` |
+
+The module evaluates the frozen routes in their reference frame
+`positions + (image_counts - reference_image_counts) @ cell_vectors`, the same
+whole-lattice re-expression as the native lifecycle, so rewrapped atoms keep their
+physical routes. `AtomisticIREEContract.pack_inputs(request)` refuses a request from
+another lifecycle epoch, provider, or failed host lifecycle; a rebuilt candidate graph
+requires a new export. `active_routes` counts the frozen graph's stored candidate
+routes, and returned values are NaN unless the status is `SUCCESS`.
+
+Runtime geometry failures (non-finite coordinates, singular or deformed cells, image
+certificate or capacity overflow) are reported through the traced status, never through
+host callbacks. Before export the parent refuses any host callback, any Equinox guard
+whose predicate depends on a runtime input, and host-runtime custom calls (such as
+LAPACK) that IREE cannot compile. Remaining guards depend only on frozen data and are
+proven inactive by a raise-mode evaluation; tracing then runs in a pinned isolated
+worker with `EQX_ON_ERROR=nan` (failure policy `"equinox-nan-status"`), whose
+environment carries only `EQX_ON_ERROR`, `JAX_ENABLE_X64`, and `JAX_PLATFORMS`. The
+worker rebuilds model, plan, structure, and contract from one pickle-free archive.
+`path` is published atomically only after the parent's frozen program matches the native
+provider at the reference geometry and the loaded module reproduces the frozen
+program's values and statuses there and at declared failure probes, within `rtol`/`atol`.
+
+The only `AtomisticExportRoute` is `"native-jax"`, the ordinary JAX program lowered with
+`jax.export`. Accelerated kernels are not exportable and are never silently
+substituted. A float64 model needs `IREEExportPolicy(executable_format="system-library")`:
+the default embedded ELF carries no C math library, so float64 transcendentals cannot
+link. The system library requires the host system linker at export time and loads only
+on the same OS and architecture.
+
+`load_atomistic_iree(path, trusted_module_sha256=..., trusted_contract_id=...)` requires
+both out-of-band pins; a different contract raises `PermissionError`, and an executable
+whose ABI differs from its contract is refused. `LoadedAtomisticIREE` is a host-only
+`"compiled-inference"` executable: it is called eagerly with a lifecycle request,
+refuses JAX transformations, and has no derivatives.
+
+```text
+bundle = phx.export.save_atomistic_iree(
+    provider_plan,
+    structure,
+    units,
+    "water-mace.phxiree",
+    policy=phx.export.IREEExportPolicy(executable_format="system-library"),
+)
+frozen = phx.export.load_atomistic_iree(
+    bundle.path,
+    trusted_module_sha256=bundle.module_sha256,
+    trusted_contract_id=bundle.contract.contract_id,
+)
+# `native.request` comes from provider_plan.prepare(system).evaluate_state(...)
+# in the frozen lifecycle epoch.
+result = frozen(native.request)
+```
+
+This frozen export is an unreleased candidate. Float64 parity of an exported MACE
+executable is not claimed: a full-float64 tiny-MACE mismatch after StableHLO scatter
+legalization is still being fixed, and no exported MACE artifact is published or
+qualified.
+
+::: phydrax.export.save_atomistic_iree
+
+---
+
+::: phydrax.export.load_atomistic_iree
+
+---
+
+::: phydrax.export.prepare_atomistic_iree_contract
+
+---
+
+::: phydrax.export.AtomisticIREEContract
+
+---
+
+::: phydrax.export.AtomisticIREEExportBundle
+
+---
+
+::: phydrax.export.AtomisticIREEEvaluation
+
+---
+
+::: phydrax.export.LoadedAtomisticIREE
+
 ## Portable uncertainty results
 
 `phydrax.uq.export_result` writes native UQ results as pickle-free, checksummed archives

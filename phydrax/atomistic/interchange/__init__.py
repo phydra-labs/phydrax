@@ -1,7 +1,11 @@
 """Optional host-side atomistic adapters.
 
 Structure, force-field, trajectory, and assembly boundaries remain lazy imports.
+The ASE calculator resolves lazily because its module imports ASE.
 """
+
+from importlib import import_module
+from typing import Any
 
 from ._adapters import (
     force_field_from_mapping,
@@ -26,14 +30,37 @@ from ._core import (
     UnsupportedAtomisticContentError,
 )
 from ._ipi import (
+    IPIInverseCellPolicy,
     IPIListener,
     IPIRequest,
-    IPIResponse,
     IPISession,
+    IPITransportMode,
     IPITransportPlan,
     IPITransportStatus,
+    IPIVirialPolicy,
     serve_ipi_once,
     TransportedExternalAtomisticProvider,
+)
+from ._mace_checkpoint import (
+    convert_mace_checkpoint,
+    create_mace_provider_fixture,
+    evaluate_mace_source,
+    MACE_PROVIDER_RELEASES,
+    mace_source_gradients,
+    MACECheckpointConversion,
+    MACEConversionLimits,
+    MACEEvaluationDtype,
+    MACEProviderCase,
+    MACEProviderConfiguration,
+    MACEProviderEvaluation,
+    MACEProviderFixture,
+    MACEProviderGradients,
+    MACEProviderRuntime,
+    MACESource,
+    MACESourceKind,
+    MACESourceProvenance,
+    MACESourceRefusedError,
+    TrustedTorchPickleSource,
 )
 from ._mdanalysis import (
     atomistic_frame_from_mdanalysis,
@@ -55,7 +82,42 @@ from ._structure_records import (
 from ._trajectory_io import ExtendedXYZTrajectoryPlan, H5MDTrajectoryPlan
 
 
+_ASE_CALCULATOR_EXPORTS = ("NativeASECalculator", "NativeASECalculatorPlan")
+
+
+def __getattr__(name: str) -> Any:
+    if name in _ASE_CALCULATOR_EXPORTS:
+        require_ase()
+        value = getattr(import_module("._ase_calculator", __package__), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
 __all__ = [
+    "convert_mace_checkpoint",
+    "create_mace_provider_fixture",
+    "evaluate_mace_source",
+    "MACE_PROVIDER_RELEASES",
+    "mace_source_gradients",
+    "MACECheckpointConversion",
+    "MACEConversionLimits",
+    "MACEEvaluationDtype",
+    "MACEProviderCase",
+    "MACEProviderConfiguration",
+    "MACEProviderEvaluation",
+    "MACEProviderFixture",
+    "MACEProviderGradients",
+    "MACEProviderRuntime",
+    "MACESource",
+    "MACESourceKind",
+    "MACESourceProvenance",
+    "MACESourceRefusedError",
+    "TrustedTorchPickleSource",
     "ASE_PARTICLE_ID_ARRAY",
     "ASE_SOURCE_ID_INFO",
     "AtomisticInterchangeBundle",
@@ -64,12 +126,16 @@ __all__ = [
     "AtomisticInterchangeReport",
     "ExtendedXYZTrajectoryPlan",
     "H5MDTrajectoryPlan",
+    "IPIInverseCellPolicy",
     "IPIListener",
     "IPIRequest",
-    "IPIResponse",
     "IPISession",
+    "IPITransportMode",
     "IPITransportPlan",
     "IPITransportStatus",
+    "IPIVirialPolicy",
+    "NativeASECalculator",
+    "NativeASECalculatorPlan",
     "PackmolAssemblyPlan",
     "PackmolAssemblyResult",
     "PackmolComponentPlan",
